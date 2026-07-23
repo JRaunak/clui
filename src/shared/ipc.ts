@@ -66,7 +66,6 @@ export interface StartSessionResult {
  *  - `text`     → an inlined text block (a dropped text file's decoded contents,
  *                 wrapped so the model knows the filename — mechanically identical to
  *                 a paste, so it works regardless of the workspace-cwd Read boundary).
- * Renderer-only display metadata (thumbnail, size, dims) never crosses IPC.
  */
 export type WireAttachment =
   | { kind: 'image'; mediaType: string; data: string }

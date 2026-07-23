@@ -214,10 +214,7 @@ export function useComposerAutocomplete(
       }
       if (e.key === 'Escape') {
         e.preventDefault()
-        // Close by nudging the caret: simplest is to blur the menu via a no-op edit.
-        // We signal closure by inserting nothing but moving past — instead, dismiss
-        // by clearing the trigger through a space is wrong; just let the composer
-        // clear focus state. We consume Esc so it doesn't bubble to other handlers.
+        // Dismiss the menu; consume Esc so it doesn't bubble to other handlers.
         setDismissed(true)
         return true
       }

@@ -434,8 +434,8 @@ export class ClaudeSession extends EventEmitter {
     if (this.opts.effort === effort) return
     this.opts = { ...this.opts, effort, resumeSessionId: this.sessionId ?? this.opts.resumeSessionId }
     if (!this.child) return
-    // Live effort change via the control protocol (verified directly-handled). Falls
-    // back to a respawn if the control_request errors/times out.
+    // Live effort change over the control protocol (verified directly-handled);
+    // respawn fallback if the control_request errors or times out.
     const ok = await this.sendControl('apply_flag_settings', { settings: { effortLevel: effort } })
     if (!ok) {
       this.emitEvent({ type: 'error', severity: 'info', message: `Live effort change unavailable — reconnecting to apply "${effort}"…` })
