@@ -1,0 +1,27 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Clui">
+  <defs>
+    <linearGradient id="bgGrad31" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e1e1f"/>
+      <stop offset="1" stop-color="#161617"/>
+    </linearGradient>
+  </defs>
+  <g id="bg"><rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#bgGrad31)"/></g>
+
+  <!-- C, u, i in Hoefler Text (embedded outlines); the "l" is intentionally NOT a
+       serif glyph — it's a session bar drawn in screen space below. -->
+  <g id="wordmark" transform="matrix(0.107608 0 0 -0.107608 38.95531 325.37918)" fill="#e6e6e6">
+    <path transform="translate(0.0 0)" d="M1415 358Q1379 198 1345 18Q1288 18 1138 -9Q946 -44 854 -44Q626 -44 454.0 46.0Q282 136 186.0 303.5Q90 471 90 676Q90 878 191.5 1048.5Q293 1219 471.0 1314.0Q649 1409 872 1409Q966 1409 1124 1389Q1247 1373 1303 1373Q1316 1233 1349 1033Q1349 1017 1317 1017Q1297 1017 1293 1033Q1257 1169 1138.0 1257.0Q1019 1345 864 1345Q629 1345 469.5 1151.0Q310 957 310 676Q310 403 468.0 211.5Q626 20 854 20Q1211 20 1360 358Q1367 374 1387 374Q1415 374 1415 358Z"/>
+    <path transform="translate(2026.0 0)" d="M1023 54Q1023 33 1007 31Q825 11 758 -39Q744 -50 730 -50Q710 -50 710 -34L718 92Q570 -42 450 -42Q313 -42 236.5 35.5Q160 113 160 246V620Q160 709 137.0 738.0Q114 767 46 767Q33 767 17 766Q2 766 2 792Q2 824 18 824Q134 824 322 869Q340 869 340 844V294Q340 181 383.0 129.5Q426 78 518 78Q577 78 622.0 100.0Q667 122 718 178V620Q718 708 694.5 737.5Q671 767 601 767Q589 767 573 766Q558 766 558 792Q558 824 574 824Q690 824 878 869Q896 869 896 844V206Q896 137 915.5 113.5Q935 90 1007 80Q1023 80 1023 54Z"/>
+    <path transform="translate(3092.0 0)" d="M392 1225Q392 1183 361.5 1152.0Q331 1121 288 1121Q245 1121 214.5 1152.0Q184 1183 184 1225Q184 1269 214.0 1299.0Q244 1329 288 1329Q331 1329 361.5 1299.0Q392 1269 392 1225ZM532 16Q532 -12 516 -12Q475 -12 411 -6Q339 0 290 0Q240 0 170 -6Q107 -12 66 -12Q50 -12 50 16Q50 41 66 43Q151 54 175.5 84.0Q200 114 200 212V582Q200 662 179.5 687.0Q159 712 90 720Q74 720 74 746Q74 770 90 770Q195 797 262.0 827.5Q329 858 346 878Q356 890 368 890Q396 890 396 874Q380 650 380 526V212Q380 114 404.5 84.0Q429 54 516 43Q532 41 532 16Z"/>
+  </g>
+
+  <!-- The "l" as an active session item: a rounded terracotta bar (echoes the app's
+       active-session accent bar) with a small teal "live" dot at its base. -->
+  <g id="session">
+    <rect x="212" y="168" width="32" height="159" rx="10" ry="10" fill="#de7356"/>
+    <circle cx="228" cy="300" r="9" fill="#4ec9b0"/>
+  </g>
+
+  <!-- Raised mid-dot "·" (matches the app header's "Clui ·"), not a baseline period. -->
+  <g id="dot"><circle cx="452" cy="272" r="12" fill="#de7356"/></g>
+</svg>

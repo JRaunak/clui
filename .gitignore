@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output & artifacts
+out/
+release/
+dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.vscode/
+
+# Secrets / environment (never commit)
+.env
+.env.*
+*.pem
+*.key
+*.p8
+*.p12
+*.keystore
+id_rsa*
+
+# Local developer notes & app screenshots (not part of the published app)
+.claude/
+design-images/

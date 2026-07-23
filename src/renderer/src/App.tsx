@@ -1,0 +1,275 @@
+import { useCallback, useEffect, useState } from 'react'
+import { useActive, useSession, loadPersistedCosts } from './store'
+import { Chat } from './components/Chat'
+import { Composer } from './components/Composer'
+import { SessionsSidebar } from './components/SessionsSidebar'
+import { PermissionDialog } from './components/PermissionDialog'
+import { Customizations } from './components/Customizations'
+import { ChangedFiles } from './components/ChangedFiles'
+import { Settings } from './components/Settings'
+import { CommandPalette } from './components/CommandPalette'
+import { GlobalSearch } from './components/GlobalSearch'
+import { BackgroundTasks } from './components/BackgroundTasks'
+import { SubagentView } from './components/SubagentView'
+import { WorkflowTray } from './components/WorkflowTray'
+import { Button } from './components/Button'
+import { Onboarding, cliHealth } from './components/Onboarding'
+import { IconSettings, IconPlus } from './components/Icon'
+import { applyTheme } from './lib/theme'
+import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
+import type { CliInfo } from '../../shared/ipc'
+
+export function App(): JSX.Element {
+  const cwd = useActive((s) => s?.cwd ?? null)
+  const sessionId = useActive((s) => s?.sessionId ?? null)
+  const costUsd = useActive((s) => s?.costUsd ?? null)
+  const startSession = useSession((s) => s.startSession)
+  const notice = useSession((s) => s.notice)
+  const viewingSubagent = useSession((s) => s.viewingSubagent)
+  const dismissNotice = useSession((s) => s.dismissNotice)
+  const [cliInfo, setCliInfo] = useState<CliInfo | null>(null)
+  // First-run intro flag. `null` = not yet loaded (don't flash the intro before we
+  // know); once loaded it's true/false. Persisted in settings via `updateSettings`.
+  const [onboarded, setOnboarded] = useState<boolean | null>(null)
+  const [showCustomizations, setShowCustomizations] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [showPalette, setShowPalette] = useState(false)
+
+  useEffect(() => {
+    window.clui.getCliInfo().then(setCliInfo)
+    // Warm the model list at startup so the picker is instant (main-process caches it).
+    void window.clui.listModels()
+    // Load persisted per-session costs so resumed sessions show accrued cost.
+    void loadPersistedCosts()
+    // Re-assert the theme (preload set it pre-paint) and install the OS-change
+    // listener for 'system'. Reads the persisted preference from settings. Also read
+    // the onboarded flag here (same call) so the first-run intro shows only once.
+    void window.clui.getSettings().then((s) => {
+      applyTheme(s.theme)
+      setOnboarded(s.onboarded)
+    })
+  }, [])
+
+  // Refresh CLI info when Settings closes (path may have changed).
+  useEffect(() => {
+    if (!showSettings) window.clui.getCliInfo().then(setCliInfo)
+  }, [showSettings])
+
+  // Persist + clear the first-run intro. Called on Skip (explicit dismiss).
+  const dismissIntro = useCallback(() => {
+    setOnboarded(true)
+    void window.clui.updateSettings({ onboarded: true })
+  }, [])
+
+  // Opening ANY session (pick / resume-from-disk / activate) completes first-run —
+  // keyed on `cwd` so every entry path counts, not just "Pick a workspace". Without
+  // this, resuming a disk session on first run left onboarded=false, so CLOSING it
+  // bounced the user back to the intro card (reported bug). Runs once (guarded on the
+  // loaded false state); persists so it never reshows.
+  useEffect(() => {
+    if (cwd && onboarded === false) {
+      setOnboarded(true)
+      void window.clui.updateSettings({ onboarded: true })
+    }
+  }, [cwd, onboarded])
+
+  const recheckCli = useCallback(() => {
+    setCliInfo(null) // brief "checking" gap; getCliInfo re-detects live
+    void window.clui.getCliInfo().then(setCliInfo)
+  }, [])
+
+  // Electron footgun guard: a file dropped ANYWHERE outside the composer would make
+  // the webview navigate to the dropped file:// URL and white-screen the app. Cancel
+  // the default at the window level for any drop the composer didn't already handle
+  // (the composer's own handlers preventDefault first, so this only swallows stray
+  // drops on the sidebar/chat/etc.). Passive:false so preventDefault takes effect.
+  useEffect(() => {
+    const cancel = (e: DragEvent): void => {
+      if (e.defaultPrevented) return // composer already handled + previewed it
+      e.preventDefault()
+    }
+    window.addEventListener('dragover', cancel, false)
+    window.addEventListener('drop', cancel, false)
+    return () => {
+      window.removeEventListener('dragover', cancel, false)
+      window.removeEventListener('drop', cancel, false)
+    }
+  }, [])
+
+  const pickAndStart = useCallback(async (): Promise<void> => {
+    // The picker opens at the configured default workspace, if any. First-run
+    // completion is handled by the cwd-keyed effect below (covers every entry path).
+    const dir = await window.clui.pickWorkspace()
+    if (dir) await startSession(dir)
+  }, [startSession])
+
+  // ⌘N new session · ⌘W close · ⌘, settings · ⌘K palette (native menu) + ⌃Tab / ⌃C.
+  const openSettings = useCallback(() => setShowSettings(true), [])
+  const openPalette = useCallback(() => setShowPalette(true), [])
+  useKeyboardShortcuts({
+    onNewSession: pickAndStart,
+    onOpenSettings: openSettings,
+    onOpenPalette: openPalette
+  })
+
+  return (
+    <div className="flex h-screen overflow-hidden">
+      <aside className="flex h-screen min-h-0 w-72 shrink-0 flex-col gap-3 border-r border-border bg-bg-sidebar px-3 pt-4">
+        <div className="flex items-baseline gap-2 px-1">
+          <span className="font-serif text-2xl font-semibold tracking-tight text-content">Clui</span>
+          <span className="h-1.5 w-1.5 translate-y-[-2px] rounded-full bg-accent" aria-hidden="true" />
+        </div>
+        <Button variant="primary" size="md" onClick={pickAndStart} className="w-full">
+          <IconPlus className="h-4 w-4" />
+          {cwd ? 'New session' : 'Pick a workspace'}
+        </Button>
+        {/* Settings moved here from the (now-deleted) top bar — one visible, 44px,
+            onboarding-critical door (a new user must find it to set the CLI path);
+            ⌘, + the native menu + ⌘K also open it. Configuration is ⌘K-only (infrequent
+            read-only audit — reshaped out of the sidebar to reclaim this scarce slot). */}
+        <Button variant="outline" size="md" onClick={() => setShowSettings(true)} className="w-full">
+          <IconSettings className="h-4 w-4" />
+          Settings
+        </Button>
+        <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-3">
+          <SessionsSidebar />
+        </div>
+        <div className="flex h-8 shrink-0 items-center justify-center gap-1.5 border-t border-border bg-bg-sidebar text-[12px] text-dim">
+          {cliInfo?.path ? (
+            <span className="truncate font-mono" title={cliInfo.path}>
+              claude {cliInfo.version ?? ''}
+            </span>
+          ) : (
+            <span className="text-err">claude CLI not found</span>
+          )}
+        </div>
+      </aside>
+
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* No top bar: Settings moved to the sidebar (below New Session). The old h-10
+            header held only the gear far-right — empty chrome that miscued as a title bar
+            and stole ~40px of transcript height. macOS draws the native title bar; the
+            notice banner + chat carry their own top borders. */}
+        {notice && (
+          <div className="flex items-center gap-2 border-b border-warn/40 bg-warn/10 px-4 py-1.5 text-[12px] text-warn">
+            <span className="flex-1">{notice}</span>
+            <button className="text-warn hover:text-content" onClick={dismissNotice} title="Dismiss">
+              ✕
+            </button>
+          </div>
+        )}
+
+        <PermissionDialog />
+        <GlobalSearch />
+        {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} />}
+        {showSettings && <Settings onClose={() => setShowSettings(false)} />}
+        {showPalette && (
+          <CommandPalette
+            onClose={() => setShowPalette(false)}
+            onNewSession={() => {
+              setShowPalette(false)
+              void pickAndStart()
+            }}
+            onOpenSettings={() => {
+              setShowPalette(false)
+              setShowSettings(true)
+            }}
+            onOpenCustomizations={() => {
+              setShowPalette(false)
+              setShowCustomizations(true)
+            }}
+          />
+        )}
+        {cwd && viewingSubagent ? (
+          // Maximized transcript view takes over the main region (sidebar persists).
+          <SubagentView />
+        ) : cwd ? (
+          <>
+            <Chat />
+            <ChangedFiles />
+            <Composer />
+            {/* Bottom-left workspace/session info. Same h-8 as the sidebar footer
+                so their divider lines align across the two columns. */}
+            <div className="flex h-8 items-center gap-3 border-t border-border px-4 text-[12px] text-dim">
+              <span title={cwd ?? ''}>
+                Workspace: <span className="text-dim">{cwd ? basename(cwd) : '—'}</span>
+              </span>
+              <span className="text-border">·</span>
+              <span title={sessionId ?? ''}>
+                Session:{' '}
+                <span className="font-mono text-dim">{sessionId ? sessionId.slice(0, 8) : '—'}</span>
+              </span>
+              {costUsd !== null && (
+                <>
+                  <span className="text-border">·</span>
+                  <span title="Cumulative session cost (from the CLI result event)">
+                    Cost: <span className="font-mono text-dim">{formatCost(costUsd)}</span>
+                  </span>
+                </>
+              )}
+              <BackgroundTasksSlot />
+              <WorkflowTray />
+            </div>
+          </>
+        ) : // Onboarding takes over the empty pane when the CLI is unhealthy OR the
+        // user hasn't completed first-run. Wait for `onboarded` to load (null) before
+        // deciding, so the intro never flashes then vanishes. When healthy + onboarded,
+        // Onboarding returns null → fall through to the normal Welcome pane.
+        onboarded !== null && (cliHealth(cliInfo) !== 'ok' || !onboarded) ? (
+          <Onboarding
+            cliInfo={cliInfo}
+            onboarded={onboarded}
+            onOpenSettings={openSettings}
+            onRecheck={recheckCli}
+            onPickWorkspace={pickAndStart}
+            onDismissIntro={dismissIntro}
+          />
+        ) : (
+          <div className="m-auto flex max-w-md flex-col items-center px-6 text-center">
+            <div className="mb-6 flex items-baseline gap-2.5">
+              <span className="font-serif text-5xl font-semibold tracking-tight text-content">Clui</span>
+              <span className="h-2.5 w-2.5 translate-y-[-6px] rounded-full bg-accent" aria-hidden="true" />
+            </div>
+            <p className="font-serif text-xl italic leading-snug text-dim">
+              Drive Claude Code, visually.
+            </p>
+            <p className="mt-3 text-sm leading-relaxed text-faint">
+              A local window onto the <span className="font-mono text-dim">claude</span> CLI — your
+              sessions, permissions, and tools, running side by side.
+            </p>
+            <Button variant="primary" size="lg" className="mt-7" onClick={pickAndStart}>
+              <IconPlus className="h-4 w-4" />
+              Pick a workspace
+            </Button>
+          </div>
+        )}
+      </main>
+    </div>
+  )
+}
+
+/** Last path segment of a workspace dir (its display name). */
+function basename(p: string): string {
+  const parts = p.replace(/\/+$/, '').split('/')
+  return parts[parts.length - 1] || p
+}
+
+/** Renders the background-tasks chip WITH its leading separator, only when the
+ *  active session has any background task (so the info bar has no dangling `·`). */
+function BackgroundTasksSlot(): JSX.Element | null {
+  const hasTasks = useActive((s) => Object.keys(s?.backgroundTasks ?? {}).length > 0)
+  if (!hasTasks) return null
+  return (
+    <>
+      <span className="text-border">·</span>
+      <BackgroundTasks />
+    </>
+  )
+}
+
+/** Format a USD cost: sub-cent → 4dp, else 2dp (e.g. $0.0032, $0.14, $2.10). */
+function formatCost(usd: number): string {
+  if (usd > 0 && usd < 0.01) return `$${usd.toFixed(4)}`
+  return `$${usd.toFixed(2)}`
+}
+

@@ -1,0 +1,560 @@
+@import 'tailwindcss';
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Bundled fonts (local — the app phones nothing home; see product constraint).
+   Lora = a soft, calligraphic variable serif (brushed curves, moderate
+   contrast) for the wordmark + headings + speaker labels — warmer and rounder
+   than a high-contrast display serif. IBM Plex Mono = tool output, code, ids.
+   ───────────────────────────────────────────────────────────────────────── */
+@font-face {
+  font-family: 'Lora';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./assets/fonts/lora-var.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Lora';
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./assets/fonts/lora-var-italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/plexmono-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./assets/fonts/plexmono-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/fonts/plexmono-600.woff2') format('woff2');
+}
+
+/* Also scan shared modules — some Tailwind class names (e.g. per-mode risk colors
+   in shared/settings.ts) live outside the renderer root and would otherwise be
+   tree-shaken away. */
+@source '../../shared';
+
+/* ─────────────────────────────────────────────────────────────────────────
+   LAYER 1 — PRIMITIVES (raw values, no meaning). Rarely change. The semantic
+   layer below aliases these; light mode (see todos/light-mode.md) will re-map
+   the semantic layer, not these.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Neutral ink ramp (near-black → light) — kept NEUTRAL by design: the accent
+     works by scarcity (spend boldness in one place), so it must sit against a
+     neutral field to read as the scarce signature note, not compete with a
+     terracotta-tinted background. */
+  --ink-960: #121213; /* deepest — sidebar */
+  --ink-950: #161617; /* app background */
+  --ink-900: #1e1e1f; /* elevated surface (cards, popovers, composer) */
+  --ink-850: #242426; /* raised — chips, hovers */
+  --ink-820: #2c2c2e; /* hairline border */
+  --ink-780: #3a3a3d; /* strong border */
+  --ink-750: #2d2d30; /* user bubble */
+  --ink-tool: #202020; /* tool-call surface */
+
+  /* Paper (text) ramp — neutral. */
+  --paper-100: #e6e6e6; /* primary content */
+  --paper-400: #9a9a9a; /* dim (secondary) */
+  /* faint (tertiary — meta/inactive). Raised #6f6f71→#8f8f92 so it clears WCAG AA
+     4.5:1 as TEXT on every dark surface it lands on (4.80:1 on bg-raised #242426,
+     5.61:1 on bg) while staying a step below `dim`. The old value failed AA on
+     real copy (permission-mode descriptions, empty-state subtitle, palette badges
+     — 3.1–3.6:1); a third text tier is kept, just a legible one. */
+  --paper-500: #8f8f92; /* faint (tertiary — meta/inactive) */
+
+  /* Terracotta — Clui's accent, anchored EXACTLY on the app-icon orange #de7356.
+     The one scarce, saturated focal note against the neutral surfaces. */
+  --terra-500: #de7356; /* accent */
+  --terra-400: #e88b70; /* accent hover */
+  --terra-700: #bd5a3d; /* accent deep — active edge, pressed */
+  --terra-tint: #241c19; /* accent-tinted dark surface — the anchored session */
+
+  /* Status — neutral/conventional (NOT rehued), so terracotta stays the unique
+     accent and these read as recognizable semantic signals. */
+  --teal-400: #4ec9b0; /* ok / success / live */
+  --amber-400: #d9a03a; /* warn */
+  --red-400: #f14c4c; /* err / destructive */
+  --blue-400: #4a9eff; /* info */
+  --orange-400: #ff7b3a; /* effort: X-High (between warn amber and err red) */
+
+  /* Syntax-highlighting palette (highlight.js). DARK values, all verified ≥4.5:1
+     on the code surface --ink-tool (#202020). The light theme re-maps these. */
+  --syntax-base: #e6e6e6; /* default code text */
+  --syntax-keyword: #de7356; /* keywords, operators — the accent */
+  --syntax-string: #4ec9b0; /* strings, regexp */
+  --syntax-number: #ff7b3a; /* numbers, literals, booleans */
+  --syntax-func: #4a9eff; /* function/class titles */
+  --syntax-attr: #d9a03a; /* attributes, properties */
+  --syntax-comment: #9a9a9a; /* comments (dim, not faint — faint fails AA here) */
+
+  /* Radius, shadow, motion primitives */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.28);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.32);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.42);
+  --shadow-glow: 0 0 0 1px color-mix(in oklab, var(--terra-500) 40%, transparent),
+    0 4px 20px color-mix(in oklab, var(--terra-500) 22%, transparent);
+
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-slow: 320ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   LAYER 2 — SEMANTIC (purpose aliases → utilities). Components use THESE
+   (bg-bg, text-dim, border-border, …). Kept the historical --color-* names so
+   existing consumers don't churn; new tokens added for the signature work.
+   ───────────────────────────────────────────────────────────────────────── */
+@theme {
+  --color-bg: var(--ink-950);
+  --color-bg-elev: var(--ink-900);
+  --color-bg-sidebar: var(--ink-960);
+  --color-bg-raised: var(--ink-850);
+  --color-border: var(--ink-820);
+  --color-border-strong: var(--ink-780);
+  --color-content: var(--paper-100);
+  --color-dim: var(--paper-400);
+  --color-faint: var(--paper-500);
+  --color-accent: var(--terra-500);
+  --color-accent-hover: var(--terra-400);
+  --color-accent-deep: var(--terra-700);
+  --color-accent-surface: var(--terra-tint);
+  /* Paired foregrounds — text sitting ON a colored fill (accent buttons, the
+     warn/err badges). Kept as tokens so light mode can flip them independently
+     (the "every fill gets a provable foreground" rule): in dark, accent/warn are
+     light so their text is near-black; in light they darken so their text is white. */
+  --color-on-accent: #1a1a1a; /* near-black on the terracotta fill (5.55:1) */
+  --color-on-warn: #1a1a1a; /* near-black on the amber fill */
+  --color-on-err: #ffffff; /* white on the red fill */
+  --color-user: var(--ink-750);
+  --color-tool: var(--ink-tool);
+  --color-err: var(--red-400);
+  --color-ok: var(--teal-400);
+  --color-warn: var(--amber-400);
+  --color-info: var(--blue-400);
+  --color-effort-xhigh: var(--orange-400);
+  /* Ultracode effort — purple, matching the user's statusline.sh (ultracode = the
+     purple/violet marker). Deliberately NOT the terracotta accent (accent stays
+     scarce) and distinct from info-blue. #a78bfa = 6.9:1 on the dark picker surface. */
+  --color-effort-ultra: #a78bfa;
+  /* Focus ring — the single most impactful a11y token (applied globally below). */
+  --color-ring: var(--terra-500);
+
+  /* Type families */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-serif: 'Lora', ui-serif, Georgia, 'Times New Roman', serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Text scale — ~+10% vs Tailwind defaults, rounded to clean px (text-only;
+     layout/padding unchanged). Every text-* utility uses these. */
+  --text-xs: 0.8125rem; /* 13px */
+  --text-xs--line-height: 1.125rem; /* 18px */
+  --text-sm: 0.9375rem; /* 15px */
+  --text-sm--line-height: 1.375rem; /* 22px */
+  --text-base: 1.0625rem; /* 17px */
+  --text-base--line-height: 1.625rem; /* 26px */
+  --text-lg: 1.1875rem; /* 19px */
+  --text-lg--line-height: 1.75rem; /* 28px */
+  --text-xl: 1.375rem; /* 22px */
+  --text-xl--line-height: 1.75rem; /* 28px */
+  --text-2xl: 1.625rem; /* 26px */
+  --text-2xl--line-height: 2rem; /* 32px */
+
+  /* Signature motion: a gentle "breathe" for the live-session dot, and a soft
+     dock-edge pulse while a turn streams. Both restrained (skill: excess motion
+     reads as AI-generated) and disabled under prefers-reduced-motion. */
+  --animate-breathe: breathe 2.8s var(--ease-out) infinite;
+  --animate-dock-pulse: dock-pulse 2s ease-in-out infinite;
+  /* Ultra: a one-shot arm sweep + an infinite "engaged" glow (see keyframes below). */
+  --animate-ultra-ripple: ultra-ripple 620ms linear 1 both;
+  --animate-ultra-glow: ultra-glow 2.4s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   LIGHT THEME — re-maps the SEMANTIC layer only (not the primitives, not the
+   components). Applied via `<html data-theme="light">` (resolved before paint
+   in index.html + theme.ts; 'system' is resolved to a concrete value in JS).
+   `:root[data-theme=…]` out-specifies the `@theme`→`:root` dark defaults above.
+
+   Colors are RE-DERIVED, never inverted — the design skill's rule. Terracotta
+   #d97757 is only ~2.3:1 on white, so accent/ring/status hues are darkened until
+   every text + fill + focus pair clears WCAG AA. Verified with a contrast script
+   (/tmp/contrast.mjs during dev): body/dim/accent ≥4.5:1 on every surface they
+   touch, paired foregrounds ≥4.5:1 on their fills, ring ≥3:1. Warm-paper palette
+   echoes the light app-icon background (#f4f1ea) so the identity carries over.
+   ───────────────────────────────────────────────────────────────────────── */
+:root[data-theme='light'] {
+  /* Surfaces — warm off-white canvas; elevation reads BRIGHTER (toward white),
+     sidebar recedes into a deeper cream, hover/chips darken a step. */
+  --color-bg: #f6f3ee;
+  --color-bg-elev: #fffdfa;
+  --color-bg-sidebar: #efe9e0;
+  --color-bg-raised: #e7e0d4;
+  --color-border: #e0d8ca;
+  --color-border-strong: #cabfac;
+
+  /* Text — warm near-black ramp (14.7 / 6.6 / 5.0 :1 on the base surface). */
+  --color-content: #22201c;
+  --color-dim: #5c554c;
+  /* faint darkened #6f675c→#645d52 so it clears AA as text on the darkest light
+     surface it touches (4.96:1 on bg-raised #e7e0d4, 5.88:1 on bg; the old value
+     was 4.25:1 on raised — a fail), still a step lighter than `dim`. */
+  --color-faint: #645d52;
+
+  /* Accent — #de7356 darkened for AA as text/marks/ring on paper (it's only ~3:1
+     on white at full strength; #a8492a gives 5.2:1). Paired foreground flips to
+     white (5.75:1 on the fill). Tinted surface = warm terracotta paper anchor. */
+  --color-accent: #a8492a;
+  --color-accent-hover: #8f3d20;
+  --color-accent-deep: #7a3216;
+  --color-accent-surface: #f3e4dc;
+  --color-on-accent: #ffffff;
+
+  /* Message + tool surfaces — subtle warm cards, text ≥12:1. */
+  --color-user: #ece4d7;
+  --color-tool: #efe9df;
+
+  /* Status — darkened so each clears 4.5:1 on both bg and elevated surfaces.
+     Paired foregrounds flip: warn/err fills are now dark → white text on them. */
+  --color-err: #c02718;
+  --color-ok: #0f766e;
+  --color-warn: #b45309;
+  --color-info: #1d4ed8;
+  --color-on-warn: #ffffff;
+  --color-on-err: #ffffff;
+  --color-effort-xhigh: #c2410c;
+  /* Ultracode purple, darkened for AA on the warm-paper surface (#6d28d9 ≈ 6.1:1). */
+  --color-effort-ultra: #6d28d9;
+
+  /* Focus ring — MUST be the darkened accent (5.2:1); the dark-mode terracotta
+     would be ~2.3:1 on white and fail the 3:1 non-text-UI floor. */
+  --color-ring: #a8492a;
+
+  /* Syntax palette — LIGHT values, all verified ≥4.5:1 on the light code surface
+     --color-tool (#efe9df). attr uses info (warn is only 4.16:1 there). */
+  --syntax-base: #22201c;
+  --syntax-keyword: #a8492a;
+  --syntax-string: #0f766e;
+  --syntax-number: #c02718;
+  --syntax-func: #1d4ed8;
+  --syntax-attr: #1d4ed8;
+  --syntax-comment: #6f675c;
+  /* (Shadows are Tailwind's own black-low-alpha utilities, which already read
+     correctly on paper — the --shadow-* primitives above are unused, so there's
+     nothing theme-specific to re-map here.) */
+}
+
+/* The live-dot "breath" is carried by SCALE ONLY — opacity stays at 1. Dipping
+   opacity (was 0.4) dropped the dot to ~1.8:1 at the trough (below the 3:1 non-text
+   floor), and even a 0.7 floor is 2.89:1 on cream — a live indicator must never fall
+   under the floor mid-cycle. A pure size pulse still reads clearly as "breathing"
+   while the color holds full contrast throughout. */
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.66);
+  }
+}
+
+@keyframes dock-pulse {
+  0%,
+  100% {
+    border-color: color-mix(in oklab, var(--color-accent) 55%, var(--color-border));
+  }
+  50% {
+    border-color: color-mix(in oklab, var(--color-accent) 12%, var(--color-border));
+  }
+}
+
+/* Ultra arm flourish — a one-shot RIPPLE_RAMP sweep (the CLI's own ultracode
+   signature: deep-purple #3E1676 → violet #8C50F0) traveling across the "✦ Ultra"
+   label via background-clip:text when the mode is armed. Paint-only (background
+   position) so it never reflows; fires once and settles to the flat purple on-state.
+   Runs <5s and is user-initiated → WCAG 2.2.2 not triggered. */
+@keyframes ultra-ripple {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -20% 0;
+  }
+}
+
+/* Ultra "engaged" cue — while an ultracode turn is RUNNING, the leading star's
+   halo breathes. Opacity-floor high (never dips out) and NO transform/scale, so it
+   reads as "energized," not "loading" — distinct from the shrink-and-fade `breathe`.
+   Sits below the dock-pulse + typing dots in the visual hierarchy (a grace note). */
+@keyframes ultra-glow {
+  0%,
+  100% {
+    text-shadow:
+      0 0 3px color-mix(in oklab, var(--color-effort-ultra) 55%, transparent),
+      0 0 7px color-mix(in oklab, var(--color-effort-ultra) 30%, transparent);
+  }
+  50% {
+    text-shadow:
+      0 0 6px var(--color-effort-ultra),
+      0 0 13px color-mix(in oklab, var(--color-effort-ultra) 60%, transparent);
+  }
+}
+
+/* Ultra chip helper classes (not expressible as Tailwind utilities: gradient-clipped
+   text + keyframe bindings). See UltracodeToggle.tsx. */
+.ultra-arming {
+  /* The RIPPLE_RAMP endpoints from the CLI binary (deep-purple → violet), with a
+     bright band in the middle so contrast only RISES as it sweeps (text never dips
+     below legibility). Clipped to the "✦ Ultra" glyphs; settles off-screen → the
+     element's own token color (set on children) takes back over when .ultra-arming
+     is removed onAnimationEnd. */
+  background-image: linear-gradient(
+    100deg,
+    #3e1676 0 32%,
+    #d7c4ff 50%,
+    #8c50f0 68% 100%
+  );
+  background-size: 240% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: var(--animate-ultra-ripple);
+}
+/* The star carries its OWN copy of the same gradient+clip during arming (background-clip
+   is per-element, so a bare `color: transparent` would make it vanish). Same keyframe +
+   duration → the star and label shimmer in sync, reading as one purple ripple, then both
+   return to their token color when .ultra-arming is removed onAnimationEnd. */
+.ultra-arming .ultra-star {
+  background-image: linear-gradient(100deg, #3e1676 0 32%, #d7c4ff 50%, #8c50f0 68% 100%);
+  background-size: 240% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: var(--animate-ultra-ripple);
+}
+.ultra-star-glow {
+  animation: var(--animate-ultra-glow);
+}
+
+/* Toast countdown — a hairline that drains full→empty over the undo window, so
+   the auto-dismiss timer is visible (Material snackbar guidance). */
+@keyframes toast-drain {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+/* Typing indicator — 3 dots bouncing in sequence (chat-app convention). A
+   learned, honestly-indeterminate "working" signal; replaces the ambiguous
+   single-dot breathe for the assistant-thinking state. */
+/* Bounce via translateY ONLY — no opacity dip. The resting 0.5 opacity dropped the
+   light-theme dots (text-ok #0f766e, 4.95:1 at full on cream) to ~2:1, under the 3:1
+   non-text floor. Full opacity throughout keeps them legible; the vertical wave still
+   reads as "typing" (same transform-not-opacity rule as `breathe`). */
+@keyframes typing-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-3px);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Base
+   ───────────────────────────────────────────────────────────────────────── */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-content);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Lora is soft/calligraphic by construction (no extra axes needed). Nudge the
+   weight up a touch so the display type has presence without going sharp. */
+.font-serif {
+  font-weight: 500;
+}
+
+/* Global keyboard focus ring — keyboard-only (focus-visible), so mouse clicks
+   stay clean. Fixes the app-wide missing-focus a11y gap in one rule. Placed in
+   @layer base so that elements carrying their OWN focus affordance (the
+   composer's focus-within border, a dropdown's border-accent, a session row's
+   ring) can override it with the `focus-visible:outline-none` utility — utilities
+   sit in a later layer and win. Without the layer, this unlayered rule would beat
+   those utilities and stack a second outline inside the element's own border. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Text-entry fields signal focus via the caret and their container's own
+     focus treatment, so they never take the global ring. */
+  textarea:focus-visible,
+  input:focus-visible {
+    outline: none;
+  }
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-accent) 32%, transparent);
+}
+
+/* Themed scrollbars — the default macOS overlay scrollbar renders as a heavy
+   light bar that clashes with the dark palette (esp. in the sidebar). Replace it
+   with a thin, low-contrast thumb that only asserts itself on hover. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--color-border-strong) 80%, transparent);
+  border-radius: 9999px;
+  /* Inset the thumb so it reads as a slim pill, not a full-width bar. */
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-faint);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Respect reduced-motion: neutralize animation + transitions (quality floor). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Reusable component utilities (Tailwind v4 @utility)
+   ───────────────────────────────────────────────────────────────────────── */
+@utility btn-primary {
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-on-accent);
+  transition: background-color var(--duration-fast) var(--ease-out);
+  &:hover {
+    background: var(--color-accent-hover);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Syntax highlighting (highlight.js) — maps hljs token classes to the
+   --syntax-* tokens, which re-derive per theme (see :root + light block).
+   Every color is contrast-verified ≥4.5:1 on the code surface (--color-tool).
+   Only the token colors are set here; layout (padding, mono, scroll) lives on
+   the CodeBlock component so this stays a pure color theme.
+   ───────────────────────────────────────────────────────────────────────── */
+.hljs {
+  color: var(--syntax-base);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-type,
+.hljs-operator {
+  color: var(--syntax-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-meta .hljs-string {
+  color: var(--syntax-string);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-bullet {
+  color: var(--syntax-number);
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-section,
+.hljs-name {
+  color: var(--syntax-func);
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-params,
+.hljs-tag {
+  color: var(--syntax-attr);
+}
+.hljs-meta,
+.hljs-comment .hljs-doctag {
+  color: var(--syntax-comment);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
+.hljs-deletion {
+  color: var(--color-err);
+}
+.hljs-addition {
+  color: var(--color-ok);
+}
