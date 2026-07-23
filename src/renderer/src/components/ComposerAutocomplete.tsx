@@ -19,7 +19,10 @@ interface Item {
   value: string
   label: string
   hint?: string
-  kind: 'command' | 'skill' | 'file'
+  kind: 'command' | 'skill' | 'file' | 'agent'
+  /** Full literal replacement (incl. trigger char), overriding the default
+   *  `trigger.char + value`. Agents need the quoted `@"name (agent)"` form. */
+  insert?: string
 }
 
 /** The active trigger token at the caret, or null if none. */
@@ -84,6 +87,7 @@ export function useComposerAutocomplete(
 
   // Build candidate items for the active trigger.
   const skills = useActiveSkills(trigger?.char === '/')
+  const agents = useActiveAgents(trigger?.char === '@')
   // The CLI's live command list (from the initialize response), curated to the
   // headless-safe allowlist + hydrated with real descriptions/arg-hints.
   const liveCommands = useActive((s) => s?.slashCommands ?? EMPTY_SLASH_COMMANDS)
@@ -106,8 +110,19 @@ export function useComposerAutocomplete(
         }))
       ]
     }
-    return files.map((f) => ({ value: f, label: f, kind: 'file' as const }))
-  }, [trigger?.char, skills, files, commands])
+    // Agents first (delegate the turn), then files. Empty query keeps this order
+    // since the fuzzy sort is skipped — so agents sit above files naturally.
+    return [
+      ...agents.map((a) => ({
+        value: a.name,
+        label: a.name,
+        hint: a.description,
+        kind: 'agent' as const,
+        insert: `@"${a.name} (agent)"`
+      })),
+      ...files.map((f) => ({ value: f, label: f, kind: 'file' as const }))
+    ]
+  }, [trigger?.char, skills, agents, files, commands])
 
   // Fuzzy-filter + rank by the trigger's query.
   const results = useMemo(() => {
@@ -154,7 +169,9 @@ export function useComposerAutocomplete(
       if (!trigger) return
       const chosen = results[i]?.it
       if (!chosen) return
-      const insert = `${trigger.char}${chosen.value} ` // trailing space so you keep typing
+      // Agents carry a full quoted `insert` (`@"name (agent)"`); everything else is
+      // just the trigger char + value. Trailing space so you keep typing.
+      const insert = `${chosen.insert ?? trigger.char + chosen.value} `
       // Replace from the trigger start up to the caret; leave the rest of the text intact.
       const nextText = text.slice(0, trigger.start) + insert + text.slice(caret)
       apply(nextText, trigger.start + insert.length)
@@ -186,7 +203,10 @@ export function useComposerAutocomplete(
       }
       if (e.key === 'Enter') {
         const q = (trigger?.query ?? '').trim()
-        const exact = results.some((r) => r.it.value.toLowerCase() === q.toLowerCase())
+        // Agents are EXCLUDED from the send-as-typed shortcut: a bare `@fiber` does
+        // NOT delegate (only the quoted `@"fiber (agent)"` does), so Enter must always
+        // run pick() to insert the quoted form — never send the raw typed name.
+        const exact = results.some((r) => r.it.kind !== 'agent' && r.it.value.toLowerCase() === q.toLowerCase())
         if (exact) return false // let the composer send the typed command as-is
         e.preventDefault()
         pick(sel)
@@ -220,7 +240,7 @@ export function useComposerAutocomplete(
       >
         <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-faint">
           {trigger?.char === '@' && <IconSearch className="h-3 w-3" />}
-          {trigger?.char === '/' ? 'Commands & skills' : 'Files in workspace'}
+          {trigger?.char === '/' ? 'Commands & skills' : 'Agents & files'}
         </div>
         {results.map((r, i) => {
           const runs = highlightRuns(r.it.label, r.matches)
@@ -243,9 +263,9 @@ export function useComposerAutocomplete(
                   )
                 )}
               </span>
-              {r.it.kind === 'skill' && (
+              {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
                 <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 text-[10px] text-faint">
-                  skill
+                  {r.it.kind}
                 </span>
               )}
               {r.it.hint && (
@@ -272,4 +292,22 @@ function useActiveSkills(active: boolean): { name: string; description: string }
     void window.clui.readConfig(cwd).then((b) => setSkills(b.skills.map((s) => ({ name: s.name, description: s.description }))))
   }, [active, cwd])
   return skills
+}
+
+/** Load the workspace's agents (once per cwd) for the `@` menu. Picking one inserts
+ *  the quoted `@"name (agent)"` token the CLI needs to delegate the turn.
+ *  ponytail: agent roster from readConfig (disk) — misses CLI built-in agents
+ *  (Explore, claude); switch the source to the initialize control_response 'agents'
+ *  array (event-mapper → new 'agents' DomainEvent → store, mirroring 'slash-commands')
+ *  if users report a built-in agent missing from the @ menu. */
+function useActiveAgents(active: boolean): { name: string; description: string }[] {
+  const cwd = useActive((s) => s?.cwd ?? null)
+  const [agents, setAgents] = useState<{ name: string; description: string }[]>([])
+  const loadedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!active || loadedFor.current === cwd) return
+    loadedFor.current = cwd
+    void window.clui.readConfig(cwd).then((b) => setAgents(b.agents.map((a) => ({ name: a.name, description: a.description }))))
+  }, [active, cwd])
+  return agents
 }

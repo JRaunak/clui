@@ -41,6 +41,44 @@ const AGGREGATE_ABOVE = 5
  *  running + failed; failed pinned). */
 const COLLAPSE_AT = 16
 
+/** Agent mentions are inserted into the composer as the literal token
+ *  `@"name (agent)"` — the exact quoted form the CLI needs to delegate the turn.
+ *  In the SENT bubble that raw form is noise, so we DISPLAY it as a quiet `@name`
+ *  chip (mono + a subtle raised wash), reusing the subagent-type/skill chip idiom.
+ *  Display-only: `message.text` keeps the literal token untouched. Distinguished by
+ *  typeface + wash + the `@` sigil, never by hue — the accent stays scarce and the
+ *  status tones carry state, so a colored mention would collide; neutral is correct,
+ *  and it never signals by color alone. Captures the name up to the closing quote,
+ *  so agent names containing spaces (why the quoted form exists) still resolve. */
+const AGENT_MENTION = /@"([^"]+?) \(agent\)"/g
+
+/** Split literal user text into plain runs + styled agent-mention chips. Returns the
+ *  original string untouched when there's no mention (zero regression for normal
+ *  messages); the parent keeps `whitespace-pre-wrap`, which still governs the string
+ *  runs, so newlines/spacing are preserved. */
+function renderUserText(text: string): (string | JSX.Element)[] {
+  AGENT_MENTION.lastIndex = 0
+  const out: (string | JSX.Element)[] = []
+  let last = 0
+  let key = 0
+  let m: RegExpExecArray | null
+  while ((m = AGENT_MENTION.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index))
+    out.push(
+      <span
+        key={key++}
+        className="rounded bg-bg-raised px-1 py-0.5 font-mono text-[0.8125rem] font-medium text-content"
+      >
+        @{m[1]}
+      </span>
+    )
+    last = m.index + m[0].length
+  }
+  if (out.length === 0) return [text]
+  if (last < text.length) out.push(text.slice(last))
+  return out
+}
+
 export function MessageView({ message }: { message: ChatMessage }): JSX.Element {
   const isUser = message.role === 'user'
   return (
@@ -74,7 +112,7 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
             )}
             {message.text && (
               <div className="whitespace-pre-wrap text-sm leading-relaxed text-content">
-                {message.text}
+                {renderUserText(message.text)}
               </div>
             )}
           </>
