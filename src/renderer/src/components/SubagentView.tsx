@@ -5,9 +5,9 @@
  * be large); ← Chat / Esc / ✕ return to the conversation.
  *
  * DATA: renders `subagentMessages[parentToolUseId]` (the subagent's forwarded
- * text/thinking, streamed via `forwardSubagentText`). The launching Agent tool call
- * (looked up by id) supplies the header: name, subagent_type chip, running/done
- * status, and the prompt/description.
+ * text/thinking AND its tool calls, streamed via `forwardSubagentText`) in stream
+ * order. The launching Agent tool call (looked up by id) supplies the header: name,
+ * subagent_type chip, status, and the prompt/description.
  *
  * SCOPE: subagent transcript only. A dynamic-workflow PHASE TREE slots into the
  * left rail later (its live event shape is not yet verified); this component is
@@ -28,8 +28,10 @@ import {
 } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { Markdown } from './Markdown'
+import { ToolGroup } from './MessageView'
 import { IconClose } from './Icon'
 import type { HistoryMessage } from '../../../shared/sessions'
+import type { SubagentMessage } from '../store'
 
 /** Find the Agent tool call (across the active session's messages) by id. */
 function findAgentTool(
@@ -340,6 +342,58 @@ function NestedAgentCard({
   )
 }
 
+/** Render a subagent's forwarded stream in TRUE ORDER: text/thinking runs interleaved
+ *  with its tool calls. Each consecutive run of tool entries coalesces into one
+ *  ToolGroup, so the main transcript's aggregation and collapse behavior applies
+ *  unchanged. Mirrors MessageView's OrderedBlocks. */
+function SubagentStream({ entries }: { entries: SubagentMessage[] }): JSX.Element {
+  const out: JSX.Element[] = []
+  let i = 0
+  while (i < entries.length) {
+    const e = entries[i]
+    if (e.kind === 'tool') {
+      const run: ToolCall[] = []
+      while (i < entries.length) {
+        const t = entries[i]
+        if (t.kind !== 'tool') break
+        run.push(t.tool)
+        i++
+      }
+      out.push(
+        <div key={`t${i}`} className="flex flex-col gap-1.5">
+          <ToolGroup tools={run} />
+        </div>
+      )
+      continue
+    }
+    out.push(
+      <div key={`m${i}`}>
+        <div className="mb-1.5 flex items-center gap-1.5 font-serif text-[13px] text-dim">
+          {e.role === 'user' ? (
+            // The subagent's turn INPUT (prompt), not its own output.
+            <span className="text-dim">Prompt</span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-accent">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
+              Subagent
+            </span>
+          )}
+          {e.kind === 'thinking' && <span className="text-faint">· thinking</span>}
+        </div>
+        {e.kind === 'thinking' ? (
+          <div className="border-l-2 border-border pl-3 text-[12.5px] italic text-dim [&_*]:text-dim">
+            <Markdown text={e.text} />
+          </div>
+        ) : (
+          <Markdown text={e.text} />
+        )}
+      </div>
+    )
+    i++
+  }
+  return <>{out}</>
+}
+
 export function SubagentView(): JSX.Element | null {
   const subagentTrail = useSession((s) => s.subagentTrail)
   const parentId = useSession((s) => s.viewingSubagent)
@@ -358,11 +412,23 @@ export function SubagentView(): JSX.Element | null {
   // The full children map — lets the breadcrumb label an ancestor that is itself a
   // nested child (its metadata isn't in `messages`, only in its parent's children list).
   const childrenByParent = useActive((s) => s?.subagentChildren ?? EMPTY_CHILDREN_MAP)
+  // The bg-task handle for a BACKGROUNDED subagent, joined on toolUseId === the PTU being
+  // viewed. Its `status` is the only true lifecycle for one (see the status note below);
+  // null for a foreground subagent, which the tool-card fallback handles. Returns a stored
+  // object or a literal null, both stable refs, so no zustand-v5 selector loop.
+  const bgTask = useActive((s) =>
+    s && parentId
+      ? (Object.values(s.backgroundTasks).find(
+          (t) => t.taskType === 'local_agent' && t.toolUseId === parentId
+        ) ?? null)
+      : null
+  )
 
-  // Nesting: a NESTED child's text does NOT stream live (`forwardSubagentText`
-  // forwards only one level deep), so when there are no live forwarded messages for the
-  // viewed id we fall back to its on-disk transcript, located by tool_use_id via the
-  // .meta.json sidecar. Keyed by parentId so switching levels reloads; null = not loaded.
+  // Live forwarded text wins; the on-disk transcript is the fallback when none arrived,
+  // located by tool_use_id via the .meta.json sidecar. Since CLI 2.1.219 `forwardSubagentText`
+  // streams depth-2+ too (verified live on 2.1.220: a 3-level chain where every level's own
+  // text streamed under its tool_use id), so nested children normally take the live path and
+  // this fallback only covers a resumed/dormant session. Keyed by parentId; null = not loaded.
   const [diskMsgs, setDiskMsgs] = useState<HistoryMessage[] | null>(null)
   const [diskLoadedFor, setDiskLoadedFor] = useState<string | null>(null)
   const liveCount = parentId ? subMsgs.length : 0
@@ -400,14 +466,27 @@ export function SubagentView(): JSX.Element | null {
   const name = meta.name
   const subtype = meta.subtype
   const desc = meta.desc
-  // "running" is only known for a top-level subagent (its tool card has a result field).
-  // A NESTED child has no card: if we loaded a complete on-disk transcript for it, it's
-  // done (disk = the finished record); otherwise fall back to running until it resolves.
+  // Status source, in order of authority:
+  //  1. A BACKGROUNDED subagent's own bg-task lifecycle. Its launching Agent tool returns
+  //     immediately ("Async agent launched successfully"), so the tool's `result` says
+  //     nothing about the agent: reading it reports "done" seconds into a long run.
+  //  2. A FOREGROUND subagent's Agent tool card, which does resolve when the agent finishes.
+  //  3. A NESTED child has no card: a loaded on-disk transcript means finished; else running.
   const childLoadedFromDisk = diskLoadedFor === parentId && (diskMsgs?.length ?? 0) > 0
-  const running = meta.tool
-    ? meta.tool.result === undefined
-    : subMsgs.length === 0 && !childLoadedFromDisk
-  const isError = meta.tool?.isError ?? false
+  const running = bgTask
+    ? bgTask.status === 'running'
+    : meta.tool
+      ? meta.tool.result === undefined
+      : subMsgs.length === 0 && !childLoadedFromDisk
+  // A KILLED bg subagent was stopped on request, so it reads neutral rather than red
+  // (matching how the bg tray labels its own killed rows).
+  const failed = bgTask ? bgTask.status === 'failed' : (meta.tool?.isError ?? false)
+  const stopped = bgTask?.status === 'killed'
+  const terminalLabel = stopped ? 'stopped' : failed ? 'failed' : 'done'
+  // Full class literals: Tailwind scans source text, so an interpolated `bg-${tone}`
+  // would only ever work by accident of another file emitting the same class.
+  const terminalDot = stopped ? 'bg-faint' : failed ? 'bg-err' : 'bg-ok'
+  const terminalText = stopped ? 'text-faint' : failed ? 'text-err' : 'text-ok'
   const atRoot = subagentTrail.length <= 1
 
   return (
@@ -452,17 +531,15 @@ export function SubagentView(): JSX.Element | null {
           {running ? (
             <>
               <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden="true" />
-              <span className="text-warn">running</span>
+              {/* A backgrounded subagent reads "launched": we know its Agent tool fired and
+                  it hasn't reported terminal, but nothing here observes it actually working.
+                  A foreground one is genuinely mid-tool-call, so "running" is true there. */}
+              <span className="text-warn">{bgTask ? 'launched' : 'running'}</span>
             </>
           ) : (
             <>
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${isError ? 'bg-err' : 'bg-ok'}`}
-                aria-hidden="true"
-              />
-              <span className={isError ? 'text-err' : 'text-ok'}>
-                {isError ? 'failed' : 'done'}
-              </span>
+              <span className={`h-1.5 w-1.5 rounded-full ${terminalDot}`} aria-hidden="true" />
+              <span className={terminalText}>{terminalLabel}</span>
             </>
           )}
         </span>
@@ -514,29 +591,7 @@ export function SubagentView(): JSX.Element | null {
           </div>
         ) : (
           <div className="flex max-w-3xl flex-col gap-4">
-            {subMsgs.map((m, i) => (
-              <div key={i}>
-                <div className="mb-1.5 flex items-center gap-1.5 font-serif text-[13px] text-dim">
-                  {m.role === 'user' ? (
-                    // The subagent's turn INPUT (prompt), not its own output.
-                    <span className="text-dim">Prompt</span>
-                  ) : (
-                    <span className="flex items-center gap-1.5 text-accent">
-                      <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
-                      Subagent
-                    </span>
-                  )}
-                  {m.kind === 'thinking' && <span className="text-faint">· thinking</span>}
-                </div>
-                {m.kind === 'thinking' ? (
-                  <div className="border-l-2 border-border pl-3 text-[12.5px] italic text-dim [&_*]:text-dim">
-                    <Markdown text={m.text} />
-                  </div>
-                ) : (
-                  <Markdown text={m.text} />
-                )}
-              </div>
-            ))}
+            <SubagentStream entries={subMsgs} />
             {running && (
               <div className="text-[12px] text-faint">••• streaming from subagent…</div>
             )}

@@ -481,10 +481,12 @@ export class EventMapper {
 
   /**
    * Map a forwarded subagent envelope (assistant/user, carries
-   * parent_tool_use_id) into `subagent-message` events — one per text/thinking
-   * block. tool_use/tool_result blocks are intentionally NOT surfaced here (the
-   * subagent's tool activity is a later UI concern; this pass is text/thinking only,
-   * code-only). Empty text blocks are skipped.
+   * parent_tool_use_id) into per-block events, EMITTED IN BLOCK ORDER so the
+   * transcript can render text and tool cards in true stream order:
+   *  - text/thinking → `subagent-message`
+   *  - Agent/Task tool_use → `subagent-nested` (a spawned child, not a tool card)
+   *  - any other tool_use → `subagent-tool`, its `tool_result` → `subagent-tool-result`
+   * Empty text blocks are skipped.
    */
   private mapSubagentMessage(env: RawEnvelope): DomainEvent[] {
     const parentToolUseId = env.parent_tool_use_id
@@ -516,6 +518,26 @@ export class EventMapper {
           name: block.name,
           description: typeof input.description === 'string' ? input.description : undefined,
           subagentType: typeof input.subagent_type === 'string' ? input.subagent_type : undefined
+        })
+      } else if (block.type === 'tool_use' && typeof block.id === 'string') {
+        // A plain tool the subagent ran (Bash, Read, Edit, …). Surfaced so a subagent
+        // that shells a slow command isn't silent until its summary lands.
+        out.push({
+          type: 'subagent-tool',
+          parentToolUseId,
+          toolUseId: block.id,
+          name: block.name ?? '',
+          input: block.input ?? {}
+        })
+      } else if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+        // The forwarded result arrives in a later `user`-role envelope; the renderer
+        // matches it to the card by toolUseId (same id-matching as the main thread).
+        out.push({
+          type: 'subagent-tool-result',
+          parentToolUseId,
+          toolUseId: block.tool_use_id,
+          content: stringifyResultContent(block.content),
+          isError: Boolean(block.is_error)
         })
       }
     }

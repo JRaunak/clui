@@ -175,8 +175,11 @@ function OrderedBlocks({
  *    static running-dot (timers kept).
  *  - ≥COLLAPSE_AT total: completed cards fold into the header count (collapsible);
  *    only running + failed cards show, failed pinned first.
+ *
+ * Exported: a subagent's forwarded tool calls render through this same component, so
+ * they inherit its aggregation and collapse/expand behavior.
  */
-function ToolGroup({ tools }: { tools: ToolCall[] }): JSX.Element | null {
+export function ToolGroup({ tools }: { tools: ToolCall[] }): JSX.Element | null {
   const [expanded, setExpanded] = useState(false)
   if (tools.length === 0) return null
 

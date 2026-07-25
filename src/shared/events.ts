@@ -108,6 +108,29 @@ export type DomainEvent =
       text: string
     }
   /**
+   * A NON-Agent tool call (Bash, Read, Edit, …) made by a running subagent, from a
+   * `tool_use` block in its forwarded message. Rendered as the same collapsed tool
+   * card the main transcript uses, in stream order with the subagent's text, so a
+   * subagent that shells a long command isn't silent until its summary lands.
+   * Agent/Task tool_use blocks are NOT this; they map to `subagent-nested`.
+   */
+  | {
+      type: 'subagent-tool'
+      parentToolUseId: string
+      toolUseId: string
+      name: string
+      input: unknown
+    }
+  /** The result of a subagent's tool call (forwarded `tool_result` block). Matched back
+   *  to its `subagent-tool` by `toolUseId`; becomes the card's expandable output. */
+  | {
+      type: 'subagent-tool-result'
+      parentToolUseId: string
+      toolUseId: string
+      content: string
+      isError: boolean
+    }
+  /**
    * Nesting: a subagent spawned ANOTHER subagent — i.e. a forwarded subagent
    * message (tagged `parentToolUseId`) contained an Agent/Task `tool_use` block. The
    * child's own transcript streams separately under `childToolUseId` (its own PTU), so

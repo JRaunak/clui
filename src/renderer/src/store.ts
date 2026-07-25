@@ -52,12 +52,15 @@ export interface BackgroundTask {
   stopping?: boolean
 }
 
-/** One forwarded message from a running subagent's internal transcript. */
-export interface SubagentMessage {
-  role: 'assistant' | 'user'
-  kind: 'text' | 'thinking'
-  text: string
-}
+/**
+ * One forwarded entry from a running subagent's internal transcript, in the order it
+ * streamed: a text/thinking run, or a TOOL CALL the subagent made. One ordered list
+ * (rather than text + a separate tools map, as an assistant ChatMessage keeps) because
+ * append order IS the render order here: no rebuilt-from-disk path to reconcile.
+ */
+export type SubagentMessage =
+  | { kind: 'text' | 'thinking'; role: 'assistant' | 'user'; text: string }
+  | { kind: 'tool'; tool: ToolCall }
 
 /** Nesting: a child subagent spawned by another subagent, surfaced as a
  *  clickable card inside the parent's transcript. `childToolUseId` is the child's own
@@ -211,10 +214,10 @@ export interface PerSessionState {
   /** Background tasks keyed by taskId (running + recently-terminal, ordered by start). */
   backgroundTasks: Record<string, BackgroundTask>
   /**
-   * Subagent transcript: forwarded internal messages of running subagents, keyed
-   * by the parent Agent tool_use id. Populated from `subagent-message` events
-   * (needs `initialize {forwardSubagentText:true}`). Accumulated here so the data
-   * is captured and correlated to the launching Agent tool card.
+   * Subagent transcript: a running subagent's forwarded text/thinking AND tool calls in
+   * stream order, keyed by the parent Agent tool_use id. Populated from the
+   * `subagent-message` / `subagent-tool` / `subagent-tool-result` events (needs
+   * `initialize {forwardSubagentText:true}`), correlated to the launching Agent tool card.
    */
   subagentMessages: Record<string, SubagentMessage[]>
   /** Nesting: child subagents spawned BY a subagent, keyed by the PARENT
@@ -1220,6 +1223,41 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.subagentMessages = {
             ...slice.subagentMessages,
             [e.parentToolUseId]: [...prev, { role: e.role, kind: e.kind, text: e.text }]
+          }
+          patch.lastActivityMs = Date.now()
+          break
+        }
+        case 'subagent-tool': {
+          // A tool the subagent ran, appended to the SAME ordered list as its text so the
+          // card renders where it actually happened. De-duped by tool id: the CLI forwards
+          // full message snapshots, so the same tool_use block can arrive more than once.
+          const prev = slice.subagentMessages[e.parentToolUseId] ?? EMPTY_SUBAGENT_MSGS
+          if (prev.some((m) => m.kind === 'tool' && m.tool.id === e.toolUseId)) break
+          patch.subagentMessages = {
+            ...slice.subagentMessages,
+            [e.parentToolUseId]: [
+              ...prev,
+              { kind: 'tool', tool: { id: e.toolUseId, name: e.name, input: e.input, startMs: Date.now() } }
+            ]
+          }
+          patch.lastActivityMs = Date.now()
+          break
+        }
+        case 'subagent-tool-result': {
+          // Match the result to its card by tool id. Search EVERY transcript, not just
+          // e.parentToolUseId: the CLI can forward a result under a different parent than
+          // the tool_use it answers (seen with nesting), and the id is globally unique.
+          const key = Object.keys(slice.subagentMessages).find((k) =>
+            slice.subagentMessages[k].some((m) => m.kind === 'tool' && m.tool.id === e.toolUseId)
+          )
+          if (!key) break
+          patch.subagentMessages = {
+            ...slice.subagentMessages,
+            [key]: slice.subagentMessages[key].map((m) =>
+              m.kind === 'tool' && m.tool.id === e.toolUseId
+                ? { kind: 'tool', tool: { ...m.tool, result: e.content, isError: e.isError } }
+                : m
+            )
           }
           patch.lastActivityMs = Date.now()
           break
