@@ -766,6 +766,24 @@ function narrowTaskStatus(status: string | undefined): BackgroundTask['status'] 
   return status === 'killed' || status === 'failed' ? status : 'completed'
 }
 
+/** The subagent (by its parent tool_use id) that ran this tool, or null when the tool
+ *  belongs to the main thread. The CLI announces a subagent's backgrounded shell as its
+ *  own bg task, which reads as a peer of the main thread unless it's attributed back to
+ *  the agent that started it. The subagent's forwarded tools carry the same tool_use id,
+ *  so they're the source of truth for ownership. */
+export function subagentOwnerOfTool(
+  toolUseId: string | undefined,
+  subagentMessages: Record<string, SubagentMessage[]>
+): string | null {
+  if (!toolUseId) return null
+  for (const [parentToolUseId, entries] of Object.entries(subagentMessages)) {
+    for (const entry of entries) {
+      if (entry.kind === 'tool' && entry.tool.id === toolUseId) return parentToolUseId
+    }
+  }
+  return null
+}
+
 /** True for events that mutate the message list (need a fresh array copy). */
 function touchesMessages(type: DomainEvent['type']): boolean {
   return (

@@ -15,17 +15,25 @@
  * tool_use id), matching the inline Agent card's "→" open-transcript affordance.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useActive, useSession, type BackgroundTask } from '../store'
+import {
+  useActive,
+  useSession,
+  subagentOwnerOfTool,
+  type BackgroundTask,
+  type SubagentMessage
+} from '../store'
 import { useEscape } from '../lib/useEscape'
 import { useClickOutside } from '../lib/useClickOutside'
 import { IconClose, IconCheck } from './Icon'
 
 const EMPTY: Record<string, BackgroundTask> = {}
+const EMPTY_SUB_MSGS: Record<string, SubagentMessage[]> = {}
 
 const LINGER_MS = 15_000
 
 export function BackgroundTasks(): JSX.Element | null {
   const tasks = useActive((s) => s?.backgroundTasks ?? EMPTY)
+  const subMsgs = useActive((s) => s?.subagentMessages ?? EMPTY_SUB_MSGS)
   const handleId = useActive((s) => s?.handleId ?? null)
   const stopTask = useSession((s) => s.stopBackgroundTask)
   const viewSubagent = useSession((s) => s.viewSubagent)
@@ -36,6 +44,15 @@ export function BackgroundTasks(): JSX.Element | null {
 
   const list = Object.values(tasks).sort((a, b) => a.startMs - b.startMs)
   const running = list.filter((t) => t.status === 'running')
+  // Agents first, then the shells the main thread started. A shell a SUBAGENT ran is
+  // neither: it nests under the agent that started it (matched by tool_use id), so the
+  // tray shows who owns it instead of listing it beside the user's own tasks.
+  const agents = list.filter((t) => t.taskType === 'local_agent')
+  const ownerOf = (t: BackgroundTask): string | null =>
+    t.taskType === 'local_agent' ? null : subagentOwnerOfTool(t.toolUseId, subMsgs)
+  const shells = list.filter((t) => t.taskType !== 'local_agent' && !ownerOf(t))
+  const childrenOf = (agent: BackgroundTask): BackgroundTask[] =>
+    agent.toolUseId ? list.filter((t) => ownerOf(t) === agent.toolUseId) : []
   // Lingering = terminal subagent rows kept clickable post-completion (see store).
   const lingering = list.filter((t) => t.taskType === 'local_agent' && t.status !== 'running')
 
@@ -90,23 +107,50 @@ export function BackgroundTasks(): JSX.Element | null {
             </span>
           </div>
           <div className="max-h-[40vh] overflow-y-auto py-1">
-            {list.map((t) => (
-              <Row
-                key={t.taskId}
-                task={t}
-                onStop={() => handleId && void stopTask(handleId, t.taskId)}
-                onOpen={
-                  t.taskType === 'local_agent' && t.toolUseId
-                    ? () => {
-                        setOpen(false)
-                        viewSubagent(t.toolUseId as string)
-                        // Opening a completed subagent = "seen" → stop lingering it.
-                        if (t.status !== 'running') clearCompleted('subagent')
+            {/* Section headers only earn their space when both kinds are present. */}
+            {agents.length > 0 && (
+              <>
+                {shells.length > 0 && <SectionLabel>Agents</SectionLabel>}
+                {agents.map((t) => (
+                  <div key={t.taskId}>
+                    <Row
+                      task={t}
+                      onStop={() => handleId && void stopTask(handleId, t.taskId)}
+                      onOpen={
+                        t.toolUseId
+                          ? () => {
+                              setOpen(false)
+                              viewSubagent(t.toolUseId as string)
+                              // Opening a completed subagent = "seen" → stop lingering it.
+                              if (t.status !== 'running') clearCompleted('subagent')
+                            }
+                          : undefined
                       }
-                    : undefined
-                }
-              />
-            ))}
+                    />
+                    {childrenOf(t).map((child) => (
+                      <Row
+                        key={child.taskId}
+                        task={child}
+                        nested
+                        onStop={() => handleId && void stopTask(handleId, child.taskId)}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </>
+            )}
+            {shells.length > 0 && (
+              <>
+                {agents.length > 0 && <SectionLabel>Shells</SectionLabel>}
+                {shells.map((t) => (
+                  <Row
+                    key={t.taskId}
+                    task={t}
+                    onStop={() => handleId && void stopTask(handleId, t.taskId)}
+                  />
+                ))}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -114,15 +158,26 @@ export function BackgroundTasks(): JSX.Element | null {
   )
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }): JSX.Element {
+  return (
+    <div className="px-3 pb-1 pt-2 font-mono text-[11px] uppercase tracking-[0.14em] text-faint">
+      {children}
+    </div>
+  )
+}
+
 function Row({
   task,
   onStop,
-  onOpen
+  onOpen,
+  nested
 }: {
   task: BackgroundTask
   onStop: () => void
   /** Present only for a backgrounded SUBAGENT row — opens its transcript. */
   onOpen?: () => void
+  /** A shell the subagent above it started: indented, with a tree elbow. */
+  nested?: boolean
 }): JSX.Element {
   const running = task.status === 'running'
   const isSubagent = task.taskType === 'local_agent'
@@ -139,6 +194,11 @@ function Row({
   // shell shows its command/description as before.
   const label = (
     <span className="flex min-w-0 flex-1 items-center gap-1.5">
+      {nested && (
+        <span className="shrink-0 font-mono text-[11px] text-faint" aria-hidden="true">
+          └
+        </span>
+      )}
       {isSubagent && (
         <span className="shrink-0 font-mono text-[11px] font-semibold text-accent">Agent</span>
       )}
@@ -191,7 +251,7 @@ function Row({
     )
   }
   return (
-    <div className="group flex items-center gap-2.5 px-3 py-2">
+    <div className={`group flex items-center gap-2.5 py-2 pr-3 ${nested ? 'pl-6' : 'pl-3'}`}>
       {statusDot}
       {label}
       {trailing}
