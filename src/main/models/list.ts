@@ -10,7 +10,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { FALLBACK_MODEL_IDS } from '../../shared/settings'
+import { FALLBACK_MODEL_IDS, deriveModelInfo } from '../../shared/settings'
 
 const execFileP = promisify(execFile)
 
@@ -80,12 +80,16 @@ export async function listModels(refresh = false): Promise<string[]> {
   }
 }
 
-/** Add the [1m] Opus 4.7+/4.8 variants (accepted by --model though not listed). */
+/** Add the [1m] Opus variants (accepted by --model though Bedrock never lists them). */
 function withVariants(ids: string[]): string[] {
   const out: string[] = []
   for (const id of ids) {
-    // Surface the 1M variant right before the base for large-context Opus.
-    if (/^claude-opus-4-([78])$/.test(id)) out.push(`${id}[1m]`)
+    // Surface the 1M variant right before the base for large-context Opus. Derived
+    // from the parsed version (like the effort gates) so a new Opus qualifies without
+    // an edit here — the base id alone caps at 200K even on Opus 5, where the CLI
+    // still requires the [1m] suffix to unlock 1M (verified live on 2.1.220).
+    const { family, version } = deriveModelInfo(id)
+    if (family === 'opus' && version >= 4.7 && !/\[1m\]$/.test(id)) out.push(`${id}[1m]`)
     out.push(id)
   }
   return out

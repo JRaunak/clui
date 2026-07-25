@@ -54,7 +54,7 @@ export interface ClaudeSessionOptions {
   ultracode?: boolean
   /** With `resumeSessionId`, pass `--fork-session` → the CLI branches to a NEW
    *  session id carrying the resumed context, leaving the original jsonl untouched
-   *  (verified live 2.1.216). Fork-from-HEAD only. Ignored without a resume id. */
+   *  (verified live 2.1.220). Fork-from-HEAD only. Ignored without a resume id. */
   fork?: boolean
   /** Extra env for the child (merged over process.env). */
   env?: Record<string, string>
