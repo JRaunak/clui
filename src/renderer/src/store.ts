@@ -766,20 +766,25 @@ function narrowTaskStatus(status: string | undefined): BackgroundTask['status'] 
   return status === 'killed' || status === 'failed' ? status : 'completed'
 }
 
-/** The subagent (by its parent tool_use id) that ran this tool, or null when the tool
- *  belongs to the main thread. The CLI announces a subagent's backgrounded shell as its
- *  own bg task, which reads as a peer of the main thread unless it's attributed back to
- *  the agent that started it. The subagent's forwarded tools carry the same tool_use id,
- *  so they're the source of truth for ownership. */
-export function subagentOwnerOfTool(
+/** The subagent (by its parent tool_use id) that started this bg task, or null when the
+ *  main thread owns it. The CLI announces BOTH a subagent's backgrounded shell and a
+ *  subagent it spawned as bg tasks of their own, which read as peers of the user's own
+ *  work unless they're attributed back to the agent that started them. Two sources,
+ *  because a spawned child never appears as a forwarded tool: a shell matches a
+ *  `kind:'tool'` entry, a child agent matches a recorded `childToolUseId`. */
+export function subagentOwnerOfTask(
   toolUseId: string | undefined,
-  subagentMessages: Record<string, SubagentMessage[]>
+  subagentMessages: Record<string, SubagentMessage[]>,
+  subagentChildren: Record<string, NestedSubagent[]>
 ): string | null {
   if (!toolUseId) return null
   for (const [parentToolUseId, entries] of Object.entries(subagentMessages)) {
     for (const entry of entries) {
       if (entry.kind === 'tool' && entry.tool.id === toolUseId) return parentToolUseId
     }
+  }
+  for (const [parentToolUseId, children] of Object.entries(subagentChildren)) {
+    if (children.some((c) => c.childToolUseId === toolUseId)) return parentToolUseId
   }
   return null
 }

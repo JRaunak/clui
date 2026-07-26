@@ -18,8 +18,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   useActive,
   useSession,
-  subagentOwnerOfTool,
+  subagentOwnerOfTask,
   type BackgroundTask,
+  type NestedSubagent,
   type SubagentMessage
 } from '../store'
 import { useEscape } from '../lib/useEscape'
@@ -28,12 +29,14 @@ import { IconClose, IconCheck } from './Icon'
 
 const EMPTY: Record<string, BackgroundTask> = {}
 const EMPTY_SUB_MSGS: Record<string, SubagentMessage[]> = {}
+const EMPTY_SUB_CHILDREN: Record<string, NestedSubagent[]> = {}
 
 const LINGER_MS = 15_000
 
 export function BackgroundTasks(): JSX.Element | null {
   const tasks = useActive((s) => s?.backgroundTasks ?? EMPTY)
   const subMsgs = useActive((s) => s?.subagentMessages ?? EMPTY_SUB_MSGS)
+  const subChildren = useActive((s) => s?.subagentChildren ?? EMPTY_SUB_CHILDREN)
   const handleId = useActive((s) => s?.handleId ?? null)
   const stopTask = useSession((s) => s.stopBackgroundTask)
   const viewSubagent = useSession((s) => s.viewSubagent)
@@ -44,15 +47,26 @@ export function BackgroundTasks(): JSX.Element | null {
 
   const list = Object.values(tasks).sort((a, b) => a.startMs - b.startMs)
   const running = list.filter((t) => t.status === 'running')
-  // Agents first, then the shells the main thread started. A shell a SUBAGENT ran is
-  // neither: it nests under the agent that started it (matched by tool_use id), so the
-  // tray shows who owns it instead of listing it beside the user's own tasks.
-  const agents = list.filter((t) => t.taskType === 'local_agent')
+  // Work the user's own turn started, split by kind. Anything a SUBAGENT started (a shell
+  // it ran, or an agent it spawned) is not a peer of these: it nests under that agent, so
+  // the tray shows who owns it. Only one level of indent, because the popover is 420px
+  // wide and a deeper chain still reads as "owned by the agent above" without marching right.
   const ownerOf = (t: BackgroundTask): string | null =>
-    t.taskType === 'local_agent' ? null : subagentOwnerOfTool(t.toolUseId, subMsgs)
+    subagentOwnerOfTask(t.toolUseId, subMsgs, subChildren)
+  const agents = list.filter((t) => t.taskType === 'local_agent' && !ownerOf(t))
   const shells = list.filter((t) => t.taskType !== 'local_agent' && !ownerOf(t))
   const childrenOf = (agent: BackgroundTask): BackgroundTask[] =>
     agent.toolUseId ? list.filter((t) => ownerOf(t) === agent.toolUseId) : []
+  // Only a subagent has a transcript to open; a bg shell has none.
+  const openTranscript = (t: BackgroundTask): (() => void) | undefined =>
+    t.taskType === 'local_agent' && t.toolUseId
+      ? () => {
+          setOpen(false)
+          viewSubagent(t.toolUseId as string)
+          // Opening a completed subagent = "seen" → stop lingering it.
+          if (t.status !== 'running') clearCompleted('subagent')
+        }
+      : undefined
   // Lingering = terminal subagent rows kept clickable post-completion (see store).
   const lingering = list.filter((t) => t.taskType === 'local_agent' && t.status !== 'running')
 
@@ -116,23 +130,17 @@ export function BackgroundTasks(): JSX.Element | null {
                     <Row
                       task={t}
                       onStop={() => handleId && void stopTask(handleId, t.taskId)}
-                      onOpen={
-                        t.toolUseId
-                          ? () => {
-                              setOpen(false)
-                              viewSubagent(t.toolUseId as string)
-                              // Opening a completed subagent = "seen" → stop lingering it.
-                              if (t.status !== 'running') clearCompleted('subagent')
-                            }
-                          : undefined
-                      }
+                      onOpen={openTranscript(t)}
                     />
+                    {/* A child agent keeps its open-transcript affordance; a child shell
+                        has none, so `openTranscript` returns undefined for it. */}
                     {childrenOf(t).map((child) => (
                       <Row
                         key={child.taskId}
                         task={child}
                         nested
                         onStop={() => handleId && void stopTask(handleId, child.taskId)}
+                        onOpen={openTranscript(child)}
                       />
                     ))}
                   </div>
@@ -194,12 +202,7 @@ function Row({
   // shell shows its command/description as before.
   const label = (
     <span className="flex min-w-0 flex-1 items-center gap-1.5">
-      {nested && (
-        <span className="shrink-0 font-mono text-[11px] text-faint" aria-hidden="true">
-          └
-        </span>
-      )}
-      {isSubagent && (
+      {isSubagent && !nested && (
         <span className="shrink-0 font-mono text-[11px] font-semibold text-accent">Agent</span>
       )}
       <span className="min-w-0 flex-1 truncate font-mono text-xs text-content" title={task.description}>
@@ -240,7 +243,7 @@ function Row({
   if (onOpen) {
     return (
       <button
-        className="group flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-bg-raised focus-visible:bg-bg-raised focus-visible:outline-none"
+        className={`group flex w-full items-center gap-2.5 py-2 pr-3 text-left hover:bg-bg-raised focus-visible:bg-bg-raised focus-visible:outline-none ${nested ? 'pl-6' : 'pl-3'}`}
         onClick={onOpen}
         title="Open this subagent's transcript"
       >
