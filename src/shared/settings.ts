@@ -100,8 +100,18 @@ export interface ModelInfo {
   version: number
 }
 
-/** Fallback model ids if the live Bedrock query is unavailable. */
+/**
+ * Fallback model ids for the window before the live Bedrock query lands, or when it fails
+ * (no `aws` on PATH, creds refreshing). A curated recent set, deliberately not a mirror of
+ * everything Bedrock returns: superseded models are omitted on purpose.
+ *
+ * ponytail: hardcoded, so it falls behind on every model release. Re-check it against
+ * `aws bedrock list-inference-profiles` whenever a new family ships; it was already a
+ * release behind (no Opus 5) before this list was corrected.
+ */
 export const FALLBACK_MODEL_IDS: string[] = [
+  'claude-opus-5[1m]',
+  'claude-opus-5',
   'claude-opus-4-8[1m]',
   'claude-opus-4-8',
   'claude-opus-4-7',

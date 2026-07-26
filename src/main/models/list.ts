@@ -11,6 +11,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { FALLBACK_MODEL_IDS, deriveModelInfo } from '../../shared/settings'
+import { loginShellAuthEnv } from '../cli/shell-env'
 
 const execFileP = promisify(execFile)
 
@@ -64,7 +65,11 @@ export async function listModels(refresh = false): Promise<string[]> {
   if (cache && !refresh) return cache
   const { profile, region } = await bedrockConfig()
   try {
-    const env = { ...process.env, ...(profile ? { AWS_PROFILE: profile } : {}) }
+    // A Finder-launched app inherits a minimal env, so `aws` here fails with
+    // NoCredentials and every list silently degrades to FALLBACK_MODEL_IDS. Re-source
+    // the login shell for the same auth vars the CLI subprocess gets.
+    const authEnv = await loginShellAuthEnv()
+    const env = { ...process.env, ...authEnv, ...(profile ? { AWS_PROFILE: profile } : {}) }
     const args = ['bedrock', 'list-inference-profiles']
     if (region) args.push('--region', region)
     args.push('--query', 'inferenceProfileSummaries[].inferenceProfileId', '--output', 'text')
