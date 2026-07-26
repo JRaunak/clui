@@ -553,7 +553,7 @@ async function beginSession(
   // Resolve per-session choices: explicit arg, else the global Settings default.
   // These are seeded ONCE here (a brand-new/resumed session); re-activating an
   // already-live session never re-seeds them, so per-session picks stick.
-  const settings = await window.clui.getSettings()
+  const { values: settings } = await window.clui.getSettings()
   const choice = opts.permissionMode ?? settings.permissionMode
   // On RESUME, restore the session's last-used model/effort from the sidecar (the CLI
   // reverts to the settings.json default on --resume, so a mid-session switch would

@@ -14,7 +14,7 @@ import {
   type MenuAction,
   type WireAttachment
 } from '../shared/ipc'
-import type { CluiSettings, EffortChoice, ModelChoice } from '../shared/settings'
+import type { CluiSettings, EffortChoice, ModelChoice, SettingsKey } from '../shared/settings'
 
 const api: CluiApi = {
   pickWorkspace: () => ipcRenderer.invoke(IpcChannels.pickWorkspace),
@@ -69,8 +69,8 @@ const api: CluiApi = {
   openDiff: (left: string, right: string) =>
     ipcRenderer.invoke(IpcChannels.openDiff, left, right),
   getSettings: () => ipcRenderer.invoke(IpcChannels.getSettings),
-  updateSettings: (patch: Partial<CluiSettings>) =>
-    ipcRenderer.invoke(IpcChannels.updateSettings, patch),
+  updateSettings: (patch: Partial<CluiSettings>, clear?: SettingsKey[]) =>
+    ipcRenderer.invoke(IpcChannels.updateSettings, patch, clear),
   detectCliAt: (path: string) => ipcRenderer.invoke(IpcChannels.detectCliAt, path),
   getSystemPermissionMode: () => ipcRenderer.invoke(IpcChannels.getSystemPermissionMode),
   listModels: (refresh?: boolean) => ipcRenderer.invoke(IpcChannels.listModels, refresh),

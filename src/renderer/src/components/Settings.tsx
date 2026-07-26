@@ -10,7 +10,9 @@ import {
   THEME_CHOICES,
   THEME_LABELS,
   deriveModelInfo,
-  type CluiSettings
+  type CluiSettings,
+  type SettingsKey,
+  type SettingsSource
 } from '../../../shared/settings'
 import { Dropdown } from './Dropdown'
 import { Button } from './Button'
@@ -29,6 +31,11 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [modelIds, setModelIds] = useState<string[]>([])
+  // Per-key provenance from the main process ('override' | 'cli' | 'default'), plus the
+  // keys staged for reset. Both drive the reset control; the modal commits on Save, so a
+  // reset is staged (not written) until then, and re-picking a value un-stages it.
+  const [sources, setSources] = useState<Record<SettingsKey, SettingsSource> | null>(null)
+  const [cleared, setCleared] = useState<SettingsKey[]>([])
   // The theme is applied LIVE on change for instant feedback, but only persisted
   // on Save. `persistedTheme` tracks the last-persisted value so closing without
   // saving can revert the live preview; `previewedTheme` is null UNTIL the user
@@ -43,10 +50,11 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
   const previewedTheme = useRef<CluiSettings['theme'] | null>(null)
 
   useEffect(() => {
-    window.clui.getSettings().then((s) => {
-      setSettings(s)
-      persistedTheme.current = s.theme
-      void checkCli(s.cliPath)
+    window.clui.getSettings().then(({ values, sources: src }) => {
+      setSettings(values)
+      setSources(src)
+      persistedTheme.current = values.theme
+      void checkCli(values.cliPath)
     })
     window.clui.listModels().then(setModelIds)
   }, [])
@@ -74,8 +82,21 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
 
   const set = <K extends keyof CluiSettings>(key: K, value: CluiSettings[K]): void => {
     setSettings((s) => (s ? { ...s, [key]: value } : s))
+    // Editing a field un-stages its pending reset, else Save would clear the key the
+    // user just chose a value for.
+    setCleared((c) => (c.includes(key) ? c.filter((k) => k !== key) : c))
     setSaveError(null)
   }
+
+  /** Stage a reset: the key is cleared on Save, so the field goes back to inherited. */
+  const reset = (key: SettingsKey): void => {
+    setCleared((c) => (c.includes(key) ? c : [...c, key]))
+    setSaveError(null)
+  }
+
+  /** True while this field holds a user override that Save would keep. */
+  const isOverridden = (key: SettingsKey): boolean =>
+    sources?.[key] === 'override' && !cleared.includes(key)
 
   // Save COMMITS + DISMISSES (dialog contract: the primary action of a modal both
   // applies and closes — the dismissal IS the confirmation, so no separate "Saved"
@@ -86,7 +107,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
     setSaving(true)
     setSaveError(null)
     try {
-      await window.clui.updateSettings(settings)
+      await window.clui.updateSettings(settings, cleared)
       // The live-applied theme is now persisted — mark it so the unmount revert is a
       // no-op (we're about to close; the previewed theme must STICK, not revert).
       persistedTheme.current = settings.theme
@@ -119,7 +140,11 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4">
-        <Field label="Theme" hint="Light re-derives the palette for readable contrast on white; System follows your OS appearance.">
+        <Field
+          label="Theme"
+          hint="Light re-derives the palette for readable contrast on white; System follows your OS appearance."
+          onReset={isOverridden('theme') ? () => reset('theme') : undefined}
+        >
           <Dropdown<CluiSettings['theme']>
             value={settings.theme}
             options={THEME_CHOICES.map((t) => ({ value: t, label: THEME_LABELS[t] }))}
@@ -136,6 +161,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
         <Field
           label="Claude CLI path"
           hint="Leave empty to auto-detect. Set explicitly to share Clui with peers whose claude is elsewhere."
+          onReset={isOverridden('cliPath') ? () => reset('cliPath') : undefined}
         >
           <div className="flex gap-2">
             <input
@@ -169,7 +195,11 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
           </div>
         </Field>
 
-        <Field label="Editor command" hint="Used to open changed files / diffs (e.g. code, cursor, subl).">
+        <Field
+          label="Editor command"
+          hint="Used to open changed files / diffs (e.g. code, cursor, subl)."
+          onReset={isOverridden('editorCommand') ? () => reset('editorCommand') : undefined}
+        >
           <input
             className="w-full rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
             value={settings.editorCommand}
@@ -182,6 +212,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
         <Field
           label="Permission mode"
           hint="Default for new sessions (changeable per-session in the composer). Applied as a --permission-mode flag; 'System Default' passes no flag. Clui never writes your ~/.claude/settings.json."
+          onReset={isOverridden('permissionMode') ? () => reset('permissionMode') : undefined}
         >
           <Dropdown<CluiSettings['permissionMode']>
             value={settings.permissionMode}
@@ -196,7 +227,13 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
           />
         </Field>
 
-        <Field label="Model" hint="Default model for new sessions (changeable per-session). List is fetched live from Bedrock.">
+        <Field
+          label="Model"
+          hint={`Default model for new sessions (changeable per-session). List is fetched live from Bedrock.${
+            sources?.model === 'cli' ? ' Currently inheriting from ~/.claude/settings.json.' : ''
+          }`}
+          onReset={isOverridden('model') ? () => reset('model') : undefined}
+        >
           <Dropdown<CluiSettings['model']>
             value={settings.model}
             options={modelIds.map((id) => ({ value: id, label: deriveModelInfo(id).label }))}
@@ -204,7 +241,13 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
           />
         </Field>
 
-        <Field label="Effort" hint="Default reasoning effort for new sessions (changeable per-session).">
+        <Field
+          label="Effort"
+          hint={`Default reasoning effort for new sessions (changeable per-session).${
+            sources?.effort === 'cli' ? ' Currently inheriting from ~/.claude/settings.json.' : ''
+          }`}
+          onReset={isOverridden('effort') ? () => reset('effort') : undefined}
+        >
           <Dropdown<CluiSettings['effort']>
             value={settings.effort}
             options={EFFORT_CHOICES.map((e) => ({ value: e, label: EFFORT_LABELS[e] }))}
@@ -212,7 +255,11 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
           />
         </Field>
 
-        <Field label="Default workspace" hint="Offered when starting a new session.">
+        <Field
+          label="Default workspace"
+          hint="Offered when starting a new session."
+          onReset={isOverridden('defaultWorkspace') ? () => reset('defaultWorkspace') : undefined}
+        >
           <div className="flex gap-2">
             <input
               className="flex-1 rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
@@ -275,15 +322,35 @@ function Overlay({
 function Field({
   label,
   hint,
+  onReset,
   children
 }: {
   label: string
   hint?: string
+  /** Present only while this field holds an override. Its presence IS the "modified"
+   *  marker: a neutral gutter rule fails the 3:1 non-text gate on this surface (the
+   *  best neutral is 1.79:1) and the only value that passes is the scarce accent, so
+   *  the control carries the state instead of a second colored channel. */
+  onReset?: () => void
   children: React.ReactNode
 }): JSX.Element {
   return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-[14px] font-semibold text-content">{label}</label>
+    <div className="flex flex-col gap-2">
+      {/* min-h-6 keeps the row a constant height whether or not the button is there,
+          so resetting a field doesn't reflow everything below it. */}
+      <div className="flex min-h-6 items-center justify-between gap-3">
+        <label className="text-[14px] font-semibold text-content">{label}</label>
+        {onReset && (
+          <button
+            type="button"
+            onClick={onReset}
+            aria-label={`Reset ${label} to its inherited value`}
+            className="-mr-1.5 flex h-6 items-center rounded px-1.5 text-[12px] font-medium text-dim transition-colors hover:text-content"
+          >
+            Reset
+          </button>
+        )}
+      </div>
       {children}
       {hint && <p className="text-[12px] text-dim">{hint}</p>}
     </div>

@@ -36,9 +36,15 @@ import { readSessionModels, setSessionModel, deleteSessionModel } from './sessio
 import { readConfig } from './config/reader'
 import { openInEditor, openDiff } from './ide/open'
 import { listWorkspaceFiles } from './workspace/files'
-import { getSettings, getSettingsSync, updateSettings } from './settings/store'
+import {
+  getResolvedSettings,
+  getSettings,
+  getSettingsSync,
+  updateSettings
+} from './settings/store'
+import { readCliSettings } from './settings/cli-settings'
 import { listModels } from './models/list'
-import type { CluiSettings } from '../shared/settings'
+import type { CluiSettings, SettingsKey } from '../shared/settings'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -458,10 +464,12 @@ function registerIpc(): void {
     })
   })
 
-  ipcMain.handle(IpcChannels.getSettings, async () => getSettings())
+  ipcMain.handle(IpcChannels.getSettings, async () => getResolvedSettings())
 
-  ipcMain.handle(IpcChannels.updateSettings, async (_e, patch: Partial<CluiSettings>) =>
-    updateSettings(patch)
+  ipcMain.handle(
+    IpcChannels.updateSettings,
+    async (_e, patch: Partial<CluiSettings>, clear?: SettingsKey[]) =>
+      updateSettings(patch, clear ?? [])
   )
 
   ipcMain.handle(IpcChannels.detectCliAt, async (_e, path: string) => detectCli(path || null))
@@ -485,14 +493,7 @@ function registerIpc(): void {
   ipcMain.handle(IpcChannels.getSystemPermissionMode, async () => {
     // Read the user's ~/.claude/settings.json fresh (read-only) and report what
     // "System Default" resolves to. Defaults to 'default' if unset/unreadable.
-    try {
-      const raw = await readFile(join(homedir(), '.claude', 'settings.json'), 'utf8')
-      const parsed = JSON.parse(raw) as { permissions?: { defaultMode?: unknown } }
-      const mode = parsed.permissions?.defaultMode
-      return typeof mode === 'string' && mode ? mode : 'default'
-    } catch {
-      return 'default'
-    }
+    return (await readCliSettings()).defaultMode ?? 'default'
   })
 }
 

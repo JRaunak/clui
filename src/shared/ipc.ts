@@ -14,7 +14,13 @@ import type {
   WorkspaceOption
 } from './sessions'
 import type { ConfigBundle } from './config'
-import type { CluiSettings, EffortChoice, ModelChoice } from './settings'
+import type {
+  CluiSettings,
+  EffortChoice,
+  ModelChoice,
+  ResolvedSettings,
+  SettingsKey
+} from './settings'
 
 /** Options for starting a new Claude session. */
 export interface StartSessionOptions {
@@ -172,10 +178,25 @@ export interface CluiApi {
   listWorkspaceFiles: (cwd: string) => Promise<{ files: string[]; truncated: boolean }>
   /** Open a two-file diff in the configured editor. */
   openDiff: (left: string, right: string) => Promise<void>
-  /** Read persisted app settings. */
-  getSettings: () => Promise<CluiSettings>
-  /** Merge a patch into app settings and persist. */
-  updateSettings: (patch: Partial<CluiSettings>) => Promise<CluiSettings>
+  /**
+   * Read app settings: resolved values plus per-key provenance. A key with source
+   * 'override' is in Clui's own settings.json; 'cli' is inherited from
+   * ~/.claude/settings.json (model/effort only); 'default' is the bundled constant.
+   */
+  getSettings: () => Promise<ResolvedSettings>
+  /**
+   * Persist a patch and/or CLEAR keys back to inherited, returning the new resolved
+   * state. Only values that differ from what the key would inherit are written, so
+   * saving the Settings modal never freezes a default into the file.
+   *
+   * Clearing needs its own argument: passing `{key: undefined}` in the patch would
+   * drop the key from disk yet leave `undefined` in a non-optional field in main's
+   * cache, so consumers would read undefined until the next restart.
+   */
+  updateSettings: (
+    patch: Partial<CluiSettings>,
+    clear?: SettingsKey[]
+  ) => Promise<ResolvedSettings>
   /** Validate a CLI path (or auto-detect if empty): returns detected info. */
   detectCliAt: (path: string) => Promise<CliInfo>
   /**

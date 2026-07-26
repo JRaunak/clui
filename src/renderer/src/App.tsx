@@ -44,9 +44,9 @@ export function App(): JSX.Element {
     // Re-assert the theme (preload set it pre-paint) and install the OS-change
     // listener for 'system'. Reads the persisted preference from settings. Also read
     // the onboarded flag here (same call) so the first-run intro shows only once.
-    void window.clui.getSettings().then((s) => {
-      applyTheme(s.theme)
-      setOnboarded(s.onboarded)
+    void window.clui.getSettings().then(({ values }) => {
+      applyTheme(values.theme)
+      setOnboarded(values.onboarded)
     })
   }, [])
 

@@ -48,6 +48,24 @@ export interface CluiSettings {
   onboarded: boolean
 }
 
+/** A settings key (used by the per-field reset affordance). */
+export type SettingsKey = keyof CluiSettings
+
+/**
+ * Where a resolved setting came from. `override` = the user set it in Clui's own
+ * settings.json; `cli` = inherited from ~/.claude/settings.json (model/effort only);
+ * `default` = the bundled constant. Absence of an override is what makes a per-field
+ * reset possible, so this is exact, never best-effort.
+ */
+export type SettingsSource = 'override' | 'cli' | 'default'
+
+/** Resolved values plus per-key provenance. Returned by `getSettings`. */
+export interface ResolvedSettings {
+  /** Always-concrete values; every existing consumer reads these. */
+  values: CluiSettings
+  sources: Record<SettingsKey, SettingsSource>
+}
+
 /** Color theme choices. 'system' tracks the OS `prefers-color-scheme`. */
 export type ThemeChoice = 'dark' | 'light' | 'system'
 
@@ -72,6 +90,11 @@ export type ModelChoice = string
 export type EffortChoice = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export const EFFORT_CHOICES: EffortChoice[] = ['low', 'medium', 'high', 'xhigh', 'max']
+
+/** Narrow an arbitrary value (a hand-edited config field) to an effort level. */
+export function isEffortChoice(v: unknown): v is EffortChoice {
+  return typeof v === 'string' && (EFFORT_CHOICES as string[]).includes(v)
+}
 
 export const EFFORT_LABELS: Record<EffortChoice, string> = {
   low: 'Low',
@@ -121,6 +144,24 @@ export const FALLBACK_MODEL_IDS: string[] = [
   'claude-fable-5',
   'claude-haiku-4-5'
 ]
+
+/**
+ * Reduce a raw model id to the `--model` form the picker lists: strip the Bedrock
+ * inference-profile prefix ('us.'/'global.'/'apac.' + 'anthropic.') and any trailing
+ * date/version stamp. Returns null for anything that isn't a claude model.
+ *
+ * The `[1m]` suffix MUST survive: it is the only thing that unlocks 1M context (the
+ * base id caps at 200K even on Opus 5), so a normalizer that ate it would silently
+ * downgrade an inherited `us.anthropic.claude-opus-5[1m]` to the 200K twin, a real
+ * picker entry, so nothing would look wrong.
+ */
+export function normalizeModelId(raw: string): string | null {
+  const m = raw.match(/^(?:[a-z0-9-]+\.)*anthropic\.(.+)$/i)
+  const id = (m ? m[1] : raw)
+    .replace(/-\d{8}(-v\d+(?::\d+)?)?$/i, '')
+    .replace(/-v\d+(?::\d+)?$/i, '')
+  return /^claude-/i.test(id) ? id : null
+}
 
 /** Parse family + numeric version + 1M flag from a model id/alias. */
 function parseModelId(id: string): {

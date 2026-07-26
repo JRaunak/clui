@@ -3,48 +3,30 @@
  * profiles via the AWS CLI using the user's configured profile/region (from
  * ~/.claude/settings.json `bedrock`), dedupes the us./global. prefixes, and
  * returns raw model ids. Falls back to a bundled list if the query fails (no aws
- * CLI, non-Bedrock provider, etc.). Result is cached for the process lifetime.
+ * CLI, non-Bedrock provider, etc.). Only a SUCCESSFUL result is cached, so a
+ * transient failure retries rather than pinning the fallback for the process.
  */
 import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { FALLBACK_MODEL_IDS, deriveModelInfo } from '../../shared/settings'
+import { FALLBACK_MODEL_IDS, deriveModelInfo, normalizeModelId } from '../../shared/settings'
 import { loginShellAuthEnv } from '../cli/shell-env'
+import { readCliSettings } from '../settings/cli-settings'
 
 const execFileP = promisify(execFile)
 
 let cache: string[] | null = null
 
-/** Read the bedrock profile/region from ~/.claude/settings.json (best-effort). */
-async function bedrockConfig(): Promise<{ profile?: string; region?: string }> {
-  try {
-    const raw = await readFile(join(homedir(), '.claude', 'settings.json'), 'utf8')
-    const parsed = JSON.parse(raw) as { bedrock?: { profile?: string; region?: string } }
-    return parsed.bedrock ?? {}
-  } catch {
-    return {}
-  }
-}
-
 /**
- * Reduce Bedrock inference-profile ids to the model ids we pass to `--model`.
- * e.g. 'us.anthropic.claude-opus-4-8' / 'global.anthropic.claude-opus-4-8' →
- * 'claude-opus-4-8'. Keeps only claude-* Anthropic models; drops v1 date suffixes.
+ * Reduce Bedrock inference-profile ids to the model ids we pass to `--model`, deduped
+ * in list order. e.g. 'us.anthropic.claude-opus-4-8' → 'claude-opus-4-8'. Non-Anthropic
+ * profiles and the legacy claude-3 family (not effort-capable) are dropped.
  */
 function normalizeProfileIds(ids: string[]): string[] {
   const seen = new Set<string>()
   const out: string[] = []
   for (const raw of ids) {
-    // Strip the us./global. region prefix and the anthropic. vendor segment.
-    const m = raw.match(/anthropic\.(claude-[a-z0-9-]+)/i)
-    if (!m) continue
-    let id = m[1]
-    // Drop date/version stamps like -20251001 and -v1:0 to get the alias-ish id.
-    id = id.replace(/-\d{8}(-v\d+(?::\d+)?)?$/i, '').replace(/-v\d+(?::\d+)?$/i, '')
-    // Skip legacy claude-3 family (not effort-capable, rarely wanted).
-    if (/^claude-3-/.test(id)) continue
+    const id = normalizeModelId(raw)
+    if (!id || /^claude-3-/.test(id)) continue
     if (!seen.has(id)) {
       seen.add(id)
       out.push(id)
@@ -63,7 +45,7 @@ function normalizeProfileIds(ids: string[]): string[] {
  */
 export async function listModels(refresh = false): Promise<string[]> {
   if (cache && !refresh) return cache
-  const { profile, region } = await bedrockConfig()
+  const { profile, region } = (await readCliSettings()).bedrock
   try {
     // A Finder-launched app inherits a minimal env, so `aws` here fails with
     // NoCredentials and every list silently degrades to FALLBACK_MODEL_IDS. Re-source
