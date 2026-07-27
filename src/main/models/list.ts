@@ -1,8 +1,8 @@
 /**
  * Live model discovery (avoids a stale hardcoded list). Queries Bedrock inference
  * profiles via the AWS CLI using the user's configured profile/region (from
- * ~/.claude/settings.json `bedrock`), dedupes the us./global. prefixes, and
- * returns raw model ids. Falls back to a bundled list if the query fails (no aws
+ * ~/.claude/settings.json `bedrock`) and returns their ids unchanged, since only the
+ * full id is a valid `--model` value. Falls back to a bundled list if the query fails (no aws
  * CLI, non-Bedrock provider, etc.) — flagged `live: false` so the UI can say so
  * instead of claiming a live list. Only a SUCCESSFUL result is cached, so a
  * transient failure retries rather than pinning the fallback for the process.
@@ -10,7 +10,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { ModelListResult } from '../../shared/ipc'
-import { FALLBACK_MODEL_IDS, deriveModelInfo, normalizeModelId } from '../../shared/settings'
+import { FALLBACK_MODEL_IDS, deriveModelInfo } from '../../shared/settings'
 import { loginShellAuthEnv } from '../cli/shell-env'
 import { readCliSettings } from '../settings/cli-settings'
 
@@ -19,19 +19,25 @@ const execFileP = promisify(execFile)
 let cache: string[] | null = null
 
 /**
- * Reduce Bedrock inference-profile ids to the model ids we pass to `--model`, deduped
- * in list order. e.g. 'us.anthropic.claude-opus-4-8' → 'claude-opus-4-8'. Non-Anthropic
- * profiles and the legacy claude-3 family (not effort-capable) are dropped.
+ * Bedrock's inference-profile ids, kept VERBATIM as `--model` values and deduped in list
+ * order. Non-Anthropic profiles and the legacy claude-3 family (not effort-capable) are
+ * dropped. Shortening the id here is what broke half the picker: strip the prefix off a
+ * date-suffixed profile and you get 'claude-haiku-4-5', which is not a model name the API
+ * knows. Shortening is a DISPLAY concern, and `labelFor` already parses the full id.
+ *
+ * Bedrock lists most models twice, once per region scope ('us.' and 'global.'), so the
+ * dedupe key is the id WITHOUT its prefix while the value stays the full id — first scope
+ * seen wins. Keying on the raw id instead would show every model twice.
  */
-function normalizeProfileIds(ids: string[]): string[] {
+function pickableProfileIds(ids: string[]): string[] {
   const seen = new Set<string>()
   const out: string[] = []
   for (const raw of ids) {
-    const id = normalizeModelId(raw)
-    if (!id || /^claude-3-/.test(id)) continue
-    if (!seen.has(id)) {
-      seen.add(id)
-      out.push(id)
+    const key = raw.replace(/^(?:[a-z0-9-]+\.)*anthropic\./i, '')
+    if (!key || key === raw || /^claude-3-/.test(key)) continue
+    if (!seen.has(key)) {
+      seen.add(key)
+      out.push(raw)
     }
   }
   return out
@@ -79,7 +85,7 @@ export async function listModels(refresh = false): Promise<ModelListResult> {
     if (region) args.push('--region', region)
     args.push('--query', 'inferenceProfileSummaries[].inferenceProfileId', '--output', 'text')
     const { stdout } = await execFileP('aws', args, { env, timeout: 15000, encoding: 'utf8' })
-    const ids = normalizeProfileIds(stdout.split(/\s+/).filter(Boolean))
+    const ids = pickableProfileIds(stdout.split(/\s+/).filter(Boolean))
     if (ids.length === 0) throw new Error('no anthropic models returned')
     cache = withVariants(ids)
     return { ids: cache, live: true }

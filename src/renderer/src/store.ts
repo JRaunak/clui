@@ -298,7 +298,11 @@ interface SessionStore {
   requestScrollTo: (messageId: string) => void
 
   /** Start a NEW session in `cwd` and make it active. */
-  startSession: (cwd: string, mode?: PermissionModeChoice) => Promise<void>
+  startSession: (
+    cwd: string,
+    mode?: PermissionModeChoice,
+    opts?: { model?: ModelChoice; effort?: EffortChoice }
+  ) => Promise<void>
   /** Resume an on-disk session (loads history) and make it active. */
   resumeSession: (cwd: string, resumeSessionId: string, mode?: PermissionModeChoice) => Promise<void>
   /** Fork a session (live or dormant) → a NEW live branch carrying its context,
@@ -545,7 +549,16 @@ function insertSlice(
 async function beginSession(
   get: () => SessionStore,
   set: (fn: (s: SessionStore) => Partial<SessionStore>) => void,
-  opts: { cwd: string; resumeSessionId?: string; fork?: boolean; permissionMode?: PermissionModeChoice }
+  opts: {
+    cwd: string
+    resumeSessionId?: string
+    fork?: boolean
+    permissionMode?: PermissionModeChoice
+    /** Explicit model/effort, outranking the Settings default. Only the test harness
+     *  passes these. The UI has no "start a session as X" control, it switches after. */
+    model?: ModelChoice
+    effort?: EffortChoice
+  }
 ): Promise<void> {
   ensureSubscribed(get().applyEvent)
   evictIfOverCap(get, set, opts.cwd)
@@ -560,8 +573,8 @@ async function beginSession(
   // otherwise be lost). Fresh sessions use the Settings default. `remembered` is only
   // consulted for a resume with a known sessionId.
   const remembered = opts.resumeSessionId ? modelPrefsBySessionId.get(opts.resumeSessionId) : undefined
-  const modelChoice = remembered?.model ?? settings.model
-  const effortChoice = remembered?.effort ?? settings.effort
+  const modelChoice = opts.model ?? remembered?.model ?? settings.model
+  const effortChoice = opts.effort ?? remembered?.effort ?? settings.effort
   // Ultracode is off by default on a fresh session; restored from the sidecar on resume.
   const ultracode = remembered?.ultracode ?? false
   // Cache the available model ids so session-init can reconcile the picker to the
@@ -810,8 +823,8 @@ export const useSession = create<SessionStore>((set, get) => ({
   globalSearchOpen: false,
   scrollTarget: null,
 
-  startSession: async (cwd, mode) => {
-    await beginSession(get, set, { cwd, permissionMode: mode })
+  startSession: async (cwd, mode, opts) => {
+    await beginSession(get, set, { cwd, permissionMode: mode, ...opts })
   },
 
   resumeSession: async (cwd, resumeSessionId, mode) => {

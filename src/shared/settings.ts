@@ -147,23 +147,10 @@ export const FALLBACK_MODEL_IDS: string[] = [
   'claude-haiku-4-5'
 ]
 
-/**
- * Reduce a raw model id to the `--model` form the picker lists: strip the Bedrock
- * inference-profile prefix ('us.'/'global.'/'apac.' + 'anthropic.') and any trailing
- * date/version stamp. Returns null for anything that isn't a claude model.
- *
- * The `[1m]` suffix MUST survive: it is the only thing that unlocks 1M context (the
- * base id caps at 200K even on Opus 5), so a normalizer that ate it would silently
- * downgrade an inherited `us.anthropic.claude-opus-5[1m]` to the 200K twin, a real
- * picker entry, so nothing would look wrong.
- */
-export function normalizeModelId(raw: string): string | null {
-  const m = raw.match(/^(?:[a-z0-9-]+\.)*anthropic\.(.+)$/i)
-  const id = (m ? m[1] : raw)
-    .replace(/-\d{8}(-v\d+(?::\d+)?)?$/i, '')
-    .replace(/-v\d+(?::\d+)?$/i, '')
-  return /^claude-/i.test(id) ? id : null
-}
+// A model id is never shortened for use: only the full Bedrock profile id, a suffix-free
+// id, or a short alias ('haiku') is a valid `--model` value. Stripping the prefix off a
+// date-suffixed profile yields 'claude-haiku-4-5', which the API rejects — that shortening
+// once made half the picker unselectable. `labelFor` parses the full id for display.
 
 /** Parse family + numeric version + 1M flag from a model id/alias. */
 function parseModelId(id: string): {
@@ -182,8 +169,10 @@ function parseModelId(id: string): {
         : s.includes('fable')
           ? 'fable'
           : 'unknown'
-  // Grab the version after the family name: "opus-4-8" → 4.8, "sonnet-5" → 5.
-  const m = s.match(/(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?/)
+  // Grab the version after the family name: "opus-4-8" → 4.8, "sonnet-5" → 5. The minor
+  // part is a SINGLE digit on purpose: profile ids carry a date next ("sonnet-4-20250514"),
+  // and a greedy \d+ read that as version 2025051.4.
+  const m = s.match(/(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d)(?!\d))?/)
   const version = m ? Number(m[1]) + (m[2] ? Number(m[2]) / 10 : 0) : 0
   return { family, version, is1m }
 }

@@ -19,7 +19,6 @@ import {
   DEFAULT_SETTINGS,
   clampEffort,
   isEffortChoice,
-  normalizeModelId,
   type CluiSettings,
   type ResolvedSettings,
   type SettingsKey
@@ -40,9 +39,9 @@ const settingsPath = (): string => join(app.getPath('userData'), 'settings.json'
  * Resolve model + effort from what the user already told the CLI.
  *
  * Two traps here, both load-bearing:
- *  - The CLI stores the Bedrock-prefixed id ('us.anthropic.claude-opus-5[1m]') while
- *    Clui's picker lists normalized ids, so the raw value must go through
- *    `normalizeModelId` or the dropdown highlights nothing.
+ *  - The CLI's stored id ('us.anthropic.claude-opus-5[1m]') is taken VERBATIM. The picker
+ *    lists Bedrock's ids unshortened, so shortening here would match nothing — and the
+ *    shortened form isn't a valid `--model` value anyway.
  *  - Effort is gated per model, and the CLI's own enum has no 'max', so an inherited
  *    effort still gets clamped against the RESOLVED model, otherwise Clui could pass
  *    an `--effort` that model rejects.
@@ -55,9 +54,8 @@ function resolveInherited(storedPartial: StoredSettings, cli: CliSettings): Reso
   }
 
   if (sources.model === 'default') {
-    const id = cli.model ? normalizeModelId(cli.model) : null
-    if (id) {
-      values.model = id
+    if (cli.model) {
+      values.model = cli.model
       sources.model = 'cli'
     }
   }

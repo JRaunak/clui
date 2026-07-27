@@ -30,7 +30,7 @@ It never modifies your `~/.claude/settings.json`. Every model, effort, and permi
 
 - **Multiple live sessions** — each keeps its own `claude` process alive in the background. Switching is instant, and in-flight turns keep streaming across a switch.
 - **Live model & effort selection** — the model list is fetched live from your provider; effort switches mid-session without losing context.
-- **Per-session permission modes** — Interactive, Auto Edit, Plan, and Autonomous, changeable mid-session, with an approval dialog for every tool use.
+- **Per-session permission modes** — seven of them, from Interactive (asks before each tool) to Autonomous (asks nothing), plus Adaptive, Auto Edit, and Plan Mode. Changeable mid-session, and two sessions can sit in different modes.
 - **Conversation search** — find within a conversation (`⌘F`) or search across every session at once (`⌘⇧F`).
 - **Attachments** — paste, drag-drop, or attach images and files directly into a turn.
 - **Subagent & workflow visibility** — nested agent transcripts and a live workflow progress tree.
@@ -41,16 +41,14 @@ It never modifies your `~/.claude/settings.json`. Every model, effort, and permi
 | Requirement | Notes |
 | ----------- | ----- |
 | **macOS on Apple Silicon** | The build target is `mac / arm64`. |
-| **Node.js 22.12+** | Vite 7 and electron-vite 5 both require it. Developed on 24.18.0 |
+| **Node.js 22.12+** | Vite 7 and electron-vite 5 both require it. Developed on 24.18.0. |
 | **npm 9+** | Ships with Node. Developed on npm 11. |
 | **The `claude` CLI** | Install [Claude Code](https://claude.com/claude-code), and make sure `claude --version` works **and that you are logged in**. Clui drives the CLI already on your machine — it does not ship or install it. |
 
 ## Getting Started
 
-Fork the repository to your account (or clone it directly to build locally), then:
-
 ```bash
-git clone https://github.com/<your-username>/clui.git
+git clone https://github.com/JRaunak/clui.git
 cd clui
 npm install
 npm run dev
@@ -58,10 +56,10 @@ npm run dev
 
 `npm run dev` launches Clui with hot reload. On first run, make sure the `claude` CLI is authenticated in your terminal — Clui inherits that auth.
 
-> [!WARNING]
-> **npm blocks post-install scripts by default.** Electron and esbuild download their binaries in a post-install step, so a fresh `npm install` can silently skip them. This repo commits an allowlist (the `allowScripts` field in `package.json`), so a normal install should just work.
+> [!NOTE]
+> npm 11 blocks post-install scripts by default, and Electron and esbuild download their binaries in one. The repo commits an allowlist (`allowScripts` in `package.json`) covering both, so `npm install` works as-is. You will see a warning about `fsevents`, which is a macOS file-watcher optional dependency and safe to leave unapproved.
 >
-> If the app fails to launch with a missing-Electron-binary error, approve the scripts and reinstall:
+> If the app ever fails to launch with a missing-Electron-binary error, approve and reinstall:
 >
 > ```bash
 > npm approve-scripts electron esbuild
