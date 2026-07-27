@@ -43,6 +43,37 @@ function pickableProfileIds(ids: string[]): string[] {
   return out
 }
 
+/**
+ * Absolute path to `aws`, asked of the login shell (which knows the user's real PATH —
+ * a Finder-launched app does not). Resolving it here rather than letting execFile search
+ * PATH means the binary is pinned once per process instead of re-looked-up on every call,
+ * so a PATH entry that changes underneath us can't swap the executable.
+ */
+let awsPath: string | null = null
+async function resolveAws(): Promise<string> {
+  if (awsPath) return awsPath
+  const shell = process.env.SHELL || '/bin/zsh'
+  // `command -v` exits 1 when the binary is absent, so a rejection here means the same
+  // thing as an ENOENT from exec'ing it directly — normalize it so the UI still reports
+  // 'no-cli' rather than the vague 'other'.
+  const stdout = await execFileP(shell, ['-lic', 'command -v aws'], {
+    timeout: 5000,
+    encoding: 'utf8'
+  }).then(
+    (r) => r.stdout,
+    () => ''
+  )
+  // rc noise can precede the answer; take the last absolute path the shell printed.
+  const hit = stdout
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith('/'))
+    .pop()
+  if (!hit) throw Object.assign(new Error('aws not found'), { code: 'ENOENT' })
+  awsPath = hit
+  return hit
+}
+
 /** Coarse cause of a failed live query, so the UI can name the fix (or stay vague). */
 function failureReason(e: unknown): NonNullable<ModelListResult['reason']> {
   const err = e as { code?: unknown; stderr?: unknown; message?: unknown }
@@ -84,7 +115,11 @@ export async function listModels(refresh = false): Promise<ModelListResult> {
     const args = ['bedrock', 'list-inference-profiles']
     if (region) args.push('--region', region)
     args.push('--query', 'inferenceProfileSummaries[].inferenceProfileId', '--output', 'text')
-    const { stdout } = await execFileP('aws', args, { env, timeout: 15000, encoding: 'utf8' })
+    const { stdout } = await execFileP(await resolveAws(), args, {
+      env,
+      timeout: 15000,
+      encoding: 'utf8'
+    })
     const ids = pickableProfileIds(stdout.split(/\s+/).filter(Boolean))
     if (ids.length === 0) throw new Error('no anthropic models returned')
     cache = withVariants(ids)
