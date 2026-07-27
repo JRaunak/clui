@@ -186,11 +186,12 @@ function findAgentFile(agentId: string): Promise<string | null> {
 }
 
 /**
- * Nesting: locate an agent transcript by its Agent `tool_use_id` rather than its
- * agentId. Needed for NESTED subagents — the UI only knows a nested child's tool_use_id
- * (from the parent's forwarded `tool_use` block), not its taskId, and `forwardSubagentText`
- * only streams ONE level deep (a grandchild's text never streams live, so disk is the
- * only source). Each `agent-<id>.jsonl` has a sibling `agent-<id>.meta.json` carrying
+ * Nesting: locate an agent transcript by its Agent `tool_use_id` rather than its agentId,
+ * because for a NESTED subagent the UI only ever learns the tool_use_id (from the parent's
+ * forwarded `tool_use` block), never its taskId. `forwardSubagentText` streams every depth
+ * live (verified on 2.1.220), so this is the dormant-session path: a resumed session whose
+ * nested agents finished before Clui attached has no live stream left to replay. Each
+ * `agent-<id>.jsonl` has a sibling `agent-<id>.meta.json` carrying
  * `{toolUseId, parentAgentId, spawnDepth, …}`; we scan those sidecars for the matching
  * toolUseId and return the paired transcript path.
  */

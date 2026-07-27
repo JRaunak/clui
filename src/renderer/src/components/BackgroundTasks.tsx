@@ -43,6 +43,7 @@ export function BackgroundTasks(): JSX.Element | null {
   const clearCompleted = useSession((s) => s.clearCompletedBgWork)
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const list = Object.values(tasks).sort((a, b) => a.startMs - b.startMs)
@@ -72,7 +73,16 @@ export function BackgroundTasks(): JSX.Element | null {
 
   const dismiss = useCallback(() => setOpen(false), [])
   useClickOutside(ref, open, dismiss)
-  useEscape(open, dismiss)
+  // Esc returns focus to the trigger, since the focused row unmounts with the popover
+  // and focus would otherwise fall to <body>. An OUTSIDE CLICK deliberately doesn't:
+  // it would steal focus from whatever the user just clicked.
+  useEscape(
+    open,
+    useCallback(() => {
+      setOpen(false)
+      triggerRef.current?.focus()
+    }, [])
+  )
 
   // LINGER grace timer: arm a ~15s one-shot to clear lingering completed subagents when
   // nothing is running. Timer in a ref (StrictMode-safe; the deferred-timer pattern used
@@ -97,9 +107,11 @@ export function BackgroundTasks(): JSX.Element | null {
   return (
     <div className="relative" ref={ref}>
       <button
-        className="flex items-center gap-1.5 rounded text-info transition-colors hover:brightness-110"
+        ref={triggerRef}
+        className="-my-1 flex items-center gap-1.5 rounded py-1 text-info transition-colors hover:brightness-110"
         onClick={() => setOpen((v) => !v)}
         title="Background tasks"
+        aria-expanded={open}
       >
         <span
           className="h-1.5 w-1.5 rounded-full bg-info"
@@ -114,17 +126,21 @@ export function BackgroundTasks(): JSX.Element | null {
       {open && (
         <div className="absolute bottom-full left-0 mb-1.5 w-[min(420px,90vw)] overflow-hidden rounded-lg border border-border bg-bg-elev shadow-lg">
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-info" aria-hidden="true" />
             <span className="text-xs font-semibold text-content">Background tasks</span>
+            {/* "done" is omitted when zero: bash rows are deleted on terminal and subagent
+                rows linger only ~15s, so the count is almost always 0. */}
             <span className="ml-auto font-mono text-[11px] text-faint">
-              {running.length} running · {list.length - running.length} done
+              {running.length} running
+              {list.length - running.length > 0 ? ` · ${list.length - running.length} done` : ''}
             </span>
           </div>
           <div className="max-h-[40vh] overflow-y-auto py-1">
-            {/* Section headers only earn their space when both kinds are present. */}
+            {/* Each header depends only on its OWN section. Don't also condition it on the
+                other kind: bash rows are deleted on terminal (see the store), so the last
+                shell finishing drops both headers and shifts every surviving row up ~26px. */}
             {agents.length > 0 && (
               <>
-                {shells.length > 0 && <SectionLabel>Agents</SectionLabel>}
+                <SectionLabel>Agents</SectionLabel>
                 {agents.map((t) => (
                   <div key={t.taskId}>
                     <Row
@@ -132,24 +148,32 @@ export function BackgroundTasks(): JSX.Element | null {
                       onStop={() => handleId && void stopTask(handleId, t.taskId)}
                       onOpen={openTranscript(t)}
                     />
-                    {/* A child agent keeps its open-transcript affordance; a child shell
-                        has none, so `openTranscript` returns undefined for it. */}
-                    {childrenOf(t).map((child) => (
-                      <Row
-                        key={child.taskId}
-                        task={child}
-                        nested
-                        onStop={() => handleId && void stopTask(handleId, child.taskId)}
-                        onOpen={openTranscript(child)}
-                      />
-                    ))}
+                    {/* Indentation is the only visual carrier of ownership and AT can't see it,
+                        so the group names its owner too (WCAG 1.3.1). Without it a screen reader
+                        hears a subagent's shell as a peer of the user's own tasks. */}
+                    {childrenOf(t).length > 0 && (
+                      <div role="group" aria-label={`Started by ${t.description}`}>
+                        {/* A child agent keeps its open-transcript affordance; a child shell
+                            has none, so `openTranscript` returns undefined for it. */}
+                        {childrenOf(t).map((child) => (
+                          <Row
+                            key={child.taskId}
+                            task={child}
+                            nested
+                            ownerDesc={t.description}
+                            onStop={() => handleId && void stopTask(handleId, child.taskId)}
+                            onOpen={openTranscript(child)}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </>
             )}
             {shells.length > 0 && (
               <>
-                {agents.length > 0 && <SectionLabel>Shells</SectionLabel>}
+                <SectionLabel>Shells</SectionLabel>
                 {shells.map((t) => (
                   <Row
                     key={t.taskId}
@@ -178,41 +202,68 @@ function Row({
   task,
   onStop,
   onOpen,
-  nested
+  nested,
+  ownerDesc
 }: {
   task: BackgroundTask
   onStop: () => void
   /** Present only for a backgrounded SUBAGENT row — opens its transcript. */
   onOpen?: () => void
-  /** A shell the subagent above it started: indented, with a tree elbow. */
+  /** Work a subagent started (a shell it ran, or an agent it spawned): indented under it. */
   nested?: boolean
+  /** The owning subagent's description, for a nested row's accessible names. */
+  ownerDesc?: string
 }): JSX.Element {
   const running = task.status === 'running'
   const isSubagent = task.taskType === 'local_agent'
 
-  const statusDot = running ? (
-    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-info" aria-hidden="true" />
-  ) : task.status === 'killed' || task.status === 'failed' ? (
-    <IconClose className="h-3.5 w-3.5 shrink-0 text-faint" />
-  ) : (
-    <IconCheck className="h-3.5 w-3.5 shrink-0 text-ok" />
-  )
-
-  // The label: a subagent reads "Agent · <desc>" (echoes the inline Agent card); a bg
-  // shell shows its command/description as before.
-  const label = (
-    <span className="flex min-w-0 flex-1 items-center gap-1.5">
-      {isSubagent && !nested && (
-        <span className="shrink-0 font-mono text-[11px] font-semibold text-accent">Agent</span>
+  // Fixed width: the dot is 6px and the terminal icons 14px, so an auto-width slot shifts
+  // every label 8px the moment a task finishes.
+  const statusDot = (
+    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden="true">
+      {running ? (
+        <span className="h-1.5 w-1.5 rounded-full bg-info" />
+      ) : task.status === 'failed' ? (
+        // `killed` was a requested stop, so only a real failure takes the err tone. The
+        // trailing word states it too, so this isn't colour alone. The word stays `faint`:
+        // err is 4.34:1 on the hover surface, which fails 4.5:1 as 11px text, while the
+        // glyph only needs 3:1.
+        <IconClose className="h-3.5 w-3.5 text-err" />
+      ) : task.status === 'killed' ? (
+        <IconClose className="h-3.5 w-3.5 text-faint" />
+      ) : (
+        <IconCheck className="h-3.5 w-3.5 text-ok" />
       )}
-      <span className="min-w-0 flex-1 truncate font-mono text-xs text-content" title={task.description}>
-        {task.description}
-      </span>
-      {/* Open-transcript affordance — mirrors the inline Agent card's "→". */}
-      {onOpen && <span className="shrink-0 font-mono text-[11px] text-faint">→</span>}
     </span>
   )
 
+  // A subagent keeps its "Agent" label even when nested: it's the only at-rest cue separating
+  // a nested AGENT (clickable, has a transcript) from a nested SHELL, since the `→` is one
+  // 11px glyph and hover shows nothing until hovered. Nested spends `faint` rather than the
+  // accent so a parent/child pair doesn't spend the scarce accent twice.
+  const typeLabel = isSubagent && (
+    <span
+      className={`shrink-0 font-mono text-[11px] font-semibold ${nested ? 'text-faint' : 'text-accent'}`}
+    >
+      Agent
+    </span>
+  )
+  const labelInner = (
+    <>
+      {typeLabel}
+      <span className="min-w-0 flex-1 truncate font-mono text-xs text-content" title={task.description}>
+        {task.description}
+      </span>
+      {/* Open-transcript affordance, mirroring the inline Agent card's "→". Inside the button
+          so clicking the glyph opens too, with pr-1.5 to clear the inset focus ring, which
+          otherwise cuts through it at the flex-1 edge. */}
+      {onOpen && <span className="shrink-0 pr-1.5 font-mono text-[11px] text-faint">→</span>}
+    </>
+  )
+
+  const stopLabel = `Stop background ${isSubagent ? 'subagent' : 'task'}: ${task.description}${
+    ownerDesc ? ` (started by ${ownerDesc})` : ''
+  }`
   const trailing = running ? (
     <>
       <BgTimer startMs={task.startMs} />
@@ -220,13 +271,12 @@ function Row({
         <span className="text-[11px] text-faint">stopping…</span>
       ) : (
         <button
-          className="rounded p-0.5 text-faint opacity-0 transition-opacity hover:text-err focus-visible:opacity-100 group-hover:opacity-100"
-          onClick={(e) => {
-            e.stopPropagation()
-            onStop()
-          }}
+          // h-6 w-6 is the house pattern for a row's icon button (see the sidebar's close);
+          // the 14px glyph alone is an 18px target, under the 24px floor.
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint opacity-0 transition-opacity hover:text-err focus-visible:opacity-100 focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-accent group-hover:opacity-100"
+          onClick={onStop}
           title="Stop this task"
-          aria-label={`Stop background ${isSubagent ? 'subagent' : 'task'}: ${task.description}`}
+          aria-label={stopLabel}
         >
           <IconClose className="h-3.5 w-3.5" />
         </button>
@@ -238,25 +288,32 @@ function Row({
     </span>
   )
 
-  // A subagent row is a button (opens its transcript); a bg-shell row is a plain div
-  // (no transcript to open). Both keep the hover-revealed stop ✕ while running.
+  // min-h-10 holds the row at its running height: the trailing slot swaps a 24px stop button
+  // for an ~17px status word, which otherwise shrinks the row 6px the moment a task finishes.
+  const rowCls = `group flex min-h-10 items-center gap-2.5 py-1 pr-3 ${nested ? 'pl-6' : 'pl-3'}`
+  // A subagent row opens its transcript; a bg-shell row has none. The BUTTON is the label
+  // region, not the whole row: a row-level button would nest the stop ✕ inside it, which is
+  // invalid HTML and AT may never expose the inner control. The ring is inset because the
+  // global one's outline-offset sits outside the element, where the popover clips it.
   if (onOpen) {
     return (
-      <button
-        className={`group flex w-full items-center gap-2.5 py-2 pr-3 text-left hover:bg-bg-raised focus-visible:bg-bg-raised focus-visible:outline-none ${nested ? 'pl-6' : 'pl-3'}`}
-        onClick={onOpen}
-        title="Open this subagent's transcript"
-      >
+      <div className={`${rowCls} hover:bg-bg-raised focus-within:bg-bg-raised`}>
         {statusDot}
-        {label}
+        <button
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-accent"
+          onClick={onOpen}
+          title="Open this subagent's transcript"
+        >
+          {labelInner}
+        </button>
         {trailing}
-      </button>
+      </div>
     )
   }
   return (
-    <div className={`group flex items-center gap-2.5 py-2 pr-3 ${nested ? 'pl-6' : 'pl-3'}`}>
+    <div className={rowCls}>
       {statusDot}
-      {label}
+      <span className="flex min-w-0 flex-1 items-center gap-1.5">{labelInner}</span>
       {trailing}
     </div>
   )

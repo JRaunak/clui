@@ -146,9 +146,9 @@ export interface CluiApi {
   /** Read a workflow/subagent agent transcript by agentId (from disk; the live
    *  stream doesn't carry it). Empty if not found (still streaming / layout drift). */
   readAgentTranscript: (agentId: string) => Promise<TranscriptResult>
-  /** Nesting: read a subagent transcript by its Agent tool_use_id (via the
-   *  .meta.json sidecar) — for NESTED children whose taskId the UI never learns and
-   *  whose text `forwardSubagentText` doesn't stream (it forwards only one level deep). */
+  /** Nesting: read a subagent transcript by its Agent tool_use_id (via the .meta.json
+   *  sidecar), for NESTED children whose taskId the UI never learns. Used when no live
+   *  forwarded stream is left to replay, i.e. a resumed session's finished agents. */
   readAgentTranscriptByToolUseId: (toolUseId: string) => Promise<TranscriptResult>
   /** Load the persisted per-session cost map (sessionId → cumulative USD). */
   getSessionCosts: () => Promise<Record<string, number>>
