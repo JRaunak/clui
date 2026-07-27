@@ -41,7 +41,7 @@ It never modifies your `~/.claude/settings.json`. Every model, effort, and permi
 | Requirement | Notes |
 | ----------- | ----- |
 | **macOS on Apple Silicon** | The build target is `mac / arm64`. |
-| **Node.js 20+** | Developed on 26.x. Use [nvm](https://github.com/nvm-sh/nvm) if you manage multiple versions. |
+| **Node.js 22.12+** | Vite 7 and electron-vite 5 both require it. Developed on 24.18.0 |
 | **npm 9+** | Ships with Node. Developed on npm 11. |
 | **The `claude` CLI** | Install [Claude Code](https://claude.com/claude-code), and make sure `claude --version` works **and that you are logged in**. Clui drives the CLI already on your machine — it does not ship or install it. |
 

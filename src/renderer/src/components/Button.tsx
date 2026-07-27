@@ -1,8 +1,8 @@
 /**
  * Shared button primitive — one place for variants, sizes, focus, and disabled
- * treatment (the app previously mixed rounded-md/lg, ad-hoc hovers, and no focus
- * ring). Variants follow the design-system spec: primary / secondary / outline /
- * ghost / destructive.
+ * treatment, so buttons can't drift back into per-site rounding, ad-hoc hovers, and
+ * missing focus rings. Variants follow the design-system spec: primary / secondary /
+ * outline / ghost / destructive.
  */
 import type { ButtonHTMLAttributes } from 'react'
 

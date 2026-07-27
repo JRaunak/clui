@@ -508,8 +508,8 @@ export class EventMapper {
         // Nesting: this subagent spawned a CHILD subagent. Surface it as a nested
         // marker so the UI can render an "Agent →" card inside this transcript that opens
         // the child's own forwarded transcript (which streams under block.id = its PTU).
-        // Its text/thinking still flow via subagent-message above; the tool_use block was
-        // previously dropped here, which is why nesting was invisible.
+        // Its text/thinking flow via subagent-message above; dropping this block instead
+        // makes nesting invisible in the UI.
         const input = (block.input ?? {}) as { description?: unknown; subagent_type?: unknown }
         out.push({
           type: 'subagent-nested',

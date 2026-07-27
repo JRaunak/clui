@@ -51,7 +51,17 @@ export async function listModels(refresh = false): Promise<string[]> {
     // NoCredentials and every list silently degrades to FALLBACK_MODEL_IDS. Re-source
     // the login shell for the same auth vars the CLI subprocess gets.
     const authEnv = await loginShellAuthEnv()
-    const env = { ...process.env, ...authEnv, ...(profile ? { AWS_PROFILE: profile } : {}) }
+    const env = {
+      ...process.env,
+      ...authEnv,
+      // When no credentials resolve, botocore probes the EC2 metadata service: two attempts
+      // at a hard-coded 1s connect timeout against 169.254.169.254, which macOS blackholes
+      // via ARP rather than refusing. That is ~2.4s of a ~2.6s doomed call; without it the
+      // failure path is ~0.5s, most of which is `aws` startup. Clui ships macOS-only, so
+      // instance metadata can never be a real credential source here.
+      AWS_EC2_METADATA_DISABLED: 'true',
+      ...(profile ? { AWS_PROFILE: profile } : {})
+    }
     const args = ['bedrock', 'list-inference-profiles']
     if (region) args.push('--region', region)
     args.push('--query', 'inferenceProfileSummaries[].inferenceProfileId', '--output', 'text')

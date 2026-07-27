@@ -129,14 +129,16 @@ export interface ModelInfo {
  * everything Bedrock returns: superseded models are omitted on purpose.
  *
  * ponytail: hardcoded, so it falls behind on every model release. Re-check it against
- * `aws bedrock list-inference-profiles` whenever a new family ships; it was already a
- * release behind (no Opus 5) before this list was corrected.
+ * `aws bedrock list-inference-profiles` whenever a new family ships. Every Opus at 4.7 or
+ * above needs its `[1m]` twin listed explicitly: `withVariants()` only derives those on the
+ * live path, so a missing one silently caps a fallback user at 200K.
  */
 export const FALLBACK_MODEL_IDS: string[] = [
   'claude-opus-5[1m]',
   'claude-opus-5',
   'claude-opus-4-8[1m]',
   'claude-opus-4-8',
+  'claude-opus-4-7[1m]',
   'claude-opus-4-7',
   'claude-opus-4-6',
   'claude-sonnet-5',
