@@ -23,10 +23,9 @@ import { useEscape } from '../lib/useEscape'
 /**
  * What to tell the user when the model list is the bundled fallback rather than a live one.
  *
- * Only Bedrock can be queried for a list; on every other provider the CLI reads its own
- * built-in catalog, so a missing `aws` is the NORMAL state for them and naming it would
- * send them after a tool they have no reason to install. Hence 'no-cli' says what is true
- * for everyone — the list is built in — and only mentions aws as the way to get a live one.
+ * Only Bedrock can be queried for a list. On every other provider the CLI reads its own
+ * built-in catalog, so a missing `aws` is normal for those users, and naming it would send
+ * them after a tool they have no reason to install.
  */
 const FALLBACK_NOTES: Record<NonNullable<ModelListResult['reason']>, string> = {
   'no-cli':

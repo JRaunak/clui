@@ -44,18 +44,16 @@ function pickableProfileIds(ids: string[]): string[] {
 }
 
 /**
- * Absolute path to `aws`, asked of the login shell (which knows the user's real PATH —
- * a Finder-launched app does not). Resolving it here rather than letting execFile search
- * PATH means the binary is pinned once per process instead of re-looked-up on every call,
- * so a PATH entry that changes underneath us can't swap the executable.
+ * Absolute path to `aws`, asked of the login shell, which knows the user's real PATH where a
+ * Finder-launched app does not. Pinned for the process so a later PATH change can't swap the
+ * executable out from under a query.
  */
 let awsPath: string | null = null
 async function resolveAws(): Promise<string> {
   if (awsPath) return awsPath
   const shell = process.env.SHELL || '/bin/zsh'
-  // `command -v` exits 1 when the binary is absent, so a rejection here means the same
-  // thing as an ENOENT from exec'ing it directly — normalize it so the UI still reports
-  // 'no-cli' rather than the vague 'other'.
+  // `command -v` exits 1 when the binary is absent, which means the same thing as an ENOENT
+  // from exec'ing it. Swallow the rejection so the reason stays 'no-cli', not 'other'.
   const stdout = await execFileP(shell, ['-lic', 'command -v aws'], {
     timeout: 5000,
     encoding: 'utf8'

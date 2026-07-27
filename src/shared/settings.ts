@@ -156,13 +156,12 @@ export const FALLBACK_MODEL_IDS: string[] = [
  * Parse family + numeric version + 1M flag out of a model id, across every provider's id
  * shape: Bedrock's `us.anthropic.claude-opus-5`, Vertex's `claude-sonnet-4-5@20250929`,
  * Foundry's bare `claude-sonnet-4-6`, Mantle's `anthropic.claude-opus-5`, and the bare
- * aliases (`opus`, `haiku`) the CLI uses on first-party providers. Substring matching, so a
- * prefix or suffix Clui has never seen doesn't break it.
+ * aliases (`opus`, `haiku`) the CLI uses on first-party providers. Matching is by substring
+ * so an unfamiliar prefix or suffix still parses.
  *
- * An alias carries NO version, and it deliberately isn't assumed to be the newest: the
- * CLI's own table maps `sonnet` to Sonnet 4.5 on Bedrock while Sonnet 5 exists. So
- * `version` stays 0 and `versioned` reports that, letting the gates below decline to
- * downgrade a model they can't identify.
+ * An alias carries no version, and it is NOT assumed to be the newest: the CLI's own table
+ * maps `sonnet` to Sonnet 4.5 on Bedrock while Sonnet 5 exists. `versioned` reports the
+ * absence so the gates below can decline to downgrade a model they can't identify.
  */
 function parseModelId(id: string): {
   family: 'opus' | 'sonnet' | 'haiku' | 'fable' | 'unknown'
@@ -201,11 +200,10 @@ function effortsFor(id: string): EffortChoice[] {
   const base: EffortChoice[] = ['low', 'medium', 'high']
   let max = false
   let xhigh = false
-  // An unversioned alias (`opus` on a first-party provider) can't be gated by version, and
-  // capping it at `high` would silently strip xhigh/max from what is usually the newest
-  // model in its family. Offer the full range for the families that have it and let the CLI
-  // reject an unsupported level — a visible error beats a hidden downgrade. Haiku is the
-  // exception: no version of it has ever supported effort.
+  // An unversioned alias can't be gated by version, and capping it at `high` would strip
+  // xhigh/max from what is usually the newest model in its family. Offer the full range and
+  // let the CLI reject a level it doesn't support, since a visible error beats a silent
+  // downgrade. Haiku is out because no version of it supports effort.
   if (!versioned) {
     if (family === 'opus' || family === 'sonnet' || family === 'fable') return [...base, 'xhigh', 'max']
     return base
