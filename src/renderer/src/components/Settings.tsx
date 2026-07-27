@@ -20,10 +20,17 @@ import { IconClose, IconWarn } from './Icon'
 import { applyTheme } from '../lib/theme'
 import { useEscape } from '../lib/useEscape'
 
-/** What to tell the user when the model list is the bundled fallback, not Bedrock's.
- *  The generic case names no command — we don't know which one would help. */
+/**
+ * What to tell the user when the model list is the bundled fallback rather than a live one.
+ *
+ * Only Bedrock can be queried for a list; on every other provider the CLI reads its own
+ * built-in catalog, so a missing `aws` is the NORMAL state for them and naming it would
+ * send them after a tool they have no reason to install. Hence 'no-cli' says what is true
+ * for everyone — the list is built in — and only mentions aws as the way to get a live one.
+ */
 const FALLBACK_NOTES: Record<NonNullable<ModelListResult['reason']>, string> = {
-  'no-cli': "The aws CLI isn't on Clui's PATH, so newer models may be missing.",
+  'no-cli':
+    "Showing Clui's built-in model list. A live list needs the aws CLI on Clui's PATH, which only applies if you use Bedrock.",
   'expired-creds':
     'Your AWS credentials have expired, so newer models may be missing. Run aws sso login, then reopen Settings.',
   other:
