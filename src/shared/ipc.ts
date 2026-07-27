@@ -89,6 +89,16 @@ export interface TaggedEvent {
   event: DomainEvent
 }
 
+/** Result of a model-list query: the ids plus whether they actually came from Bedrock. */
+export interface ModelListResult {
+  ids: string[]
+  /** True only when this call's ids came LIVE from Bedrock (or from a cached live
+   *  result). False means `ids` is Clui's bundled fallback. */
+  live: boolean
+  /** Coarse cause when `live` is false, so the UI can name the fix. */
+  reason?: 'no-cli' | 'expired-creds' | 'other'
+}
+
 /** Detected CLI binary info shown in Settings. */
 export interface CliInfo {
   path: string | null
@@ -204,8 +214,13 @@ export interface CluiApi {
    * the "System Default" (inherit) mode resolves to. Returns 'default' if unset.
    */
   getSystemPermissionMode: () => Promise<string>
-  /** List available model ids (live from Bedrock, cached; bundled fallback). */
-  listModels: (refresh?: boolean) => Promise<string[]>
+  /**
+   * List available model ids. `live` is true when these ids came from Bedrock (a
+   * successful query, or the cache of one) and false when they're Clui's bundled
+   * fallback, with `reason` naming the cause. Only success is cached, so `live` is a
+   * PER-CALL fact — a later call can go live again; never latch it as app state.
+   */
+  listModels: (refresh?: boolean) => Promise<ModelListResult>
   /** Resolve a dropped/picked File's absolute path (Electron 33 `webUtils`). Synchronous;
    *  returns '' when the File has no backing path (e.g. a pasted screenshot Blob). */
   getPathForFile: (file: File) => string

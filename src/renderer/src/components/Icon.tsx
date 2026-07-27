@@ -117,6 +117,18 @@ export function IconSliders(p: IconProps): JSX.Element {
   )
 }
 
+/** Triangle with a bang. Pairs with `text-warn` so a degraded state is signaled by SHAPE
+ *  too, not amber alone (WCAG 1.4.1). */
+export function IconWarn(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M12 4 2.8 20h18.4z" />
+      <path d="M12 9.5v4" />
+      <path d="M12 16.6h.01" />
+    </Svg>
+  )
+}
+
 export function IconShield(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>

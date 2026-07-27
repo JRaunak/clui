@@ -567,7 +567,7 @@ async function beginSession(
   // Cache the available model ids so session-init can reconcile the picker to the
   // CLI's actually-running model (best-effort; empty on failure → reconcile falls
   // back to the reported id).
-  void window.clui.listModels().then((ids) => { if (ids.length) knownModelIds = ids })
+  void window.clui.listModels().then(({ ids }) => { if (ids.length) knownModelIds = ids })
 
   // On resume, reconstruct prior history from the transcript so it renders in the
   // chat, then continue streaming new turns on top. Best-effort / display-only.

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useActive, useSession } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { useClickOutside } from '../lib/useClickOutside'
-import { IconSliders, IconRefresh, IconLock } from './Icon'
+import { IconSliders, IconRefresh, IconLock, IconWarn } from './Icon'
 import {
   deriveModelInfo,
   groupModels,
@@ -27,6 +27,10 @@ const EFFORT_COLORS: Record<EffortChoice, string> = {
 /** Delay before a model row's effort flyout opens on hover (ms). */
 const HOVER_DELAY = 400
 
+/** Floor for the refresh spinner. A missing `aws` rejects in single-digit ms, which reads
+ *  as a flicker rather than a retry; the project bans sub-400ms spinners. */
+const MIN_SPIN = 350
+
 /**
  * Composer control: current model + effort button that opens an upward popover of
  * the (live, Bedrock-derived) models. Hovering a model — after a short delay —
@@ -46,6 +50,9 @@ export function ModelEffortPicker(): JSX.Element {
   const setUltracode = useSession((s) => s.setUltracode)
   const [open, setOpen] = useState(false)
   const [models, setModels] = useState<ModelInfo[]>([])
+  // Per-call, not app state: only a SUCCESSFUL list is cached in main, so a later call
+  // (or the refresh button) can go live again.
+  const [live, setLive] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [hover, setHover] = useState<ModelChoice | null>(null)
   const ref = useRef<HTMLDivElement>(null)
@@ -54,7 +61,10 @@ export function ModelEffortPicker(): JSX.Element {
   // Load the live model list once the popover first opens.
   useEffect(() => {
     if (!open || models.length) return
-    window.clui.listModels().then((ids) => setModels(ids.map(deriveModelInfo)))
+    window.clui.listModels().then((res) => {
+      setModels(res.ids.map(deriveModelInfo))
+      setLive(res.live)
+    })
   }, [open, models.length])
 
   // Force a fresh live query (Bedrock may have gained a model, or the first query
@@ -62,8 +72,13 @@ export function ModelEffortPicker(): JSX.Element {
   const refresh = async (): Promise<void> => {
     setRefreshing(true)
     try {
-      const ids = await window.clui.listModels(true)
-      setModels(ids.map(deriveModelInfo))
+      // Awaited (not a bare setTimeout) so no timer can outlive the unmount.
+      const [res] = await Promise.all([
+        window.clui.listModels(true),
+        new Promise((r) => setTimeout(r, MIN_SPIN))
+      ])
+      setModels(res.ids.map(deriveModelInfo))
+      setLive(res.live)
     } finally {
       setRefreshing(false)
     }
@@ -144,7 +159,7 @@ export function ModelEffortPicker(): JSX.Element {
             <button
               type="button"
               className="text-dim transition-colors hover:text-content"
-              title="Refresh model list from Bedrock"
+              title={live ? 'Refresh model list from Bedrock' : 'Retry the live model query'}
               onClick={(e) => {
                 e.stopPropagation()
                 void refresh()
@@ -153,6 +168,18 @@ export function ModelEffortPicker(): JSX.Element {
               <IconRefresh className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
           </div>
+          {/* Own line UNDER the header, not in it: the left slot is already spoken for by
+              the ultracode string. Wraps to two lines at w-[180px] — accepted, since
+              shrinking it below the meta size would fail the contrast/size floor. */}
+          {!live && (
+            <div
+              className="flex items-start gap-1 px-3 pb-1 text-[11px] text-warn"
+              title="Couldn't reach Bedrock. This is Clui's built-in list and may be missing newer models. Refresh to retry."
+            >
+              <IconWarn className="mt-px h-3 w-3 shrink-0" />
+              <span>Built-in list, may be incomplete</span>
+            </div>
+          )}
           {models.length === 0 && <div className="px-3 py-2 text-dim">Loading models…</div>}
           {/* Grouped by family (version-desc within each) so 13 near-identically-named
               models aren't a flat interleaved wall. Purely a display transform over the

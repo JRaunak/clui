@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CliInfo } from '../../../shared/ipc'
+import type { CliInfo, ModelListResult } from '../../../shared/ipc'
 import {
   PERMISSION_MODES,
   PERMISSION_MODE_LABELS,
@@ -16,9 +16,19 @@ import {
 } from '../../../shared/settings'
 import { Dropdown } from './Dropdown'
 import { Button } from './Button'
-import { IconClose } from './Icon'
+import { IconClose, IconWarn } from './Icon'
 import { applyTheme } from '../lib/theme'
 import { useEscape } from '../lib/useEscape'
+
+/** What to tell the user when the model list is the bundled fallback, not Bedrock's.
+ *  The generic case names no command — we don't know which one would help. */
+const FALLBACK_NOTES: Record<NonNullable<ModelListResult['reason']>, string> = {
+  'no-cli': "The aws CLI isn't on Clui's PATH, so newer models may be missing.",
+  'expired-creds':
+    'Your AWS credentials have expired, so newer models may be missing. Run aws sso login, then reopen Settings.',
+  other:
+    "Showing Clui's built-in list. The live Bedrock query failed, so newer models may be missing. Check the aws CLI and your credentials, then reopen Settings."
+}
 
 /**
  * Settings modal: CLI path override (+auto-detect preview), editor command,
@@ -30,7 +40,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
   const [checking, setChecking] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [modelIds, setModelIds] = useState<string[]>([])
+  const [modelList, setModelList] = useState<ModelListResult>({ ids: [], live: true })
   // Per-key provenance from the main process ('override' | 'cli' | 'default'), plus the
   // keys staged for reset. Both drive the reset control; the modal commits on Save, so a
   // reset is staged (not written) until then, and re-picking a value un-stages it.
@@ -56,7 +66,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
       persistedTheme.current = values.theme
       void checkCli(values.cliPath)
     })
-    window.clui.listModels().then(setModelIds)
+    window.clui.listModels().then(setModelList)
   }, [])
 
   // On unmount, revert an unsaved live theme preview — but ONLY if one was made and
@@ -124,10 +134,10 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
     if (dir) set('defaultWorkspace', dir)
   }
 
-  if (!settings) return <Overlay onClose={onClose}>Loading…</Overlay>
+  if (!settings) return <Overlay>Loading…</Overlay>
 
   return (
-    <Overlay onClose={onClose}>
+    <Overlay>
       <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
         <div className="font-serif text-lg font-semibold text-content">Settings</div>
         <button
@@ -229,14 +239,24 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
 
         <Field
           label="Model"
-          hint={`Default model for new sessions (changeable per-session). List is fetched live from Bedrock.${
+          hint={`Default model for new sessions (changeable per-session).${
             sources?.model === 'cli' ? ' Currently inheriting from ~/.claude/settings.json.' : ''
           }`}
           onReset={isOverridden('model') ? () => reset('model') : undefined}
+          // Amber = degraded but usable: they still have a working list, just possibly
+          // an incomplete one. Glyph + text carry it so it isn't status-by-colour.
+          note={
+            !modelList.live && (
+              <p className="flex items-start gap-1.5 text-[12px] text-warn" role="status">
+                <IconWarn className="mt-px h-3.5 w-3.5 shrink-0" />
+                {FALLBACK_NOTES[modelList.reason ?? 'other']}
+              </p>
+            )
+          }
         >
           <Dropdown<CluiSettings['model']>
             value={settings.model}
-            options={modelIds.map((id) => ({ value: id, label: deriveModelInfo(id).label }))}
+            options={modelList.ids.map((id) => ({ value: id, label: deriveModelInfo(id).label }))}
             onChange={(m) => set('model', m)}
           />
         </Field>
@@ -297,22 +317,11 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
   )
 }
 
-function Overlay({
-  children,
-  onClose
-}: {
-  children: React.ReactNode
-  onClose: () => void
-}): JSX.Element {
+/** No scrim dismissal: the form holds unsaved edits an outside click would discard. */
+function Overlay({ children }: { children: React.ReactNode }): JSX.Element {
   return (
-    <div
-      className="absolute inset-0 z-40 flex items-center justify-center bg-black/50"
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-[85vh] w-[min(620px,92%)] flex-col rounded-lg border border-border bg-bg-elev shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50">
+      <div className="flex max-h-[85vh] w-[min(620px,92%)] flex-col rounded-lg border border-border bg-bg-elev shadow-2xl">
         {children}
       </div>
     </div>
@@ -323,6 +332,7 @@ function Field({
   label,
   hint,
   onReset,
+  note,
   children
 }: {
   label: string
@@ -332,6 +342,8 @@ function Field({
    *  best neutral is 1.79:1) and the only value that passes is the scarce accent, so
    *  the control carries the state instead of a second colored channel. */
   onReset?: () => void
+  /** Rendered after the hint, for a state the hint can't express (e.g. a degraded source). */
+  note?: React.ReactNode
   children: React.ReactNode
 }): JSX.Element {
   return (
@@ -353,6 +365,7 @@ function Field({
       </div>
       {children}
       {hint && <p className="text-[12px] text-dim">{hint}</p>}
+      {note}
     </div>
   )
 }

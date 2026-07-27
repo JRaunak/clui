@@ -3,11 +3,13 @@
  * profiles via the AWS CLI using the user's configured profile/region (from
  * ~/.claude/settings.json `bedrock`), dedupes the us./global. prefixes, and
  * returns raw model ids. Falls back to a bundled list if the query fails (no aws
- * CLI, non-Bedrock provider, etc.). Only a SUCCESSFUL result is cached, so a
+ * CLI, non-Bedrock provider, etc.) — flagged `live: false` so the UI can say so
+ * instead of claiming a live list. Only a SUCCESSFUL result is cached, so a
  * transient failure retries rather than pinning the fallback for the process.
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import type { ModelListResult } from '../../shared/ipc'
 import { FALLBACK_MODEL_IDS, deriveModelInfo, normalizeModelId } from '../../shared/settings'
 import { loginShellAuthEnv } from '../cli/shell-env'
 import { readCliSettings } from '../settings/cli-settings'
@@ -35,16 +37,27 @@ function normalizeProfileIds(ids: string[]): string[] {
   return out
 }
 
+/** Coarse cause of a failed live query, so the UI can name the fix (or stay vague). */
+function failureReason(e: unknown): NonNullable<ModelListResult['reason']> {
+  const err = e as { code?: unknown; stderr?: unknown; message?: unknown }
+  if (err?.code === 'ENOENT') return 'no-cli'
+  const text = `${typeof err?.stderr === 'string' ? err.stderr : ''} ${
+    typeof err?.message === 'string' ? err.message : ''
+  }`
+  return /expired|ExpiredToken|sso/i.test(text) ? 'expired-creds' : 'other'
+}
+
 /**
  * List available model ids. Live-queries Bedrock; caches ONLY successful results;
  * falls back to the bundled list on failure WITHOUT caching it — so a transient
  * failure (aws not yet on PATH, creds refreshing, network blip) is retried on the
  * next call instead of pinning the stale fallback for the whole process lifetime.
+ * `live` is therefore a per-call fact, never a process-wide "offline" state.
  * The 1M Opus variant is appended when the base opus-4-8 is present (Bedrock
  * doesn't list [1m] as a separate profile, but the CLI accepts the suffix).
  */
-export async function listModels(refresh = false): Promise<string[]> {
-  if (cache && !refresh) return cache
+export async function listModels(refresh = false): Promise<ModelListResult> {
+  if (cache && !refresh) return { ids: cache, live: true }
   const { profile, region } = (await readCliSettings()).bedrock
   try {
     // A Finder-launched app inherits a minimal env, so `aws` here fails with
@@ -69,11 +82,11 @@ export async function listModels(refresh = false): Promise<string[]> {
     const ids = normalizeProfileIds(stdout.split(/\s+/).filter(Boolean))
     if (ids.length === 0) throw new Error('no anthropic models returned')
     cache = withVariants(ids)
-    return cache
-  } catch {
+    return { ids: cache, live: true }
+  } catch (e) {
     // Do NOT cache the fallback — leave `cache` null so the next call retries the
     // live query. Return the bundled list for this call only.
-    return FALLBACK_MODEL_IDS
+    return { ids: FALLBACK_MODEL_IDS, live: false, reason: failureReason(e) }
   }
 }
 
