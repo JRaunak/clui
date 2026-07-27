@@ -152,11 +152,23 @@ export const FALLBACK_MODEL_IDS: string[] = [
 // date-suffixed profile yields 'claude-haiku-4-5', which the API rejects — that shortening
 // once made half the picker unselectable. `labelFor` parses the full id for display.
 
-/** Parse family + numeric version + 1M flag from a model id/alias. */
+/**
+ * Parse family + numeric version + 1M flag out of a model id, across every provider's id
+ * shape: Bedrock's `us.anthropic.claude-opus-5`, Vertex's `claude-sonnet-4-5@20250929`,
+ * Foundry's bare `claude-sonnet-4-6`, Mantle's `anthropic.claude-opus-5`, and the bare
+ * aliases (`opus`, `haiku`) the CLI uses on first-party providers. Substring matching, so a
+ * prefix or suffix Clui has never seen doesn't break it.
+ *
+ * An alias carries NO version, and it deliberately isn't assumed to be the newest: the
+ * CLI's own table maps `sonnet` to Sonnet 4.5 on Bedrock while Sonnet 5 exists. So
+ * `version` stays 0 and `versioned` reports that, letting the gates below decline to
+ * downgrade a model they can't identify.
+ */
 function parseModelId(id: string): {
   family: 'opus' | 'sonnet' | 'haiku' | 'fable' | 'unknown'
   version: number
   is1m: boolean
+  versioned: boolean
 } {
   const s = id.toLowerCase()
   const is1m = /\[1m\]/.test(s)
@@ -169,12 +181,14 @@ function parseModelId(id: string): {
         : s.includes('fable')
           ? 'fable'
           : 'unknown'
-  // Grab the version after the family name: "opus-4-8" → 4.8, "sonnet-5" → 5. The minor
-  // part is a SINGLE digit on purpose: profile ids carry a date next ("sonnet-4-20250514"),
-  // and a greedy \d+ read that as version 2025051.4.
-  const m = s.match(/(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d)(?!\d))?/)
+  // "opus-4-8" → 4.8, "sonnet-5" → 5, "3-5-sonnet" → 3.5 (the pre-4 families put the
+  // version BEFORE the name). The minor part is a single digit on purpose: profile ids
+  // carry a date next ("sonnet-4-20250514"), and a greedy \d+ read that as 2025051.4.
+  const after = s.match(/(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d)(?!\d))?/)
+  const before = s.match(/(\d+)-(\d)-(?:opus|sonnet|haiku|fable)/)
+  const m = after ?? before
   const version = m ? Number(m[1]) + (m[2] ? Number(m[2]) / 10 : 0) : 0
-  return { family, version, is1m }
+  return { family, version, is1m, versioned: version > 0 }
 }
 
 /**
@@ -183,10 +197,19 @@ function parseModelId(id: string): {
  * Sonnet 4.6+" for max). Version-based so future models qualify automatically.
  */
 function effortsFor(id: string): EffortChoice[] {
-  const { family, version } = parseModelId(id)
+  const { family, version, versioned } = parseModelId(id)
   const base: EffortChoice[] = ['low', 'medium', 'high']
   let max = false
   let xhigh = false
+  // An unversioned alias (`opus` on a first-party provider) can't be gated by version, and
+  // capping it at `high` would silently strip xhigh/max from what is usually the newest
+  // model in its family. Offer the full range for the families that have it and let the CLI
+  // reject an unsupported level — a visible error beats a hidden downgrade. Haiku is the
+  // exception: no version of it has ever supported effort.
+  if (!versioned) {
+    if (family === 'opus' || family === 'sonnet' || family === 'fable') return [...base, 'xhigh', 'max']
+    return base
+  }
   if (family === 'opus') {
     max = version >= 4.6
     xhigh = version >= 4.7
@@ -205,7 +228,16 @@ function effortsFor(id: string): EffortChoice[] {
 }
 
 /** Build a friendly label from a model id, e.g. "Opus 4.8 (1M)". */
+/** The CLI's non-model selector values, which name a policy rather than a model. */
+const SELECTOR_LABELS: Record<string, string> = {
+  default: 'Default',
+  best: 'Best available',
+  opusplan: 'Opus for plans, Sonnet to build'
+}
+
 function labelFor(id: string): string {
+  const selector = SELECTOR_LABELS[id.toLowerCase().replace(/\[1m\]$/, '')]
+  if (selector) return selector
   const { family, version, is1m } = parseModelId(id)
   if (family === 'unknown') return id
   const cap = family.charAt(0).toUpperCase() + family.slice(1)
