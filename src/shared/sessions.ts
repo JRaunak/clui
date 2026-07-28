@@ -36,6 +36,13 @@ export interface ProjectGroup {
   cwd: string
   /** Human label (basename of cwd). */
   label: string
+  /**
+   * Whether the workspace folder is still on disk. A transcript outlives its folder
+   * (deleted, moved, or a /tmp dir the OS reaped), and the CLI can't spawn into a missing
+   * cwd, so resume and branch are impossible while export and delete still work. One stat
+   * per GROUP rather than per session, inside a scan that already reads every file.
+   */
+  exists: boolean
   sessions: SessionSummary[]
 }
 

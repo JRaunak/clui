@@ -164,7 +164,7 @@ export class ClaudeSession extends EventEmitter {
     if (!existsSync(this.opts.cwd)) {
       this.emitEvent({
         type: 'error',
-        message: `Workspace folder no longer exists: ${this.opts.cwd}. Pick a new workspace to start a session here.`
+        message: `Can't resume: ${this.opts.cwd} no longer exists. The transcript is safe. You can still export or delete it from the row menu.`
       })
       if (!this.closed) {
         this.closed = true

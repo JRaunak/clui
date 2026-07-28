@@ -194,14 +194,14 @@ export function App(): JSX.Element {
               <span title={cwd ?? ''}>
                 Workspace: <span className="text-dim">{cwd ? basename(cwd) : '—'}</span>
               </span>
-              <span className="text-border">·</span>
+              <span className="text-faint">·</span>
               <span title={sessionId ?? ''}>
                 Session:{' '}
                 <span className="font-mono text-dim">{sessionId ? sessionId.slice(0, 8) : '—'}</span>
               </span>
               {costUsd !== null && (
                 <>
-                  <span className="text-border">·</span>
+                  <span className="text-faint">·</span>
                   <span title="Cumulative session cost (from the CLI result event)">
                     Cost: <span className="font-mono text-dim">{formatCost(costUsd)}</span>
                   </span>
@@ -261,7 +261,7 @@ function BackgroundTasksSlot(): JSX.Element | null {
   if (!hasTasks) return null
   return (
     <>
-      <span className="text-border">·</span>
+      <span className="text-faint">·</span>
       <BackgroundTasks />
     </>
   )

@@ -56,6 +56,7 @@ export function ModelEffortPicker(): JSX.Element {
   const [refreshing, setRefreshing] = useState(false)
   const [hover, setHover] = useState<ModelChoice | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Load the live model list once the popover first opens.
@@ -86,8 +87,17 @@ export function ModelEffortPicker(): JSX.Element {
 
   const dismiss = useCallback(() => setOpen(false), [])
   useClickOutside(ref, open, dismiss)
-  // Esc closes the popover via the shared escape-stack (nesting-aware).
-  useEscape(open, dismiss)
+  // Esc closes via the shared escape-stack (nesting-aware) and hands focus back to the
+  // trigger, since the focused row unmounts with the popover and would otherwise leave
+  // focus on <body>. An outside click deliberately doesn't: it would steal focus from
+  // whatever the user just clicked.
+  useEscape(
+    open,
+    useCallback(() => {
+      setOpen(false)
+      triggerRef.current?.focus()
+    }, [])
+  )
 
   const clearHoverTimer = (): void => {
     if (hoverTimer.current) {
@@ -113,6 +123,7 @@ export function ModelEffortPicker(): JSX.Element {
   return (
     <div ref={ref} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         className="flex h-8 items-center gap-1.5 rounded-md border border-border bg-bg px-2.5 text-xs text-content transition-colors hover:border-border-strong focus:border-accent focus:outline-none"
         onClick={() => {
@@ -158,7 +169,7 @@ export function ModelEffortPicker(): JSX.Element {
             <span>{ultracode ? 'Model · Ultra needs X-High' : 'Model'}</span>
             <button
               type="button"
-              className="text-dim transition-colors hover:text-content"
+              className="-my-1 flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content"
               title={live ? 'Refresh model list from Bedrock' : 'Retry the live model query'}
               onClick={(e) => {
                 e.stopPropagation()

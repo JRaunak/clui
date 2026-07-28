@@ -45,6 +45,9 @@ interface MergedSession {
 interface MergedGroup {
   cwd: string
   label: string
+  /** From ProjectGroup; see its doc. Defaults true for a live-only group, which has no
+   *  on-disk counterpart to ask and whose process already spawned. */
+  exists: boolean
   sessions: MergedSession[]
 }
 
@@ -338,7 +341,10 @@ export function SessionsSidebar(): JSX.Element {
       const visible = sessions.filter((s) => !(s.id && pendingIds.has(s.id)))
       if (visible.length === 0) continue
       visible.sort((a, b) => b.createdMs - a.createdMs)
-      out.push({ cwd, label: basename(cwd) || cwd, sessions: visible })
+      // A cwd with no on-disk group is live-only (brand new, not yet flushed), and its
+      // process spawned successfully, so the folder is there.
+      const exists = groups.find((g) => g.cwd === cwd)?.exists ?? true
+      out.push({ cwd, label: basename(cwd) || cwd, exists, sessions: visible })
     }
     out.sort((a, b) => (b.sessions[0]?.createdMs ?? 0) - (a.sessions[0]?.createdMs ?? 0))
     return out
@@ -361,7 +367,7 @@ export function SessionsSidebar(): JSX.Element {
           )}
         </span>
         <button
-          className="rounded p-0.5 text-dim transition-colors hover:text-content"
+          className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content"
           onClick={() => void refresh()}
           title="Refresh sessions"
         >
@@ -413,6 +419,14 @@ export function SessionsSidebar(): JSX.Element {
                       active={Boolean(s.handleId) && s.handleId === activeHandleId}
                       onOpen={() => {
                         if (s.live && s.handleId) activateSession(s.handleId)
+                        // A live session activates regardless, since its process exists. A
+                        // dormant one is answered here rather than in resumeSession, which
+                        // would read the whole transcript and mount a slice before the cwd
+                        // guard tore it down.
+                        else if (!g.exists)
+                          setNotice(
+                            `Can't resume: ${g.cwd} no longer exists. The transcript is safe. You can still export or delete it from the row menu.`
+                          )
                         else if (s.id) void resumeSession(s.cwd, s.id)
                       }}
                       onClose={s.live && s.handleId ? () => void closeSession(s.handleId!) : undefined}
@@ -422,8 +436,10 @@ export function SessionsSidebar(): JSX.Element {
                           : undefined
                       }
                       onExport={s.onDisk && s.id ? () => void exportSession(s.id!, s.title) : undefined}
+                      // Branching spawns into the same cwd, so it's unavailable once the
+                      // folder is gone. Export and delete only touch the transcript, so they stay.
                       onFork={
-                        s.id ? () => void forkSession(s.cwd, s.id!) : undefined
+                        s.id && g.exists ? () => void forkSession(s.cwd, s.id!) : undefined
                       }
                       onChanged={refresh}
                     />
@@ -640,6 +656,11 @@ function RowMenu({
 }): JSX.Element | null {
   const [open, setOpen] = useState(false)
   const [focusIdx, setFocusIdx] = useState(0)
+  // Which way the menu opens. The session list is `overflow-y-auto`, so an absolutely
+  // positioned menu can't escape it: on a row near the bottom it gets clipped mid-item and
+  // the last action is unreachable. Measured at open time because the row's distance from
+  // the bottom depends on scroll position.
+  const [up, setUp] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -660,6 +681,10 @@ function RowMenu({
 
   const openMenu = (): void => {
     setFocusIdx(0)
+    // ~34px per item + padding, floored so a 1-item menu still measures sanely.
+    const needed = Math.max(items.length * 34 + 12, 60)
+    const below = window.innerHeight - (btnRef.current?.getBoundingClientRect().bottom ?? 0)
+    setUp(below < needed)
     setOpen(true)
   }
 
@@ -701,7 +726,9 @@ function RowMenu({
         <div
           role="menu"
           aria-label={`Actions for “${title}”`}
-          className="absolute right-0 top-full z-30 mt-1 min-w-[188px] rounded-lg border border-border bg-bg-elev p-1 shadow-lg"
+          className={`absolute right-0 z-30 min-w-[188px] rounded-lg border border-border bg-bg-elev p-1 shadow-lg ${
+            up ? 'bottom-full mb-1' : 'top-full mt-1'
+          }`}
           onKeyDown={onMenuKey}
         >
           {items.map((it, i) => (

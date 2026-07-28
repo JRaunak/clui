@@ -9,7 +9,7 @@
  * rather than mutating the CLI's files, so they survive resume and CLI upgrades.
  */
 import { app } from 'electron'
-import { createReadStream } from 'node:fs'
+import { createReadStream, existsSync } from 'node:fs'
 import { readdir, stat, rm, readFile, writeFile, mkdir } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { homedir } from 'node:os'
@@ -231,7 +231,7 @@ function groupByProject(summaries: SessionSummary[]): ProjectGroup[] {
   for (const [cwd, sessions] of byCwd) {
     // Order by creation time (newest first). Immutable → stable across resume/delete.
     sessions.sort((a, b) => b.createdMs - a.createdMs)
-    groups.push({ cwd, label: basename(cwd) || cwd, sessions })
+    groups.push({ cwd, label: basename(cwd) || cwd, exists: existsSync(cwd), sessions })
   }
   // Groups ordered by their most-recently-created session.
   groups.sort((a, b) => (b.sessions[0]?.createdMs ?? 0) - (a.sessions[0]?.createdMs ?? 0))
