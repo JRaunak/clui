@@ -237,7 +237,13 @@
      Paired foregrounds flip: warn/err fills are now dark → white text on them. */
   --color-err: #c02718;
   --color-ok: #0f766e;
-  --color-warn: #b45309;
+  /* Dark gold at Lab hue 85, dE 34.6 from the accent. The hue distance is the point: an
+     amber merely darkened for AA lands near hue 56, close enough to the accent's 45 that a
+     warn banner reads as terracotta and spends the scarce brand accent on a status. Keep
+     any future value clear of ~45. Worst landing is 4.77:1 on bg-raised; the tinted
+     composites (bg-warn/10 in the notice banner, text-warn on bg-user in the permission
+     dropdown) are the tightest at 4.93 and 4.96, so they gate any change here. */
+  --color-warn: #7a5c00;
   --color-info: #1d4ed8;
   --color-on-warn: #ffffff;
   --color-on-err: #ffffff;
