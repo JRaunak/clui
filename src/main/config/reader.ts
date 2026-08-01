@@ -170,6 +170,10 @@ async function readPluginConfigs(): Promise<{ agents: AgentInfo[]; skills: Skill
   const root = join(userClaude(), 'plugins', 'marketplaces')
   const agents: AgentInfo[] = []
   const skills: SkillInfo[] = []
+  // Offer a plugin's items only when enabled in settings.json, keyed "<plugin>@<marketplace>";
+  // else a cloned-but-unenabled marketplace buries the user's own agents under dozens it can't run.
+  const settings = await safeReadJson(join(userClaude(), 'settings.json'))
+  const enabled = (settings?.enabledPlugins ?? {}) as Record<string, unknown>
   let marketplaces: string[]
   try {
     marketplaces = (await readdir(root, { withFileTypes: true }))
@@ -191,6 +195,7 @@ async function readPluginConfigs(): Promise<{ agents: AgentInfo[]; skills: Skill
         continue
       }
       for (const plugin of plugins) {
+        if (enabled[`${plugin}@${mkt}`] !== true) continue
         const pluginDir = join(groupDir, plugin)
         agents.push(...(await readAgentsIn(pluginDir, 'plugin')))
         skills.push(...(await readSkillsIn(pluginDir, 'plugin')))

@@ -128,17 +128,25 @@ export function useComposerAutocomplete(
   const results = useMemo(() => {
     if (!trigger) return []
     const q = trigger.query
+    const ql = q.trim().toLowerCase()
     const scored = candidates
       .map((it) => {
         const m = fuzzyMatch(q, it.value)
         let score = m.score
-        // Files: strongly boost a match on the BASENAME so "@Composer" surfaces
-        // Composer.tsx above a deep path that merely contains those chars. Scored
-        // separately on the basename; take whichever is better + a filename bonus.
-        if (it.kind === 'file' && q.trim()) {
-          const base = it.value.slice(it.value.lastIndexOf('/') + 1)
+        // Tiers spaced 1000 apart so a lower one can't accumulate into a higher: a flat
+        // bonus let "@basil" rank a .light.png (b/s/l on segment starts) above the basil
+        // agent. `base` is the final path segment for a file, the whole name otherwise.
+        // kindLift floats an agent/skill/command above every file, but only on a real name
+        // hit (substring or better), never a scattered match.
+        if (ql) {
+          const base = it.kind === 'file' ? it.value.slice(it.value.lastIndexOf('/') + 1) : it.value
+          const bl = base.toLowerCase()
           const bm = fuzzyMatch(q, base)
-          if (bm.score !== null) score = Math.max(score ?? 0, bm.score + 40)
+          const kindLift = it.kind === 'file' ? 0 : 10000
+          if (bm.score !== null) score = Math.max(score ?? 0, bm.score) // scattered
+          if (bl.includes(ql)) score = Math.max(score ?? 0, kindLift + 1000 + (bm.score ?? 0)) // substring
+          if (bl.startsWith(ql)) score = Math.max(score ?? 0, kindLift + 2000 + (bm.score ?? 0)) // prefix
+          if (bl === ql) score = Math.max(score ?? 0, kindLift + 3000) // exact
         }
         // Highlight indices must index the LABEL we actually render — commands
         // render as "/usage" but are matched on the value "usage", so value-relative
@@ -148,7 +156,10 @@ export function useComposerAutocomplete(
         return { it, score, matches }
       })
       .filter((r) => r.score !== null)
-    if (q.trim()) scored.sort((a, b) => (b.score as number) - (a.score as number))
+    // Tie-break by shorter value: within a tier, "Composer.tsx" beats
+    // "ComposerAutocomplete.tsx" and the exact name beats a longer path that shares its prefix.
+    if (q.trim())
+      scored.sort((a, b) => (b.score as number) - (a.score as number) || a.it.value.length - b.it.value.length)
     return scored.slice(0, 50)
   }, [candidates, trigger?.query])
 
