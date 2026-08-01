@@ -45,6 +45,7 @@
   "build": {
     "appId": "com.clui.app",
     "productName": "Clui",
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },
