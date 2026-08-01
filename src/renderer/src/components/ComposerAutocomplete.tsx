@@ -25,6 +25,10 @@ interface Item {
   insert?: string
 }
 
+/** Score at/above which the query matches a NAME contiguously (substring or better),
+ *  not just as scattered letters in a path. The floor and the scoring tiers share it. */
+const NAME_TIER = 1000
+
 /** The active trigger token at the caret, or null if none. */
 interface Trigger {
   char: '/' | '@'
@@ -144,9 +148,9 @@ export function useComposerAutocomplete(
           const bm = fuzzyMatch(q, base)
           const kindLift = it.kind === 'file' ? 0 : 10000
           if (bm.score !== null) score = Math.max(score ?? 0, bm.score) // scattered
-          if (bl.includes(ql)) score = Math.max(score ?? 0, kindLift + 1000 + (bm.score ?? 0)) // substring
-          if (bl.startsWith(ql)) score = Math.max(score ?? 0, kindLift + 2000 + (bm.score ?? 0)) // prefix
-          if (bl === ql) score = Math.max(score ?? 0, kindLift + 3000) // exact
+          if (bl.includes(ql)) score = Math.max(score ?? 0, kindLift + NAME_TIER + (bm.score ?? 0)) // substring
+          if (bl.startsWith(ql)) score = Math.max(score ?? 0, kindLift + 2 * NAME_TIER + (bm.score ?? 0)) // prefix
+          if (bl === ql) score = Math.max(score ?? 0, kindLift + 3 * NAME_TIER) // exact
         }
         // Highlight indices must index the LABEL we actually render — commands
         // render as "/usage" but are matched on the value "usage", so value-relative
@@ -160,7 +164,13 @@ export function useComposerAutocomplete(
     // "ComposerAutocomplete.tsx" and the exact name beats a longer path that shares its prefix.
     if (q.trim())
       scored.sort((a, b) => (b.score as number) - (a.score as number) || a.it.value.length - b.it.value.length)
-    return scored.slice(0, 50)
+    // Drop scattered matches (below NAME_TIER) only when a real name match exists: "@co" on a
+    // deep cwd is a subsequence of ~3000 paths but a name-match of ~150. When nothing scored
+    // higher, keep them, so a deliberately deep query still finds its file, not an empty menu.
+    const floored = scored.some((r) => (r.score as number) >= NAME_TIER)
+      ? scored.filter((r) => (r.score as number) >= NAME_TIER)
+      : scored
+    return floored.slice(0, 50)
   }, [candidates, trigger?.query])
 
   const open = trigger !== null && results.length > 0
