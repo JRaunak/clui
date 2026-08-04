@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useActive, useSession, loadPersistedCosts } from './store'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useActive, useSession, loadPersistedCosts, EMPTY_PENDING } from './store'
 import { Chat } from './components/Chat'
 import { Composer } from './components/Composer'
 import { SessionsSidebar } from './components/SessionsSidebar'
@@ -34,6 +34,50 @@ export function App(): JSX.Element {
   const [showCustomizations, setShowCustomizations] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
+  const globalSearchOpen = useSession((s) => s.globalSearchOpen)
+  const permissionPending = useActive((s) => (s?.pendingPermissions ?? EMPTY_PENDING).length > 0)
+
+  // An open modal must contain focus and hide the rest of the app from assistive
+  // tech, or Tab walks the ring out of the dialog into the scrimmed content behind
+  // it (WCAG 2.4.3 / 2.1.2). We toggle native `inert` on the two background regions
+  // rather than hand-rolling a Tab cycle: `inert` gives focus-containment + subtree
+  // aria-hidden + pointer-inertness in one property. The overlays render as siblings
+  // of these regions (below), so inerting both leaves only the open dialog reachable.
+  const asideRef = useRef<HTMLElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
+  // Where focus sat in the background before a dialog opened, so we can return it on
+  // close. Tracked live (any focusin outside the overlay host) rather than captured in
+  // an effect, because a child's open-focus (search input) runs before App's effect and
+  // would otherwise be what we captured.
+  const lastBgFocusRef = useRef<HTMLElement | null>(null)
+  const anyOverlayOpen =
+    showSettings || showCustomizations || showPalette || globalSearchOpen || permissionPending
+
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent): void => {
+      const t = e.target as HTMLElement | null
+      if (t && !t.closest('[data-overlay-host]')) lastBgFocusRef.current = t
+    }
+    document.addEventListener('focusin', onFocusIn)
+    return () => document.removeEventListener('focusin', onFocusIn)
+  }, [])
+
+  // Toggle inert with the overlay state. On close, clear inert FIRST (a .focus() on a
+  // still-inert node is a silent no-op), then restore focus to the trigger — falling
+  // back through composer → new-session button → body if the trigger is gone (e.g. a
+  // deleted session row). useLayoutEffect so the DOM is inert before the browser paints.
+  useLayoutEffect(() => {
+    if (asideRef.current) asideRef.current.inert = anyOverlayOpen
+    if (mainRef.current) mainRef.current.inert = anyOverlayOpen
+    if (!anyOverlayOpen) {
+      const prev = lastBgFocusRef.current
+      const fallback =
+        document.querySelector<HTMLElement>('[data-composer-input]') ??
+        document.querySelector<HTMLElement>('[data-new-session]')
+      if (prev && document.contains(prev)) prev.focus()
+      else fallback?.focus()
+    }
+  }, [anyOverlayOpen])
 
   useEffect(() => {
     window.clui.getCliInfo().then(setCliInfo)
@@ -114,12 +158,15 @@ export function App(): JSX.Element {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <aside className="flex h-screen min-h-0 w-72 shrink-0 flex-col gap-3 border-r border-border bg-bg-sidebar px-3 pt-4">
+      <aside
+        ref={asideRef}
+        className="flex h-screen min-h-0 w-72 shrink-0 flex-col gap-3 border-r border-border bg-bg-sidebar px-3 pt-4"
+      >
         <div className="flex items-baseline gap-2 px-1">
           <span className="font-serif text-2xl font-semibold tracking-tight text-content">Clui</span>
           <span className="h-1.5 w-1.5 translate-y-[-2px] rounded-full bg-accent" aria-hidden="true" />
         </div>
-        <Button variant="primary" size="md" onClick={pickAndStart} className="w-full">
+        <Button data-new-session variant="primary" size="md" onClick={pickAndStart} className="w-full">
           <IconPlus className="h-4 w-4" />
           {cwd ? 'New session' : 'Pick a workspace'}
         </Button>
@@ -145,7 +192,7 @@ export function App(): JSX.Element {
         </div>
       </aside>
 
-      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {/* No top bar: Settings moved to the sidebar (below New Session). The old h-10
             header held only the gear far-right — empty chrome that miscued as a title bar
             and stole ~40px of transcript height. macOS draws the native title bar; the
@@ -159,27 +206,6 @@ export function App(): JSX.Element {
           </div>
         )}
 
-        <PermissionDialog />
-        <GlobalSearch />
-        {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} />}
-        {showSettings && <Settings onClose={() => setShowSettings(false)} />}
-        {showPalette && (
-          <CommandPalette
-            onClose={() => setShowPalette(false)}
-            onNewSession={() => {
-              setShowPalette(false)
-              void pickAndStart()
-            }}
-            onOpenSettings={() => {
-              setShowPalette(false)
-              setShowSettings(true)
-            }}
-            onOpenCustomizations={() => {
-              setShowPalette(false)
-              setShowCustomizations(true)
-            }}
-          />
-        )}
         {cwd && viewingSubagent ? (
           // Maximized transcript view takes over the main region (sidebar persists).
           <SubagentView />
@@ -244,6 +270,35 @@ export function App(): JSX.Element {
           </div>
         )}
       </main>
+
+      {/* Overlays mount OUTSIDE <aside>/<main> (both siblings here) so those regions
+          can be inerted wholesale while a dialog is open — see the inert effect above.
+          Each scrim is `fixed inset-0` (viewport-anchored), so it also covers the
+          sidebar, which a `<main>`-scoped `absolute inset-0` never did. `data-overlay-host`
+          marks this subtree so the focus tracker ignores focus moves inside a dialog. */}
+      <div data-overlay-host>
+        <PermissionDialog />
+        <GlobalSearch />
+        {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} />}
+        {showSettings && <Settings onClose={() => setShowSettings(false)} />}
+        {showPalette && (
+          <CommandPalette
+            onClose={() => setShowPalette(false)}
+            onNewSession={() => {
+              setShowPalette(false)
+              void pickAndStart()
+            }}
+            onOpenSettings={() => {
+              setShowPalette(false)
+              setShowSettings(true)
+            }}
+            onOpenCustomizations={() => {
+              setShowPalette(false)
+              setShowCustomizations(true)
+            }}
+          />
+        )}
+      </div>
     </div>
   )
 }

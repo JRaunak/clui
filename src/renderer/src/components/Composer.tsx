@@ -238,6 +238,7 @@ export function Composer(): JSX.Element {
           {ac.render()}
           <textarea
             ref={textareaRef}
+            data-composer-input
             className="max-h-48 min-h-[52px] w-full resize-none bg-transparent px-2 pt-1.5 text-sm leading-normal text-content outline-none placeholder:text-dim focus-visible:outline-none"
             placeholder="Message Claude…  (Enter to send, Shift+Enter for newline · / for commands, @ for files, paste or drop images)"
             value={text}

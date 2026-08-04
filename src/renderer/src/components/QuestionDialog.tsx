@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSession, type PendingPermission } from '../store'
 import { useEscape } from '../lib/useEscape'
+import { useDialogFocus } from '../lib/useDialogFocus'
 import { Button } from './Button'
 import { IconCheck } from './Icon'
 
@@ -377,10 +378,16 @@ function Shell({
   onKeyDown?: (e: React.KeyboardEvent) => void
   wide?: boolean
 }): JSX.Element {
+  const dialogRef = useDialogFocus<HTMLDivElement>()
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50" onKeyDown={onKeyDown}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onKeyDown={onKeyDown}>
       <div
-        className={`flex max-h-[80vh] flex-col rounded-xl border border-border bg-bg-elev shadow-lg ${
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Claude is asking"
+        className={`flex max-h-[80vh] flex-col rounded-xl border border-border bg-bg-elev shadow-lg outline-none ${
           wide ? 'w-[min(880px,94%)]' : 'w-[min(600px,92%)]'
         }`}
       >

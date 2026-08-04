@@ -19,6 +19,7 @@ import { Button } from './Button'
 import { IconClose, IconWarn } from './Icon'
 import { applyTheme } from '../lib/theme'
 import { useEscape } from '../lib/useEscape'
+import { useDialogFocus } from '../lib/useDialogFocus'
 
 /**
  * What to tell the user when the model list is the bundled fallback rather than a live one.
@@ -325,9 +326,17 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
 
 /** No scrim dismissal: the form holds unsaved edits an outside click would discard. */
 function Overlay({ children }: { children: React.ReactNode }): JSX.Element {
+  const dialogRef = useDialogFocus<HTMLDivElement>()
   return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="flex max-h-[85vh] w-[min(620px,92%)] flex-col rounded-lg border border-border bg-bg-elev shadow-2xl">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        className="flex max-h-[85vh] w-[min(620px,92%)] flex-col rounded-lg border border-border bg-bg-elev shadow-2xl outline-none"
+      >
         {children}
       </div>
     </div>

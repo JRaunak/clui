@@ -137,13 +137,14 @@ export function GlobalSearch(): JSX.Element | null {
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-start justify-center bg-black/50 px-4 pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 px-4 pt-[12vh]"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) close()
       }}
     >
       <div
         role="dialog"
+        aria-modal="true"
         aria-label="Search all conversations"
         className="flex max-h-[70vh] w-[min(680px,100%)] flex-col overflow-hidden rounded-xl border border-border-strong bg-bg-elev shadow-2xl"
       >

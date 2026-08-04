@@ -2,6 +2,7 @@ import { useActive, useSession, EMPTY_PENDING, type PendingPermission } from '..
 import { Button } from './Button'
 import { IconShield } from './Icon'
 import { QuestionDialog } from './QuestionDialog'
+import { useDialogFocus } from '../lib/useDialogFocus'
 
 /**
  * Modal shown when Claude requests permission for a gated tool call.
@@ -12,6 +13,9 @@ import { QuestionDialog } from './QuestionDialog'
 export function PermissionDialog(): JSX.Element | null {
   const pending = useActive((s) => s?.pendingPermissions ?? EMPTY_PENDING)
   const respond = useSession((s) => s.respondPermission)
+  // Focus the dialog CONTAINER (not a button) on open — anchors focus + announces the
+  // dialog without pre-selecting Allow/Deny, preserving the deliberate no-autofocus gate.
+  const dialogRef = useDialogFocus<HTMLDivElement>()
   const current = pending[0]
   if (!current) return null
 
@@ -34,14 +38,21 @@ export function PermissionDialog(): JSX.Element | null {
   }
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="w-[min(560px,90%)] rounded-xl border border-border bg-bg-elev shadow-lg">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="permission-title"
+        className="w-[min(560px,90%)] rounded-xl border border-border bg-bg-elev shadow-lg outline-none"
+      >
         <div className="border-b border-border px-5 py-3.5">
           <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-warn">
             <IconShield className="h-3.5 w-3.5" />
             Permission required
           </div>
-          <div className="mt-1.5 font-serif text-lg font-semibold text-content">
+          <div id="permission-title" className="mt-1.5 font-serif text-lg font-semibold text-content">
             Allow <span className="text-accent">{current.displayName || current.toolName}</span>?
           </div>
         </div>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useActive } from '../store'
 import { IconClose } from './Icon'
 import { useEscape } from '../lib/useEscape'
+import { useDialogFocus } from '../lib/useDialogFocus'
 import type { ConfigBundle, ConfigOrigin } from '../../../shared/config'
 
 type Tab = 'agents' | 'skills' | 'hooks' | 'mcp'
@@ -38,6 +39,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
 
   // Esc closes the modal (nesting-aware via the escape-stack).
   useEscape(true, onClose)
+  const dialogRef = useDialogFocus<HTMLDivElement>()
 
   const pluginFilter = <T extends { origin: ConfigOrigin }>(items: T[]): T[] =>
     showPlugins ? items : items.filter((it) => it.origin !== 'plugin')
@@ -57,11 +59,20 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
     : { agents: 0, skills: 0, hooks: 0, mcp: 0 }
 
   return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="flex h-[80vh] w-[min(760px,92%)] flex-col rounded-lg border border-border bg-bg-elev shadow-2xl">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="config-title"
+        className="flex h-[80vh] w-[min(760px,92%)] flex-col rounded-lg border border-border bg-bg-elev shadow-2xl outline-none"
+      >
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
-            <div className="font-serif text-lg font-semibold text-content">Configuration</div>
+            <div id="config-title" className="font-serif text-lg font-semibold text-content">
+              Configuration
+            </div>
             <div className="mt-0.5 text-[12px] text-dim">
               What applies to this workspace, and where it comes from — read-only.
             </div>

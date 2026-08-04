@@ -249,10 +249,13 @@ export function CommandPalette({
 
   return (
     <div
-      className="absolute inset-0 z-50 flex items-start justify-center bg-black/50 pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-[12vh]"
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
         className="flex max-h-[70vh] w-[min(640px,92%)] flex-col overflow-hidden rounded-xl border border-border bg-bg-elev shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
