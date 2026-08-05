@@ -19,7 +19,7 @@ import { useSession } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { highlightRuns } from '../lib/fuzzy'
 import { Dropdown } from './Dropdown'
-import { IconSearch, IconClose } from './Icon'
+import { IconSearch, IconClose, IconCheck } from './Icon'
 import type { SearchResults, SearchHit, WorkspaceOption } from '../../../shared/sessions'
 
 const DEBOUNCE_MS = 150
@@ -170,7 +170,7 @@ export function GlobalSearch(): JSX.Element | null {
 
         {/* Facet bar — appears only once there's a query (no chrome on the empty
             state). Scope = a workspace SELECTOR (dropdown, variable-length list, works
-            with no active session + can pick ANY workspace); Role = a single "You only"
+            with no active session + can pick ANY workspace); Role = a single "From you"
             toggle (agent-only was cut as low-value; the noise is assistant/tool text). */}
         {q.length >= MIN_QUERY && (
           <div className="flex items-center gap-4 border-b border-border px-4 py-2">
@@ -199,7 +199,11 @@ export function GlobalSearch(): JSX.Element | null {
                   : 'border-border text-dim hover:text-content hover:border-border-strong'
               }`}
             >
-              You only
+              {/* The check is the only ≥3:1 on-state signal: no neutral surface token
+                  clears 3:1 above bg-elev, so shading alone can't carry the toggle. State
+                  lives in aria-pressed; the glyph is decorative. */}
+              {userOnly && <IconCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+              From you
             </button>
           </div>
         )}
