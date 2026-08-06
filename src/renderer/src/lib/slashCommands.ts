@@ -41,7 +41,7 @@ export const HEADLESS_SAFE_COMMANDS: readonly string[] = [
   'context', // native card (CommandOutput ContextCard)
   'usage', // native card (UsageCard)
   'init', // analyze the codebase → CLAUDE.md
-  'review', // review a PR / the working diff
+  'code-review', // review a PR / the working diff (canonical name; `review` is its alias pre-2.1.223)
   'mcp' // manage MCP servers (reconnect/enable/disable) — no Clui-native equivalent
 ]
 
@@ -52,7 +52,7 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommand[] = [
   { name: 'context', description: 'Show current context-window usage' },
   { name: 'usage', description: 'Show cost, duration, and token totals' },
   { name: 'init', description: 'Analyze the codebase and create a CLAUDE.md' },
-  { name: 'review', description: 'Review the current changes' }
+  { name: 'code-review', description: 'Review the current changes' }
 ]
 
 /**
@@ -65,12 +65,18 @@ export function resolveSlashCommands(live: SlashCommandInfo[]): SlashCommand[] {
     // Pre-handshake: show the bundled defaults (filtered to the allowlist for safety).
     return BUILTIN_SLASH_COMMANDS.filter((c) => HEADLESS_SAFE_COMMANDS.includes(c.name))
   }
-  const byName = new Map(live.map((c) => [c.name, c]))
+  // Index aliases too, so a command the CLI renamed (keeping the old name as an alias)
+  // still resolves instead of being pruned as missing.
+  const byName = new Map<string, SlashCommandInfo>()
+  for (const c of live) {
+    byName.set(c.name, c)
+    for (const alias of c.aliases ?? []) if (!byName.has(alias)) byName.set(alias, c)
+  }
   const fallback = new Map(BUILTIN_SLASH_COMMANDS.map((c) => [c.name, c.description]))
   const out: SlashCommand[] = []
   for (const name of HEADLESS_SAFE_COMMANDS) {
     const info = byName.get(name)
-    if (!info) continue // allowlisted but not in the live list (CLI dropped it) → skip
+    if (!info) continue // allowlisted but not in the live list, even via alias (CLI dropped it) → skip
     const desc = info.description || fallback.get(name) || ''
     // Append the argument hint so the menu teaches the syntax (e.g. "manage MCP … [reconnect|…]").
     const hint = info.argumentHint ? `${desc} · ${info.argumentHint}` : desc
