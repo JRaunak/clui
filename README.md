@@ -19,7 +19,7 @@
 
 </div>
 
-Clui wraps the `claude` CLI you already have installed and gives it a native desktop interface — multiple live sessions, a live model and effort picker, per-session permission modes, conversation search, image attachments, and light/dark themes — all driving the real CLI underneath.
+Clui wraps the `claude` CLI you already have installed and gives it a desktop interface: multiple live sessions, a live model and effort picker, per-session permission modes, conversation search, image attachments, and light/dark themes. Everything drives the real CLI underneath.
 
 It never modifies your `~/.claude/settings.json`. Every model, effort, and permission choice is per-session and stored in Clui's own app-data directory, so the CLI you use in the terminal is left exactly as it was.
 
@@ -28,13 +28,13 @@ It never modifies your `~/.claude/settings.json`. Every model, effort, and permi
 
 ## Features
 
-- **Multiple live sessions** — each keeps its own `claude` process alive in the background. Switching is instant, and in-flight turns keep streaming across a switch.
-- **Live model & effort selection** — the model list is fetched live from your provider; effort switches mid-session without losing context.
-- **Per-session permission modes** — seven of them, from Interactive (asks before each tool) to Autonomous (asks nothing), plus Adaptive, Auto Edit, and Plan Mode. Changeable mid-session, and two sessions can sit in different modes.
-- **Conversation search** — find within a conversation (`⌘F`) or search across every session at once (`⌘⇧F`).
-- **Attachments** — paste, drag-drop, or attach images and files directly into a turn.
-- **Subagent & workflow visibility** — nested agent transcripts and a live workflow progress tree.
-- **Built for reading** — markdown with syntax highlighting, a command palette (`⌘K`), slash-command and `@`-file autocomplete, session export, and full light/dark theming.
+- **Multiple live sessions.** Each keeps its own `claude` process alive in the background. Switching is instant, and in-flight turns keep streaming across a switch.
+- **Live model & effort selection.** The model list is fetched live from your provider; effort switches mid-session without losing context.
+- **Per-session permission modes.** Seven of them, from Interactive (asks before each tool) to Autonomous (asks nothing), plus Adaptive, Auto Edit, and Plan Mode. Changeable mid-session, and two sessions can sit in different modes.
+- **Conversation search.** Find within a conversation (`⌘F`) or search across every session at once (`⌘⇧F`).
+- **Attachments.** Paste, drag-drop, or attach images and files directly into a turn.
+- **Subagent & workflow visibility.** Nested agent transcripts and a live workflow progress tree.
+- **Built for reading.** Markdown with syntax highlighting, a command palette (`⌘K`), slash-command and `@`-file autocomplete, session export, and full light/dark theming.
 
 ## Requirements
 
@@ -43,7 +43,7 @@ It never modifies your `~/.claude/settings.json`. Every model, effort, and permi
 | **macOS on Apple Silicon** | The build target is `mac / arm64`. |
 | **Node.js 22.12+** | Vite 7 and electron-vite 5 both require it. Developed on 24.18.0. |
 | **npm 9+** | Ships with Node. Developed on npm 11. |
-| **The `claude` CLI** | Install [Claude Code](https://claude.com/claude-code), and make sure `claude --version` works **and that you are logged in**. Clui drives the CLI already on your machine — it does not ship or install it. |
+| **The `claude` CLI** | Install [Claude Code](https://claude.com/claude-code), and make sure `claude --version` works **and that you are logged in**. Clui drives the CLI already on your machine; it does not ship or install it. |
 
 ## Getting Started
 
@@ -54,7 +54,7 @@ npm install
 npm run dev
 ```
 
-`npm run dev` launches Clui with hot reload. On first run, make sure the `claude` CLI is authenticated in your terminal — Clui inherits that auth.
+`npm run dev` launches Clui with hot reload. On first run, make sure the `claude` CLI is authenticated in your terminal; Clui inherits that auth.
 
 > [!NOTE]
 > npm 11 blocks post-install scripts by default, and Electron and esbuild download their binaries in one. The repo commits an allowlist (`allowScripts` in `package.json`) covering both, so `npm install` works as-is. You will see a warning about `fsevents`, which is a macOS file-watcher optional dependency and safe to leave unapproved.
@@ -100,16 +100,16 @@ open release/mac-arm64/Clui.app
 
 ## How It Works
 
-Clui is split cleanly between processes:
+Clui is split between two processes:
 
 - The **main process** owns the CLI subprocesses (one per live session), IPC, and the native window.
-- The **renderer** is pure UI — a Zustand store with a single persistent event subscription. Switching sessions only changes which slice is active, which is why background sessions keep streaming.
+- The **renderer** is UI only: a Zustand store with a single persistent event subscription. Switching sessions only changes which slice is active, which is why background sessions keep streaming.
 
 Clui speaks to the `claude` CLI over its duplex `stream-json` protocol, and over the stdio control protocol for interactive tool approval.
 
 ```
 src/
-  main/       Electron main — CLI subprocess management, IPC, sessions
+  main/       Electron main: CLI subprocess management, IPC, sessions
   preload/    Context-isolated bridge (emitted as index.cjs)
   renderer/   React + Tailwind UI (Zustand store, components)
   shared/     Types shared across processes
@@ -119,10 +119,10 @@ assets/       Icon source SVGs
 
 ## Troubleshooting
 
-- **"Not logged in · run /login" in every session** — the `claude` CLI isn't authenticated in the environment Clui launched from. Confirm `claude` works from your terminal, then relaunch Clui.
-- **App won't launch after `npm install`** — approve the post-install scripts (see the install warning above), then reinstall.
-- **Gatekeeper blocks the packaged app** — see the unsigned-app warning above.
-- **Type or build errors after pulling changes** — run `npm install` again, then `npm run typecheck`.
+- **"Not logged in · run /login" in every session.** The `claude` CLI isn't authenticated in the environment Clui launched from. Confirm `claude` works from your terminal, then relaunch Clui.
+- **App won't launch after `npm install`.** Approve the post-install scripts (see the install warning above), then reinstall.
+- **Gatekeeper blocks the packaged app.** See the unsigned-app warning above.
+- **Type or build errors after pulling changes.** Run `npm install` again, then `npm run typecheck`.
 
 > [!TIP]
 > Issues and pull requests are welcome. Please run `npm run typecheck` and `npm run build` before opening a PR.
