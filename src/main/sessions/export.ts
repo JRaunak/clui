@@ -1,19 +1,19 @@
 /**
  * Export a conversation to a human-readable Markdown file.
  *
- * Reads the session's transcript from disk (via the existing parser — NO resume, no
- * process spawn: this works on dormant sessions without opening them) and renders:
+ * Reads the session's transcript from disk (via the existing parser: NO resume, no
+ * process spawn, so this works on dormant sessions without opening them) and renders:
  *   # <title>
  *   *<workspace> · <model?> · exported <date> · <N> messages*   ← one-line provenance
  *   ## You / ## Claude   speaker headings
  *   fenced code preserved (assistant text is already markdown; user text is literal)
- *   › <Tool> · <summary>   dim one-line tool-call markers (NOT full I/O dumps — the
+ *   › <Tool> · <summary>   dim one-line tool-call markers (NOT full I/O dumps: the
  *                          jsonl already holds that; a readable export shouldn't be 30MB)
  *   ![attached image] / [attached <file>]   attachment placeholders (no base64 inlined)
  *
  * Design: Markdown only, single session,
- * one-line provenance (NOT YAML front-matter — a reader skims YAML; the jsonl is the
- * structured source). Human readability + git-diff-friendliness over machine metadata.
+ * one-line provenance (NOT YAML front-matter: a reader skims prose, and the jsonl is
+ * the structured source). Human readability + git-diff-friendliness over machine metadata.
  */
 import { readTranscript } from './transcript'
 import type { HistoryMessage, HistoryToolCall } from '../../shared/sessions'
@@ -45,12 +45,11 @@ function toolSummary(t: HistoryToolCall): string {
   return `› ${t.name || 'tool'}${arg ? ` · ${arg}` : ''}${err}`
 }
 
-/** Render one message to Markdown blocks. */
 function renderMessage(m: HistoryMessage): string {
   const heading = m.role === 'user' ? '## You' : '## Claude'
   const parts: string[] = [heading]
 
-  // Attachment placeholders (never inline base64 — keeps the .md small + readable).
+  // Attachment placeholders (never inline base64, which keeps the .md small + readable).
   for (const a of m.attachments ?? []) {
     if (a.kind === 'image') parts.push('![attached image]')
     else if (a.kind === 'document') parts.push(`[attached ${a.name}]`)
@@ -65,7 +64,6 @@ function renderMessage(m: HistoryMessage): string {
   return parts.join('\n\n')
 }
 
-/** Build the full Markdown document for a session. */
 export async function exportSessionMarkdown(sessionId: string, meta: ExportMeta): Promise<string> {
   const { messages } = await readTranscript(sessionId)
   const workspace = meta.cwd || 'unknown workspace'
@@ -82,7 +80,6 @@ export async function exportSessionMarkdown(sessionId: string, meta: ExportMeta)
   return `# ${meta.title}\n\n*${provenance}*\n\n${body}\n`
 }
 
-/** Filesystem-safe filename from a session title (no ext). */
 export function exportFilename(title: string): string {
   const base = title
     .trim()

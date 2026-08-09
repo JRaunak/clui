@@ -8,18 +8,18 @@ import { useDialogFocus } from '../lib/useDialogFocus'
  * Modal shown when Claude requests permission for a gated tool call.
  * Only the oldest pending request of the ACTIVE session is shown; answering it
  * reveals the next. Background sessions accumulate their own requests (badged in
- * the sidebar) — this never steals focus to a background session's prompt.
+ * the sidebar); this never steals focus to a background session's prompt.
  */
 export function PermissionDialog(): JSX.Element | null {
   const pending = useActive((s) => s?.pendingPermissions ?? EMPTY_PENDING)
   const respond = useSession((s) => s.respondPermission)
-  // Focus the dialog CONTAINER (not a button) on open — anchors focus + announces the
+  // Focus the dialog CONTAINER (not a button) on open: anchors focus + announces the
   // dialog without pre-selecting Allow/Deny, preserving the deliberate no-autofocus gate.
   const dialogRef = useDialogFocus<HTMLDivElement>()
   const current = pending[0]
   if (!current) return null
 
-  // AskUserQuestion isn't a permission — it's a question needing an answer (it
+  // AskUserQuestion is a question needing an answer, not a permission (it
   // fires can_use_tool with requires_user_interaction even in bypass mode). Route
   // it to a dedicated picker instead of the wrong Allow/Deny dialog.
   if (current.toolName === 'AskUserQuestion') {
@@ -90,7 +90,6 @@ export function PermissionDialog(): JSX.Element | null {
   )
 }
 
-/** Render the most relevant part of the tool input prominently, plus full JSON. */
 function PermissionInput({
   toolName,
   input

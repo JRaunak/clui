@@ -2,7 +2,7 @@
  * Resolve the user's LOGIN-SHELL environment so a Finder/app-drawer-launched Clui
  * spawns `claude` with the same auth context a terminal launch would have.
  *
- * WHY: macOS GUI apps inherit a minimal environment — none of the shell's exported
+ * WHY: macOS GUI apps inherit a minimal environment, none of the shell's exported
  * vars (`~/.zshrc`/`~/.zprofile`). The `claude` CLI authenticates from env: either
  * Bedrock (`CLAUDE_CODE_USE_BEDROCK` + `AWS_PROFILE`/`AWS_REGION`/creds), Vertex
  * (`CLAUDE_CODE_USE_VERTEX` + `GOOGLE_*`), or a direct key (`ANTHROPIC_API_KEY` /
@@ -12,16 +12,15 @@
  * class of reason; this does the same for the auth *env*.
  *
  * Approach: run the login shell, have it emit its env as JSON, and keep only the
- * auth-relevant keys plus PATH. Curated-not-wholesale on purpose — blindly overlaying
+ * auth-relevant keys plus PATH. Curated, not wholesale, on purpose: blindly overlaying
  * the shell's entire env onto the Electron process could clobber Electron/Node-critical
  * vars. Best-effort (a failure yields {} → the CLI behaves exactly as it does today).
  *
- * NOT cached — but honestly a near-wash, not a freshness win. What's forwarded is a
- * static profile POINTER + provider flags (`AWS_PROFILE`/`AWS_REGION`/`CLAUDE_CODE_USE_BEDROCK`),
- * NEVER the hourly token: the SDK resolves + refreshes the token from `~/.aws/sso/cache/`
- * at call time, so a cached env would keep working across an `aws sso login` too. Left
- * uncached simply because the login-shell call is negligible against session-start's CLI
- * spawn+handshake, so a cache would be unjustified state for no measurable benefit.
+ * Not cached. What's forwarded is a static profile POINTER + provider flags
+ * (`AWS_PROFILE`/`AWS_REGION`/`CLAUDE_CODE_USE_BEDROCK`), never the hourly token: the SDK
+ * resolves and refreshes the token from `~/.aws/sso/cache/` at call time, so a cached env
+ * would even survive an `aws sso login`. It stays uncached only because the login-shell
+ * call is negligible against session-start's CLI spawn+handshake.
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -33,7 +32,7 @@ const AUTH_PREFIXES = ['ANTHROPIC_', 'AWS_', 'CLAUDE_CODE_', 'GOOGLE_', 'GCLOUD_
 /**
  * Exact keys outside those prefixes worth carrying (region/provider togglers), plus PATH.
  * PATH matters because a Finder-launched app gets `/usr/bin:/bin`, which has no
- * `/opt/homebrew/bin` — so `aws` isn't found and the model list silently falls back to the
+ * `/opt/homebrew/bin`, so `aws` isn't found and the model list silently falls back to the
  * bundled one. Same class of problem `detect.ts` solves for `claude` by asking the shell.
  */
 const AUTH_EXACT = new Set([
@@ -44,7 +43,7 @@ const AUTH_EXACT = new Set([
   'PATH'
 ])
 /**
- * `CLAUDE_CODE_*` keys that are per-session RUNTIME markers, not auth — must NOT be
+ * `CLAUDE_CODE_*` keys that are per-session RUNTIME markers, not auth. These must NOT be
  * forwarded, or the spawned CLI would think it's a child/continuation of whatever
  * session set them (only present when Clui itself is launched from inside a Claude
  * Code session; harmless for a normal Finder launch, but wrong to pass through).
@@ -66,14 +65,13 @@ function isAuthKey(key: string): boolean {
  * The auth-relevant subset of the user's login-shell environment, to merge OVER
  * `process.env` when spawning the CLI. Empty object if the shell can't be read (the
  * CLI then behaves as it does when launched from a terminal without those vars).
- * Not cached — the login-shell call is negligible next to session-start's CLI spawn, so
- * a cache would be unjustified state for no measurable gain (see the module note above).
+ * Not cached (see the module note above).
  */
 export async function loginShellAuthEnv(): Promise<Record<string, string>> {
   const shell = process.env.SHELL || '/bin/zsh'
   try {
     // -l login + -i interactive so profile AND rc are sourced (matches detect.ts). Have
-    // the shell hand its env to node and emit JSON — robust across shells and safe for
+    // the shell hand its env to node and emit JSON, which works across shells and is safe for
     // values containing newlines/`=` (BSD `printenv` has no `-0`, and delimiter-splitting
     // a raw env dump is fragile; JSON.stringify(process.env) sidesteps both).
     const { stdout } = await execFileP(

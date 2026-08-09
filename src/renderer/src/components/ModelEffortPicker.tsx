@@ -31,18 +31,14 @@ const HOVER_DELAY = 400
  *  as a flicker rather than a retry; the project bans sub-400ms spinners. */
 const MIN_SPIN = 350
 
-/**
- * Composer control: current model + effort button that opens an upward popover of
- * the (live, Bedrock-derived) models. Hovering a model — after a short delay —
- * opens a RIGHT-SIDE flyout with an effort slider over only that model's supported
- * levels. Applies to THIS session only; never writes any settings file.
- */
+/** Composer control: model + effort picker. Applies to THIS session only; never
+ *  writes any settings file. */
 export function ModelEffortPicker(): JSX.Element {
   const modelChoice = useActive((s) => s?.modelChoice ?? 'claude-opus-4-8[1m]')
   const effortChoice = useActive((s) => s?.effortChoice ?? 'high')
   const ultracode = useActive((s) => s?.ultracode ?? false)
   // While ultracode is on the CLI forces xhigh regardless of the stored effort, so the
-  // chip DISPLAYS xhigh (without mutating the stored choice — it's restored when ultra
+  // chip DISPLAYS xhigh (without mutating the stored choice, which is restored when ultra
   // turns off). Effort selection is disabled while ultra is on (it's overridden).
   const displayEffort = ultracode ? 'xhigh' : effortChoice
   const setModel = useSession((s) => s.setModel)
@@ -206,7 +202,7 @@ export function ModelEffortPicker(): JSX.Element {
               )}
               {group.models.map((info) => {
             // While Ultra is on, a model without X-High can't run it. Show it
-            // DISABLED-WITH-REASON (not hidden — hiding is the disappearing-menu
+            // DISABLED-WITH-REASON (not hidden, since hiding is the disappearing-menu
             // anti-pattern) so the user keeps their map + learns the rule.
             const incompatible = ultracode && !supportsUltracodeToggle(info.id)
             if (incompatible) {
@@ -224,7 +220,7 @@ export function ModelEffortPicker(): JSX.Element {
               )
             }
             // Effort is not selectable while Ultra is on (it's forced to X-High), so the
-            // per-model flyout is suppressed — the row just switches the model.
+            // per-model flyout is suppressed, so the row just switches the model.
             const effortSelectable = !ultracode
             return (
               <div
@@ -313,7 +309,6 @@ export function ModelEffortPicker(): JSX.Element {
   )
 }
 
-/** Right-side flyout with an effort slider over the model's supported levels. */
 function EffortFlyout({
   info,
   current,

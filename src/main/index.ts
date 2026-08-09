@@ -64,18 +64,15 @@ process.on('uncaughtException', (err) => {
   throw err
 })
 
-/** Translate a per-session mode choice to the --permission-mode flag value. */
 function modeToFlag(choice: PermissionModeChoice): string | undefined {
   // 'inherit' → undefined = pass no flag = honor ~/.claude/settings.json.
   return choice === 'inherit' ? undefined : choice
 }
 
-/** Window background per theme — matches the renderer's --color-bg so there's no
+/** Window background per theme. Matches the renderer's --color-bg so there's no
  *  flash of the wrong color before the React/CSS paint. Keep in sync with styles.css. */
 const THEME_BG = { dark: '#161617', light: '#f6f3ee' } as const
 
-/** Resolve the concrete theme ('dark' | 'light'), turning 'system' into the OS
- *  preference via Electron's nativeTheme. Reads the sync settings cache. */
 function resolveTheme(): 'dark' | 'light' {
   const pref = getSettingsSync().theme
   if (pref === 'system') return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
@@ -84,12 +81,12 @@ function resolveTheme(): 'dark' | 'light' {
 
 /**
  * Build + install the application menu. ⌘N / ⌘W / ⌘, are defined HERE (not as
- * renderer key listeners) because macOS routes those through the app menu first —
+ * renderer key listeners) because macOS routes those through the app menu first:
  * a DOM listener for ⌘W would still hit Electron's default "Close Window". Menu
  * clicks push a `menuAction` to the renderer, which calls the matching store
  * action. The Edit + Window submenus use built-in ROLES so copy/paste/select-all
  * and standard window commands keep working in text fields (a custom menu that
- * omits them silently breaks clipboard shortcuts — the classic Electron gotcha).
+ * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
 function buildMenu(): void {
   const send = (action: string): void => {
@@ -99,7 +96,7 @@ function buildMenu(): void {
       const wc = win.webContents
       if (!wc.isDestroyed()) wc.send(IpcChannels.menuAction, action)
     } catch {
-      /* window torn down — drop */
+      /* window torn down; drop */
     }
   }
   const isMac = process.platform === 'darwin'
@@ -136,7 +133,7 @@ function buildMenu(): void {
         ...(isMac ? ([{ role: 'close' }] as MenuItemConstructorOptions[]) : ([{ role: 'quit' }] as MenuItemConstructorOptions[]))
       ]
     },
-    // Role-based Edit menu — preserves ⌘C/⌘V/⌘X/⌘A/⌘Z in inputs + the textarea.
+    // Role-based Edit menu, preserving ⌘C/⌘V/⌘X/⌘A/⌘Z in inputs + the textarea.
     {
       label: 'Edit',
       submenu: [
@@ -190,8 +187,8 @@ function createWindow(): void {
 
   // Defense-in-depth against navigation footguns: never let the webview leave the
   // app document. A file dropped outside the composer (or a stray link) must not
-  // navigate the window to a file://…/local URL and white-screen the app — the
-  // renderer already cancels stray drops, this is the belt-and-suspenders backstop.
+  // navigate the window to a file://…/local URL and white-screen the app. The
+  // renderer already cancels stray drops; this is the backstop.
   // External http(s) links are opened in the OS browser via the existing openExternal
   // IPC, so we can safely block ALL in-window navigations except the initial load.
   mainWindow.webContents.on('will-navigate', (e, url) => {
@@ -216,7 +213,7 @@ function registerIpc(): void {
   const manager = new SessionManager((handleId, event) => {
     // A `claude` child's stdout can arrive WHILE the window is tearing down. When the
     // BrowserWindow itself is destroyed, even READING `mainWindow.webContents` throws
-    // "Object has been destroyed" (the getter throws) — so we must check
+    // "Object has been destroyed" (the getter throws), so we must check
     // `mainWindow.isDestroyed()` BEFORE touching `.webContents`, and guard the
     // webContents too. Wrapped in try/catch as a final backstop (a teardown race can
     // still slip between the check and the send). A latent race, amplified by the
@@ -226,7 +223,7 @@ function registerIpc(): void {
       const wc = mainWindow.webContents
       if (!wc.isDestroyed()) wc.send(IpcChannels.sessionEvent, { handleId, event })
     } catch {
-      /* window torn down mid-send — drop the event */
+      /* window torn down mid-send; drop the event */
     }
   })
   sessionManager = manager
@@ -293,7 +290,7 @@ function registerIpc(): void {
     async (_e, handleId: string, mode: PermissionModeChoice) => {
       // 'inherit' has no CLI equivalent mid-session (there's no "unset"); map it
       // to 'default' so switching back to an asking mode still works. This still
-      // never writes any settings file — it's a live control message only.
+      // never writes any settings file; it's a live control message only.
       manager.setPermissionMode(handleId, mode === 'inherit' ? 'default' : mode)
     }
   )
@@ -385,7 +382,7 @@ function registerIpc(): void {
     await warmSearchCache()
   })
 
-  // Export a session to Markdown. Reads the jsonl directly (no resume/spawn — works
+  // Export a session to Markdown. Reads the jsonl directly (no resume/spawn, so it works
   // on dormant sessions), then a native Save dialog lets the USER choose the location
   // (Clui never silently writes a file). Returns the saved path, or null if cancelled.
   ipcMain.handle(IpcChannels.exportSession, async (_e, sessionId: string) => {
@@ -438,7 +435,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IpcChannels.openExternal, async (_e, url: string) => {
-    // Only allow web links from markdown — never file:// or arbitrary schemes
+    // Only allow web links from markdown, never file:// or arbitrary schemes
     // (defense against a malicious link in model output opening a local target).
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)
   })
@@ -452,7 +449,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IpcChannels.filterExistingFiles, async (_e, paths: string[]) => {
-    // Prune paths that no longer exist (deleted this turn — including by the agent
+    // Prune paths that no longer exist (deleted this turn, including by the agent
     // via Bash rm, which never surfaces a file_path). Keeps the changed-files list
     // accurate. Best-effort: any stat error → treat as gone.
     return (Array.isArray(paths) ? paths : []).filter((p) => {
@@ -499,17 +496,16 @@ function registerIpc(): void {
 
 // Single-instance lock: a second Clui launch must NOT spawn a rival process. Two
 // Clui instances could each `--resume` the same session and both append to one jsonl
-// (an unguarded corruption hazard — the CLI writes no lockfile). Acquiring the lock
+// (an unguarded corruption hazard; the CLI writes no lockfile). Acquiring the lock
 // makes a 2nd launch hand off to the already-running instance (which focuses its
-// window) and quit. Must run BEFORE whenReady. (Standard desktop hygiene; the intra-
-// Clui double-spawn case was already guarded in the store — this closes the cross-
-// instance case at ~zero cost.)
+// window) and quit. Must run BEFORE whenReady. (The intra-Clui double-spawn case is
+// already guarded in the store; this closes the cross-instance case at ~zero cost.)
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    // Someone tried to launch a second Clui — focus/restore ours instead.
+    // Someone tried to launch a second Clui; focus/restore ours instead.
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.show()

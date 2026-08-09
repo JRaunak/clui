@@ -15,7 +15,6 @@ export class SessionManager {
 
   constructor(private readonly sink: EventSink) {}
 
-  /** Create + start a session; returns its handle id. */
   start(opts: ClaudeSessionOptions): string {
     const handleId = randomUUID()
     const session = new ClaudeSession(opts)

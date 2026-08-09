@@ -4,8 +4,7 @@ import { TypingDots } from './TypingDots'
 import { Markdown } from './Markdown'
 import { IconChevron, IconCheck, IconClose, IconFile } from './Icon'
 
-/** Render one user-message attachment: an image thumbnail, or a neutral file chip
- *  (document/text) showing the filename + size. Matches the composer pill's language. */
+/** Non-image attachments render as a file chip matching the composer pill's language. */
 function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element {
   if (att.kind === 'image') {
     return (
@@ -32,8 +31,8 @@ function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element
 }
 
 /** >this many TOTAL tools in a message → aggregate header + demote per-card dots to
- *  a static running-dot. NOTE: gated on total count, not *concurrent-running* count
- *  — verified against the CLI that headless stream-json serializes subagent/tool
+ *  a static running-dot. NOTE: gated on total count, not *concurrent-running* count.
+ *  Verified against the CLI that headless stream-json serializes subagent/tool
  *  calls (peak concurrent = 1), so a "running > N" gate would never fire; a message
  *  with many tool calls is exactly when the compact tally + one static header help. */
 const AGGREGATE_ABOVE = 5
@@ -41,21 +40,15 @@ const AGGREGATE_ABOVE = 5
  *  running + failed; failed pinned). */
 const COLLAPSE_AT = 16
 
-/** Agent mentions are inserted into the composer as the literal token
- *  `@"name (agent)"` — the exact quoted form the CLI needs to delegate the turn.
- *  In the SENT bubble that raw form is noise, so we DISPLAY it as a quiet `@name`
- *  chip (mono + a subtle raised wash), reusing the subagent-type/skill chip idiom.
- *  Display-only: `message.text` keeps the literal token untouched. Distinguished by
- *  typeface + wash + the `@` sigil, never by hue — the accent stays scarce and the
- *  status tones carry state, so a colored mention would collide; neutral is correct,
- *  and it never signals by color alone. Captures the name up to the closing quote,
- *  so agent names containing spaces (why the quoted form exists) still resolve. */
+/** The composer inserts an agent mention as the literal token `@"name (agent)"`, the
+ *  quoted form the CLI needs to delegate the turn. Display-only: `message.text` keeps
+ *  the literal token; the chip is styled by typeface + wash + `@` sigil, not hue, so it
+ *  can't collide with the scarce accent or the state-carrying status tones. Non-greedy
+ *  up to the closing quote so agent names containing spaces still resolve. */
 const AGENT_MENTION = /@"([^"]+?) \(agent\)"/g
 
-/** Split literal user text into plain runs + styled agent-mention chips. Returns the
- *  original string untouched when there's no mention (zero regression for normal
- *  messages); the parent keeps `whitespace-pre-wrap`, which still governs the string
- *  runs, so newlines/spacing are preserved. */
+/** Returns string runs interleaved with chip elements; the parent's `whitespace-pre-wrap`
+ *  still governs the string runs, so newlines/spacing are preserved. */
 function renderUserText(text: string): (string | JSX.Element)[] {
   AGENT_MENTION.lastIndex = 0
   const out: (string | JSX.Element)[] = []
@@ -100,7 +93,7 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
       >
         {message.thinking && <ThinkingBlock text={message.thinking} />}
         {isUser ? (
-          // User input is literal text — render as-is (don't reformat what they typed).
+          // User input is literal text; render as-is (don't reformat what they typed).
           // Attachments (image thumbnails / file chips) render above the text.
           <>
             {message.attachments && message.attachments.length > 0 && (
@@ -132,9 +125,8 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
   )
 }
 
-/** Render an assistant message's ordered blocks: text runs as markdown, and each
- *  maximal run of consecutive tool blocks as one ToolGroup (so aggregation still
- *  applies to a fan-out) — preserving the true text/tool interleaving. */
+/** Each maximal run of consecutive tool blocks becomes one ToolGroup, so aggregation
+ *  still applies to a fan-out while the true text/tool interleaving is preserved. */
 function OrderedBlocks({
   blocks,
   tools
@@ -166,18 +158,12 @@ function OrderedBlocks({
 }
 
 /**
- * Renders a message's tool calls with progressive aggregation (gated on TOTAL
- * tool count — the CLI serializes subagent calls in headless mode, so a
- * concurrent-running gate would never fire):
- *  - ≤AGGREGATE_ABOVE total: individual cards, per-card dots+timer (the baseline).
- *  - more: a STATIC aggregate header ("M done · N running · K failed" — no spinner;
- *    the chat footer owns the single fg animation) and per-card dots demote to a
- *    static running-dot (timers kept).
- *  - ≥COLLAPSE_AT total: completed cards fold into the header count (collapsible);
- *    only running + failed cards show, failed pinned first.
+ * Aggregation is gated on TOTAL tool count, not concurrent-running: the CLI serializes
+ * subagent calls in headless mode, so a concurrent-running gate would never fire. The
+ * thresholds are AGGREGATE_ABOVE and COLLAPSE_AT; the static header (no spinner) leaves
+ * the chat footer owning the single foreground animation.
  *
- * Exported: a subagent's forwarded tool calls render through this same component, so
- * they inherit its aggregation and collapse/expand behavior.
+ * Exported so a subagent's forwarded tool calls inherit the same aggregation.
  */
 export function ToolGroup({ tools }: { tools: ToolCall[] }): JSX.Element | null {
   const [expanded, setExpanded] = useState(false)
@@ -216,7 +202,7 @@ export function ToolGroup({ tools }: { tools: ToolCall[] }): JSX.Element | null 
         {collapse && (
           <IconChevron className={`h-3.5 w-3.5 text-faint transition-transform ${expanded ? 'rotate-90' : ''}`} />
         )}
-        {/* STATIC dot — the chat footer is the single animated element per turn. */}
+        {/* STATIC dot: the chat footer is the single animated element per turn. */}
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden="true" />
         <span className="text-xs font-semibold text-content">Tasks</span>
         <span className="ml-auto flex items-center gap-2 font-mono text-[11px]">
@@ -271,7 +257,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
   // A backgrounded tool returns its result AT LAUNCH while the real work continues
   // asynchronously (tracked in the tray), so its terminal state reads "launched", not
   // "done". Two cases: Bash `run_in_background`, AND the dynamic `Workflow` tool (it
-  // returns immediately, then the workflow runs via task_progress — showing "done" the
+  // returns immediately, then the workflow runs via task_progress; showing "done" the
   // instant it launches was the reported bug).
   const isBackgrounded =
     tool.name === 'Workflow' ||
@@ -285,7 +271,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
     >
       {/* Head row. For a SUBAGENT the card is the actual content, so clicking it
           opens the maximized transcript view (the inline JSON expand is near-useless
-          for a subagent — its input is a huge prompt, its result one blob). A PLAIN
+          for a subagent: its input is a huge prompt, its result one blob). A PLAIN
           TOOL keeps the lightweight inline expand (input/output is the right detail;
           a full-screen takeover for a one-line Bash result would be overkill). */}
       <div className="flex w-full items-center">
@@ -309,7 +295,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
             // A backgrounded tool (Workflow / run_in_background Bash) returns its result
             // almost immediately, then the real work continues in the tray. In the brief
             // gap before its result lands, the in-flight state is "launching…", NOT
-            // "running" (+ no elapsed timer — that wrongly implies you're waiting on THIS
+            // "running" (+ no elapsed timer, which wrongly implies you're waiting on THIS
             // call). Info-blue matches the terminal "launched" state so it doesn't flip
             // color. Fixes the reported "running…"→"launched" flash.
             <>
@@ -331,7 +317,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
                 <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden="true" />
               )}
               <span className="text-dim">running</span>
-              {/* Elapsed timer — the load-bearing "not frozen" signal for long
+              {/* Elapsed timer: the load-bearing "not frozen" signal for long
                   tool/subagent calls that emit nothing until they finish. */}
               {tool.startMs !== undefined && <RunningTimer startMs={tool.startMs} />}
             </>
@@ -356,7 +342,6 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
         {isSubagent && <span className="ml-2 shrink-0 font-mono text-[11px] text-faint">→</span>}
       </button>
       </div>
-      {/* Inline expand is for PLAIN tools only; subagents open the transcript view. */}
       {open && !isSubagent && (
         <div className="border-t border-border px-3 py-2.5">
           <pre className="mb-2 whitespace-pre-wrap break-words font-mono text-xs text-dim">
@@ -376,7 +361,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
 function summarizeInput(input: unknown): string {
   if (input && typeof input === 'object') {
     const o = input as Record<string, unknown>
-    // Task (subagent) calls carry a short human description — surface it so the
+    // Task (subagent) calls carry a short human description: surface it so the
     // card reads "Task  research palette UX" rather than a bare "Task" (Labor
     // Illusion: showing WHAT is running raises perceived progress + patience).
     if (typeof o.description === 'string') return o.description
@@ -388,8 +373,7 @@ function summarizeInput(input: unknown): string {
   return ''
 }
 
-/** The subagent kind (e.g. "Explore", "general-purpose") from a Task/Agent input,
- *  when present — rendered as a chip. Additive parse of the opaque tool input. */
+/** Additive parse of the opaque tool input; null when absent. */
 function subagentType(input: unknown): string | null {
   if (input && typeof input === 'object') {
     const t = (input as Record<string, unknown>).subagent_type
@@ -398,9 +382,7 @@ function subagentType(input: unknown): string | null {
   return null
 }
 
-/** Live elapsed timer for a running tool call. Ticks each second from startMs and
- *  formats as `12s` / `1m 04s` / `1h 02m`. No verb — the TypingDots + this timer
- *  are the whole signal (per the design decision). */
+/** No verb by design: the TypingDots + this timer are the whole running signal. */
 function RunningTimer({ startMs }: { startMs: number }): JSX.Element {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {

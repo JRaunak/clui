@@ -24,7 +24,7 @@ let systemListener: ((e: MediaQueryListEvent) => void) | null = null
 /**
  * Apply a theme preference to `<html data-theme>`. When the preference is
  * 'system', (re)installs a media listener so OS changes propagate live; otherwise
- * removes any prior listener. Idempotent — safe to call on every settings change.
+ * removes any prior listener. Idempotent, so it's safe to call on every settings change.
  */
 export function applyTheme(pref: ThemeChoice): void {
   document.documentElement.setAttribute('data-theme', resolve(pref))

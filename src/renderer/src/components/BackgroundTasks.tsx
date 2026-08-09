@@ -1,16 +1,16 @@
 /**
  * Background-task indicator for the bottom info bar (the active session's ambient
- * status strip). A backgrounded task keeps running after the turn's `result` fires
- * — so this is deliberately NOT in the composer (which is reserved for the
+ * status strip). A backgrounded task keeps running after the turn's `result` fires,
+ * so this is deliberately NOT in the composer (which is reserved for the
  * foreground turn's verb+timer footer). Blue (--color-info) reads as "ambient /
  * informational, no action needed", distinct from the amber foreground running.
  *
  * Clicking the chip opens a popover listing each task with its own elapsed timer
- * and a ✕ to stop it (tool-mediated TaskStop — costs a turn, shows a "stopping…"
+ * and a ✕ to stop it (tool-mediated TaskStop: costs a turn, shows a "stopping…"
  * state until the killed event lands).
  *
  * This tray also holds backgrounded SUBAGENTS (taskType 'local_agent'), not just
- * bg bash shells — the CLI announces both here. A subagent row additionally opens its
+ * bg bash shells; the CLI announces both here. A subagent row additionally opens its
  * forwarded transcript (SubagentView, keyed by the row's toolUseId = the parent
  * tool_use id), matching the inline Agent card's "→" open-transcript affordance.
  */
@@ -87,7 +87,7 @@ export function BackgroundTasks(): JSX.Element | null {
   // LINGER grace timer: arm a ~15s one-shot to clear lingering completed subagents when
   // nothing is running. Timer in a ref (StrictMode-safe; the deferred-timer pattern used
   // elsewhere). A new running task re-arms on the next change. Opening the tray also
-  // clears them (below) — "seen".
+  // clears them (below), counting as "seen".
   useEffect(() => {
     if (lingering.length > 0 && running.length === 0) {
       if (timerRef.current) clearTimeout(timerRef.current)
@@ -207,7 +207,7 @@ function Row({
 }: {
   task: BackgroundTask
   onStop: () => void
-  /** Present only for a backgrounded SUBAGENT row — opens its transcript. */
+  /** Present only for a backgrounded SUBAGENT row; opens its transcript. */
   onOpen?: () => void
   /** Work a subagent started (a shell it ran, or an agent it spawned): indented under it. */
   nested?: boolean

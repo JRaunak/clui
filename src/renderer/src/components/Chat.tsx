@@ -9,12 +9,11 @@ import { IconChevron, IconClose, IconEdit, IconCheck } from './Icon'
 
 /**
  * Virtualized transcript. react-virtuoso renders only the visible
- * window, so the FULL transcript loads (the old 200-message render cap is gone) while
- * staying fast on thousands of messages. Key behaviors preserved from the old
- * scroll-div:
+ * window, so the FULL transcript loads while staying fast on thousands of messages.
+ * Scroll behaviors:
  *  - Auto-scroll to bottom on new streamed tokens, BUT only when the user is already
- *    at the bottom (followOutput gated on isAtBottom) — never yank a user who scrolled
- *    up to read history mid-stream.
+ *    at the bottom (followOutput gated on isAtBottom), so it never yanks a user who
+ *    scrolled up to read history mid-stream.
  *  - Sending a new message jumps to bottom (reveal your message + the reply).
  *  - Switching/resuming a session resets to the bottom (key={activeHandleId} remount +
  *    initialTopMostItemIndex at the last message).
@@ -45,7 +44,7 @@ export function Chat(): JSX.Element {
   const prevLen = useRef(messages.length)
 
   // Virtuoso animates scroll in JS, so the global `scroll-behavior:auto !important`
-  // reduced-motion CSS rule does NOT cover it — resolve the behavior explicitly.
+  // reduced-motion CSS rule does NOT cover it, so resolve the behavior explicitly.
   const reduce =
     typeof window !== 'undefined' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -108,7 +107,7 @@ export function Chat(): JSX.Element {
     virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center', behavior })
     setFlashId(scrollTarget.messageId)
     if (flashTimer.current) clearTimeout(flashTimer.current)
-    // Flash duration; the highlight is opacity/color only (reduced-motion-safe — it's a
+    // Flash duration; the highlight is opacity/color only (reduced-motion-safe: a
     // static tint that fades via a CSS transition the global reduce rule flattens).
     flashTimer.current = setTimeout(() => setFlashId(null), 1600)
     return () => {
@@ -117,7 +116,7 @@ export function Chat(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollTarget?.nonce])
 
-  // Empty / welcome state — render directly, skip Virtuoso.
+  // Empty / welcome state: render directly, skip Virtuoso.
   if (messages.length === 0 && !busy) {
     return (
       <div className="flex flex-1 flex-col overflow-y-auto px-7 py-6">
@@ -184,9 +183,7 @@ export function Chat(): JSX.Element {
   )
 }
 
-/** Transcript-tail chrome (scrolls with content, like the old layout): the streaming
- *  indicator, the compact suggestion, and the last error. Reads the store itself so it
- *  stays reactive as a Virtuoso Footer without prop threading. */
+/** Reads the store itself so it stays reactive as a Virtuoso Footer without prop threading. */
 function ChatFooter(): JSX.Element {
   const busy = useActive((s) => s?.busy ?? false)
   const lastError = useActive((s) => s?.lastError ?? null)
@@ -197,9 +194,9 @@ function ChatFooter(): JSX.Element {
           <WorkingStatus />
         </div>
       )}
-      {/* Queued messages live at the very TAIL (below the streaming response), because
-          they aren't committed transcript yet — they're pending until their turn starts.
-          Editable + cancelable here (renderer-held, not yet sent to the CLI). */}
+      {/* Queued messages live at the very TAIL, below the streaming response: they aren't
+          committed transcript yet, just renderer-held drafts pending until their turn starts,
+          so they stay editable and cancelable here before anything reaches the CLI. */}
       <QueuedMessages />
       <CompactSuggestion />
       {lastError && (
@@ -211,8 +208,7 @@ function ChatFooter(): JSX.Element {
   )
 }
 
-/** The tail-pinned list of not-yet-dispatched queued messages (sent while busy). Each is
- *  editable/cancelable before its turn starts; they dispatch FIFO at turn boundaries. */
+/** They dispatch FIFO at turn boundaries. */
 function QueuedMessages(): JSX.Element | null {
   const queued = useActive((s) => s?.queuedMessages ?? EMPTY_QUEUED)
   if (queued.length === 0) return null
@@ -299,15 +295,15 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
 
   return (
     <div
-      /* Dashed info-tinted border distinguishes a still-queued message from a sent
-         user bubble (solid) — these are editable/cancelable, not committed history. */
+      /* Dashed info-tinted border distinguishes a still-queued message (editable,
+         not committed history) from a sent user bubble, which is solid. */
       className="group flex max-w-[80%] items-start gap-2 self-start rounded-lg rounded-tl-sm border border-dashed border-info/40 bg-user px-3.5 py-2.5"
       role="listitem"
     >
       <span className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-relaxed text-content">
         {q.text}
       </span>
-      {/* Persistent at-rest affordance (opacity-70) — hover-only edit/cancel is
+      {/* Shown at opacity-70 at rest, not hover-only: hover-only edit/cancel is
           undiscoverable, so a user may not realize a queued message is still editable. */}
       <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
         <button
@@ -331,8 +327,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
   )
 }
 
-/** Floating "jump to latest" pill — appears only when scrolled up. Neutral raised
- *  surface + down chevron; accent is scarce (focus ring + a single "new" dot). 44px
+/** Accent stays scarce here: only the focus ring and the single "new" dot use it. 44px
  *  target. Reduced-motion is honored by the caller's `behavior`. */
 function JumpToLatest({ hasNew, onClick }: { hasNew: boolean; onClick: () => void }): JSX.Element {
   return (

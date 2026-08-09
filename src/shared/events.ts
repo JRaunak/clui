@@ -7,7 +7,7 @@
  * (`src/main/cli/event-mapper.ts`) translates them into the small, stable set of
  * `DomainEvent`s below, which are the ONLY shape the renderer ever sees.
  *
- * Keep this list minimal and defensive — never hard-depend on the raw jsonl shape.
+ * Keep this list minimal and defensive; never hard-depend on the raw jsonl shape.
  */
 
 /** One slash command from the CLI's `initialize` response (dynamic discovery). */
@@ -33,21 +33,16 @@ export type DomainEvent =
   /** The live slash-command list from the `initialize` control_response. Lets the
    *  composer's `/` menu track the CLI's real commands instead of a hardcoded list.
    *  Includes TUI-only commands the renderer filters out (the CLI carries no
-   *  headless-safe flag — see `isHeadlessSafeCommand`). */
+   *  headless-safe flag, so see `isHeadlessSafeCommand`). */
   | { type: 'slash-commands'; commands: SlashCommandInfo[] }
-  /** The assistant started a new message. */
   | { type: 'message-start' }
   /** A streamed chunk of assistant-visible text. */
   | { type: 'text-delta'; text: string }
   /** A streamed chunk of thinking/reasoning text. */
   | { type: 'thinking-delta'; text: string }
-  /** A tool_use block began. */
   | { type: 'tool-use-start'; id: string; name: string }
-  /** Streamed partial JSON for a tool_use block's input. */
   | { type: 'tool-use-input-delta'; id: string; partialJson: string }
-  /** A tool_use block finished; input is now complete. */
   | { type: 'tool-use-stop'; id: string; input: unknown }
-  /** A tool produced a result. */
   | {
       type: 'tool-result'
       toolUseId: string
@@ -58,7 +53,7 @@ export type DomainEvent =
   | { type: 'turn-complete'; stopReason: string | null }
   /**
    * A dynamic WORKFLOW (ultracode `Workflow` tool) started. task_type
-   * 'local_workflow' — distinct from local_bash (bg shell) / local_agent
+   * 'local_workflow', distinct from local_bash (bg shell) / local_agent
    * (subagent). Drives the workflow tray chip + card. The live phase/agent tree
    * arrives via `workflow-progress` (keyed by the same taskId).
    */
@@ -95,7 +90,7 @@ export type DomainEvent =
    * Forwarded internal output of a RUNNING subagent, unlocked by
    * `initialize {forwardSubagentText:true}`. The CLI streams the subagent's own
    * assistant/user text as envelopes carrying `parent_tool_use_id` (the id of the
-   * Agent tool_use that launched it) — so these are correlated to a subagent card,
+   * Agent tool_use that launched it), so these are correlated to a subagent card,
    * NOT the main thread. `role` distinguishes the subagent's own output
    * ('assistant') from its turn inputs ('user'). `kind` marks assistant reasoning
    * ('thinking') vs visible text ('text').
@@ -131,7 +126,7 @@ export type DomainEvent =
       isError: boolean
     }
   /**
-   * Nesting: a subagent spawned ANOTHER subagent — i.e. a forwarded subagent
+   * Nesting: a subagent spawned ANOTHER subagent, i.e. a forwarded subagent
    * message (tagged `parentToolUseId`) contained an Agent/Task `tool_use` block. The
    * child's own transcript streams separately under `childToolUseId` (its own PTU), so
    * this event lets the UI render a nested "Agent →" card inside the parent's transcript
@@ -189,7 +184,7 @@ export type DomainEvent =
   /**
    * A background task (e.g. a Bash `run_in_background` shell, or a backgrounded
    * subagent) started. Backgrounded work is unique in that the turn's `result`
-   * fires while it keeps running — so these are tracked separately from the
+   * fires while it keeps running, so these are tracked separately from the
    * turn-level `busy` flag. `taskId` is stable across its lifecycle events.
    */
   | {
@@ -208,7 +203,7 @@ export type DomainEvent =
     }
   /**
    * A background task emitted a completion/terminal notification (fired when the
-   * task finishes or is stopped) — the trigger for the completion toast.
+   * task finishes or is stopped), the trigger for the completion toast.
    */
   | {
       type: 'bg-task-notification'

@@ -1,6 +1,6 @@
 /**
- * Context-compaction thresholds — the single source of truth shared by the ContextRing
- * markers and the in-chat compact suggestion (so they never disagree).
+ * Context-compaction thresholds. Single source of truth for ContextRing markers and the
+ * in-chat compact suggestion so they never disagree.
  *
  * The CLI auto-compacts at ~`window − 33K` resident tokens (verified from the binary:
  * effective limit = window − min(maxOutput,20K), then −13K) → ~96.7% on 1M, ~83.5% on
@@ -16,7 +16,7 @@
 /** The reserve the CLI keeps below the window before auto-compacting (tokens). */
 const AUTO_COMPACT_RESERVE = 33_000
 
-/** Auto-compact trigger as a percent (0–100) of the window — window-dependent. */
+/** Auto-compact trigger as a percent (0–100) of the window; window-dependent. */
 export function autoCompactPercent(window: number): number {
   const trigger = Math.max(0, window - AUTO_COMPACT_RESERVE)
   return Math.min(100, Math.round((trigger / window) * 1000) / 10) // 1 decimal (96.7)

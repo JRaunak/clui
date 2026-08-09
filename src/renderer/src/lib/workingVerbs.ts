@@ -1,5 +1,5 @@
 /**
- * Whimsical "working" verbs shown while a turn streams — matching Claude Code's
+ * Whimsical "working" verbs shown while a turn streams, matching Claude Code's
  * thinking-state flavor. Extracted verbatim from the installed claude binary
  * (2.1.206) so they're the real set, not invented. Displayed as e.g. "Tomfoolering…".
  */
@@ -78,7 +78,6 @@ export const WORKING_VERBS: string[] = [
   'Wrangling'
 ]
 
-/** A random working verb. */
 export function randomWorkingVerb(): string {
   return WORKING_VERBS[Math.floor(Math.random() * WORKING_VERBS.length)]
 }

@@ -3,7 +3,7 @@
  * profiles via the AWS CLI using the user's configured profile/region (from
  * ~/.claude/settings.json `bedrock`) and returns their ids unchanged, since only the
  * full id is a valid `--model` value. Falls back to a bundled list if the query fails (no aws
- * CLI, non-Bedrock provider, etc.) — flagged `live: false` so the UI can say so
+ * CLI, non-Bedrock provider, etc.), flagged `live: false` so the UI can say so
  * instead of claiming a live list. Only a SUCCESSFUL result is cached, so a
  * transient failure retries rather than pinning the fallback for the process.
  */
@@ -26,8 +26,8 @@ let cache: string[] | null = null
  * knows. Shortening is a DISPLAY concern, and `labelFor` already parses the full id.
  *
  * Bedrock lists most models twice, once per region scope ('us.' and 'global.'), so the
- * dedupe key is the id WITHOUT its prefix while the value stays the full id — first scope
- * seen wins. Keying on the raw id instead would show every model twice.
+ * dedupe key is the id WITHOUT its prefix while the value stays the full id (first scope
+ * seen wins). Keying on the raw id instead would show every model twice.
  */
 function pickableProfileIds(ids: string[]): string[] {
   const seen = new Set<string>()
@@ -84,7 +84,7 @@ function failureReason(e: unknown): NonNullable<ModelListResult['reason']> {
 
 /**
  * List available model ids. Live-queries Bedrock; caches ONLY successful results;
- * falls back to the bundled list on failure WITHOUT caching it — so a transient
+ * falls back to the bundled list on failure WITHOUT caching it, so a transient
  * failure (aws not yet on PATH, creds refreshing, network blip) is retried on the
  * next call instead of pinning the stale fallback for the whole process lifetime.
  * `live` is therefore a per-call fact, never a process-wide "offline" state.
@@ -123,7 +123,7 @@ export async function listModels(refresh = false): Promise<ModelListResult> {
     cache = withVariants(ids)
     return { ids: cache, live: true }
   } catch (e) {
-    // Do NOT cache the fallback — leave `cache` null so the next call retries the
+    // Do NOT cache the fallback: leave `cache` null so the next call retries the
     // live query. Return the bundled list for this call only.
     return { ids: FALLBACK_MODEL_IDS, live: false, reason: failureReason(e) }
   }
@@ -135,7 +135,7 @@ function withVariants(ids: string[]): string[] {
   for (const id of ids) {
     // Surface the 1M variant right before the base for large-context Opus. Derived
     // from the parsed version (like the effort gates) so a new Opus qualifies without
-    // an edit here — the base id alone caps at 200K even on Opus 5, where the CLI
+    // an edit here. The base id alone caps at 200K even on Opus 5, where the CLI
     // still requires the [1m] suffix to unlock 1M (verified live on 2.1.220).
     const { family, version } = deriveModelInfo(id)
     if (family === 'opus' && version >= 4.7 && !/\[1m\]$/.test(id)) out.push(`${id}[1m]`)

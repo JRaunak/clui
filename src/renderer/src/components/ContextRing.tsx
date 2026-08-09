@@ -1,13 +1,12 @@
 import { autoCompactPercent } from '../lib/compaction'
 
 /**
- * C1 — Context-window usage as a real gauge (like the CLI statusline's
+ * C1: Context-window usage as a real gauge (like the CLI statusline's
  * `used_percentage`). An arc with a track, threshold coloring, and the percent set
  * in mono inside the ring. NO threshold tick marks: at 30px a 1px radial notch can't
  * be visually mapped to a specific % (the auto-compact point on a 1M window sits ~at
  * 12 o'clock and reads as a smudge), and the info is already carried by the fill
- * color (amber→red) and the tooltip's "auto-compacts near N%". A glanceable meter
- * this small should be fill + color + number, nothing it can't render legibly.
+ * color (amber→red) and the tooltip's "auto-compacts near N%".
  */
 export function ContextRing({
   percent,
@@ -32,7 +31,7 @@ export function ContextRing({
   const color = p >= 85 ? 'var(--color-err)' : p >= 60 ? 'var(--color-warn)' : 'var(--color-ok)'
 
   // The auto-compact point isn't drawn on the ring (too small to read) but IS named in
-  // the tooltip — it's window-dependent, so a user can't otherwise guess where it falls.
+  // the tooltip: it's window-dependent, so a user can't otherwise guess where it falls.
   const compactPct = contextWindow ? autoCompactPercent(contextWindow) : null
 
   const tooltip =

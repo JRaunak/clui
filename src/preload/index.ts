@@ -1,6 +1,6 @@
 /**
  * Preload: exposes a minimal, typed `window.clui` API to the renderer over the
- * context bridge. No Node globals leak into the renderer — every capability is an
+ * context bridge. No Node globals leak into the renderer; every capability is an
  * explicit IPC call.
  */
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
@@ -98,7 +98,7 @@ const api: CluiApi = {
 
 contextBridge.exposeInMainWorld('clui', api)
 
-// Resolve + apply the theme BEFORE the renderer paints — no flash of the wrong
+// Resolve + apply the theme BEFORE the renderer paints, avoiding a flash of the wrong
 // palette. Done here (not via an inline <head> script, which our strict
 // `default-src 'self'` CSP would block) because the preload is privileged and
 // runs before page scripts. `sendSync` blocks for the main-resolved concrete

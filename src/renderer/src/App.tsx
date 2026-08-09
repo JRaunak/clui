@@ -64,7 +64,7 @@ export function App(): JSX.Element {
   }, [])
 
   // Toggle inert with the overlay state. On close, clear inert FIRST (a .focus() on a
-  // still-inert node is a silent no-op), then restore focus to the trigger — falling
+  // still-inert node is a silent no-op), then restore focus to the trigger, falling
   // back through composer → new-session button → body if the trigger is gone (e.g. a
   // deleted session row). useLayoutEffect so the DOM is inert before the browser paints.
   useLayoutEffect(() => {
@@ -107,7 +107,7 @@ export function App(): JSX.Element {
     void window.clui.updateSettings({ onboarded: true })
   }, [])
 
-  // Opening ANY session (pick / resume-from-disk / activate) completes first-run —
+  // Opening ANY session (pick / resume-from-disk / activate) completes first-run,
   // keyed on `cwd` so every entry path counts, not just "Pick a workspace". Without
   // this, resuming a disk session on first run left onboarded=false, so CLOSING it
   // bounced the user back to the intro card (reported bug). Runs once (guarded on the
@@ -293,10 +293,10 @@ export function App(): JSX.Element {
       </aside>
 
       <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* No top bar: Settings moved to the sidebar (below New Session). The old h-10
-            header held only the gear far-right — empty chrome that miscued as a title bar
-            and stole ~40px of transcript height. macOS draws the native title bar; the
-            notice banner + chat carry their own top borders. */}
+        {/* No top bar: Settings lives in the sidebar (below New Session). macOS draws the
+            native title bar, so a custom header would be empty chrome that miscues as a
+            title bar and steals ~40px of transcript height. The notice banner + chat carry
+            their own top borders. */}
         {notice && (
           <div className="flex items-center gap-2 border-b border-warn/40 bg-warn/10 px-4 py-1.5 text-[12px] text-warn">
             <span className="flex-1">{notice}</span>
@@ -372,7 +372,7 @@ export function App(): JSX.Element {
       </main>
 
       {/* Overlays mount OUTSIDE <aside>/<main> (both siblings here) so those regions
-          can be inerted wholesale while a dialog is open — see the inert effect above.
+          can be inerted wholesale while a dialog is open (see the inert effect above).
           Each scrim is `fixed inset-0` (viewport-anchored), so it also covers the
           sidebar, which a `<main>`-scoped `absolute inset-0` never did. `data-overlay-host`
           marks this subtree so the focus tracker ignores focus moves inside a dialog. */}
@@ -408,7 +408,6 @@ export function App(): JSX.Element {
   )
 }
 
-/** Last path segment of a workspace dir (its display name). */
 function basename(p: string): string {
   const parts = p.replace(/\/+$/, '').split('/')
   return parts[parts.length - 1] || p
@@ -427,7 +426,7 @@ function BackgroundTasksSlot(): JSX.Element | null {
   )
 }
 
-/** Format a USD cost: sub-cent → 4dp, else 2dp (e.g. $0.0032, $0.14, $2.10). */
+/** e.g. $0.0032, $0.14, $2.10 */
 function formatCost(usd: number): string {
   if (usd > 0 && usd < 0.01) return `$${usd.toFixed(4)}`
   return `$${usd.toFixed(2)}`

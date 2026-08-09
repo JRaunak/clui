@@ -1,7 +1,7 @@
 /**
  * Autocomplete popover for the composer: a `/` command menu (skills + headless-safe
- * built-ins) and an `@` file picker (git-aware, fuzzy). Surfacing affordances only —
- * the CLI already honors typed `/cmd` and `@path`; this adds the menu.
+ * built-ins) and an `@` file picker (git-aware, fuzzy). Surfacing affordances only;
+ * the CLI already honors typed `/cmd` and `@path`, and this adds the menu.
  *
  * Design: the Composer owns the textarea; this hook-driven component reads the
  * current `text` + `caret`, detects the active trigger token, and returns an API
@@ -115,7 +115,7 @@ export function useComposerAutocomplete(
       ]
     }
     // Agents first (delegate the turn), then files. Empty query keeps this order
-    // since the fuzzy sort is skipped — so agents sit above files naturally.
+    // since the fuzzy sort is skipped, so agents sit above files naturally.
     return [
       ...agents.map((a) => ({
         value: a.name,
@@ -152,7 +152,7 @@ export function useComposerAutocomplete(
           if (bl.startsWith(ql)) score = Math.max(score ?? 0, kindLift + 2 * NAME_TIER + (bm.score ?? 0)) // prefix
           if (bl === ql) score = Math.max(score ?? 0, kindLift + 3 * NAME_TIER) // exact
         }
-        // Highlight indices must index the LABEL we actually render — commands
+        // Highlight indices must index the LABEL we actually render. Commands
         // render as "/usage" but are matched on the value "usage", so value-relative
         // indices are off by the leading "/" (lit the slash, dropped the last char).
         // Files have label === value, so reuse the already-computed matches.
@@ -213,7 +213,7 @@ export function useComposerAutocomplete(
         setSel((s) => (s - 1 + results.length) % results.length)
         return true
       }
-      // Tab ALWAYS completes to the selected item. Enter completes too — EXCEPT
+      // Tab ALWAYS completes to the selected item. Enter completes too, EXCEPT
       // when the user has already typed a value that exactly matches an item (e.g.
       // the full `/context`): then Enter should SEND, not re-pick (re-picking would
       // insert a trailing space / the wrong fuzzy row and the command never sends).
@@ -226,7 +226,7 @@ export function useComposerAutocomplete(
         const q = (trigger?.query ?? '').trim()
         // Agents are EXCLUDED from the send-as-typed shortcut: a bare `@fiber` does
         // NOT delegate (only the quoted `@"fiber (agent)"` does), so Enter must always
-        // run pick() to insert the quoted form — never send the raw typed name.
+        // run pick() to insert the quoted form, never send the raw typed name.
         const exact = results.some((r) => r.it.kind !== 'agent' && r.it.value.toLowerCase() === q.toLowerCase())
         if (exact) return false // let the composer send the typed command as-is
         e.preventDefault()
@@ -314,7 +314,7 @@ function useActiveSkills(active: boolean): { name: string; description: string }
 
 /** Load the workspace's agents (once per cwd) for the `@` menu. Picking one inserts
  *  the quoted `@"name (agent)"` token the CLI needs to delegate the turn.
- *  ponytail: agent roster from readConfig (disk) — misses CLI built-in agents
+ *  ponytail: agent roster from readConfig (disk) that misses CLI built-in agents
  *  (Explore, claude); switch the source to the initialize control_response 'agents'
  *  array (event-mapper → new 'agents' DomainEvent → store, mirroring 'slash-commands')
  *  if users report a built-in agent missing from the @ menu. */

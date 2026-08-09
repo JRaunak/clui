@@ -1,11 +1,11 @@
 /**
  * Renderer state: many concurrent Claude sessions, each with its own chat
  * transcript, streaming flags, permission queue, context ring, and picker
- * choices — assembled from the streamed DomainEvents.
+ * choices, assembled from the streamed DomainEvents.
  *
  * Keep-sessions-alive model (terminal-tab behavior): every started/resumed
  * session keeps its `claude` subprocess ALIVE in the background. Switching
- * sessions only changes `activeHandleId` (the session the UI views) — it never
+ * sessions only changes `activeHandleId` (the session the UI views); it never
  * kills or respawns a process, so switching is instant and a background session
  * can keep streaming while you look at another. Processes are stopped only on an
  * explicit close, on quit (main's `stopAll`), or by the live-process cap below.
@@ -33,7 +33,7 @@ export interface PendingPermission {
 /**
  * A background task (Bash run_in_background shell / backgrounded subagent) that
  * keeps running after the turn's `result` fires. Tracked separately from the
- * turn-level `busy` flag — its lifecycle is driven by the bg-task-* events.
+ * turn-level `busy` flag; its lifecycle is driven by the bg-task-* events.
  */
 export interface BackgroundTask {
   taskId: string
@@ -46,7 +46,7 @@ export interface BackgroundTask {
   toolUseId?: string
   /** 'running' until a terminal notification/update flips it. */
   status: 'running' | 'completed' | 'killed' | 'failed'
-  /** Wall-clock ms when started — drives the per-task elapsed timer. */
+  /** Wall-clock ms when started; drives the per-task elapsed timer. */
   startMs: number
   /** True while a user-requested TaskStop is in flight (tool-mediated; not instant). */
   stopping?: boolean
@@ -64,7 +64,7 @@ export type SubagentMessage =
 
 /** Nesting: a child subagent spawned by another subagent, surfaced as a
  *  clickable card inside the parent's transcript. `childToolUseId` is the child's own
- *  parent_tool_use_id — the key its forwarded transcript (`subagentMessages`) streams
+ *  parent_tool_use_id, the key its forwarded transcript (`subagentMessages`) streams
  *  under, so the card can drill into it. */
 export interface NestedSubagent {
   childToolUseId: string
@@ -83,7 +83,7 @@ export interface WorkflowAgent {
   agentId?: string
 }
 
-/** A live dynamic workflow (ultracode) — its phase→agent tree + status. */
+/** A live dynamic workflow (ultracode): its phase→agent tree + status. */
 export interface WorkflowState {
   taskId: string
   name: string
@@ -95,12 +95,12 @@ export interface WorkflowState {
   endedStatus: string | null
 }
 
-/** An ordered piece of an assistant message — a run of text, or a tool call ref —
- *  so the transcript renders text/tools in true stream order (e.g. intro text →
- *  tool cards → closing text, instead of all text lumped above all tools). */
+/** An ordered piece of an assistant message (a text run or a tool call ref), so the
+ *  transcript renders text and tools in true stream order rather than lumping all
+ *  text above all tools. */
 export type MessageBlock = { kind: 'text'; text: string } | { kind: 'tool'; id: string }
 
-/** A displayable attachment on a USER bubble — image thumbnail, or a document/text
+/** A displayable attachment on a USER bubble: an image thumbnail or a document/text
  *  file chip. Present on live bubbles the composer created AND on resumed user turns
  *  (images recovered from the transcript). */
 export type MessageAttachment =
@@ -118,12 +118,11 @@ export interface SendAttachment {
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
-  /** Visible text (assistant text deltas concatenated) — kept for the fallback
+  /** Visible text (assistant text deltas concatenated), kept for the fallback
    *  render path + transcript rebuild; live rendering uses `blocks` for ordering. */
   text: string
-  /** Reasoning text, shown collapsed. */
+  /** Shown collapsed. */
   thinking: string
-  /** Tool calls made within this assistant message. */
   tools: ToolCall[]
   /** Ordered text/tool blocks as they streamed. Empty for rebuilt-from-disk
    *  messages (which fall back to text-then-tools rendering). */
@@ -137,9 +136,9 @@ export interface ChatMessage {
  * A message the user composed WHILE a turn was running. Held renderer-side (NOT yet
  * dispatched to the CLI) so it can be EDITED or CANCELLED before its turn starts, and so
  * it renders at the transcript TAIL (below the streaming response) instead of being
- * spliced mid-transcript. Dispatched FIFO at the next turn boundary. (The CLI itself
- * would queue a mid-turn message — the `/btw` behavior — but dispatching immediately
- * makes it uneditable/uncancelable and mis-orders it, so Clui holds it instead.)
+ * spliced mid-transcript. Dispatched FIFO at the next turn boundary. Handing it to the
+ * CLI immediately (the `/btw` path) would make it uneditable and mis-ordered, so Clui
+ * holds it instead.
  */
 export interface QueuedMessage {
   id: string
@@ -153,16 +152,13 @@ export interface ToolCall {
   input: unknown
   result?: string
   isError?: boolean
-  /** Wall-clock ms when the tool_use started — drives the running-elapsed timer.
+  /** Wall-clock ms when the tool_use started; drives the running-elapsed timer.
    *  Optional: only set for live tool calls; rebuilt-from-disk tools are already
    *  complete (result present), so they never show the timer. */
   startMs?: number
 }
 
-/**
- * All state for a single live session, keyed by its `handleId` in the store.
- * (Was the top-level SessionState singleton before keep-sessions-alive.)
- */
+/** All state for a single live session, keyed by its `handleId` in the store. */
 export interface PerSessionState {
   /** App-local routing key (from the main SessionManager); durable across respawns. */
   handleId: string
@@ -204,10 +200,9 @@ export interface PerSessionState {
   /** True while a turn is streaming. */
   busy: boolean
   messages: ChatMessage[]
-  /** Messages composed while a turn was running — held renderer-side (editable/cancelable),
+  /** Messages composed while a turn was running: held renderer-side (editable/cancelable),
    *  rendered at the transcript tail, dispatched FIFO at the next turn boundary. */
   queuedMessages: QueuedMessage[]
-  /** Queue of tool-permission requests awaiting the user. */
   pendingPermissions: PendingPermission[]
   /** Files written/edited this session, most-recent first. */
   changedFiles: string[]
@@ -236,7 +231,7 @@ export interface PerSessionState {
   /**
    * True once the underlying process has exited for real (NOT an effort respawn,
    * which is swallowed in the main process). The slice is kept so the transcript
-   * stays readable, but the session is no longer live — the sidebar stops showing
+   * stays readable, but the session is no longer live: the sidebar stops showing
    * it as running and offers resume-from-disk instead.
    */
   exited: boolean
@@ -250,8 +245,8 @@ export interface PerSessionState {
  * Max concurrent live `claude` processes. Unlike terminal tabs, each live session
  * is a real subprocess (memory + possibly an API socket), so we cap them. When a
  * new session would exceed the cap we evict the least-recently-active session that
- * is NOT busy and NOT active; if every candidate is busy we never kill one — we
- * surface a notice and let the count run over.
+ * is NOT busy and NOT active; if every candidate is busy we never kill one, and
+ * instead surface a notice and let the count run over.
  */
 const LIVE_SESSION_CAP = 8
 
@@ -266,7 +261,7 @@ interface SessionStore {
    * The `parent_tool_use_id` of the subagent/workflow whose transcript is being
    * VIEWED in the maximized transcript view (null = normal chat). Scoped to the
    * active session's Agent tool_use ids. Cleared on ← Chat / Esc / session switch.
-   * This is the LAST element of `subagentTrail` (the deepest open subagent) — kept
+   * This is the LAST element of `subagentTrail` (the deepest open subagent), kept
    * as a derived convenience so existing readers (App gate, findOpen guard) are untouched.
    */
   viewingSubagent: string | null
@@ -274,7 +269,7 @@ interface SessionStore {
    * Nesting: the drill-down breadcrumb of subagent tool_use ids. Entering a
    * transcript from an Agent card / bg tray RESETS it to `[id]`; drilling into a nested
    * child PUSHES; the header "← back" POPS. Empty = normal chat. `viewingSubagent` mirrors
-   * its tail. (A workflow trail is always length 1 — workflows don't nest this way.)
+   * its tail. (A workflow trail is always length 1: workflows don't nest this way.)
    */
   subagentTrail: string[]
 
@@ -285,8 +280,8 @@ interface SessionStore {
   globalSearchOpen: boolean
   /**
    * A jump request for Chat: scroll to + flash the message with this id. `nonce`
-   * makes repeated jumps to the SAME id re-fire (Chat watches the nonce). Cleared to
-   * null after Chat consumes it isn't necessary — Chat keys off the nonce change.
+   * makes repeated jumps to the SAME id re-fire (Chat watches the nonce). No need to
+   * clear it after consumption, since Chat keys off the nonce change.
    */
   scrollTarget: { messageId: string; nonce: number } | null
 
@@ -356,7 +351,7 @@ interface SessionStore {
   /** Open the maximized transcript view for a subagent (by parent_tool_use_id). Resets
    *  the nesting trail to just this id (fresh entry from an Agent card / bg tray). */
   viewSubagent: (parentToolUseId: string) => void
-  /** Nesting: drill INTO a nested child subagent — pushes it onto the trail so
+  /** Nesting: drill INTO a nested child subagent, pushing it onto the trail so
    *  the header shows a breadcrumb + "← back" to the parent. */
   pushSubagent: (childToolUseId: string) => void
   /** Nesting: go back up one level (pop the trail); closes the view if at root. */
@@ -375,10 +370,10 @@ export function activeSlice(store: SessionStore): PerSessionState | null {
 /**
  * Immutably merge `patch` into one session's slice, returning the `set` payload (or `{}`
  * if the handle is gone). Every mutating action funnels the two-level spread through here
- * so the shape — and its not-null guard — live in ONE place: hand-writing
+ * so the shape and its not-null guard live in ONE place: hand-writing
  * `{ sessions: { ...s.sessions, [id]: { ...s.sessions[id], ...patch } } }` at each site
- * risks a dropped inner spread silently clobbering the whole slice (TS can't catch it —
- * the literal is well-typed). Read the base slice from the fresh `s`, never a stale capture.
+ * risks a dropped inner spread silently clobbering the whole slice, which TS can't catch
+ * because the literal is well-typed. Read the base slice from the fresh `s`, never a stale capture.
  */
 function patchSlice(
   s: SessionStore,
@@ -394,7 +389,7 @@ function patchSlice(
  * the narrow-selector re-render behavior: components re-render only when the
  * selected value changes, not on every event for any session.
  *
- * IMPORTANT: the selector must return a STABLE value when the slice is null —
+ * IMPORTANT: the selector must return a STABLE value when the slice is null.
  * zustand v5 uses `useSyncExternalStore` with Object.is, so a selector that
  * returns a fresh `[]`/`{}` on every call (e.g. `s?.messages ?? []`) triggers an
  * infinite render loop. Use the shared `EMPTY_*` constants below for the null
@@ -421,7 +416,7 @@ export const EMPTY_SLASH_COMMANDS: SlashCommandInfo[] = []
 
 let subscribed = false
 /**
- * Events that arrived for a handle whose slice does not exist yet — the tiny
+ * Events that arrived for a handle whose slice does not exist yet, in the tiny
  * window between `startSession` spawning (main assigns the handle) and the store
  * inserting the slice. Buffered by handleId, flushed when the slice lands, so no
  * `session-init` is ever dropped (closes the pre-handleId race).
@@ -432,7 +427,7 @@ const earlyBuffer = new Map<string, DomainEvent[]>()
  * Accrued cost (USD) per CLI sessionId, remembered across close→resume within an
  * app run. The CLI's `total_cost_usd` is PER-INVOCATION, not cumulative across a
  * `--resume` (verified: turn1 $0.114, resumed turn2 reports only its own $0.026),
- * and cost is NOT persisted in the jsonl — so we accumulate it here and re-seed a
+ * and cost is NOT persisted in the jsonl, so we accumulate it here and re-seed a
  * resumed/respawned session's slice from it, instead of resetting to null.
  * Best-effort/in-memory: a fresh app launch resuming an old session starts at $0
  * for new turns (there's no historical cost on disk to recover).
@@ -444,8 +439,8 @@ const costBySessionId = new Map<string, number>()
  * `beginSession` from `listModels()`, used in `session-init` to reconcile the
  * picker's `modelChoice` to the model the CLI actually reports (so a mid-session
  * `set_model` that survives a resume is reflected in the picker, not overwritten by
- * the stale Settings default). Empty until the first session starts — reconciliation
- * then falls back to the reported id, which is still correct.
+ * the stale Settings default). Empty until the first session starts, when reconciliation
+ * falls back to the reported id, which is still correct.
  */
 let knownModelIds: string[] = []
 
@@ -496,7 +491,7 @@ export async function loadPersistedCosts(): Promise<void> {
       if (!costBySessionId.has(sid)) costBySessionId.set(sid, usd)
     }
   } catch {
-    // best-effort — cost display just starts empty if the sidecar is unreadable
+    // best-effort: cost display just starts empty if the sidecar is unreadable
   }
   // Also load per-session model/effort prefs so a resume after relaunch restores the
   // session's last-used model (the CLI reverts to the settings default otherwise).
@@ -513,7 +508,7 @@ export async function loadPersistedCosts(): Promise<void> {
       modelPrefsBySessionId.set(sid, { model: prefs.model, effort, ultracode: prefs.ultracode })
     }
   } catch {
-    // best-effort — resume just falls back to the Settings default model/effort
+    // best-effort: resume just falls back to the Settings default model/effort
   }
 }
 
@@ -599,8 +594,8 @@ async function beginSession(
         // text-then-tools layout (ordering within a resumed turn isn't preserved
         // in the transcript, and it's display-only history anyway).
         blocks: [],
-        // Drop-file: recovered attachments render in the user bubble —
-        // images as thumbnails (the recovered data-URL is the preview), document/text as
+        // Drop-file: recovered attachments render in the user bubble. Images show as
+        // thumbnails (the recovered data-URL is the preview), document/text as
         // metadata chips (name + size; bytes not re-inlined into the store on resume).
         attachments: m.attachments?.length
           ? m.attachments.map((a) =>
@@ -614,7 +609,7 @@ async function beginSession(
       }))
       resumedContextTokens = t.contextTokens
     } catch {
-      // Transcript unreadable/format drift — resume still works, just no history.
+      // Transcript unreadable/format drift: resume still works, just no history.
       history = []
     }
   }
@@ -629,7 +624,7 @@ async function beginSession(
     seededTokens != null ? Math.min(100, Math.round((seededTokens / seededWindow) * 100)) : null
 
   // Pass model/effort explicitly. On resume these are the REMEMBERED per-session
-  // values (from the sidecar) — verified: --model/--effort ARE honored on a --resume
+  // values (from the sidecar). Verified: --model/--effort ARE honored on a --resume
   // spawn, and the CLI otherwise reverts to the settings.json default (dropping the
   // user's mid-session switch). On a fresh session they're the Settings default.
   const { handleId } = await window.clui.startSession({
@@ -657,7 +652,7 @@ async function beginSession(
     compactDismissedAtRunway: null,
     // Re-seed accrued cost when resuming a session we've already spent on this app
     // run (cost isn't persisted on disk, and the CLI's per-invocation total_cost
-    // resets across --resume — so carry our own running total forward).
+    // resets across --resume, so carry our own running total forward).
     costUsd: opts.resumeSessionId ? (costBySessionId.get(opts.resumeSessionId) ?? null) : null,
     resumed: Boolean(opts.resumeSessionId),
     historyCount: history.length,
@@ -724,7 +719,7 @@ function basename(p: string): string {
 /**
  * Commit a user turn: append the optimistic user bubble, set busy, and write it to the
  * CLI. Used both for an immediate send (idle) and for RELEASING a queued message at a
- * turn boundary — so the queued path and the direct path build the identical bubble.
+ * turn boundary, so the queued path and the direct path build the identical bubble.
  */
 async function dispatchTurn(
   set: (fn: (s: SessionStore) => Partial<SessionStore>) => void,
@@ -828,7 +823,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
 
   resumeSession: async (cwd, resumeSessionId, mode) => {
-    // If this session is already live, just view it — never respawn.
+    // If this session is already live, just view it; never respawn.
     const existing = Object.values(get().sessions).find((s) => s.sessionId === resumeSessionId)
     if (existing) {
       get().activateSession(existing.handleId)
@@ -837,10 +832,10 @@ export const useSession = create<SessionStore>((set, get) => ({
     await beginSession(get, set, { cwd, resumeSessionId, permissionMode: mode })
   },
 
-  // Fork a session — branch it to a NEW live session carrying the full context,
+  // Fork a session: branch it to a NEW live session carrying the full context,
   // leaving the original jsonl untouched (`--fork-session`). Fork-from-HEAD (whole-session
   // duplicate); works on live AND dormant sessions (both just need the id + cwd). Unlike
-  // resume, we NEVER short-circuit to an existing live session — the point is a new branch.
+  // resume, we NEVER short-circuit to an existing live session; the point is a new branch.
   forkSession: async (cwd, sourceSessionId, mode) => {
     await beginSession(get, set, { cwd, resumeSessionId: sourceSessionId, fork: true, permissionMode: mode })
   },
@@ -861,7 +856,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     await window.clui.stopSession(handleId)
     set((s) => {
       // Compute the neighbour BEFORE deleting, using the SAME order the sidebar
-      // shows (createdMs desc) — so closing the active session moves the highlight
+      // shows (createdMs desc), so closing the active session moves the highlight
       // to its visual neighbour (the row below, or the row above if it was last),
       // never to a random most-recently-used row elsewhere in the list. We only
       // ever hand off to another LIVE session; we NEVER auto-resume a dormant
@@ -873,7 +868,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           .filter((v) => !v.exited)
           .sort((a, b) => b.createdMs - a.createdMs)
         const i = ordered.findIndex((v) => v.handleId === handleId)
-        // Prefer the row ABOVE (the newer session — list is newest-first, so moving
+        // Prefer the row ABOVE (the newer session, since the list is newest-first, so moving
         // up after closing an older one is the intuitive direction); if we closed
         // the topmost row, fall to the one below it.
         const neighbour = i === -1 ? undefined : (ordered[i - 1] ?? ordered[i + 1])
@@ -910,7 +905,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     // Optimistically reflect both the choice AND the resolved "active" mode. The
     // CLI applies the change live but does not re-emit a session-init event, so
     // we update the reported mode ourselves. 'inherit' has no mid-session
-    // "unset", so the main process maps it to 'default' — mirror that here.
+    // "unset", so the main process maps it to 'default'; mirror that here.
     set((s) =>
       patchSlice(s, active.handleId, {
         modeChoice: mode,
@@ -926,13 +921,13 @@ export const useSession = create<SessionStore>((set, get) => ({
     // If the new model doesn't support the current effort, clamp it down.
     const nextEffort = clampEffort(model, active.effortChoice)
     const prevEffort = active.effortChoice
-    // Ultracode requires an xhigh-capable model — switching to an incompatible one
+    // Ultracode requires an xhigh-capable model, so switching to an incompatible one
     // (e.g. Haiku) must turn it OFF, else it'd stay on for a model that can't do it
     // (model switch is live, no respawn, so nothing else would clear it).
     const nextUltra = active.ultracode && supportsUltracodeToggle(model)
     const ultraChanged = nextUltra !== active.ultracode
     // Switching model can change the context window (1M ↔ 200K). Recompute it now from
-    // the new id and rescale the ring % against it — otherwise the ring keeps the old
+    // the new id and rescale the ring % against it, else the ring keeps the old
     // window (wrong %, wrong auto-compact notch) until the next turn streams usage. The
     // authoritative window still arrives on the next `result`; this is the id-derived
     // estimate for the gap. Only rescale when we know the resident tokens.
@@ -988,7 +983,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (!active || (!text.trim() && !(attachments && attachments.length))) return
     // Composed while a turn is running → HOLD it renderer-side (editable/cancelable,
     // rendered at the tail) instead of dispatching now. It's sent FIFO at the next turn
-    // boundary (see the `result` handler). We do NOT dispatch to the CLI here — dispatching
+    // boundary (see the `result` handler). We do NOT dispatch to the CLI here: dispatching
     // immediately would make it uneditable AND splice it mid-transcript (the ordering bug).
     if (active.busy) {
       const qm: QueuedMessage = { id: `q-${Date.now()}`, text, attachments }
@@ -1023,7 +1018,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (!active) return
     // Optimistically clear busy so Stop is responsive. The CLI's `result` event
     // (which also clears it) may lag or, if the interrupt races the turn's end,
-    // never arrive with new content — don't leave the composer stuck on "Stop".
+    // never arrive with new content, so don't leave the composer stuck on "Stop".
     set((s) => patchSlice(s, active.handleId, { busy: false }))
     await window.clui.interrupt(active.handleId)
   },
@@ -1034,7 +1029,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (!task || task.status !== 'running') return
     // Per-task kill is TOOL-MEDIATED (verified): there is no direct control
     // channel for it, so we inject a user turn instructing the model to call
-    // TaskStop(taskId). It therefore costs a turn and isn't instant — reflect that
+    // TaskStop(taskId). It therefore costs a turn and isn't instant; reflect that
     // with a `stopping` flag until the task_updated:killed event lands. A new turn
     // also makes the session busy again.
     set((s) =>
@@ -1066,7 +1061,7 @@ export const useSession = create<SessionStore>((set, get) => ({
         }
         patch.backgroundTasks = nextTasks
       }
-      // Drop ENDED workflows (keep running ones — endedStatus === null).
+      // Drop ENDED workflows (keep running ones, endedStatus === null).
       if (kind !== 'subagent') {
         const nextWf: Record<string, WorkflowState> = {}
         for (const [id, w] of Object.entries(active.workflows)) {
@@ -1119,10 +1114,10 @@ export const useSession = create<SessionStore>((set, get) => ({
       }
 
       // Only copy the message list for events that mutate it (keeps unrelated
-      // events — context-usage, result, … — from re-rendering the transcript).
+      // events like context-usage and result from re-rendering the transcript).
       const messages = touchesMessages(e.type) ? slice.messages.slice() : slice.messages
       const patch: Partial<PerSessionState> = {}
-      // Top-level (store-wide) notice to set, if any — survives a slice drop.
+      // Top-level (store-wide) notice to set, if any; survives a slice drop.
       let topLevelNotice: string | null = null
       // Set true to CLEAR the app-level notice (e.g. a fresh session-init resolves the
       // transient "Reconnecting…" notice from an effort/ultracode respawn).
@@ -1136,7 +1131,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           // Reconcile the PICKER (modelChoice) to the model the CLI actually reports.
           // On resume, the CLI keeps the model the session last used (a mid-session
           // set_model survives --resume), but beginSession seeded modelChoice from the
-          // stale Settings default — so the picker would lie (show Opus while the CLI
+          // stale Settings default, so the picker would lie (show Opus while the CLI
           // runs Sonnet). Adopt the reported model (mapped to the matching picker id).
           if (e.model) {
             const reconciled = reconcileModelChoice(slice.modelChoice, e.model, knownModelIds)
@@ -1162,7 +1157,7 @@ export const useSession = create<SessionStore>((set, get) => ({
             }
           }
           // A fresh init means any prior transient notice (e.g. the effort/ultracode
-          // respawn "reconnecting…" message) is now resolved — clear both the per-slice
+          // respawn "reconnecting…" message) is now resolved, so clear both the per-slice
           // error and the app-level notice.
           patch.lastError = null
           clearNotice = true
@@ -1228,7 +1223,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.lastActivityMs = Date.now()
           break
         case 'permission-cancel':
-          // The CLI withdrew this pending prompt — drop it so the dialog closes.
+          // The CLI withdrew this pending prompt, so drop it and the dialog closes.
           patch.pendingPermissions = slice.pendingPermissions.filter(
             (p) => p.requestId !== e.requestId
           )
@@ -1238,7 +1233,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.contextTokens = e.usedTokens
           patch.contextWindow = e.contextWindow
           // Reset the compact-suggestion dismissal when context drops back below the
-          // trigger (a fresh fill-cycle after a manual/auto compact) — so the row can
+          // trigger (a fresh fill-cycle after a manual/auto compact) so the row can
           // offer again. Uses the same window-class threshold as the suggestion.
           if (
             slice.compactDismissedAtRunway != null &&
@@ -1435,14 +1430,14 @@ export const useSession = create<SessionStore>((set, get) => ({
           // A backgrounded subagent's COMPLETION arrives as its own result tagged
           // `fromTaskNotification`. Its cost + text are real (accrued/rendered below +
           // via the normal text path), but this result is NOT the user's foreground turn
-          // ending — so it must NOT clear `busy` (that would free the composer mid-turn
+          // ending, so it must NOT clear `busy` (that would free the composer mid-turn
           // if the user has since started a new prompt) and must NOT be treated as a
           // turn boundary for lastActivity. Only a genuine turn-end clears busy.
           if (!e.fromTaskNotification) {
             patch.busy = false
             patch.lastActivityMs = Date.now()
             // A real turn boundary: if the user queued message(s) during this turn, release
-            // the OLDEST now (FIFO) — dequeue it here and dispatch it after this set commits
+            // the OLDEST now (FIFO). Dequeue it here and dispatch it after this set commits
             // (dispatch is async + re-sets busy; can't run inside the reducer). Remaining
             // queued messages wait for their own boundary.
             if (slice.queuedMessages.length > 0) {
@@ -1455,8 +1450,8 @@ export const useSession = create<SessionStore>((set, get) => ({
           // --resume, and it resets on an effort-respawn), so ACCUMULATE it rather
           // than replace. Also remember it by sessionId so a later close→resume or
           // respawn re-seeds the running total instead of dropping to this turn's
-          // cost. Undefined on some results (e.g. interrupted) — no-op then.
-          // (Accrued for BOTH result kinds — the bg completion turn really did cost.)
+          // cost. Undefined on some results (e.g. interrupted), a no-op then.
+          // (Accrued for BOTH result kinds: the bg completion turn really did cost.)
           if (typeof e.totalCostUsd === 'number') {
             const nextCost = (slice.costUsd ?? 0) + e.totalCostUsd
             patch.costUsd = nextCost
@@ -1475,11 +1470,11 @@ export const useSession = create<SessionStore>((set, get) => ({
             topLevelNotice = e.message
             break
           }
-          // A launch that fails before the CLI ever initialized (model===null) —
-          // e.g. a missing workspace folder or a bad CLI path — will have its slice
+          // A launch that fails before the CLI ever initialized (model===null),
+          // e.g. a missing workspace folder or a bad CLI path, will have its slice
           // dropped on the imminent process-exit, taking a per-slice lastError with
           // it. So surface it ONLY as the app-level notice (top banner, survives the
-          // drop) — NOT also as the in-chat error box, which would (a) duplicate the
+          // drop), NOT also as the in-chat error box, which would (a) duplicate the
           // message and (b) vanish with the slice anyway. A mid-session error (model
           // already set) shows in-chat as before.
           if (slice.model === null) topLevelNotice = e.message
@@ -1494,11 +1489,11 @@ export const useSession = create<SessionStore>((set, get) => ({
       }
 
       // A session that exits WITHOUT the CLI ever initializing THIS run is a
-      // failed launch — ENOENT (bad CLI path) or a missing workspace folder. The
+      // failed launch: ENOENT (bad CLI path) or a missing workspace folder. The
       // process never came up (model stays null until session-init), so there's no
       // live session to keep; drop the slice entirely instead of leaving a zombie
-      // "exited" session that lingers in the store, mis-counts as live, and — the
-      // reported bug — gets picked as the fallback when another session closes,
+      // "exited" session that lingers in the store, mis-counts as live, and (the
+      // reported bug) gets picked as the fallback when another session closes,
       // resurfacing its stale error. The transcript (if any) is untouched on disk,
       // so it stays resumable from the sidebar once the folder is back.
       if (e.type === 'process-exit' && slice.model === null) {
@@ -1511,7 +1506,7 @@ export const useSession = create<SessionStore>((set, get) => ({
                 .sort((a, b) => b.lastActivityMs - a.lastActivityMs)[0]?.handleId ?? null)
             : state.activeHandleId
         // Preserve any notice the preceding error event set (don't clear it just
-        // because the slice is being dropped — that notice IS the explanation).
+        // because the slice is being dropped, since that notice IS the explanation).
         return { sessions: next, activeHandleId: active }
       }
 
@@ -1547,7 +1542,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   // Fresh entry from an Agent card / bg tray / workflow chip → the trail is just [id].
   viewSubagent: (parentToolUseId) =>
     set(() => ({ viewingSubagent: parentToolUseId, subagentTrail: [parentToolUseId] })),
-  // Nesting: drill into a child — push it; `viewingSubagent` mirrors the tail.
+  // Nesting: drill into a child by pushing it; `viewingSubagent` mirrors the tail.
   // Guard against pushing a dupe (e.g. double-click) so "back" always makes progress.
   pushSubagent: (childToolUseId) =>
     set((s) =>

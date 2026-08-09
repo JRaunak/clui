@@ -2,7 +2,7 @@
  * Dismiss-on-outside-click for popovers/menus.
  *
  * While `active`, a document-level mousedown listener fires `onOutside` when the click
- * lands outside `ref`. The companion to `useEscape` (same call shape) — a popover wanting
+ * lands outside `ref`. The companion to `useEscape` (same call shape): a popover wanting
  * both dismissal paths calls the two side by side. Extracted because the identical effect
  * was hand-rolled in every dropdown/menu; a change here (pointerdown for touch, ignoring
  * the trigger, portalled sub-menus) now lands in one place instead of drifting across sites.

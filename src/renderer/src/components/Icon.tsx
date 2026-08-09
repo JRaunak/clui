@@ -1,7 +1,7 @@
 /**
- * Crisp inline SVG icons (replace the emoji glyphs — ⚙ 🗑 ↻ ✎ ↗ ✕ — which
- * rendered inconsistently and read as templated). All inherit `currentColor` and
- * a shared 1.6 stroke so they sit coherently next to the Dropdown chevrons.
+ * Inline SVG icons. Emoji glyphs rendered inconsistently across platforms and
+ * read as templated. All inherit `currentColor` and a shared 1.6 stroke so they
+ * sit coherently next to the Dropdown chevrons.
  */
 type IconProps = { className?: string; title?: string }
 
@@ -148,7 +148,7 @@ export function IconShield(p: IconProps): JSX.Element {
   )
 }
 
-/** Shield with a slash — "protection off". Used for the risky bypassPermissions
+/** Shield with a slash, "protection off". Used for the risky bypassPermissions
  *  ("Autonomous") mode so its danger is signaled by SHAPE, not color alone (WCAG 1.4.1). */
 export function IconShieldOff(p: IconProps): JSX.Element {
   return (
@@ -161,10 +161,10 @@ export function IconShieldOff(p: IconProps): JSX.Element {
 
 // ── Permission-mode glyphs ───────────────────────────────────────────────────
 // Each permission mode gets a DISTINCT metaphor glyph so the mode is legible by
-// SHAPE, not by color alone (two modes shared green — WCAG 1.4.1). Reused
+// SHAPE, not by color alone (two modes shared green; WCAG 1.4.1). Reused
 // elsewhere: IconSettings (System Default), IconEdit (Auto Edit).
 
-/** No-entry (circle + horizontal bar) — "Silent Deny": denies anything unlisted. */
+/** No-entry (circle + horizontal bar), "Silent Deny": denies anything unlisted. */
 export function IconNoEntry(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
@@ -174,7 +174,7 @@ export function IconNoEntry(p: IconProps): JSX.Element {
   )
 }
 
-/** Raised hand — "Interactive": stops to ask you before each tool. */
+/** Raised hand, "Interactive": stops to ask you before each tool. */
 export function IconHand(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
@@ -183,7 +183,7 @@ export function IconHand(p: IconProps): JSX.Element {
   )
 }
 
-/** Sparkles — "Adaptive": Claude's classifier decides risk per action. */
+/** Sparkles, "Adaptive": Claude's classifier decides risk per action. */
 export function IconSparkles(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
@@ -193,7 +193,7 @@ export function IconSparkles(p: IconProps): JSX.Element {
   )
 }
 
-/** Checklist document — "Plan Mode": proposes a plan before acting. */
+/** Checklist document, "Plan Mode": proposes a plan before acting. */
 export function IconChecklist(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
@@ -206,7 +206,7 @@ export function IconChecklist(p: IconProps): JSX.Element {
   )
 }
 
-/** Download / export — a down-arrow into a tray. Used for the session-row export action. */
+/** Download / export, a down-arrow into a tray. Used for the session-row export action. */
 export function IconDownload(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
@@ -259,7 +259,7 @@ export function IconMessage(p: IconProps): JSX.Element {
   )
 }
 
-/** Framed picture with a sun + mountain — the "attach image" affordance. */
+/** Framed picture with a sun + mountain: the "attach image" affordance. */
 export function IconImage(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
@@ -270,7 +270,7 @@ export function IconImage(p: IconProps): JSX.Element {
   )
 }
 
-/** Closed padlock — marks the effort readout as forced/locked while Ultra is on. */
+/** Closed padlock: marks the effort readout as forced/locked while Ultra is on. */
 export function IconLock(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
@@ -280,7 +280,7 @@ export function IconLock(p: IconProps): JSX.Element {
   )
 }
 
-/** Vertical kebab (⋮) — the session-row overflow menu trigger for rare actions. */
+/** Vertical kebab (⋮): the session-row overflow menu trigger for rare actions. */
 export function IconMore(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
@@ -291,7 +291,7 @@ export function IconMore(p: IconProps): JSX.Element {
   )
 }
 
-/** Git-branch glyph (a line diverging off a base) — the "Branch session" action. */
+/** Git-branch glyph (a line diverging off a base): the "Branch session" action. */
 export function IconGitFork(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>

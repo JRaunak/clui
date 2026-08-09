@@ -6,11 +6,10 @@
  * (model, effort), else from DEFAULT_SETTINGS. Same philosophy as the existing
  * `permissionMode: 'inherit'` sentinel, applied to every field.
  *
- * This matters because the previous write path persisted the whole merged object,
- * so the first Save froze all eight keys as concrete values, including a model the
- * user never picked, which then silently overrode what their CLI config said. With
- * overrides-only, "the user chose dark" and "dark is the default" are distinguishable,
- * which is what a per-field reset needs.
+ * Overrides-only so "the user chose dark" and "dark is the default" stay
+ * distinguishable, which per-field reset needs. Persisting the whole merged object
+ * would freeze every key as a concrete value on the first Save, including a model the
+ * user never picked, silently overriding their CLI config.
  */
 import { app } from 'electron'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
@@ -40,7 +39,7 @@ const settingsPath = (): string => join(app.getPath('userData'), 'settings.json'
  *
  * Two traps here, both load-bearing:
  *  - The CLI's stored id ('us.anthropic.claude-opus-5[1m]') is taken VERBATIM. The picker
- *    lists Bedrock's ids unshortened, so shortening here would match nothing — and the
+ *    lists Bedrock's ids unshortened, so shortening here would match nothing, and the
  *    shortened form isn't a valid `--model` value anyway.
  *  - Effort is gated per model, and the CLI's own enum has no 'max', so an inherited
  *    effort still gets clamped against the RESOLVED model, otherwise Clui could pass

@@ -84,14 +84,14 @@ export const THEME_LABELS: Record<ThemeChoice, string> = {
 }
 
 /**
- * A model "choice" is the actual `--model` value (id or alias) — so the list is
+ * A model "choice" is the actual `--model` value (id or alias), so the list is
  * derived from whatever Bedrock returns, never a fixed hardcoded union. Labels
  * and effort capabilities are derived from the id (see deriveModelInfo).
  */
 export type ModelChoice = string
 
 /** Effort choices (CLI: low/medium/high/xhigh/max). No inherit. Ultracode is a
- *  SEPARATE per-session toggle (not an effort level) — it forces xhigh + workflow
+ *  SEPARATE per-session toggle (not an effort level) that forces xhigh + workflow
  *  orchestration; see `setUltracode` in the store. */
 export type EffortChoice = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -123,21 +123,19 @@ export interface ModelInfo {
   label: string
   /** Effort levels this model supports (derived from family + version). */
   efforts: EffortChoice[]
-  /** Family + numeric version, derived from the id — used to GROUP the live list
+  /** Family + numeric version, derived from the id, used to GROUP the live list
       in the picker (never to filter or hardcode which models exist). */
   family: 'opus' | 'sonnet' | 'haiku' | 'fable' | 'unknown'
   version: number
 }
 
 /**
- * Fallback model ids for the window before the live Bedrock query lands, or when it fails
- * (no `aws` on PATH, creds refreshing). A curated recent set, deliberately not a mirror of
- * everything Bedrock returns: superseded models are omitted on purpose.
+ * Fallback model ids used before the live Bedrock query lands or when it fails (no `aws`
+ * on PATH, creds refreshing). A curated recent set; superseded models are omitted.
  *
- * ponytail: hardcoded, so it falls behind on every model release. Re-check it against
- * `aws bedrock list-inference-profiles` whenever a new family ships. Every Opus at 4.7 or
- * above needs its `[1m]` twin listed explicitly: `withVariants()` only derives those on the
- * live path, so a missing one silently caps a fallback user at 200K.
+ * ponytail: re-check against `aws bedrock list-inference-profiles` when a new family ships.
+ * Every Opus >=4.7 needs its `[1m]` twin listed explicitly, since `withVariants()` only
+ * derives those on the live path; a missing one silently caps a fallback user at 200K.
  */
 export const FALLBACK_MODEL_IDS: string[] = [
   'claude-opus-5[1m]',
@@ -155,7 +153,7 @@ export const FALLBACK_MODEL_IDS: string[] = [
 
 // A model id is never shortened for use: only the full Bedrock profile id, a suffix-free
 // id, or a short alias ('haiku') is a valid `--model` value. Stripping the prefix off a
-// date-suffixed profile yields 'claude-haiku-4-5', which the API rejects — that shortening
+// date-suffixed profile yields 'claude-haiku-4-5', which the API rejects; that shortening
 // once made half the picker unselectable. `labelFor` parses the full id for display.
 
 /**
@@ -231,7 +229,6 @@ function effortsFor(id: string): EffortChoice[] {
   return out
 }
 
-/** Build a friendly label from a model id, e.g. "Opus 4.8 (1M)". */
 /** The CLI's non-model selector values, which name a policy rather than a model. */
 const SELECTOR_LABELS: Record<string, string> = {
   default: 'Default',
@@ -249,13 +246,12 @@ function labelFor(id: string): string {
   return `${cap}${ver}${is1m ? ' (1M)' : ''}`
 }
 
-/** Derive full display info for a model id. */
 export function deriveModelInfo(id: string): ModelInfo {
   const { family, version } = parseModelId(id)
   return { id, label: labelFor(id), efforts: effortsFor(id), family, version }
 }
 
-/** Group order for the model picker — most-capable families first. Unknown/新 families
+/** Group order for the model picker, most-capable families first. Unknown families
     fall through to a trailing "Other" bucket so a NEW Bedrock model is never dropped. */
 const FAMILY_ORDER: ModelInfo['family'][] = ['opus', 'sonnet', 'haiku', 'fable', 'unknown']
 const FAMILY_LABEL: Record<ModelInfo['family'], string> = {
@@ -275,7 +271,7 @@ export interface ModelGroup {
 /**
  * Group a LIVE model list by family, version-desc within each group, families in
  * FAMILY_ORDER. Purely a display transform: every input model lands in exactly one
- * group (unknown → "Other"), nothing is filtered or hardcoded — so the picker still
+ * group (unknown → "Other"), nothing is filtered or hardcoded, so the picker still
  * reflects whatever Bedrock returned, just scannable instead of a flat interleaved wall.
  */
 export function groupModels(models: ModelInfo[]): ModelGroup[] {
@@ -300,7 +296,7 @@ export function groupModels(models: ModelInfo[]): ModelGroup[] {
  * Context-window size (tokens) for a model id: 1M for the `[1m]` variant, else 200K.
  * The `result` event carries the authoritative window once a turn streams; this is
  * the id-derived estimate used before that (session start, and on a mid-session model
- * switch — where the picker changes the window with no new turn to re-derive it).
+ * switch, where the picker changes the window with no new turn to re-derive it).
  */
 export function contextWindowForModel(id: string): number {
   return /\[1m\]/i.test(id) ? 1_000_000 : 200_000
@@ -312,7 +308,7 @@ export function supportsUltracode(id: string): boolean {
 }
 
 /** True if two model ids denote the SAME model (family+version+1M), ignoring the
- *  Bedrock inference-profile prefix — so the CLI's raw report `claude-sonnet-5`
+ *  Bedrock inference-profile prefix, so the CLI's raw report `claude-sonnet-5`
  *  matches a picker id `us.anthropic.claude-sonnet-5`. */
 export function sameModel(a: string, b: string): boolean {
   const pa = parseModelId(a)
@@ -365,7 +361,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
 // Ordered by the risk ramp (safest concrete mode → riskiest), with System Default
 // (settings.json-honoring) pinned first. `dontAsk`/`auto` are 2.1.210 CLI modes
 // (verified accepted headless): dontAsk = never prompts, DENIES anything not
-// pre-approved (most restrictive — verified it hard-denies a safe-but-unlisted
+// pre-approved (most restrictive; verified it hard-denies a safe-but-unlisted
 // command); auto = runs low-risk silently + delegates risk to Claude's classifier
 // (Claude Code's new default).
 export const PERMISSION_MODES: CluiSettings['permissionMode'][] = [
@@ -392,8 +388,8 @@ export const PERMISSION_MODE_LABELS: Record<CluiSettings['permissionMode'], stri
 /**
  * Risk-based Tailwind text-color class per mode (green = safest → red = riskiest).
  * System Default is neutral (it inherits whatever settings.json says). `dontAsk` is
- * green — it's the MOST restrictive (only pre-approved actions run, rest denied); `auto`
- * is info-blue — a smart/managed middle (classifier decides), deliberately not green
+ * green because it's the MOST restrictive (only pre-approved actions run, rest denied);
+ * `auto` is info-blue, a smart/managed middle (classifier decides), deliberately not green
  * since its live hard-block wasn't fully verified (don't over-signal "safe").
  */
 export const PERMISSION_MODE_COLORS: Record<CluiSettings['permissionMode'], string> = {
@@ -408,10 +404,9 @@ export const PERMISSION_MODE_COLORS: Record<CluiSettings['permissionMode'], stri
 
 /**
  * One-line behavior descriptions shown UNDER each option in the open picker (menu
- * only — the collapsed composer chip stays compact). The labels are terse
- * ("Silent Deny", "Adaptive") and don't convey behavior on their own; the
- * description is behavior-first (what the mode DOES / whether it asks you) so the
- * risk ordering is self-explanatory. Kept short (≤7 words).
+ * only; the collapsed composer chip stays compact). The terse labels ("Silent Deny",
+ * "Adaptive") don't convey behavior alone, so each description says what the mode DOES
+ * and whether it asks you, making the risk ordering self-explanatory. Kept ≤7 words.
  */
 export const PERMISSION_MODE_DESCRIPTIONS: Record<CluiSettings['permissionMode'], string> = {
   inherit: 'Follows your CLI settings.json',

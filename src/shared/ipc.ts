@@ -29,10 +29,10 @@ export interface StartSessionOptions {
   /** Resume an existing session id instead of starting fresh. */
   resumeSessionId?: string
   /**
-   * Fork from `resumeSessionId` instead of resuming it — passes `--fork-session`
+   * Fork from `resumeSessionId` instead of resuming it. Passes `--fork-session`
    * so the CLI branches to a NEW session id carrying the full context, leaving the
    * original jsonl untouched. Only meaningful with `resumeSessionId`. Fork-from-HEAD
-   * (whole-session duplicate) — never a mid-conversation truncation (that would desync
+   * (a whole-session duplicate), never a mid-conversation truncation (that would desync
    * from files on disk). Verified live 2.1.216.
    */
   fork?: boolean
@@ -50,7 +50,7 @@ export interface StartSessionOptions {
 }
 
 /** Permission-mode choices selectable per session. Aliased to the settings union so the
- *  two can't drift — one canonical list, kept honest by the `PERMISSION_MODE_*` Record
+ *  two can't drift: one canonical list, kept honest by the `PERMISSION_MODE_*` Record
  *  maps in settings.ts (which compile-error on a missing arm). */
 export type PermissionModeChoice = CluiSettings['permissionMode']
 
@@ -63,14 +63,14 @@ export interface StartSessionResult {
 /**
  * The minimal attachment payload that crosses the wire to the CLI:
  * only the media type + raw base64 bytes (NO `data:...;base64,` prefix) or inlined text
- * cross IPC — renderer-only display metadata (thumbnail, size, dims) never does, keeping
+ * cross IPC. Renderer-only display metadata (thumbnail, size, dims) never does, keeping
  * the (already large) base64 from being duplicated across the bridge. Covers the three
  * content-block kinds the CLI's duplex stream-json user turn accepts (all three VERIFIED
  * live on 2.1.209):
  *  - `image`    → `{type:'image',    source:{type:'base64', media_type, data}}`
  *  - `document` → `{type:'document', source:{type:'base64', media_type:'application/pdf', data}}`
  *  - `text`     → an inlined text block (a dropped text file's decoded contents,
- *                 wrapped so the model knows the filename — mechanically identical to
+ *                 wrapped so the model knows the filename, mechanically identical to
  *                 a paste, so it works regardless of the workspace-cwd Read boundary).
  */
 export type WireAttachment =
@@ -151,7 +151,7 @@ export interface CluiApi {
    *  file path, or null if the user cancelled. Reads the jsonl directly (no resume). */
   exportSession: (sessionId: string) => Promise<string | null>
   /** Pre-populate the search content cache (called when the search overlay opens,
-   *  so the first query is warm). No matching — just parse-into-cache. Fire-and-forget. */
+   *  so the first query is warm). No matching, just parse-into-cache. Fire-and-forget. */
   warmSearchCache: () => Promise<void>
   /** Read a workflow/subagent agent transcript by agentId (from disk; the live
    *  stream doesn't carry it). Empty if not found (still streaming / layout drift). */
@@ -180,7 +180,7 @@ export interface CluiApi {
   openInEditor: (filePath: string) => Promise<void>
   /** Open an http(s) URL in the user's default browser (markdown links). */
   openExternal: (url: string) => Promise<void>
-  /** Given a list of paths, return only those that still exist on disk — used to
+  /** Given a list of paths, return only those that still exist on disk, to
    *  prune the changed-files list when a file is deleted (even by the agent). */
   filterExistingFiles: (paths: string[]) => Promise<string[]>
   /** List files under a workspace (git-aware; relative paths, capped) for the
@@ -210,7 +210,7 @@ export interface CluiApi {
   /** Validate a CLI path (or auto-detect if empty): returns detected info. */
   detectCliAt: (path: string) => Promise<CliInfo>
   /**
-   * Read the `permissions.defaultMode` from ~/.claude/settings.json — i.e. what
+   * Read the `permissions.defaultMode` from ~/.claude/settings.json, i.e. what
    * the "System Default" (inherit) mode resolves to. Returns 'default' if unset.
    */
   getSystemPermissionMode: () => Promise<string>
@@ -218,7 +218,7 @@ export interface CluiApi {
    * List available model ids. `live` is true when these ids came from Bedrock (a
    * successful query, or the cache of one) and false when they're Clui's bundled
    * fallback, with `reason` naming the cause. Only success is cached, so `live` is a
-   * PER-CALL fact — a later call can go live again; never latch it as app state.
+   * PER-CALL fact: a later call can go live again; never latch it as app state.
    */
   listModels: (refresh?: boolean) => Promise<ModelListResult>
   /** Resolve a dropped/picked File's absolute path (Electron 33 `webUtils`). Synchronous;
@@ -287,7 +287,7 @@ export const IpcChannels = {
   listModels: 'clui:listModels',
   /**
    * SYNCHRONOUS channel (ipcRenderer.sendSync) used by the preload to resolve the
-   * concrete theme ('dark'|'light') before first paint — 'system' is resolved via
+   * concrete theme ('dark'|'light') before first paint; 'system' is resolved via
    * the OS in main. Sync so the preload can set <html data-theme> with zero flash
    * (an inline <head> script would violate our strict `default-src 'self'` CSP).
    */

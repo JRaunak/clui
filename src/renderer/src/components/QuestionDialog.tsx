@@ -1,5 +1,5 @@
 /**
- * AskUserQuestion picker — the model asking the USER a structured question (not a
+ * AskUserQuestion picker: the model asking the USER a structured question (not a
  * permission decision). The CLI surfaces it as a `can_use_tool` request with
  * `requires_user_interaction: true` (fires even in bypassPermissions), so it's
  * routed here instead of the Allow/Deny dialog.
@@ -55,7 +55,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
   const [picked, setPicked] = useState<Record<number, string[]>>({})
   const [freeText, setFreeText] = useState<Record<number, string>>({})
   // Optional per-question note, folded into that question's answer value on submit.
-  // Never gates submit (allAnswered ignores it) — it's additive context, not an answer.
+  // Never gates submit (allAnswered ignores it); it's additive context, not an answer.
   const [note, setNote] = useState<Record<number, string>>({})
   // Which option's preview fills the side pane. Hover-driven (null = not hovering);
   // resolved below to hovered → selected → first, so the pane is never empty.
@@ -104,7 +104,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: { questions, answers } })
   }
 
-  // "Chat about this" — deny the structured question so the user can free-type a
+  // "Chat about this": deny the structured question so the user can free-type a
   // reply instead (verified: the model acknowledges and stops).
   const chatInstead = (): void => {
     void respond({
@@ -114,7 +114,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     })
   }
 
-  // Cancel — neutral skip (allow + empty answers). Distinct from "chat": no message
+  // Cancel: neutral skip (allow + empty answers). Distinct from "chat": no message
   // to the model, just "no answer".
   const cancel = useCallback((): void => {
     void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: { questions, answers: {} } })
@@ -128,7 +128,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
 
   // Tab / arrows cycle between question tabs. Ignore when focus is in the free-text
   // input so typing/Tab there behaves normally. Enter submits when every question is
-  // answered — but not while an option BUTTON has focus (Enter there toggles it, so
+  // answered, but not while an option BUTTON has focus (Enter there toggles it, so
   // submitting too would be a surprise double-action).
   const onKeyDown = (e: React.KeyboardEvent): void => {
     const tag = (e.target as HTMLElement).tagName
@@ -146,7 +146,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
   }
 
   if (questions.length === 0) {
-    // Degenerate input — just let the user dismiss.
+    // Degenerate input: just let the user dismiss.
     return (
       <Shell>
         <div className="px-5 py-4 text-sm text-dim">Claude asked a question, but it couldn’t be parsed.</div>
@@ -158,7 +158,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
   const q = questions[Math.min(tab, questions.length - 1)]
   const qi = Math.min(tab, questions.length - 1)
   // The tab-bar only earns its space when there's more than one question to move
-  // between — a single-question dialog is just its options + the footer.
+  // between; a single-question dialog is just its options + the footer.
   const showTabs = questions.length > 1
 
   // Pane follows hovered → selected → first option, so it's never empty. No previews
@@ -183,10 +183,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
           onHover={hasPreviews ? () => setHovered(oi) : undefined}
         />
       ))}
-      {/* Type something — free-text custom answer. When chosen, THIS row
-          becomes the input (one bordered box, not an option box with a second
-          input box nested below it). It has no preview, so hovering it returns
-          the pane to the selected/first option. */}
+      {/* Type something: this row itself becomes the text input when chosen. */}
       {(picked[qi] ?? []).includes(FREE_TEXT) ? (
         <div className="flex items-center gap-2.5 rounded-md border border-accent bg-accent-surface px-3 py-2">
           <span className="w-4 shrink-0 text-center font-mono text-[11px] text-faint">
@@ -215,12 +212,8 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
 
   return (
     <Shell onKeyDown={onKeyDown} wide={hasPreviews}>
-      {/* Tab-bar: one TAB per question (these are peer questions you navigate + answer
-          ALL of — a real tabbed interface, not a picker). The active tab is marked by a
-          terracotta UNDERLINE + accent text (the scarce accent, in one place); inactive
-          are dim. Deliberately NO leading circle and NO filled pill — both read as a
-          single-select control (radio / segmented control) and mislead (the reported bug).
-          Answered progress = a TRAILING ✓ (means "done", never "selectable"). */}
+      {/* Tab uses no leading circle and no filled pill because those misread as a
+          single-select control. */}
       {showTabs && (
         <div
           role="tablist"
@@ -313,11 +306,8 @@ function OptionRow({
 }
 
 /**
- * Preview side-panel — shows the active option's `preview` (a code snippet / ASCII
- * mock). Matches Clui's code surfaces (bg-tool + font-mono text-xs, like the tool
- * output <pre> and CommandOutput) so it reads as one system, not a new widget.
- * Whitespace preserved, long lines wrapped, height capped with internal scroll so a
- * big preview can't push the dialog past max-h-[80vh].
+ * Preview side-panel: reuses the existing surface styling so it doesn't read as a
+ * separate widget.
  */
 function PreviewPane({ text }: { text: string }): JSX.Element {
   return (

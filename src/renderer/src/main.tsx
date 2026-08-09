@@ -5,7 +5,7 @@ import { useSession, activeSlice, type PerSessionState } from './store'
 import './styles.css'
 
 // E2E hook: lets the Playwright driver drive the store directly (the workspace
-// picker is a native dialog that automation can't click). Harmless in prod — it
+// picker is a native dialog that automation can't click). Harmless in prod: it
 // only exposes the same actions the UI already calls.
 const w = window as unknown as {
   __cluiStore?: typeof useSession

@@ -6,7 +6,7 @@
  *
  * Cold-start: the FIRST content scan parses every jsonl (~1s once, then ~9ms warm via
  * the main-side cache). We hide it by (a) warming the cache the moment this overlay
- * OPENS — intent-driven, not at launch — so the parse overlaps the user's typing, and
+ * OPENS (intent-driven, not at launch) so the parse overlaps the user's typing, and
  * (b) a loading state for any query that still hasn't warmed. Latest-query-wins: each
  * query carries a monotonic id; a stale response is dropped.
  *
@@ -54,7 +54,7 @@ export function GlobalSearch(): JSX.Element | null {
 
   useEscape(open, close)
 
-  // On open: focus, warm the content cache (intent-driven — overlaps typing), and
+  // On open: focus, warm the content cache (intent-driven, overlaps typing), and
   // load the workspace list for the scope dropdown.
   useEffect(() => {
     if (!open) return
@@ -64,9 +64,9 @@ export function GlobalSearch(): JSX.Element | null {
   }, [open])
 
   // Debounced search. Re-runs when the query OR a facet changes. Latest-query-wins via
-  // queryIdRef (drop stale responses). Facet changes re-query instantly (no debounce
-  // needed — they're deliberate clicks, not keystrokes — but sharing the path keeps it
-  // simple and the cache makes it ~9ms anyway).
+  // queryIdRef (drop stale responses). Facet changes are deliberate clicks, not
+  // keystrokes, so they don't need the debounce, but sharing the path keeps it
+  // simple and the cache makes it ~9ms anyway.
   useEffect(() => {
     if (!open) return
     const q = query.trim()
@@ -118,9 +118,9 @@ export function GlobalSearch(): JSX.Element | null {
   // Which result sessions are currently LIVE (a running process) vs dormant (on disk).
   // Clicking a dormant hit RESUMES → spawns a process; a live one just switches. We
   // surface that so the resume cost isn't a surprise (matches ⌘K/sidebar grammar:
-  // TONE + a verb, never a status dot — the sidebar owns live-monitoring).
-  // ⚠️ zustand-v5: select a STABLE PRIMITIVE (sorted id string), not a fresh Set —
-  // a new Set/array each call trips useSyncExternalStore's Object.is → React #185 loop.
+  // TONE + a verb, never a status dot; the sidebar owns live-monitoring).
+  // ⚠️ zustand-v5: select a STABLE PRIMITIVE (sorted id string), not a fresh Set.
+  // A new Set/array each call trips useSyncExternalStore's Object.is → React #185 loop.
   const liveSig = useSession((s) =>
     Object.values(s.sessions)
       .filter((v) => !v.exited && v.sessionId)
@@ -168,10 +168,10 @@ export function GlobalSearch(): JSX.Element | null {
           </button>
         </div>
 
-        {/* Facet bar — appears only once there's a query (no chrome on the empty
+        {/* Facet bar: appears only once there's a query (no chrome on the empty
             state). Scope = a workspace SELECTOR (dropdown, variable-length list, works
             with no active session + can pick ANY workspace); Role = a single "From you"
-            toggle (agent-only was cut as low-value; the noise is assistant/tool text). */}
+            toggle. No agent-only filter: the noise being filtered is assistant/tool text. */}
         {q.length >= MIN_QUERY && (
           <div className="flex items-center gap-4 border-b border-border px-4 py-2">
             <div className="flex items-center gap-2">

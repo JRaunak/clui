@@ -3,7 +3,7 @@
  *
  * The CLI's `total_cost_usd` is per-invocation (it resets across a `--resume`) and
  * is NOT written to the jsonl, so Clui accumulates a running total itself. This
- * sidecar persists that total across app relaunches — same pattern as the rename
+ * sidecar persists that total across app relaunches, the same pattern as the rename
  * sidecar (`session-names.json`); app-owned, never touches ~/.claude.
  *
  * Map shape: { "<cli-session-id>": <cumulative-usd> }.

@@ -1,6 +1,6 @@
 /**
  * Maximized transcript view. When a subagent's "view transcript" is
- * clicked, this REPLACES the main region (Chat/Composer) — the sessions sidebar
+ * clicked, this REPLACES the main region (Chat/Composer); the sessions sidebar
  * persists (it's a sibling of <main> in App). Full-width by design (transcripts can
  * be large); ← Chat / Esc / ✕ return to the conversation.
  *
@@ -33,7 +33,6 @@ import { IconClose } from './Icon'
 import type { HistoryMessage } from '../../../shared/sessions'
 import type { SubagentMessage } from '../store'
 
-/** Find the Agent tool call (across the active session's messages) by id. */
 function findAgentTool(
   messages: { tools: ToolCall[] }[],
   id: string
@@ -50,7 +49,7 @@ const EMPTY_CHILDREN_MAP: Record<string, NestedSubagent[]> = {}
 
 /** Resolved header metadata for a subagent at some trail depth. A top-level subagent is
  *  found on its launching Agent tool card (in `messages`, carries running/error state);
- *  a NESTED child has no card — its metadata comes from its parent's `subagentChildren`
+ *  a NESTED child has no card; its metadata comes from its parent's `subagentChildren`
  *  entry (found by scanning the map for the matching childToolUseId). */
 function resolveAgentMeta(
   id: string,
@@ -97,7 +96,6 @@ function agentSubtype(input: unknown): string | null {
   return null
 }
 
-/** Map a raw CLI agent state to a status dot color + label. */
 function agentStatus(state: string): { cls: string; label: string } {
   if (/fail|error/i.test(state)) return { cls: 'bg-err', label: 'failed' }
   if (/done|complete|success/i.test(state)) return { cls: 'bg-ok', label: 'done' }
@@ -162,7 +160,6 @@ function WorkflowAgentDetail({ agent }: { agent: WorkflowAgent }): JSX.Element {
   )
 }
 
-/** Render one history message (reused shape: thinking + text + tool cards). */
 function HistoryBlock({ msg }: { msg: HistoryMessage }): JSX.Element {
   const isUser = msg.role === 'user'
   return (
@@ -286,7 +283,7 @@ function WorkflowTreeView({
           )}
         </div>
 
-        {/* Detail pane for the selected agent — its full transcript (read from disk). */}
+        {/* Detail pane for the selected agent: its full transcript (read from disk). */}
         <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
           {!sel ? (
             <div className="text-sm text-faint">Select an agent to see its transcript.</div>
@@ -409,7 +406,7 @@ export function SubagentView(): JSX.Element | null {
   const children = useActive((s) =>
     parentId ? (s?.subagentChildren[parentId] ?? EMPTY_NESTED_SUBAGENTS) : EMPTY_NESTED_SUBAGENTS
   )
-  // The full children map — lets the breadcrumb label an ancestor that is itself a
+  // The full children map, letting the breadcrumb label an ancestor that is itself a
   // nested child (its metadata isn't in `messages`, only in its parent's children list).
   const childrenByParent = useActive((s) => s?.subagentChildren ?? EMPTY_CHILDREN_MAP)
   // The bg-task handle for a BACKGROUNDED subagent, joined on toolUseId === the PTU being
@@ -452,7 +449,7 @@ export function SubagentView(): JSX.Element | null {
     }
   }, [parentId, liveCount])
 
-  // Esc pops one level (back up the trail), closing the view at the root — LIFO stack.
+  // Esc pops one level (back up the trail), closing the view at the root. LIFO stack.
   useEscape(parentId !== null, popSubagent)
 
   if (!parentId) return null
@@ -460,7 +457,7 @@ export function SubagentView(): JSX.Element | null {
   if (workflow) return <WorkflowTreeView workflow={workflow} onClose={close} />
 
   // Resolve the CURRENT subagent's header metadata. A top-level subagent is found on the
-  // launching Agent tool card (in `messages`); a NESTED child isn't there — its metadata
+  // launching Agent tool card (in `messages`); a NESTED child isn't there, so its metadata
   // lives in its parent's `subagentChildren` entry. Try both.
   const meta = resolveAgentMeta(parentId, messages, childrenByParent)
   const name = meta.name
@@ -491,8 +488,7 @@ export function SubagentView(): JSX.Element | null {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Header — ← back pops one level (Chat at root); a breadcrumb shows the nesting
-          trail so you always know how deep you are and can jump up. ✕ closes entirely. */}
+      {/* Breadcrumb (clickable to jump up); ← back pops one level. */}
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-[13px]">
         <button
           className="font-semibold text-accent hover:brightness-110"
@@ -552,14 +548,14 @@ export function SubagentView(): JSX.Element | null {
         </button>
       </div>
 
-      {/* Transcript — full width (a workflow phase-tree rail slots left of this later). */}
+      {/* Transcript: full width (a workflow phase-tree rail slots left of this later). */}
       <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
         {desc && (
           <div className="mb-5 max-w-3xl font-mono text-[12px] leading-relaxed text-faint">
             {desc}
           </div>
         )}
-        {/* A NESTED child has no live stream — render its on-disk transcript
+        {/* A NESTED child has no live stream; render its on-disk transcript
             (loaded by tool_use_id). Falls through to the live path for top-level. */}
         {subMsgs.length === 0 && diskLoadedFor === parentId && diskMsgs && diskMsgs.length > 0 ? (
           <div className="flex max-w-3xl flex-col gap-4">
@@ -595,8 +591,6 @@ export function SubagentView(): JSX.Element | null {
             {running && (
               <div className="text-[12px] text-faint">••• streaming from subagent…</div>
             )}
-            {/* Nesting: subagents this one spawned. Each opens its own transcript
-                (drills one level deeper — the breadcrumb tracks the path). */}
             {children.length > 0 && (
               <div className="mt-2 flex flex-col gap-1.5">
                 <div className="font-serif text-[13px] text-dim">

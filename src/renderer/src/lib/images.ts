@@ -4,7 +4,7 @@
  * Turns a dropped/pasted/picked File into a `ProcessedAttachment` (image | document |
  * text) carrying a lean wire payload + renderer-only display metadata. All three ride
  * INLINE in the duplex stream-json user turn as Anthropic content blocks (image /
- * document / text — every kind verified live on CLI 2.1.209), so none of them touch
+ * document / text; every kind verified live on CLI 2.1.209), so none of them touch
  * the Read tool or the workspace-cwd boundary.
  *
  * Routing (see `processDroppedFiles`):
@@ -26,14 +26,12 @@ const ACCEPTED = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 
 /** Downscale target: the longest edge, in px. Matches the model's own resample. */
 const MAX_EDGE = 1568
-/** Thumbnail longest edge for the composer/bubble preview, in px. */
 const PREVIEW_EDGE = 256
-/** Hard reject above this original-file size (bytes) — 30 MB. */
 const MAX_BYTES = 30 * 1024 * 1024
-/** PDF hard cap (bytes) — the Anthropic document limit is 32 MB; 20 MB keeps a single
+/** PDF hard cap (bytes): the Anthropic document limit is 32 MB; 20 MB keeps a single
  *  turn sane on cost (a PDF bills ~1.5–3k tokens per page, every page). */
 const MAX_PDF_BYTES = 20 * 1024 * 1024
-/** Text file cap (bytes) — ~256 KB ≈ 64k tokens; a dropped log/csv above this should
+/** Text file cap (bytes): ~256 KB ≈ 64k tokens; a dropped log/csv above this should
  *  be referenced (@) or trimmed, not silently inlined (context-eviction risk). */
 const MAX_TEXT_BYTES = 256 * 1024
 
@@ -52,7 +50,7 @@ export interface ProcessedImage {
   id: string
   /** e.g. 'image/png'. */
   mediaType: string
-  /** Base64 image bytes (NO `data:...;base64,` prefix) — the wire payload. */
+  /** Base64 image bytes (NO `data:...;base64,` prefix); the wire payload. */
   data: string
   /** Small `data:` URL for the thumbnail (renderer-only). */
   previewUrl: string
@@ -75,7 +73,6 @@ function nextId(): string {
   return `img-${Date.now().toString(36)}-${idCounter}`
 }
 
-/** Strip a data-URL down to `{ mediaType, base64 }`. */
 function splitDataUrl(url: string): { mediaType: string; base64: string } {
   const comma = url.indexOf(',')
   const header = url.slice(5, url.indexOf(';')) // after "data:" up to ";base64"
@@ -100,7 +97,6 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   })
 }
 
-/** Draw `img` into a canvas scaled to a max long edge; return a data-URL + dims. */
 function renderScaled(
   img: HTMLImageElement,
   maxEdge: number,
@@ -116,7 +112,7 @@ function renderScaled(
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new ImageError('Could not process the image (no canvas context).')
   ctx.drawImage(img, 0, 0, w, h)
-  // JPEG re-encodes lossy (photos); png/webp stay lossless — crisp for screenshots.
+  // JPEG re-encodes lossy (photos); png/webp stay lossless, so screenshots stay crisp.
   const url = mediaType === 'image/jpeg' ? canvas.toDataURL('image/jpeg', 0.9) : canvas.toDataURL(mediaType)
   return { url, w, h }
 }
@@ -156,7 +152,7 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
 
   // Preview thumbnail: a small still (first frame for GIFs) so the bubble doesn't
   // retain a full-size data-URL for the whole session. A GIF is ALWAYS flattened to
-  // a still PNG even when small — otherwise a tiny-but-multi-MB animation would be
+  // a still PNG even when small; otherwise a tiny-but-multi-MB animation would be
   // kept whole in the message. Non-GIFs already within the preview edge keep their
   // (small) data-URL as-is.
   let previewUrl = wireUrl
@@ -198,7 +194,7 @@ function extOf(name: string): string {
 }
 
 /** True if decoded text contains a NUL (U+0000) or the Unicode replacement char
- *  (U+FFFD) — markers of a binary file or an invalid-UTF-8 decode. Scans a bounded
+ *  (U+FFFD), markers of a binary file or an invalid-UTF-8 decode. Scans a bounded
  *  prefix (binaries reveal themselves early; avoids walking a whole 256 KB string). */
 function hasBinaryMarker(text: string): boolean {
   const n = Math.min(text.length, 4096)
@@ -248,8 +244,8 @@ async function processTextFile(file: File): Promise<ProcessedAttachment> {
   const text = await readAsText(file)
   // Binary sniff: a NUL byte (U+0000) or a Unicode replacement char (U+FFFD, what the
   // decoder emits for invalid UTF-8) means this is a renamed binary or a wrong-encoding
-  // decode → inlining it would be token garbage. Reject constructively. (Codepoint
-  // check, not literal chars, so it's robust to editor/encoding round-tripping.)
+  // decode, and inlining it would be token garbage. Reject constructively. Checks
+  // codepoints so it survives editor/encoding round-tripping.
   if (hasBinaryMarker(text)) {
     throw new ImageError(
       `${file.name || 'That file'} doesn't look like text — Clui can only inline text files.`
@@ -265,7 +261,6 @@ async function processTextFile(file: File): Promise<ProcessedAttachment> {
   }
 }
 
-/** True if a file should be inlined as text (extension allowlist OR a text/* MIME). */
 function isTextFile(file: File): boolean {
   if (file.type.startsWith('text/')) return true
   if (/^(application\/(json|xml|x-yaml|x-sh)|application\/javascript)$/.test(file.type)) return true
@@ -275,8 +270,8 @@ function isTextFile(file: File): boolean {
 /**
  * Route dropped/pasted/picked files by type into `ProcessedAttachment`s, returning the
  * successes + user-facing error messages for the rest. Unsupported files are REPORTED
- * (not silently skipped) so the composer can show a helpful notice — because here the
- * user explicitly dropped a document expecting something to happen.
+ * (not silently skipped) so the composer can show a notice, because the user explicitly
+ * dropped a document expecting something to happen.
  */
 export async function processDroppedFiles(
   files: File[]

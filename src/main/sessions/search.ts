@@ -1,7 +1,7 @@
 /**
- * Conversation search — global content search across all on-disk sessions.
+ * Conversation search: global content search across all on-disk sessions.
  *
- * Runs in the MAIN process over the FULL jsonl files (uncapped) — the renderer only
+ * Runs in the MAIN process over the FULL jsonl files (uncapped). The renderer only
  * holds the active session's messages, and the 200-cap was a render limit, never a
  * data limit. Design decisions (from measured critiques):
  *
@@ -16,9 +16,9 @@
  * - Searchable fields (FIXED for v1, no toggles): user text + assistant text + tool
  *   NAMES + curated tool-INPUT values (file_path/command/pattern/query/url/prompt).
  *   EXCLUDED: tool OUTPUTS (bulk + noise), thinking (empty/encrypted on disk),
- *   sidechain/subagent text (no jump locator — parser skips it anyway), and CLI
+ *   sidechain/subagent text (no jump locator; parser skips it anyway), and CLI
  *   plumbing (the parser already suppresses it, so it never reaches us).
- * - Case-insensitive SUBSTRING match (not fuzzy — fuzzy over long prose = garbage).
+ * - Case-insensitive SUBSTRING match (not fuzzy; fuzzy over long prose = garbage).
  * - Cooperative yielding (`setImmediate` every N files) + latest-query-wins so a
  *   cold scan never blocks the event loop or piles up behind fast keystrokes.
  */
@@ -37,7 +37,7 @@ const MIN_QUERY = 2
 const MAX_HITS_PER_SESSION = 5
 /** Chars of context around a match in the snippet. */
 const SNIPPET_RADIUS = 60
-/** Warm-cache ceiling (distinct session files). LRU-evicted — bounds main-process memory. */
+/** Warm-cache ceiling (distinct session files). LRU-evicted to bound main-process memory. */
 const CACHE_MAX = 40
 
 /** Tool-input keys worth searching (human-meaningful; excludes huge/noisy blobs). */
@@ -60,7 +60,7 @@ interface CacheEntry {
 /** Module-level warm cache, LRU by insertion order (Map preserves it). */
 const cache = new Map<string /* filePath */, CacheEntry>()
 
-/** Monotonic query token — the renderer sends increasing ids; a scan bails early
+/** Monotonic query token: the renderer sends increasing ids; a scan bails early
  *  when a newer query has started, and stale results are dropped renderer-side. */
 let latestQueryId = 0
 
@@ -109,12 +109,12 @@ async function getRecords(filePath: string, mtimeMs: number, size: number): Prom
 }
 
 /**
- * Warm the content cache WITHOUT running a query — a dedicated cache-population pass
+ * Warm the content cache WITHOUT running a query: a dedicated cache-population pass
  * (NOT a throwaway search: no matching, no result allocation, no queryId pollution).
  * Called when the global-search overlay OPENS, so the parse overlaps the user's typing
- * and the first real query is usually already warm. Intent-driven (only runs when
- * search is actually invoked), so non-searchers never pay for it. Cooperative-yields
- * and bails if a real search superseded it. Best-effort: swallows per-file errors.
+ * and the first real query is usually already warm. Only runs when search is actually
+ * invoked, so non-searchers never pay for it. Cooperative-yields and bails if a real
+ * search superseded it. Best-effort: swallows per-file errors.
  */
 export async function warmSearchCache(): Promise<void> {
   const files = await enumerateSessionFiles()
@@ -174,8 +174,8 @@ function makeSnippet(text: string, offsets: number[], qLen: number): { snippet: 
 }
 
 /** Enumerate on-disk session files (like listSessions), newest-first by mtime.
- *  `scopeSlug` restricts to one workspace dir — the scope facet's perf win: other
- *  project dirs are never read/parsed. */
+ *  `scopeSlug` restricts to one workspace dir (the scope facet's perf win: other
+ *  project dirs are never read/parsed). */
 async function enumerateSessionFiles(
   scopeSlug?: string
 ): Promise<{ filePath: string; sessionId: string; slug: string; mtimeMs: number; size: number }[]> {
@@ -250,7 +250,7 @@ export async function searchSessions(
     let totalHits = 0
     const meta = titleFor(f.sessionId)
     for (const r of records) {
-      // Role facet: "You only" restricts to user messages (pure subtraction — the
+      // Role facet: "You only" restricts to user messages (pure subtraction; the
       // cache stores all roles, so toggling never re-parses).
       if (opts.userOnly && r.role !== 'user') continue
       const offsets = findMatches(r.text, qLower)

@@ -18,11 +18,11 @@ import type { HistoryMessage, HistoryToolCall, TranscriptResult } from '../../sh
 const projectsRoot = (): string => join(homedir(), '.claude', 'projects')
 
 /**
- * OOM safety ceiling, NOT a render cap. The transcript is now VIRTUALIZED
+ * OOM safety ceiling, NOT a render cap. The transcript is VIRTUALIZED
  * (react-virtuoso in Chat.tsx renders only the visible window), so we return the
- * WHOLE transcript — the old 200 render-cap is gone. This ceiling only guards
- * against a pathological/corrupt multi-hundred-MB file OOMing the main process;
- * a real human transcript never approaches it (measured corpus max ~4,600 msgs).
+ * WHOLE transcript. This ceiling only guards against a pathological/corrupt
+ * multi-hundred-MB file OOMing the main process; a real human transcript never
+ * approaches it (measured corpus max ~4,600 msgs).
  */
 const SAFETY_CAP = 50_000
 
@@ -54,14 +54,14 @@ function stripCommandStdout(raw: unknown): string {
  * `<command-name>/x</command-name>` echo and the `<local-command-caveat>…` notice
  * the CLI injects around a slash command. Rendering them as "You" bubbles is the
  * raw-XML noise seen on resume. (The command's OUTPUT is a separate local_command
- * record, surfaced above — so hiding these loses nothing the user typed.)
+ * record, surfaced above, so hiding these loses nothing the user typed.)
  */
 function isCommandPlumbing(text: string): boolean {
   // Suppress synthetic user turns the CLI injects into the transcript: slash-command
   // plumbing (<command-*>/<local-command-*>) AND background-task/workflow completion
-  // notices (<task-notification> — the CLI feeds a finished bg task's result back to
+  // notices (<task-notification>). The CLI feeds a finished bg task's result back to
   // the model as a user message; the user already sees it via the tool card + tray, so
-  // rendering the raw XML as a chat bubble is noise).
+  // rendering the raw XML as a chat bubble is noise.
   return /^\s*<(command-(message|name|args)|local-command-(caveat|stdout)|task-notification)>/.test(
     text
   )
@@ -99,11 +99,11 @@ interface ContentBlock {
   source?: { type?: string; media_type?: string; data?: string; url?: string }
 }
 
-/** Budget for recovered images per transcript read — full-size base64 held in the
- *  store bloats memory (unlike the LIVE path, which downscales a small preview before
- *  storing; the renderer has canvas, main does not). Clui-sent images are already
- *  ≤1568px, so this only bites on full-res images from another client. Beyond the cap
- *  the block degrades to the `[image]` text placeholder. */
+/** Budget for recovered images per transcript read: full-size base64 held in the
+ *  store bloats memory. (The LIVE path downscales a small preview before storing;
+ *  the renderer has canvas, main does not.) Clui-sent images are already ≤1568px, so
+ *  this only bites on full-res images from another client. Beyond the cap the block
+ *  degrades to the `[image]` text placeholder. */
 const MAX_RECOVERED_IMAGES = 30
 const MAX_RECOVERED_IMAGE_BYTES = 25 * 1024 * 1024
 
@@ -134,7 +134,7 @@ async function findTranscriptFile(sessionId: string): Promise<string | null> {
  * Resolved agent-transcript paths, keyed by `agent:<agentId>` / `tool:<toolUseId>`. The
  * finders below run a depth-5 readdir DFS over the whole projects tree; while a subagent
  * panel is open the UI re-calls them every ~2s, and once a transcript file exists its path
- * never moves — so cache the resolved path and revalidate with a single `stat` on the next
+ * never moves. Cache the resolved path and revalidate with a single `stat` on the next
  * lookup, collapsing the steady-state to one syscall instead of re-walking the tree. A
  * stale entry (file gone) falls back to a fresh walk.
  */
@@ -145,7 +145,7 @@ async function cachedFind(key: string, walk: () => Promise<string | null>): Prom
     try {
       if ((await stat(hit)).size >= 0) return hit
     } catch {
-      agentPathCache.delete(key) // moved/deleted — fall through to a fresh walk
+      agentPathCache.delete(key) // moved/deleted; fall through to a fresh walk
     }
   }
   const found = await walk()
@@ -217,7 +217,7 @@ function findAgentFileByToolUseId(toolUseId: string): Promise<string | null> {
               return join(dir, e.name.replace(/\.meta\.json$/, '.jsonl'))
             }
           } catch {
-            // Unreadable/partial sidecar — skip it, keep scanning.
+            // Unreadable/partial sidecar; skip it, keep scanning.
           }
         }
       } else if (e.isDirectory() || e.isSymbolicLink()) {
@@ -262,9 +262,9 @@ export async function readTranscript(
 
 /**
  * Locate + read a WORKFLOW/SUBAGENT agent transcript by its agentId. These live at
- * `projects/<slug>/<session>/subagents/[workflows/<wf>/]agent-<id>.jsonl` — same
- * record shape as a session transcript, so it reuses the same parser. Returns empty
- * if not found (still streaming, or the CLI changed the layout — degrade gracefully).
+ * `projects/<slug>/<session>/subagents/[workflows/<wf>/]agent-<id>.jsonl` (same
+ * record shape as a session transcript, so it reuses the same parser). Returns empty
+ * if not found (still streaming, or the CLI changed the layout).
  */
 export async function readAgentTranscript(
   agentId: string,
@@ -273,8 +273,8 @@ export async function readAgentTranscript(
   const file = await findAgentFile(agentId)
   if (!file) return { messages: [], total: 0, capped: false, contextTokens: null }
   // An agent transcript's OWN records are all `isSidechain:true` (they ARE the
-  // sidechain) — so we must NOT skip them here, unlike a main-session read where
-  // sidechain records are a subagent's output to be excluded.
+  // sidechain), so we must NOT skip them here. In a main-session read, sidechain
+  // records are a subagent's output to be excluded.
   return parseTranscriptFile(file, cap, { includeSidechain: true })
 }
 
@@ -294,7 +294,7 @@ export async function readAgentTranscriptByToolUseId(
 
 /**
  * Parse a transcript at a KNOWN path (skips the dir scan `readTranscript` does).
- * Used by the search engine so it reuses the EXACT same parser — guaranteeing the
+ * Used by the search engine so it reuses the EXACT same parser, guaranteeing the
  * message ids (`h-<seq>-<uuid>`) it returns match `store.messages` for jump-to-hit.
  */
 export async function readTranscriptAtPath(file: string): Promise<TranscriptResult> {
@@ -332,16 +332,16 @@ async function parseTranscriptFile(
       } catch {
         continue
       }
-      // Only render the main thread; skip subagent sidechains — UNLESS we're reading
+      // Only render the main thread; skip subagent sidechains, UNLESS we're reading
       // an agent's own transcript (whose records are all sidechains).
       if (entry.isSidechain && !opts.includeSidechain) continue
-      // Capture usage (main thread only) — the last one is the resident context.
+      // Capture usage (main thread only); the last one is the resident context.
       const usedNow = residentTokens(entry.message?.usage ?? entry.usage)
       if (usedNow > 0) lastContextTokens = usedNow
 
       // Slash-command output is logged as a `system` record of subtype
       // `local_command` carrying <local-command-stdout>…</local-command-stdout>
-      // (e.g. the /usage report) — NOT as an assistant message. Surface it as an
+      // (e.g. the /usage report), NOT as an assistant message. Surface it as an
       // assistant bubble so resumed history shows the command's result instead of
       // dropping it (the "commands don't work on resume" symptom). Live turns get
       // this via the assistant snapshot; this is the resume-only path.
@@ -365,7 +365,7 @@ async function parseTranscriptFile(
             ? (content as ContentBlock[])
             : []
 
-      // A user entry that is ONLY tool_results carries no visible user text — we
+      // A user entry that is ONLY tool_results carries no visible user text: we
       // attach those results to prior tool calls and don't emit a user bubble.
       const isToolResultOnly =
         role === 'user' && blocks.length > 0 && blocks.every((b) => b?.type === 'tool_result')
@@ -394,7 +394,7 @@ async function parseTranscriptFile(
         switch (b.type) {
           case 'text':
             if (typeof b.text === 'string') {
-              // A dropped TEXT FILE was inlined as a `<file name="…">…</file>` text block
+              // A dropped TEXT FILE is inlined as a `<file name="…">…</file>` text block
               // (drop-file feature). On resume, recover it as a metadata-only chip rather
               // than dumping the raw wrapper + full contents into the bubble.
               const fileMatch = /^<file name="([^"]*)">\n([\s\S]*)\n<\/file>$/.exec(b.text.trim())
@@ -427,7 +427,7 @@ async function parseTranscriptFile(
             break
           }
           case 'tool_result': {
-            // A tool_result mixed into an assistant/other message — attach it.
+            // A tool_result mixed into an assistant/other message; attach it.
             if (b.tool_use_id) {
               const call = toolCallsById.get(b.tool_use_id)
               if (call) {
@@ -460,8 +460,8 @@ async function parseTranscriptFile(
             break
           }
           case 'document': {
-            // A dropped PDF was inlined as a base64 `document` block (drop-file). We do
-            // NOT re-inline its (large) bytes into the store on resume — recover a
+            // A dropped PDF is inlined as a base64 `document` block (drop-file). We do
+            // NOT re-inline its (large) bytes into the store on resume; recover a
             // metadata-only chip so the bubble honestly shows a PDF was attached.
             const src = b.source
             const bytes = typeof src?.data === 'string' ? Math.round((src.data.length * 3) / 4) : 0
@@ -469,15 +469,15 @@ async function parseTranscriptFile(
             break
           }
           default:
-            // Unknown block type — skip defensively.
+            // Unknown block type; skip defensively.
             break
         }
       }
 
       // Skip empty shells (e.g. an assistant entry that was only signatures). An
-      // attachments-only user turn is NOT empty — it has chips/thumbnails to render.
+      // attachments-only user turn is NOT empty: it has chips/thumbnails to render.
       if (!msg.text && !msg.thinking && msg.tools.length === 0 && !msg.attachments?.length) continue
-      // Drop CLI slash-command plumbing user-bubbles (<command-name>/<caveat>) —
+      // Drop CLI slash-command plumbing user-bubbles (<command-name>/<caveat>):
       // noise the terminal never shows; the command's output is surfaced separately.
       if (role === 'user' && msg.tools.length === 0 && !msg.thinking && isCommandPlumbing(msg.text)) {
         continue
@@ -490,7 +490,7 @@ async function parseTranscriptFile(
 
   const contextTokens = lastContextTokens > 0 ? lastContextTokens : null
   const total = messages.length
-  // Only trips at the OOM safety ceiling (SAFETY_CAP), never in normal use — the UI
+  // Only trips at the OOM safety ceiling (SAFETY_CAP), never in normal use: the UI
   // is virtualized, so the full transcript renders fine. `capped` stays for shape.
   if (total > cap) {
     return { messages: messages.slice(total - cap), total, capped: true, contextTokens }

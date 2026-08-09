@@ -37,10 +37,6 @@ const FALLBACK_NOTES: Record<NonNullable<ModelListResult['reason']>, string> = {
     "Showing Clui's built-in list. The live Bedrock query failed, so newer models may be missing. Check the aws CLI and your credentials, then reopen Settings."
 }
 
-/**
- * Settings modal: CLI path override (+auto-detect preview), editor command,
- * default permission mode, model, and default workspace. Persisted via IPC.
- */
 export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
   const [settings, setSettings] = useState<CluiSettings | null>(null)
   const [cliInfo, setCliInfo] = useState<CliInfo | null>(null)
@@ -56,12 +52,12 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
   // The theme is applied LIVE on change for instant feedback, but only persisted
   // on Save. `persistedTheme` tracks the last-persisted value so closing without
   // saving can revert the live preview; `previewedTheme` is null UNTIL the user
-  // actually changes the dropdown — so the unmount revert only fires when there's a
+  // actually changes the dropdown, so the unmount revert only fires when there's a
   // real preview to undo. This guards two cases where reverting would be WRONG:
   //   (1) StrictMode's simulated mount→unmount→remount (dev) fires the cleanup
   //       BEFORE the async getSettings() resolves, when persistedTheme still holds
-  //       its default — reverting there flipped a light app to dark (the reported bug);
-  //   (2) a fast open→close before load (prod) — same stale baseline.
+  //       its default, and reverting there flipped a light app to dark (the reported bug);
+  //   (2) a fast open→close before load (prod), the same stale baseline.
   // No preview made → nothing to revert → the theme the preload set stays put.
   const persistedTheme = useRef<CluiSettings['theme'] | null>(null)
   const previewedTheme = useRef<CluiSettings['theme'] | null>(null)
@@ -76,7 +72,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
     window.clui.listModels().then(setModelList)
   }, [])
 
-  // On unmount, revert an unsaved live theme preview — but ONLY if one was made and
+  // On unmount, revert an unsaved live theme preview, but ONLY if one was made and
   // we know the persisted baseline (see refs above).
   useEffect(() => {
     return () => {
@@ -116,7 +112,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
     sources?.[key] === 'override' && !cleared.includes(key)
 
   // Save COMMITS + DISMISSES (dialog contract: the primary action of a modal both
-  // applies and closes — the dismissal IS the confirmation, so no separate "Saved"
+  // applies and closes; the dismissal IS the confirmation, so no separate "Saved"
   // toast). But close ONLY on success: if the write fails we keep the modal open and
   // surface the error, so a failure can't masquerade as a save.
   const save = async (): Promise<void> => {
@@ -125,7 +121,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
     setSaveError(null)
     try {
       await window.clui.updateSettings(settings, cleared)
-      // The live-applied theme is now persisted — mark it so the unmount revert is a
+      // The live-applied theme is now persisted, so mark it so the unmount revert is a
       // no-op (we're about to close; the previewed theme must STICK, not revert).
       persistedTheme.current = settings.theme
       previewedTheme.current = null

@@ -1,9 +1,9 @@
 /**
  * Map raw CLI stream-json envelopes → typed `DomainEvent`s.
  *
- * The raw shapes were captured live from claude 2.1.206. This
- * mapper is intentionally defensive: unknown envelopes map to nothing rather than
- * throwing, so CLI version drift degrades gracefully instead of crashing the app.
+ * The raw shapes were captured live from claude 2.1.206. This mapper is deliberately
+ * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
+ * drift skips the envelope instead of crashing the app.
  */
 import type { DomainEvent } from '../../shared/events'
 
@@ -106,7 +106,6 @@ interface RawUsage {
 export class EventMapper {
   /** content-block index → tool_use id (for input-delta association). */
   private indexToToolId = new Map<number, string>()
-  /** accumulated partial input JSON per tool id. */
   private toolInputJson = new Map<string, string>()
   /** Model's context window (tokens); learned from the model id / result. */
   private contextWindow = 200_000
@@ -114,13 +113,13 @@ export class EventMapper {
   private lastPercent = -1
   /** Whether any text_delta streamed since the last message boundary. Slash
    *  commands (/usage, /cost, /context) emit a bare `assistant` snapshot with text
-   *  but NO message_start/text_delta — we detect that (snapshot text + nothing
+   *  but NO message_start/text_delta, so we detect that (snapshot text + nothing
    *  streamed) and surface the text so it renders instead of being dropped. */
   private streamedTextSinceStart = false
   /** task_ids that are TRUE background work (Bash run_in_background = 'local_bash').
    *  Only these belong in the bg tray. `task_started` is the only event that carries
    *  a reliable `task_type`, so we record the local_bash ids here and gate the later
-   *  task_updated/notification/changed events on membership — subagents ('local_agent')
+   *  task_updated/notification/changed events on membership. Subagents ('local_agent')
    *  run in the foreground turn (shown as Agent cards) and must NEVER emit bg-task
    *  events (else a finished subagent fires a spurious "Background task finished" toast). */
   private bgTaskIds = new Set<string>()
@@ -129,17 +128,17 @@ export class EventMapper {
    *  bg-bash path. */
   private workflowIds = new Set<string>()
   /** task_ids of BACKGROUNDED subagents (task_type 'local_agent' AND launched
-   *  with run_in_background:true). These DO get a persistent tray handle — unlike a
+   *  with run_in_background:true). These DO get a persistent tray handle, unlike a
    *  FOREGROUND subagent (same task_type, run in the turn, already an Agent card), which
    *  must stay dropped (else a double-count + spurious completion toast). We can't tell
    *  the two apart from `task_started` alone (both are local_agent); the distinguisher
-   *  is that a backgrounded one is announced in `background_tasks_changed` — which fires
-   *  BEFORE its task_started (verified live 2.1.216) — so its task_id lands in
+   *  is that a backgrounded one is announced in `background_tasks_changed`, which fires
+   *  BEFORE its task_started (verified live 2.1.216), so its task_id lands in
    *  `bgAgentTaskIds` first, and the matching task_started then promotes it to a tray
    *  handle here. Gated like bgTaskIds on the later update/notification/changed events. */
   private bgSubagentIds = new Set<string>()
   /** task_ids seen in a `background_tasks_changed` snapshot as task_type
-   *  'local_agent' — the reliable "this subagent was backgrounded" signal (a foreground
+   *  'local_agent', the reliable "this subagent was backgrounded" signal (a foreground
    *  subagent never appears in that snapshot). Consumed by the task_started handler. */
   private bgAgentTaskIds = new Set<string>()
 
@@ -149,11 +148,8 @@ export class EventMapper {
     return 200_000
   }
 
-  /**
-   * Compute a context-usage event from a usage snapshot. Uses input + cache
-   * tokens (the resident context), matching how the statusline's used_percentage
-   * behaves. Returns [] if usage is absent or the percent hasn't changed.
-   */
+  /** Counts input + cache tokens (the resident context) to match the statusline's
+   *  used_percentage. */
   private usageEvent(usage: RawUsage | undefined): DomainEvent[] {
     if (!usage) return []
     const used =
@@ -173,7 +169,7 @@ export class EventMapper {
     if (!raw || typeof raw !== 'object') return []
     const env = raw as RawEnvelope
     // A forwarded subagent message (carries parent_tool_use_id) must be routed
-    // to a subagent card, NOT the main thread — intercept BEFORE the normal
+    // to a subagent card, NOT the main thread, so intercept BEFORE the normal
     // assistant/user handlers (which would fold its text into the main chat, the
     // documented interleaving regression). Only assistant/user envelopes forward
     // this way; other types with the field (if any) fall through unchanged.
@@ -215,7 +211,7 @@ export class EventMapper {
         return out
       }
       case 'result': {
-        // Turn boundary — reset the streamed-text flag so the NEXT turn (which may
+        // Turn boundary: reset the streamed-text flag so the NEXT turn (which may
         // be another non-streaming slash command with no message_start) is detected.
         this.streamedTextSinceStart = false
         // The result carries the authoritative contextWindow for the model.
@@ -231,7 +227,7 @@ export class EventMapper {
             // A backgrounded subagent's COMPLETION emits its own turn (init +
             // streamed text + this result) tagged origin.kind='task-notification'. Its
             // cost + text ARE real (accrue + render them), but it must NOT clear the
-            // user's foreground `busy` — flag it so the store can guard that.
+            // user's foreground `busy`, so flag it so the store can guard that.
             fromTaskNotification: env.origin?.kind === 'task-notification'
           }
         ]
@@ -263,7 +259,7 @@ export class EventMapper {
       case 'task_started':
         // Only TRUE background work (Bash run_in_background = task_type 'local_bash')
         // belongs in the background tray. Subagents (task_type 'local_agent') run in
-        // the foreground turn and are ALREADY shown as Agent tool cards — tracking
+        // the foreground turn and are ALREADY shown as Agent tool cards; tracking
         // them here too would double-count them AND fire a spurious completion toast
         // when the subagent finishes (the reported bug). Record the local_bash ids so
         // the later task events (which lack a reliable task_type) can be gated too.
@@ -279,7 +275,7 @@ export class EventMapper {
             }
           ]
         }
-        // A dynamic workflow (ultracode) — its own task type + progress stream.
+        // A dynamic workflow (ultracode): its own task type + progress stream.
         if (env.task_id && env.task_type === 'local_workflow') {
           this.workflowIds.add(env.task_id)
           return [
@@ -297,14 +293,14 @@ export class EventMapper {
         // so it earns a tray handle. `toolUseId` is the Agent tool_use id = the PTU the
         // SubagentView/forwardSubagentText transcript is keyed by, so the tray row can
         // open its transcript. A foreground subagent (not in bgAgentTaskIds) still falls
-        // through to `return []` below — unchanged, no double-count, no toast.
+        // through to `return []` below, unchanged, no double-count, no toast.
         if (env.task_id && env.task_type === 'local_agent' && this.bgAgentTaskIds.has(env.task_id)) {
           this.bgSubagentIds.add(env.task_id)
           // Consumed: the id has done its "was backgrounded" handoff into bgSubagentIds
-          // (which gates all later events). Drop it so this Set — the only one without a
-          // reclamation path — doesn't retain an id per backgrounded subagent for the
-          // whole session. (A later background_tasks_changed can re-add a still-running id;
-          // that's fine — it's re-consumed here, so growth stays bounded, not permanent.)
+          // (which gates all later events). Drop it so this Set, the only one without a
+          // reclamation path, doesn't retain an id per backgrounded subagent for the
+          // whole session. (A later background_tasks_changed can re-add a still-running
+          // id; that's fine, it's re-consumed here, so growth stays bounded.)
           this.bgAgentTaskIds.delete(env.task_id)
           return [
             {
@@ -394,14 +390,14 @@ export class EventMapper {
         // This snapshot is ALSO the reliable signal that a local_agent subagent was
         // backgrounded (foreground subagents never appear here). Record those task_ids so
         // the imminent task_started can promote them to a tray handle (the snapshot fires
-        // BEFORE task_started — verified live). Note the snapshot's task objects carry
+        // BEFORE task_started, verified live). Note the snapshot's task objects carry
         // task_id + task_type but NOT tool_use_id (that comes on task_started).
         for (const t of env.tasks ?? []) {
           if (t.task_id && t.task_type === 'local_agent') this.bgAgentTaskIds.add(t.task_id)
         }
         // Snapshot the running list, keeping ids we track in the tray: local_bash bg
         // shells AND backgrounded subagents. The CLI's raw list can also include
-        // foreground agent tasks we don't tray — those are filtered out.
+        // foreground agent tasks we don't tray, and those are filtered out.
         return [
           {
             type: 'bg-tasks-changed',
@@ -479,15 +475,9 @@ export class EventMapper {
     }
   }
 
-  /**
-   * Map a forwarded subagent envelope (assistant/user, carries
-   * parent_tool_use_id) into per-block events, EMITTED IN BLOCK ORDER so the
-   * transcript can render text and tool cards in true stream order:
-   *  - text/thinking → `subagent-message`
-   *  - Agent/Task tool_use → `subagent-nested` (a spawned child, not a tool card)
-   *  - any other tool_use → `subagent-tool`, its `tool_result` → `subagent-tool-result`
-   * Empty text blocks are skipped.
-   */
+  /** Blocks are emitted in block order so the transcript renders text and tool cards
+   *  in true stream order. Agent/Task tool_use maps to `subagent-nested` (a spawned
+   *  child), any other tool_use to `subagent-tool`. */
   private mapSubagentMessage(env: RawEnvelope): DomainEvent[] {
     const parentToolUseId = env.parent_tool_use_id
     if (!parentToolUseId) return []

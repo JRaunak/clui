@@ -36,11 +36,9 @@ import {
 import type { PermissionModeChoice } from '../../../shared/ipc'
 
 /**
- * The composer as a command center (C1–C5): a crafted dock with the message
- * textarea on top and a control row below — model/effort + permission as
- * instrument-grade chips on the left, context gauge + send/stop on the right.
- * While a turn streams, the dock edge pulses and an inline status shows elapsed
- * time, so the working state lives where the user's attention already is.
+ * Message textarea on top, a control row below: model/effort + permission chips
+ * on the left, context gauge + send/stop on the right. The dock edge pulses while
+ * a turn streams (the verb+timer itself lives in the chat footer, see WorkingStatus).
  */
 export function Composer(): JSX.Element {
   const [text, setText] = useState('')
@@ -50,7 +48,7 @@ export function Composer(): JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // Depth counter so nested dragenter/dragleave (over child elements) don't flicker
-  // the drop highlight — only the outermost enter/leave toggles it.
+  // the drop highlight; only the outermost enter/leave toggles it.
   const dragDepth = useRef(0)
   const busy = useActive((s) => s?.busy ?? false)
   const hasSession = useActive((s) => !!s)
@@ -67,7 +65,7 @@ export function Composer(): JSX.Element {
   // Drop/paste/pick routing:
   //  - IMAGES inline as thumbnails (the model can't `@`-read pixels; it needs the block).
   //  - EVERY OTHER FILE becomes an `@path` TOKEN in the composer (relative if under the
-  //    workspace cwd, else absolute) — the CLI expands `@` and the model Reads it ON
+  //    workspace cwd, else absolute). The CLI expands `@` and the model Reads it ON
   //    DEMAND (verified: @relative, @absolute both resolve). This is token-cheap (a
   //    pointer, not the re-billed contents), handles files we can't inline (.xlsx/.zip),
   //    reflects live edits, and works in- or out-of-cwd.
@@ -217,7 +215,7 @@ export function Composer(): JSX.Element {
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
       >
-        {/* Drag-to-attach overlay — accent is legit here (a live, transient state cue). */}
+        {/* Drag-to-attach overlay: accent is legit here (a live, transient state cue). */}
         {dragOver && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg-elev/85">
             <div className="flex items-center gap-2 text-sm font-medium text-accent">
@@ -226,7 +224,7 @@ export function Composer(): JSX.Element {
             </div>
           </div>
         )}
-        {/* Attachment thumbnails — a strip above the textarea, neutral surfaces. */}
+        {/* Attachment thumbnails: a strip above the textarea, neutral surfaces. */}
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-1 pt-1">
             {attachments.map((a) => (
@@ -276,14 +274,11 @@ export function Composer(): JSX.Element {
           >
             <IconImage className="h-4 w-4" />
           </button>
-          {/* Hairline divider: attach is a MESSAGE-CONTENT action; everything to its
-              right is RUN CONFIGURATION. The gap+rule makes the two groups legible
-              (Gestalt proximity) instead of reading as one undifferentiated chip row.
-              Kept as the ONLY divider in the row (one rule = one real boundary; peers
-              within the run-config group are NOT separated) — a hair taller + the
-              stronger border token so the single boundary reads without adding more. */}
+          {/* Attach is a message-content action; everything to its right is run
+              configuration. This is the only divider in the row: peers within the
+              run-config group are not separated, so one rule marks the one real boundary. */}
           <span className="h-6 w-px shrink-0 bg-border-strong" aria-hidden="true" />
-          {/* C3 — instrument control chips: model/effort + permission grouped. */}
+          {/* C3: instrument control chips, model/effort + permission grouped. */}
           <ModelEffortPicker />
           <Dropdown<PermissionModeChoice>
             value={modeChoice}
@@ -297,16 +292,15 @@ export function Composer(): JSX.Element {
           <UltracodeToggle />
 
           <div className="ml-auto flex items-center gap-3">
-            {/* The "working" verb+timer now lives in the CHAT footer (WorkingStatus)
-                for CLI-parity — the composer keeps only the context gauge + Stop, so
-                the transcript tail is the single foreground activity signal. The
-                dock-edge pulse (above) remains as an ambient busy cue. */}
+            {/* The verb+timer lives in the chat footer (WorkingStatus) for CLI-parity,
+                so the transcript tail is the single foreground activity signal. Here the
+                dock keeps only the context gauge + Stop; the dock-edge pulse is ambient. */}
             <ContextRing
               percent={contextPercent}
               usedTokens={contextTokens}
               contextWindow={contextWindow}
             />
-            {/* C2 — send/stop morph. */}
+            {/* C2: send/stop morph. */}
             {busy ? (
               <button
                 className="flex h-9 w-9 items-center justify-center rounded-lg bg-err text-on-err transition-transform hover:scale-105 active:scale-95"
@@ -334,27 +328,23 @@ export function Composer(): JSX.Element {
 
 /** Turn a dropped file's absolute path into the reference the CLI expands after `@`:
  *  a workspace-RELATIVE path when the file is under `cwd` (matches the @-picker + is the
- *  token-cheap common case), else the ABSOLUTE path (out-of-cwd — the CLI/Read still
+ *  token-cheap common case), else the ABSOLUTE path (out-of-cwd, the CLI/Read still
  *  resolves it). Pure string math (no node `path` in the renderer); POSIX separators. */
 function toWorkspaceRef(abs: string, cwd: string | null): string {
   if (cwd) {
     const base = cwd.endsWith('/') ? cwd : cwd + '/'
-    if (abs === cwd) return abs // a directory dropped onto itself — just reference it
+    if (abs === cwd) return abs // a directory dropped onto itself; just reference it
     if (abs.startsWith(base)) return abs.slice(base.length)
   }
   return abs
 }
 
-/** Leading icon for the permission-mode chip. The risky "Autonomous"
- *  (bypassPermissions) mode gets a SHIELD-OFF glyph so its danger is carried by
- *  SHAPE — not just the red tint — satisfying WCAG 1.4.1 (never state-by-color-alone).
- *  Every mode is also tinted with its risk color so the active mode reads at a glance. */
-/** Per-mode glyph (WCAG 1.4.1: mode legible by SHAPE, not color alone — two modes
- *  share green). Each metaphor: gear=inherit config, no-entry=deny-by-default,
- *  hand=asks-you, sparkles=classifier-decides, pencil=auto-edits, checklist=plan,
- *  slashed-shield=danger/unguarded (kept from before — danger by shape). The color
- *  class carries the risk tier for the collapsed chip; in the open menu the icon
- *  inherits the option row's color via currentColor. */
+/** Per-mode glyph so the mode is legible by SHAPE, not color alone (two modes share
+ *  green; WCAG 1.4.1, never state-by-color-alone). Each metaphor: gear=inherit config,
+ *  no-entry=deny-by-default, hand=asks-you, sparkles=classifier-decides, pencil=auto-edits,
+ *  checklist=plan, slashed-shield=danger/unguarded. The color class carries the risk tier
+ *  for the collapsed chip; in the open menu the icon inherits the option row's color via
+ *  currentColor. */
 const PERMISSION_MODE_ICONS: Record<
   PermissionModeChoice,
   (p: { className?: string }) => JSX.Element

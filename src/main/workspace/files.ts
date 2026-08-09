@@ -13,7 +13,7 @@ import { join, relative, sep } from 'node:path'
 
 const execFileP = promisify(execFile)
 
-/** Max files returned — a huge repo shouldn't flood the picker or the IPC. */
+/** Max files returned, so a huge repo can't flood the picker or the IPC. */
 const CAP = 3000
 
 /** Dirs never worth walking in the fallback path (git already ignores most). */

@@ -1,8 +1,8 @@
 /**
- * ⌘K command palette — one door to everything (VS Code / Linear / Raycast style).
+ * ⌘K command palette: one door to everything (VS Code / Linear / Raycast style).
  *
- * Sessions are listed first (recency-ordered) so the common path — jump to a
- * session by name — is instant. A leading `>` scopes the query to COMMANDS only
+ * Sessions are listed first (recency-ordered) so the common path (jump to a
+ * session by name) is instant. A leading `>` scopes the query to COMMANDS only
  * (New session, Settings, Customizations, Toggle theme, Close session), matching
  * the VS Code convention, so both live on one key with no second shortcut.
  *
@@ -105,7 +105,7 @@ export function CommandPalette({
           key: `live:${s.handleId}`,
           kind: 'session',
           // "Untitled" (not "New session") so an unnamed session's label can't collide
-          // with the "New session" COMMAND — the palette must never show two identical
+          // with the "New session" COMMAND; the palette must never show two identical
           // labels a fast keyboard user could confuse.
           label: firstUser ? firstUser.slice(0, 80) : 'Untitled',
           hint: s.cwd.split('/').pop() || s.cwd,
@@ -203,8 +203,8 @@ export function CommandPalette({
     return [...out, ...commands]
   }, [commandMode, disk, onNewSession, onOpenSettings, onOpenCustomizations])
 
-  // Filter + rank by the (scope-stripped) query. Match the LABEL (title) first —
-  // its matched indices drive the highlight. If the label doesn't match, fall back
+  // Filter + rank by the (scope-stripped) query. Match the LABEL (title) first; its
+  // matched indices drive the highlight. If the label doesn't match, fall back
   // to the HINT (workspace name) so "scr" still finds sessions in ~/clui-scratch;
   // a hint-only match scores lower and carries no label highlight.
   const filtered = useMemo(() => {
@@ -334,9 +334,9 @@ function Row({
   const isSession = item.kind === 'session'
   const dim = isSession && !item.live
   // The verb NAMES what Enter will do (Raycast primary-action model): Switch to a
-  // running session (instant) vs Resume a dormant one (spawns a process) — the
-  // materially-different consequence the user must not be surprised by. Shown only
-  // on the focused row, so exactly one verb tracks the cursor.
+  // running session (instant) vs Resume a dormant one (spawns a process). That
+  // materially-different consequence is the thing the user must not be surprised by.
+  // Shown only on the focused row, so exactly one verb tracks the cursor.
   const verb = isSession ? (item.live ? 'Switch' : 'Resume') : 'Run'
   // Full state in the accessible name for EVERY row (the verb only renders when
   // selected, so SR row-by-row navigation still hears live/dormant + consequence).
@@ -352,10 +352,10 @@ function Row({
       aria-label={aria}
       onMouseMove={onHover}
       onClick={onClick}
-      /* Keyboard-first surface: the selected row needs a perceivable marker, not a
-         ~1.08:1 fill. Reuse the sidebar's active-item language — a scarce terracotta
-         left-edge bar + the raised fill — so the eye tracks selection where names
-         are read (the left). */
+      /* Keyboard-first surface: the selected row needs a perceivable marker; a
+         ~1.08:1 fill alone isn't. Reuse the sidebar's active-item language (a scarce
+         terracotta left-edge bar plus the raised fill) so the eye tracks selection
+         where names are read (the left). */
       className={`relative flex w-full items-center gap-2.5 px-4 py-2 text-left ${
         selected ? 'bg-bg-raised' : ''
       }`}
@@ -366,7 +366,7 @@ function Row({
           aria-hidden="true"
         />
       )}
-      {/* Neutral, monochrome leading glyph — anchors the row + aligns with command
+      {/* Neutral, monochrome leading glyph: anchors the row + aligns with command
           icons; identical for live/dormant (it does NOT encode state). */}
       <span className="shrink-0 text-faint">
         {isSession ? <IconMessage className="h-3.5 w-3.5" /> : <CommandIcon label={item.label} />}
@@ -401,7 +401,6 @@ function Row({
   )
 }
 
-/** Small leading icon per command (falls back to a generic dot). */
 function CommandIcon({ label }: { label: string }): JSX.Element {
   if (label.startsWith('New')) return <IconPlus className="h-3.5 w-3.5" />
   if (label.startsWith('Open Settings')) return <IconSettings className="h-3.5 w-3.5" />

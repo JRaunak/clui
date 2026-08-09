@@ -2,7 +2,7 @@
  * The foreground "working" indicator: 3 bouncing dots + a whimsical randomized
  * verb (Claude Code flavor, e.g. "Tomfoolering…") + an elapsed timer.
  *
- * It lives at the TAIL of the chat transcript (where the next output appears) —
+ * It lives at the TAIL of the chat transcript (where the next output appears):
  * CLI-parity, and where the user's reading attention is. It is the SINGLE animated
  * element of a foreground turn, so the aggregate subagent header renders static.
  * Absent during background work (the turn has ended → composer is freed).

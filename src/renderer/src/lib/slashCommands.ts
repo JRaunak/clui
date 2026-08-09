@@ -20,7 +20,7 @@
  *   /clear, /resume        → New Session button + the sessions sidebar
  *   /config, /mcp-ui, /vim, /terminal-setup, /doctor, /debug, /insights, /recap,
  *   /agents (removed), /login, /status, /help, __remote-workflow, /rewind …
- *                          → TUI-chrome / server-only / diagnostic — meaningless or
+ *                          → TUI-chrome / server-only / diagnostic: meaningless or
  *                            broken through Clui's pipe (verified live).
  */
 import type { SlashCommandInfo } from '../../../shared/events'
@@ -42,7 +42,7 @@ export const HEADLESS_SAFE_COMMANDS: readonly string[] = [
   'usage', // native card (UsageCard)
   'init', // analyze the codebase → CLAUDE.md
   'code-review', // review a PR / the working diff (canonical name; `review` is its alias pre-2.1.223)
-  'mcp' // manage MCP servers (reconnect/enable/disable) — no Clui-native equivalent
+  'mcp' // manage MCP servers (reconnect/enable/disable); no Clui-native equivalent
 ]
 
 /** Bundled fallback descriptions, used only until the live list arrives (pre-handshake)

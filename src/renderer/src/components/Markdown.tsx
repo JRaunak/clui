@@ -9,8 +9,7 @@
  * STREAMING-SAFE: assistant text arrives token-by-token, so the markdown is
  * routinely incomplete mid-turn (an unclosed ``` fence, a half-written table).
  * react-markdown simply renders whatever currently parses, and the highlighter is
- * wrapped in try/catch, so a partial document never throws — each render just
- * shows the best interpretation of the text so far.
+ * wrapped in try/catch, so a partial document never throws.
  */
 import { memo, useCallback, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
@@ -54,8 +53,8 @@ function CodeBlock({ code, lang }: { code: string; lang: string | null }): JSX.E
         <span className="font-mono text-[11px] uppercase tracking-wide text-faint">
           {used ?? 'text'}
         </span>
-        {/* Persistent at-rest affordance (opacity-60), brightening on hover/focus —
-            a hover-only (opacity-0) copy button is undiscoverable and unreachable by
+        {/* Persistent at-rest affordance (opacity-60), brightening on hover/focus.
+            A hover-only (opacity-0) copy button is undiscoverable and unreachable by
             a keyboard scan of visible controls. */}
         <button
           onClick={onCopy}
@@ -77,7 +76,7 @@ function CodeBlock({ code, lang }: { code: string; lang: string | null }): JSX.E
         <code
           className="hljs font-mono"
           // Highlighted HTML is produced by highlight.js from the code string only
-          // (no user HTML is interpreted — react-markdown never passes raw HTML here).
+          // (no user HTML is interpreted; react-markdown never passes raw HTML here).
           dangerouslySetInnerHTML={{ __html: html }}
         />
       </pre>
@@ -85,7 +84,6 @@ function CodeBlock({ code, lang }: { code: string; lang: string | null }): JSX.E
   )
 }
 
-/** Extract plain text from react-markdown's children (code content). */
 function childrenToText(children: React.ReactNode): string {
   if (typeof children === 'string') return children
   if (Array.isArray(children)) return children.map(childrenToText).join('')
@@ -154,7 +152,7 @@ const COMPONENTS: Components = {
 
 export const Markdown = memo(function Markdown({ text }: { text: string }): JSX.Element {
   // The `/usage` report is preformatted column text that markdown would flatten
-  // into one run-on line — detect it and render a native card instead. Anything
+  // into one run-on line. Detect it and render a native card instead. Anything
   // unrecognized (incl. mid-stream partials) falls through to normal markdown.
   const usage = parseUsageReport(text)
   if (usage) return <UsageCard report={usage} />

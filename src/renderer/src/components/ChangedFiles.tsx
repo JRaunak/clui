@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useActive, EMPTY_STRINGS } from '../store'
 import { IconChevron, IconFile } from './Icon'
 
-/** Collapsible bar listing files changed this session; click to open in editor. */
 export function ChangedFiles(): JSX.Element | null {
   const changedFiles = useActive((s) => s?.changedFiles ?? EMPTY_STRINGS)
   const [open, setOpen] = useState(true)

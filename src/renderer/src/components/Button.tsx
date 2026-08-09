@@ -1,5 +1,5 @@
 /**
- * Shared button primitive — one place for variants, sizes, focus, and disabled
+ * Shared button primitive: one place for variants, sizes, focus, and disabled
  * treatment, so buttons can't drift back into per-site rounding, ad-hoc hovers, and
  * missing focus rings. Variants follow the design-system spec: primary / secondary /
  * outline / ghost / destructive.
@@ -36,7 +36,7 @@ export function Button({
 } & ButtonHTMLAttributes<HTMLButtonElement>): JSX.Element {
   return (
     <button
-      /* Disabled: don't just fade the fill — a faded terracotta primary still reads
+      /* Disabled: don't just fade the fill. A faded terracotta primary still reads
          as a live (if weak) button, and in dark it's near-indistinguishable from
          enabled. Override to a NEUTRAL inert surface + dim label in both themes so
          "disabled" is unambiguous and its label stays legible. */

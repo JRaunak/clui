@@ -2,18 +2,18 @@
  * First-run onboarding. Two distinct states, both rendered in the main pane
  * (replacing the Welcome content) when there's no active session:
  *
- *  1. CLI HEALTH GATE (blocking) — if the `claude` CLI isn't found, or is found but
+ *  1. CLI HEALTH GATE (blocking): if the `claude` CLI isn't found, or is found but
  *     `--version` fails (broken install), show a setup card with the install command,
  *     a "set path manually" link into Settings, and a re-check button. This is the
- *     load-bearing piece: without a working CLI, Clui can do NOTHING, and today the
- *     only signal is tiny red footer text (a dead end). Gates on the LIVE detectCli
- *     result, independent of the onboarded flag — a CLI that breaks later re-gates.
+ *     load-bearing piece: without a working CLI, Clui can do NOTHING, and the only
+ *     other signal is tiny red footer text (a dead end). Gates on the LIVE detectCli
+ *     result, independent of the onboarded flag; a CLI that breaks later re-gates.
  *
- *  2. FIRST-RUN INTRO (dismissible) — only when the CLI is healthy AND the user has
+ *  2. FIRST-RUN INTRO (dismissible): only when the CLI is healthy AND the user has
  *     never onboarded: one lightweight card naming what Clui adds, then "Pick a
  *     workspace". Dismiss (or picking a workspace) sets the persisted `onboarded`
  *     flag so it never reshows. Deliberately ONE card, not a multi-step tour
- *     (forced multi-step onboarding gets skipped — NN/g).
+ *     (forced multi-step onboarding gets skipped, per NN/g).
  *
  * When the CLI is healthy and the user is already onboarded, this renders nothing
  * (App falls through to its normal Welcome pane).
@@ -53,7 +53,7 @@ export function Onboarding({
 }): JSX.Element | null {
   const health = cliHealth(cliInfo)
 
-  // 1) Blocking CLI setup card — takes precedence over everything.
+  // 1) Blocking CLI setup card; takes precedence over everything.
   if (health !== 'ok') {
     const broken = health === 'broken'
     return (
@@ -69,8 +69,8 @@ export function Onboarding({
           {broken ? (
             <>
               A <span className="font-mono text-content">claude</span> binary was found at{' '}
-              {/* The offending path is the key diagnostic fact — give it FULL emphasis
-                  (was text-faint, the least-emphasized span in its own sentence). */}
+              {/* The offending path is the key diagnostic fact, so it gets full
+                  emphasis rather than being the least-emphasized span in its sentence. */}
               <span className="break-all font-mono text-content">{cliInfo?.path}</span>, but{' '}
               <span className="font-mono text-content">claude --version</span> failed. It may be a
               broken install or the wrong file. Set the correct path, then re-check.
@@ -115,7 +115,7 @@ export function Onboarding({
     )
   }
 
-  // 2) First-run intro — healthy CLI, never onboarded.
+  // 2) First-run intro: healthy CLI, never onboarded.
   if (!onboarded) {
     return (
       <div className="m-auto flex max-w-md flex-col items-center px-6 text-center">

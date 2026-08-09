@@ -1,7 +1,7 @@
 /**
  * Per-session model+effort sidecar (`<userData>/session-models.json`).
  *
- * WHY: the CLI reads model/effort from ~/.claude/settings.json on `--resume` — a
+ * WHY: the CLI reads model/effort from ~/.claude/settings.json on `--resume`; a
  * mid-session `set_model`/effort change does NOT persist (verified: switch to
  * sonnet-5, resume → the CLI reports the settings default again). So a user's
  * mid-session switch would be silently lost on resume. Clui remembers each
@@ -53,7 +53,7 @@ async function writeSessionModels(map: Record<string, SessionModelPrefs>): Promi
 
 // Serialize read-modify-write mutations so two concurrent switches (background sessions
 // finishing turns in the same tick) can't read the same base map and clobber each other's
-// key on write — preserves last-writer-per-KEY. Same guard as the cost sidecar.
+// key on write. Preserves last-writer-per-KEY, the same guard as the cost sidecar.
 let writeChain: Promise<void> = Promise.resolve()
 function serialize(mutate: () => Promise<void>): Promise<void> {
   const next = writeChain.then(mutate, mutate)

@@ -18,7 +18,6 @@ import type { ProjectGroup, SessionSummary } from '../../shared/sessions'
 
 const projectsRoot = (): string => join(homedir(), '.claude', 'projects')
 
-/** Path to the app's sidecar rename map. */
 const sidecarPath = (): string => join(app.getPath('userData'), 'session-names.json')
 
 /** Fields we defensively extract while scanning a session's jsonl. */
@@ -109,7 +108,7 @@ async function scanSession(filePath: string): Promise<ScanResult> {
           const t = extractText((o.message as Record<string, unknown>)?.content)
           // Skip CLI slash-command plumbing (<command-name>…, <local-command-caveat>…)
           // so a session whose first turn was a `/command` doesn't title itself with
-          // raw XML — fall through to the next real user message.
+          // raw XML; fall through to the next real user message.
           if (t && !isCommandPlumbing(t)) res.firstUserMessage = t
         }
       }
@@ -121,7 +120,7 @@ async function scanSession(filePath: string): Promise<ScanResult> {
   return res
 }
 
-/** CLI slash-command plumbing a user never typed as prose — the wrapper tags the
+/** CLI slash-command plumbing a user never typed as prose: the wrapper tags the
  *  CLI injects around a `/command`: <command-message>, <command-name>,
  *  <command-args>, <local-command-caveat>, <local-command-stdout>. */
 function isCommandPlumbing(text: string): boolean {
@@ -219,7 +218,6 @@ export async function listSessions(): Promise<ProjectGroup[]> {
   return groupByProject(summaries)
 }
 
-/** Group sessions by workspace cwd; sort sessions and groups by recency. */
 function groupByProject(summaries: SessionSummary[]): ProjectGroup[] {
   const byCwd = new Map<string, SessionSummary[]>()
   for (const s of summaries) {
@@ -241,7 +239,7 @@ function groupByProject(summaries: SessionSummary[]): ProjectGroup[] {
 /**
  * Best-effort reverse of a project slug → path (only used if the jsonl had no
  * cwd, which is rare). Lossy: both `/` and `.` became `-`, so we can't perfectly
- * reconstruct — return a leading-slash guess for display.
+ * reconstruct; return a leading-slash guess for display.
  */
 function slugToPathGuess(slug: string): string {
   return slug.startsWith('-') ? '/' + slug.slice(1).replace(/-/g, '/') : slug

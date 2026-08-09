@@ -207,7 +207,7 @@ async function readPluginConfigs(): Promise<{ agents: AgentInfo[]; skills: Skill
 
 /**
  * Assemble the full customization bundle for a workspace. `cwd` may be null
- * (no active session) — then only user + plugin scopes are read.
+ * (no active session), in which case only user + plugin scopes are read.
  */
 export async function readConfig(cwd: string | null): Promise<ConfigBundle> {
   const user = userClaude()

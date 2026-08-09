@@ -1,8 +1,8 @@
 /**
  * ⌘F find-in-conversation. A thin bar docked top-right of the transcript (no
- * scrim; the chat scrolls live underneath — it belongs to the current conversation,
- * unlike the ⌘⇧F global overlay). Operates entirely on the active session's
- * `messages` already in renderer memory — NO disk read, NO IPC, instant.
+ * scrim; the chat scrolls live underneath, since it belongs to the current
+ * conversation, unlike the ⌘⇧F global overlay). Operates entirely on the active
+ * session's `messages` already in renderer memory: no disk read, no IPC, instant.
  *
  * Matches are per-MESSAGE (a message either contains the query or not). Enter / ⇧Enter
  * (and the ⌘G / ⌘⇧G menu fallbacks) step between matching messages; each step requests
@@ -38,8 +38,6 @@ export function FindBar(): JSX.Element | null {
   const [current, setCurrent] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Ids of messages that match the query (in transcript order). Recomputed only when
-  // the query or the message set changes.
   const matches = useMemo<string[]>(() => {
     const q = query.trim().toLowerCase()
     if (!q) return []
@@ -62,7 +60,6 @@ export function FindBar(): JSX.Element | null {
     }
   }, [open])
 
-  // Jump to a match index (wraps). Clamps to the match list; scrolls + flashes.
   const goTo = useCallback(
     (idx: number) => {
       if (matches.length === 0) return
@@ -73,7 +70,7 @@ export function FindBar(): JSX.Element | null {
     [matches, requestScrollTo]
   )
 
-  // Jump to the first match when the QUERY changes — NOT on every `matches` identity.
+  // Jump to the first match when the QUERY changes, NOT on every `matches` identity.
   // `messages` gets a fresh array on every streamed token (store copies it per delta), so
   // keying this on `[matches]` re-fired it each token during an active turn: current snapped
   // back to 0 and the transcript scroll-jumped to the first match, making find unusable
@@ -88,7 +85,7 @@ export function FindBar(): JSX.Element | null {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query])
 
-  // Keep `current` in range as matches stream in/out mid-turn WITHOUT scrolling — so the
+  // Keep `current` in range as matches stream in/out mid-turn WITHOUT scrolling, so the
   // "N of M" count stays honest (M can grow) but the user's position isn't hijacked.
   useEffect(() => {
     if (current >= matches.length) setCurrent(Math.max(0, matches.length - 1))

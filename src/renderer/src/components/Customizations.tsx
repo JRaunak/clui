@@ -14,8 +14,8 @@ type Tab = 'agents' | 'skills' | 'hooks' | 'mcp'
  * file (the CLI scatters this across `claude agents` / `/mcp` / `/hooks`). Read-only by
  * design: a stale WRITER would corrupt the user's real ~/.claude / .mcp.json (catastrophic
  * for a wrapper) and chase CLI schema drift forever; a stale reader just mis-renders a row.
- * Entry is ⌘K-only (reshaped out of the sidebar — infrequent read-only audit ≠ persistent
- * chrome). Renamed from "Customizations" so it doesn't collide with Settings, and so the
+ * Entry is ⌘K-only (an infrequent read-only audit isn't persistent chrome, so it's out of
+ * the sidebar). Named "Configuration" so it doesn't collide with Settings, and so the
  * skills tab stops implying it's a second invoke-door to the composer's `/` menu.
  */
 export function Customizations({ onClose }: { onClose: () => void }): JSX.Element {
@@ -23,8 +23,8 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
   const [bundle, setBundle] = useState<ConfigBundle | null>(null)
   const [tab, setTab] = useState<Tab>('agents')
   const [loading, setLoading] = useState(true)
-  // Descope the noise: plugin/marketplace agents+skills are hidden by default so the
-  // panel shows YOUR project+user config, not a wall of marketplace entries (the reported
+  // Plugin/marketplace agents+skills are hidden by default so the panel shows YOUR
+  // project+user config rather than a wall of marketplace entries (the reported
   // "marketplace dominates" problem). Toggle reveals them. Only agents/skills have a
   // plugin scope (hooks/MCP don't), so the toggle only appears on those tabs.
   const [showPlugins, setShowPlugins] = useState(false)
@@ -86,8 +86,8 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
           </button>
         </div>
 
-        {/* Null-cwd trap fix: with no active session the reader skips PROJECT scope, so the
-            list would silently show only user + plugin entries (the reported "I can't see my
+        {/* With no active session the reader skips PROJECT scope, so the list would
+            silently show only user + plugin entries (the reported "I can't see my
             project skills" confusion). Say so explicitly instead of pretending it's complete. */}
         {!loading && !cwd && (
           <div className="border-b border-info/30 bg-info/10 px-5 py-2 text-[12px] text-info">
@@ -113,8 +113,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {loading && <div className="text-sm text-dim">Loading…</div>}
-          {/* Plugin/marketplace descope toggle — only on agents/skills (the scopes that
-              have plugin entries), only when some are hidden. */}
+          {/* Only on agents/skills, the scopes that have plugin entries. */}
           {!loading && (tab === 'agents' || tab === 'skills') && (hiddenPluginCount > 0 || showPlugins) && (
             <button
               className="mb-3 rounded-md border border-border px-2.5 py-1 text-[12px] text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -261,9 +260,9 @@ function OriginBadge({ origin }: { origin: ConfigOrigin }): JSX.Element {
   )
 }
 
-/* Centered empty-state (not a lone top-left line stranded over a tall void, which
-   read as a load failure). Names where items would be discovered from, since this
-   panel is read-only provenance across project → user → plugin scopes. */
+/* Centered empty-state: a lone top-left line stranded over a tall void reads as a
+   load failure. Names where items would be discovered from, since this panel is
+   read-only provenance across project → user → plugin scopes. */
 function Empty({ what, hint }: { what: string; hint: string }): JSX.Element {
   return (
     <div className="flex min-h-[40vh] flex-col items-center justify-center gap-1.5 text-center">

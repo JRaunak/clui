@@ -2,7 +2,7 @@
  * Global keyboard shortcuts.
  *
  * Two sources feed this:
- *  1. The native application menu (main process) owns ⌘N / ⌘W / ⌘, — those must
+ *  1. The native application menu (main process) owns ⌘N / ⌘W / ⌘,; those must
  *     be defined in the menu so macOS routes them correctly (a renderer ⌘W would
  *     still trigger Electron's default "Close Window"). They arrive here as
  *     `menuAction` pushes and dispatch to the matching store action / modal.
@@ -12,7 +12,7 @@
  *       ⌘B            — collapse / expand the session sidebar (no menu collision)
  *
  * All bindings use modifiers, so they stay active even while the composer
- * textarea is focused (the macOS convention — ⌘/⌃ shortcuts are global). We never
+ * textarea is focused (the macOS convention: ⌘/⌃ shortcuts are global). We never
  * bind a plain key, which is the actual safety guarantee against hijacking typing.
  */
 import { useEffect } from 'react'
@@ -71,7 +71,7 @@ export function useKeyboardShortcuts(opts: {
     const onKeyDown = (e: KeyboardEvent): void => {
       const store = useSession.getState()
 
-      // ⌃Tab / ⌃⇧Tab — cycle live sessions. Control-based (NOT ⌘Tab, which macOS
+      // ⌃Tab / ⌃⇧Tab: cycle live sessions. Control-based (NOT ⌘Tab, which macOS
       // reserves for app switching).
       if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Tab') {
         e.preventDefault()
@@ -79,7 +79,7 @@ export function useKeyboardShortcuts(opts: {
         return
       }
 
-      // ⌘B — toggle the session sidebar. No native-menu binding (no macOS default
+      // ⌘B: toggle the session sidebar. No native-menu binding (no macOS default
       // on ⌘B outside a text field), so a DOM listener is the whole story.
       if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault()
@@ -87,7 +87,7 @@ export function useKeyboardShortcuts(opts: {
         return
       }
 
-      // ⌃C — interrupt, but ONLY while a turn is streaming. Guarding on `busy`
+      // ⌃C: interrupt, but ONLY while a turn is streaming. Guarding on `busy`
       // means that when nothing is running, ⌃C is a no-op and the browser's
       // native copy-of-selection still works for users with that habit.
       if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === 'c' || e.key === 'C')) {

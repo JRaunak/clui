@@ -1,7 +1,7 @@
 /**
  * IDE integration: open files/diffs in the user's editor.
  *
- * Per the product decision, Clui does NOT ship a bespoke diff viewer — it shells
+ * Per the product decision, Clui does NOT ship a bespoke diff viewer; it shells
  * out to the configured editor (default `code`). Changed-file detection is done
  * in the renderer by tracking Write/Edit tool_use paths from the stream; this
  * module just launches the editor for a path.

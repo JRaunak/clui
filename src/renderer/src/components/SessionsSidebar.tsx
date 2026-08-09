@@ -33,7 +33,6 @@ interface MergedSession {
   projectSlug: string | null
   createdMs: number
   onDisk: boolean
-  /** Live-process handle, if this session is currently alive. */
   handleId?: string
   live: boolean
   busy: boolean
@@ -71,18 +70,18 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   /** Collapsed project cwds. */
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   // Session pending an undoable delete (hidden from the list; not yet on-disk-
-  // deleted). ONE at a time — the Gmail/Material snackbar model: a new undoable
+  // deleted). ONE at a time, the Gmail/Material snackbar model: a new undoable
   // action REPLACES the previous toast and commits the previous delete (Material:
   // never stack snackbars). Deleting a second session while one is pending is fine;
-  // it just finalizes the first (its undo window ends early — an accepted tradeoff
+  // it just finalizes the first (its undo window ends early, an accepted tradeoff
   // the user chose over stacking).
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   // Ids whose on-disk delete is COMMITTED but whose refresh() hasn't landed yet.
   // These stay hidden so the row never flashes back for a frame between "no longer
-  // the pending toast" and "gone from groups" — the reported reappear-bug. Cleared
+  // the pending toast" and "gone from groups" (the reported reappear-bug). Cleared
   // once refresh() has dropped the row from `groups`.
   const [committingIds, setCommittingIds] = useState<Set<string>>(() => new Set())
-  // The undo timer lives in a ref, NOT in state — side effects must never run
+  // The undo timer lives in a ref, NOT in state: side effects must never run
   // inside a setState updater (React StrictMode double-invokes updaters in dev,
   // which would spawn a second, orphaned timer that fires even after Undo).
   const deleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -95,7 +94,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   const setNotice = useSession((s) => s.setNotice)
 
   // Export a session to Markdown (on-disk sessions only). Reads the jsonl in main
-  // (no resume/spawn — safe on dormant sessions); a native Save dialog picks the path.
+  // (no resume/spawn, so it's safe on dormant sessions); a native Save dialog picks the path.
   const exportSession = useCallback(
     async (id: string, title: string) => {
       try {
@@ -117,13 +116,13 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
 
   // Commit the actual (irreversible) on-disk delete. The id is kept in
   // `committingIds` (hidden) across the async delete + refresh, and only removed
-  // AFTER refresh() has dropped the row from `groups` — so the row is continuously
+  // AFTER refresh() has dropped the row from `groups`, so the row is continuously
   // hidden and never flashes back, even when a second delete has already moved
   // `pendingDelete` on to a different session.
   const commitDelete = useCallback(async (pd: PendingDelete): Promise<void> => {
     setCommittingIds((cur) => new Set(cur).add(pd.id))
     await window.clui.deleteSession(pd.projectSlug, pd.id)
-    // The session is now permanently gone — drop its remembered cost so the
+    // The session is now permanently gone; drop its remembered cost so the
     // in-memory cost map doesn't leak orphaned entries (done here, NOT on undo,
     // since undo keeps the session). pd.id is the CLI sessionId.
     forgetSessionCost(pd.id)
@@ -136,24 +135,24 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Delete-with-undo (replaces the inline confirm): hide the row immediately and
-  // start a timer; the irreversible on-disk delete only fires when it expires.
-  // Undo cancels the timer, so nothing is ever lost to a stray click, and the row
-  // never reflows. Guideline: an irreversible destructive action needs undo OR
-  // confirmation — this keeps recoverability while removing the friction.
+  // Delete-with-undo: hide the row immediately and start a timer; the irreversible
+  // on-disk delete only fires when it expires. Undo cancels the timer, so nothing is
+  // ever lost to a stray click, and the row never reflows. Guideline: an irreversible
+  // destructive action needs undo OR confirmation; this keeps recoverability while
+  // removing the friction.
   const requestDelete = useCallback(
     (id: string, projectSlug: string, title: string, liveHandleId?: string) => {
       // A second delete while one is pending: commit the FIRST one now (single-toast
       // model). Its id enters `committingIds` synchronously inside commitDelete, so
-      // it stays hidden across the async commit — no reappear-flash.
+      // it stays hidden across the async commit (no reappear-flash).
       const prev = pendingDelete
       clearDeleteTimer()
       if (prev && prev.id !== id) void commitDelete(prev)
 
-      // If the session is live, stop its process NOW (chosen behavior: delete =
-      // full teardown). This drops the slice from the store immediately, so the
-      // "N live" counter + group dots update at once. Undo can then only bring back
-      // the transcript on disk (a resumable session), not the live process.
+      // If the session is live, stop its process NOW (delete = full teardown).
+      // This drops the slice from the store immediately, so the "N live" counter +
+      // group dots update at once. Undo can then only bring back the transcript on
+      // disk (a resumable session), not the live process.
       if (liveHandleId) void closeSession(liveHandleId)
 
       const pd: PendingDelete = { id, projectSlug, title }
@@ -171,7 +170,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     clearDeleteTimer()
     setPendingDelete(null)
     // If the deleted session was LIVE, we already stopped its process (delete =
-    // teardown), so undo can't revive the process — but the transcript survives on
+    // teardown), so undo can't revive the process, but the transcript survives on
     // disk. Re-scan so the restored session reappears in the sidebar as a
     // resumable (dormant) row; otherwise Undo would have no visible effect and the
     // user is stranded (e.g. on the welcome screen after deleting the only session).
@@ -179,10 +178,10 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearDeleteTimer])
 
-  // Dismissing the toast (the ✕, or its countdown elapsing) means "I'm done — let
+  // Dismissing the toast (the ✕, or its countdown elapsing) means "I'm done, let
   // the delete proceed", NOT undo. So COMMIT the delete immediately (and cancel the
   // now-redundant timer). Only the explicit Undo button cancels the delete.
-  // (Bug fix: onDismiss used to call undoDelete, which resurrected the session.)
+  // (Gotcha: onDismiss must NOT call undoDelete, which resurrects the session.)
   const dismissDelete = useCallback(() => {
     const pd = pendingDelete
     clearDeleteTimer()
@@ -191,13 +190,13 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingDelete, clearDeleteTimer, commitDelete])
 
-  // Safety: on unmount, cancel any pending timer so it can't fire against a torn-
-  // down component. The session is left on disk (data-preserving) — the sidebar
-  // effectively never unmounts in normal use, so this is just belt-and-suspenders.
+  // On unmount, cancel any pending timer so it can't fire against a torn-down
+  // component. The session is left on disk; the sidebar effectively never unmounts
+  // in normal use, so this is belt-and-suspenders.
   useEffect(() => () => clearDeleteTimer(), [clearDeleteTimer])
 
   // A shallow-compared signature of the live sessions: re-renders the sidebar
-  // only when a live session's identity/busy/pending-count changes — NOT on every
+  // only when a live session's identity/busy/pending-count changes, NOT on every
   // streamed token (the slice object changes each event, but this array of
   // primitive strings stays equal unless something we display actually changed).
   const liveSig = useSession(
@@ -209,13 +208,13 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     )
   )
   // Count only genuinely-live sessions (a spawn-failed or exited slice lingers in
-  // the store to keep its transcript, but must NOT count as live — that was the
+  // the store to keep its transcript, but must NOT count as live; that was the
   // "errored/deleted session still counted" bug). Derived directly from the store
-  // so it's robust to cwds containing spaces (unlike parsing liveSig strings).
+  // so it handles cwds containing spaces (unlike parsing liveSig strings).
   const liveCount = useSession(
     (s) => Object.values(s.sessions).filter((v) => !v.exited).length
   )
-  // A narrow key of persisted live session ids — changes only when the set of
+  // A narrow key of persisted live session ids: changes only when the set of
   // on-disk-visible live sessions changes, so we re-scan disk then (not per token).
   const liveIdsKey = useSession((s) =>
     Object.values(s.sessions)
@@ -267,7 +266,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
 
   // Session ids to hide from the list: the one showing the undo toast PLUS any whose
   // on-disk delete has been committed but whose refresh() hasn't landed yet (so a
-  // just-superseded delete stays hidden across its async commit — no reappear-flash).
+  // just-superseded delete stays hidden across its async commit; no reappear-flash).
   const pendingIds = useMemo(() => {
     const s = new Set(committingIds)
     if (pendingDelete) s.add(pendingDelete.id)
@@ -305,13 +304,13 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
           renamed: s.renamed,
           cwd: s.cwd,
           projectSlug: s.projectSlug,
-          // ALWAYS order by the on-disk createdMs (the file's original birthtime) —
-          // it's the authoritative, immutable creation time. Using the live slice's
-          // createdMs here was a bug: resuming a dormant session mints a fresh live
-          // slice with createdMs=now, which shot the row (and its group) to the top
-          // on every activation. The on-disk value keeps every row in its fixed slot
-          // (the never-reorder requirement). For a brand-new session the birthtime ≈
-          // the live now (sub-second), so no visible slide on first reconcile.
+          // ALWAYS order by the on-disk createdMs (the file's original birthtime):
+          // it's the immutable creation time. Do NOT use the live slice's createdMs
+          // here: resuming a dormant session mints a fresh live slice with
+          // createdMs=now, which shoots the row (and its group) to the top on every
+          // activation. The on-disk value keeps every row in its fixed slot (the
+          // never-reorder requirement). For a brand-new session the birthtime ≈ the
+          // live now (sub-second), so no visible slide on first reconcile.
           createdMs: s.createdMs,
           onDisk: true,
           handleId: stillLive ? liveMatch!.handleId : undefined,
@@ -400,7 +399,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
       <div className="flex items-center justify-between px-1 pb-2">
         <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-dim">
           Sessions
-          {/* No color tint behind the label — text-ok on the bg-ok/15 pill was
+          {/* No color tint behind the label: text-ok on the bg-ok/15 pill was
               3.73:1 in light (fails AA). On the plain surface full text-ok clears
               4.95:1; the dot carries the "live" shape cue. */}
           {liveCount > 0 && (
@@ -448,7 +447,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
                 />
                 <span className="truncate">{g.label}</span>
                 {groupLive > 0 && (
-                  /* Full opacity — bg-ok/70 was 2.89:1 in light (below the 3:1
+                  /* Full opacity: bg-ok/70 was 2.89:1 in light (below the 3:1
                      non-text floor); the live-here dot must clear it. */
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" title={`${groupLive} live here`} />
                 )}
@@ -485,9 +484,9 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
       </div>
 
       {/* Undo toast for a just-deleted session (nothing is removed from disk until
-          this window elapses). A real floating snackbar — position:fixed so it
-          overlays the window bottom-center and never reflows the sidebar. Keyed
-          by id so a second delete restarts the enter + drain animations. */}
+          this window elapses). A floating snackbar: position:fixed so it overlays
+          the window bottom-center and never reflows the sidebar. Keyed by id so a
+          second delete restarts the enter + drain animations. */}
       {pendingDelete && (
         <Toast
           key={pendingDelete.id}
@@ -544,9 +543,9 @@ function SessionRow({
   // Rename lives in the kebab menu for on-disk sessions.
   const onRename = session.onDisk ? startRename : undefined
 
-  // R5 — two-tier grammar: live/active sessions read full-strength; a dormant
+  // R5 two-tier grammar: live/active sessions read full-strength; a dormant
   // (on-disk) session reads dimmer. NB: uses `dim` (6.65:1 on the sidebar), not
-  // `faint` (3.7:1 — fails WCAG AA), so dormant rows stay legible.
+  // `faint` (3.7:1, fails WCAG AA), so dormant rows stay legible.
   const titleTone = active || session.live ? 'text-content' : 'text-dim'
 
   return (
@@ -559,13 +558,12 @@ function SessionRow({
             : 'hover:bg-bg-raised/60'
       }`}
     >
-      {/* R2 — active anchor: an accent left-edge bar marks the viewed session. */}
+      {/* R2 active anchor */}
       {active && (
         <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-accent" aria-hidden="true" />
       )}
 
-      {/* R1 — live presence: 3 bouncing dots while streaming (typing-indicator
-          convention), a small steady dot when idle-but-live. */}
+      {/* R1 live presence: bouncing dots follow the typing-indicator convention */}
       <span className="flex w-3.5 shrink-0 items-center justify-center">
         {session.live &&
           (session.busy ? (
@@ -604,7 +602,7 @@ function SessionRow({
         </button>
       )}
 
-      {/* R6 — pending-permission eye-pull: a backgrounded session needing YOU. */}
+      {/* R6 pending-permission */}
       {session.pendingCount > 0 && !editing && (
         <span
           className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-on-warn shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-warn)_28%,transparent)]"
@@ -614,7 +612,7 @@ function SessionRow({
         </span>
       )}
 
-      {/* Background-task badge (blue) — only on NON-active sessions; the active
+      {/* Background-task badge (blue), only on NON-active sessions; the active
           session shows its bg tasks in the bottom info bar instead. */}
       {session.bgCount > 0 && !active && !editing && (
         <span
@@ -626,12 +624,12 @@ function SessionRow({
       )}
 
       {!editing && (
-        // FREQUENCY-SPLIT hybrid (research-refuted): the ONE semi-frequent action —
-        // Close (live rows) — stays a direct inline icon (never menu-buried, Fitts). The
-        // RARE trio + fork collapse into a single kebab with TEXT-labeled items, which is
-        // the only way to meet the 44px target + get labels in a 288px row (four inline
-        // 14px glyphs can't). Hover-REVEALED not hover-GATED (opacity, not display:none) so
-        // keyboard/touch reach it (WCAG 2.1.1); the kebab button + menu carry their own aria.
+        // FREQUENCY-SPLIT hybrid: the ONE semi-frequent action, Close (live rows),
+        // stays a direct inline icon (never menu-buried, Fitts). The RARE trio + fork
+        // collapse into a single kebab with TEXT-labeled items, the only way to meet
+        // the 44px target + get labels in a 288px row (four inline 14px glyphs can't).
+        // Hover-REVEALED not hover-GATED (opacity, not display:none) so keyboard/touch
+        // reach it (WCAG 2.1.1); the kebab button + menu carry their own aria.
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
           {onClose && (
             <button
@@ -746,7 +744,7 @@ interface RowMenuItem {
 }
 
 /**
- * The session-row overflow (kebab) menu — holds the rare actions (fork/export/rename/
+ * The session-row overflow (kebab) menu holds the rare actions (fork/export/rename/
  * delete) as TEXT-labeled items, so they clear the 44px target + get names four inline
  * icons couldn't. A11y: the trigger is a `menu`-button (aria-haspopup/expanded); the
  * open menu is `role="menu"` with roving focus (↑↓ move, Enter/Space activate, Esc/Tab
@@ -844,11 +842,11 @@ function RowMenu({
               role="menuitem"
               tabIndex={i === focusIdx ? 0 : -1}
               /* A destructive item reads as DANGER at rest (err token on label +
-                 icon), not as a dimmed/disabled row, and is fenced off by a divider
-                 above it so it can't be mis-hit as a safe action. The roving-focused
-                 item keeps the global accent focus ring (NOT suppressed here) — the
-                 weak bg-raised fill alone was ~1.08:1 and imperceptible; a keyboard
-                 user must see which action Enter fires before an irreversible Delete. */
+                 icon), and is fenced off by a divider above it so it can't be mis-hit
+                 as a safe action. The roving-focused item keeps the global accent
+                 focus ring (NOT suppressed here): the weak bg-raised fill alone was
+                 ~1.08:1 and imperceptible; a keyboard user must see which action Enter
+                 fires before an irreversible Delete. */
               className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] transition-colors -outline-offset-2 ${
                 it.danger
                   ? 'mt-1 border-t border-border pt-2 text-err hover:bg-err/10 focus-visible:bg-err/15'

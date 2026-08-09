@@ -7,18 +7,15 @@ export interface DropdownOption<T extends string> {
   label: string
   /** Optional Tailwind text-color class (e.g. 'text-ok') for the label. */
   color?: string
-  /** Optional one-line description shown UNDER the label in the OPEN menu only
-   *  (never on the collapsed trigger — that stays compact). */
+  /** Optional one-line description shown under the label in the open menu only
+   *  (the collapsed trigger stays compact). */
   description?: string
   /** Optional leading glyph for this option (e.g. a per-mode permission icon). */
   icon?: React.ReactNode
 }
 
-/**
- * A small custom dropdown styled to match Clui's dark theme (the native <select>
- * renders as the OS default, which looks out of place). Click to open, click an
- * option to select, click outside or Escape to dismiss.
- */
+/** A custom dropdown replacing the native <select>, which renders as the OS default
+ *  and looks out of place in Clui's styled UI. */
 export function Dropdown<T extends string>({
   value,
   options,
@@ -41,7 +38,7 @@ export function Dropdown<T extends string>({
   align?: 'left' | 'right'
   /** Open the menu upward (for bottom-docked controls). */
   direction?: 'up' | 'down'
-  /** Optional leading icon (instrument-chip treatment). */
+  /** Optional leading icon. */
   icon?: React.ReactNode
 }): JSX.Element {
   const [open, setOpen] = useState(false)
@@ -49,7 +46,7 @@ export function Dropdown<T extends string>({
 
   const dismiss = useCallback(() => setOpen(false), [])
   useClickOutside(ref, open, dismiss)
-  // Esc closes the open menu — via the shared escape-stack so a dropdown opened
+  // Esc closes the open menu via the shared escape-stack, so a dropdown opened
   // inside a modal closes the dropdown first, not the modal.
   useEscape(open, dismiss)
 
@@ -95,7 +92,7 @@ export function Dropdown<T extends string>({
             // NO leading tick-gutter (was lopsided dead space) and NO trailing tick (the
             // trigger chip still shows the current choice while the menu is open, so an
             // in-menu tick is redundant). Selection = a full-row highlight + a 2px accent
-            // left-edge bar — Clui's active-item idiom (the active-session rail), absolutely
+            // left-edge bar, Clui's active-item idiom (the active-session rail), absolutely
             // positioned so it adds ZERO horizontal shift; aria-current carries it for AT.
             return (
               <button

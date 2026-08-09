@@ -31,7 +31,7 @@ export interface ClaudeSessionOptions {
   resumeSessionId?: string
   /**
    * Permission mode forwarded as `--permission-mode`. Leave undefined to pass NO
-   * flag — the CLI then honors the user's ~/.claude/settings.json defaultMode
+   * flag, and the CLI then honors the user's ~/.claude/settings.json defaultMode
    * (the "inherit" behavior). Any concrete value overrides just that field.
    */
   permissionMode?: string
@@ -85,7 +85,7 @@ export class ClaudeSession extends EventEmitter {
   /**
    * In-flight control_requests awaiting their control_response, keyed by request_id
    * (general control-protocol client). `resolve(true)` on a `success` response,
-   * `resolve(false)` on `error` / no-response timeout — so callers can fall back.
+   * `resolve(false)` on `error` / no-response timeout, so callers can fall back.
    * The init handshake stays on its own `initRequestId`/`initAcked` path (it gates
    * message flushing and predates this map).
    */
@@ -132,7 +132,7 @@ export class ClaudeSession extends EventEmitter {
     }
     if (this.opts.ultracode) {
       // Ultracode is a session setting (not --effort). Pass it at launch via --settings
-      // inline JSON (verified) so a resume restores it — Clui's own arg, never ~/.claude.
+      // inline JSON (verified) so a resume restores it. Clui's own arg, never ~/.claude.
       args.push('--settings', JSON.stringify({ ultracode: true }))
     }
     if (this.opts.resumeSessionId) {
@@ -144,20 +144,18 @@ export class ClaudeSession extends EventEmitter {
     return args
   }
 
-  /** Spawn the subprocess and begin streaming. */
   start(): void {
     if (this.child) throw new Error('session already started')
     this.spawnChild()
   }
 
-  /** (Re)spawn the CLI subprocess with the current opts and wire its streams. */
   private spawnChild(): void {
     // Reset per-spawn handshake state (a respawn re-runs the initialize dance).
     this.initRequestId = null
     this.initAcked = false
 
     // Guard: if the workspace folder no longer exists, spawn() throws a cryptic
-    // ENOENT that names the *binary* path (misleading — it looks like the CLI is
+    // ENOENT that names the *binary* path (misleading, since it looks like the CLI is
     // missing when really the cwd is gone; e.g. resuming a session whose folder
     // was deleted). Detect it up front and surface a clear, actionable error, then
     // tear the session down instead of spawning into a bad cwd.
@@ -202,19 +200,19 @@ export class ClaudeSession extends EventEmitter {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => {
       // CLI writes benign diagnostics to stderr too (e.g. "Warning: Opus 4.8 not
-      // available — using Opus 4.7 for this session"). These are NOT errors — the
-      // CLI already handled the fallback — so styling them as a red error (and, at
-      // startup, ALSO as a top banner) was misleading + duplicated. Only surface a
-      // line as an error if it doesn't self-identify as a warning/info note.
+      // available, using Opus 4.7 for this session"). These are NOT errors: the CLI
+      // already handled the fallback, so styling them as a red error (and, at startup,
+      // also as a top banner) would mislead and duplicate. Only surface a line as an
+      // error if it doesn't self-identify as a warning/info note.
       const text = chunk.trim()
       if (!text) return
-      if (/^(warning|warn|note|info)\b[:\s]/i.test(text)) return // benign diagnostic — drop
+      if (/^(warning|warn|note|info)\b[:\s]/i.test(text)) return // benign diagnostic; drop
       this.emitEvent({ type: 'error', message: text })
     })
 
     child.on('error', (err) => {
       this.emitEvent({ type: 'error', message: `spawn failed: ${err.message}` })
-      // A spawn failure (e.g. ENOENT — wrong CLI path) fires 'error' but NOT
+      // A spawn failure (e.g. ENOENT from a wrong CLI path) fires 'error' but NOT
       // 'close', so without this the session would never emit process-exit and
       // would linger forever as a phantom "live" session. Tear it down like an
       // exit so the manager drops it and the renderer stops counting it as live.
@@ -228,7 +226,7 @@ export class ClaudeSession extends EventEmitter {
 
     child.on('close', (code) => {
       // A real stop() ran (closed=true): never respawn, even mid-effort-respawn. This
-      // guard MUST precede the respawning branch — else a stop()/stopAll() that lands in
+      // guard MUST precede the respawning branch, else a stop()/stopAll() that lands in
       // the window between respawnForEffort's SIGTERM and this 'close' would take the
       // respawning branch and spawnChild() a NEW orphaned process after the handle was
       // already deleted from the manager. (Mirrors the 'error' handler, which already
@@ -317,8 +315,8 @@ export class ClaudeSession extends EventEmitter {
    * Send a control_request and await its control_response. Resolves true on a
    * `success` response, false on `error` or if no response arrives within `timeoutMs`
    * (so callers can fall back). Fire-and-forget callers can ignore the promise.
-   * NOTE: only reliable for the CLI's directly-handled ("worker allowlist") subtypes
-   * — callback-gated getters (get_context_usage, etc.) never respond over the wire
+   * NOTE: only reliable for the CLI's directly-handled ("worker allowlist") subtypes.
+   * Callback-gated getters (get_context_usage, etc.) never respond over the wire
    * and would always time out to false (verified).
    */
   private sendControl(subtype: string, extra: Record<string, unknown> = {}, timeoutMs = 5000): Promise<boolean> {
@@ -338,7 +336,6 @@ export class ClaudeSession extends EventEmitter {
     this.emit('event', e)
   }
 
-  /** Write a raw JSON object to the CLI's stdin as one NDJSON line. */
   private writeLine(obj: unknown): void {
     if (!this.child || this.child.stdin.destroyed) return
     this.child.stdin.write(JSON.stringify(obj) + '\n')
@@ -361,11 +358,11 @@ export class ClaudeSession extends EventEmitter {
   /**
    * Write a user turn to the CLI stdin as NDJSON. With no attachments, `content` stays
    * a plain string (the historical shape). With attachments, `content` becomes an
-   * Anthropic content-block array — attachment blocks first, then the text block —
+   * Anthropic content-block array (attachment blocks first, then the text block),
    * which the CLI accepts inline in duplex stream-json (all three kinds verified live
    * on 2.1.209). The text block is omitted when empty (an attachments-only turn is
    * valid). A dropped text FILE rides as a `text` block wrapped in a `<file name>`
-   * delimiter so the model knows what it is (mechanically identical to a paste — no
+   * delimiter so the model knows what it is (mechanically identical to a paste, no
    * Read tool, so it works regardless of the workspace-cwd boundary).
    */
   private writeUserMessage(turn: UserTurn): void {
@@ -394,7 +391,7 @@ export class ClaudeSession extends EventEmitter {
    * work mid-session. Does not touch any settings file.
    *
    * Also persists the new mode into `opts.permissionMode` so a later effort-driven
-   * respawn (which rebuilds argv from opts) keeps it — otherwise the respawn would
+   * respawn (which rebuilds argv from opts) keeps it, else the respawn would
    * silently revert to the launch-time mode. The renderer maps 'inherit' → 'default'
    * before calling this (there's no mid-session "unset"), so `mode` is concrete here.
    */
@@ -423,11 +420,10 @@ export class ClaudeSession extends EventEmitter {
 
   /**
    * Change the effort of THIS session LIVE via the control protocol
-   * (`apply_flag_settings {settings:{effortLevel}}`) — verified directly-handled by
-   * the CLI worker, so no process restart is needed (model
-   * switching already works this way; this brings effort to parity). Persists into
-   * opts so any later respawn keeps it. Falls back to the old respawn-with-`--resume`
-   * path if the live control_request errors or times out — the protocol is
+   * (`apply_flag_settings {settings:{effortLevel}}`), verified directly-handled by
+   * the CLI worker, so no process restart is needed (same path model switching uses).
+   * Persists into opts so any later respawn keeps it. Falls back to a respawn-with-
+   * `--resume` if the live control_request errors or times out, since the protocol is
    * undocumented and drifts across CLI versions, so we degrade rather than fail.
    */
   async setEffort(effort: string): Promise<void> {
@@ -446,7 +442,7 @@ export class ClaudeSession extends EventEmitter {
   /**
    * Toggle ultracode LIVE (`apply_flag_settings {ultracode}`). Ultracode forces xhigh
    * reasoning + workflow-orchestration disposition; the `Workflow` tool is present at
-   * every effort level (verified), so this is a pure live setting — NO respawn. Persisted
+   * every effort level (verified), so this is a pure live setting, NO respawn. Persisted
    * into opts so a respawn (e.g. effort fallback) keeps it.
    */
   async setUltracode(on: boolean): Promise<void> {
@@ -496,12 +492,11 @@ export class ClaudeSession extends EventEmitter {
     })
   }
 
-  /** Terminate the subprocess and clean up. */
   stop(): void {
     // Cancel any in-flight effort-respawn: without this, a 'close' still pending from
     // respawnForEffort's SIGTERM would resurrect the child even though we're tearing it
-    // down for good. (The 'close' handler now also guards on `closed` first; this is the
-    // belt to that suspenders — a pending respawn must not survive an explicit stop.)
+    // down for good. (The 'close' handler also guards on `closed` first; this is the
+    // belt to that suspenders, since a pending respawn must not survive an explicit stop.)
     this.respawning = false
     // Resolve any awaited control_requests as failed + clear their timers.
     for (const [, p] of this.pendingControl) {
@@ -521,7 +516,7 @@ export class ClaudeSession extends EventEmitter {
     // `child.killed`: Node sets `killed` true the moment a signal is SENT (the SIGTERM
     // above already did), so `!child.killed` would be permanently false and the escalation
     // would never fire. `exitCode`/`signalCode` are both null only while the process is
-    // still alive — the real "did it actually exit?" check.
+    // still alive, the real "did it actually exit?" check.
     const child = this.child
     setTimeout(() => {
       if (child.exitCode === null && child.signalCode === null) {

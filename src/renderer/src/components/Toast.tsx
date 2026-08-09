@@ -2,13 +2,7 @@ import { useEffect, useState } from 'react'
 import { IconClose } from './Icon'
 
 /**
- * A transient floating toast/snackbar (per NN/g + Material snackbar guidance):
- * floats ABOVE content at the bottom-center of the window (position:fixed — never
- * wedged into the layout flow, never reflows anything), carries one action, and
- * auto-dismisses on a timer with a visible draining progress bar so the user can
- * see the window closing. Slides up on mount; respects reduced-motion via the
- * global rule (transition still applies but the app's reduce rule flattens it).
- * Only ONE toast is shown at a time (Material: never stack snackbars).
+ * One toast at a time; fixed position so it doesn't reflow content.
  */
 export function Toast({
   message,
@@ -61,7 +55,6 @@ export function Toast({
             <IconClose className="h-3.5 w-3.5" />
           </button>
         </div>
-        {/* Countdown: a hairline that drains left→right over the undo window. */}
         <div className="h-0.5 w-full bg-border">
           <div
             className="h-full bg-accent"

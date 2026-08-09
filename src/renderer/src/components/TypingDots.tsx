@@ -1,5 +1,5 @@
 /**
- * Three bouncing dots — the chat-app "typing" convention, reused wherever we
+ * Three bouncing dots, the chat-app "typing" convention, reused wherever we
  * signal indeterminate assistant activity (Claude thinking, a tool running).
  * A learned, recognition-not-recall pattern; no background. Staggered so the
  * bounce reads as a wave. Honors prefers-reduced-motion via the global rule.

@@ -1,13 +1,13 @@
 /**
  * In-chat compact suggestion. When context nears the
- * auto-compact point, a quiet advisory row appears at the TAIL of the transcript —
+ * auto-compact point, a quiet advisory row appears at the TAIL of the transcript,
  * like an assistant aside, NOT sticky composer chrome (user's explicit pick). It reads
  * as Claude advising you, offers manual `/compact` on your terms, and is dismissible.
  *
  * Trigger + dismiss logic lives in `lib/compaction.ts` (shared with the ContextRing so
  * they never disagree): 90% on 1M / 70% on 200K, re-arming ONCE near auto-compact.
  *
- * Framing is SOFT — `/compact` only shrinks the model's context; the transcript here +
+ * Framing is SOFT: `/compact` only shrinks the model's context; the transcript here +
  * the on-disk jsonl survive (verified). So: info-blue base, escalate to amber for the
  * one "last-call" re-arm, NEVER red (red in-transcript reads as "something broke").
  * Copy states the model's REAL auto-compact % (never a constant). Accent-scarcity: the
@@ -31,7 +31,7 @@ export function CompactSuggestion(): JSX.Element | null {
   const dismiss = useSession((s) => s.dismissCompactSuggestion)
 
   const sug = compactSuggestion(percent, tokens, window, dismissedAtRunway)
-  // Hide while a turn is streaming — the tail is owned by WorkingStatus then, and
+  // Hide while a turn is streaming: the tail is owned by WorkingStatus then, and
   // firing /compact mid-turn is nonsensical. It reappears once the turn settles.
   if (!sug || busy) return null
 
@@ -45,7 +45,7 @@ export function CompactSuggestion(): JSX.Element | null {
     : 'border-info/50 text-info hover:bg-info/10'
 
   const runway = fmtK(sug.runwayTokens)
-  // Human-facing prose gets a rounded threshold ("near 97%") — the one-decimal
+  // Human-facing prose gets a rounded threshold ("near 97%"): the one-decimal
   // 96.7 reads as machine false-precision next to the approximating word "near".
   // The exact value still lives on the ContextRing tooltip.
   const autoPct = Math.round(sug.autoPercent)

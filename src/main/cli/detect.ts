@@ -39,12 +39,11 @@ async function resolveViaLoginShell(): Promise<string | null> {
     const path = stdout.trim().split('\n').pop()?.trim()
     if (path && existsSync(path)) return path
   } catch {
-    // ignore — fall through to common paths
+    // ignore; fall through to common paths
   }
   return null
 }
 
-/** Get `claude --version` for a given binary path. */
 async function getVersion(binPath: string): Promise<string | null> {
   try {
     const { stdout } = await execFileP(binPath, ['--version'], {
@@ -58,9 +57,7 @@ async function getVersion(binPath: string): Promise<string | null> {
   }
 }
 
-/**
- * Detect the CLI. If `override` is set (from app settings) and exists, it wins.
- */
+// Detect the CLI. If `override` is set (from app settings) and exists, it wins.
 export async function detectCli(override?: string | null): Promise<CliInfo> {
   if (override && existsSync(override)) {
     return { path: override, version: await getVersion(override), source: 'settings' }

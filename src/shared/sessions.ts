@@ -18,10 +18,10 @@ export interface SessionSummary {
   firstTimestamp: string | null
   /** ISO timestamp of the last event, if known. */
   lastTimestamp: string | null
-  /** File mtime (ms) — last activity. */
+  /** File mtime (ms): last activity. */
   mtimeMs: number
   /**
-   * Session creation time (ms) — file birthtime, falling back to the first
+   * Session creation time (ms): file birthtime, falling back to the first
    * event's timestamp, then mtime. Immutable, so ordering by it is stable across
    * resume (which bumps mtime) and deletes.
    */
@@ -49,7 +49,7 @@ export interface ProjectGroup {
 /**
  * A reconstructed transcript message for rendering resumed history. Mirrors the
  * renderer's ChatMessage/ToolCall so history and live-streamed turns render the
- * same way. Built defensively from the version-dependent `.jsonl` — display only.
+ * same way. Built defensively from the version-dependent `.jsonl`; display only.
  */
 export interface HistoryToolCall {
   id: string
@@ -61,7 +61,7 @@ export interface HistoryToolCall {
 
 /** An attachment recovered from a resumed USER turn (drop-file). Images
  *  come back as a displayable `data:` URL (bytes are inlined in the jsonl); document/
- *  text attachments come back as a metadata-only CHIP (name + size) — we don't re-inline
+ *  text attachments come back as a metadata-only CHIP (name + size); we don't re-inline
  *  a PDF's base64 (memory) or re-dump a text file's contents (noise) into the bubble. */
 export type HistoryAttachment =
   | { kind: 'image'; dataUrl: string }
@@ -102,7 +102,7 @@ export interface SnippetRange {
   end: number
 }
 
-/** A single search hit — LIGHTWEIGHT (never carries the full message). Enough to
+/** A single search hit, LIGHTWEIGHT (never carries the full message). Enough to
  *  render a result row and navigate: the `messageId` maps to a rendered message in
  *  the (now-uncapped, virtualized) transcript via findIndex → scrollToIndex. */
 export interface SearchHit {
@@ -110,7 +110,7 @@ export interface SearchHit {
   cwd: string
   /** Session display title (from the sidecar/first message). */
   title: string
-  /** Stable message id (`h-<seq>-<uuid>`) — matches store.messages for jump-to-hit. */
+  /** Stable message id (`h-<seq>-<uuid>`); matches store.messages for jump-to-hit. */
   messageId: string
   role: 'user' | 'assistant'
   /** A readable window of text centered on the first match, term(s) highlighted via
@@ -124,10 +124,9 @@ export interface SearchHit {
 /** Facets for a global search. Both optional; omitting = broadest scope. */
 export interface SearchOptions {
   /** Restrict to one workspace by its project slug (skips other project dirs at the
-   *  parse step — a cold-start perf win). Undefined = all workspaces. */
+   *  parse step, a cold-start perf win). Undefined = all workspaces. */
   scopeSlug?: string
-  /** Only match USER messages (find your own prompts). False/undefined = everyone.
-   *  ("You only" is the high-value role filter; agent-only was cut as low-value.) */
+  /** Only match USER messages (find your own prompts). False/undefined = everyone. */
   userOnly?: boolean
 }
 

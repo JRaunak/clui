@@ -3,18 +3,18 @@
  *
  * WHY THIS EXISTS: the CLI emits that report as PREFORMATTED, column-aligned text
  * (newlines + runs of spaces). Piping it through react-markdown collapses the
- * whitespace → one unreadable run-on line (the reported bug). Rather than a raw
- * <pre> that looks like terminal spillover, we parse the key/value lines into a
- * Clui-native stat card — labeled rows + a per-model usage table.
+ * whitespace into one unreadable run-on line (the reported bug). A raw <pre> looks
+ * like terminal spillover, so instead we parse the key/value lines into a
+ * Clui-native stat card: labeled rows + a per-model usage table.
  *
- * DEFENSIVE / DRIFT-SAFE: parsing is best-effort. `parseUsageReport` returns null
- * if the text doesn't look like the report (the CLI could change its wording on an
- * upgrade); callers fall back to a formatting-preserving <pre> so output is NEVER
- * lost — worst case it looks plain, never blank or scrambled. This mirrors the
- * transcript reader's "defensive, display-only" stance.
+ * Parsing is best-effort. `parseUsageReport` returns null if the text doesn't look
+ * like the report (the CLI could change its wording on an upgrade); callers fall
+ * back to a formatting-preserving <pre> so output is never lost. Worst case it
+ * looks plain, never blank or scrambled. This mirrors the transcript reader's
+ * defensive, display-only stance.
  */
 
-/** A parsed usage/cost report. Fields are optional — we render whatever we found. */
+/** A parsed usage/cost report. Fields are optional; we render whatever we found. */
 export interface UsageReport {
   cost?: string
   apiDuration?: string
@@ -30,7 +30,7 @@ export interface UsageReport {
  * the caller can fall back. Tolerant of extra/missing lines and variable spacing.
  */
 export function parseUsageReport(text: string): UsageReport | null {
-  // Cheap gate first — must look like the report, not arbitrary assistant prose.
+  // Cheap gate first: must look like the report, not arbitrary assistant prose.
   if (!/^\s*Total cost:/m.test(text)) return null
 
   const report: UsageReport = { models: [] }
@@ -40,10 +40,10 @@ export function parseUsageReport(text: string): UsageReport | null {
   for (const line of lines) {
     // NOTE: value column is aligned to `len(longest label)+1`, so the LONGEST
     // label (e.g. "Total duration (wall):") gets exactly ONE space before its
-    // value — `\s{2,}` silently dropped that row. `\s+` recovers it; the gate
-    // above + the known-key allowlist below keep prose from matching.
+    // value. Don't tighten this to `\s{2,}`: it silently drops that row. `\s+`
+    // matches it; the gate above + the known-key allowlist below keep prose out.
     const kv = /^\s*([^:]+?):\s+(.+?)\s*$/.exec(line)
-    // "Usage by model:" is a section header (value empty) — following indented lines
+    // "Usage by model:" is a section header (value empty); following indented lines
     // are per-model rows until a non-indented / non-model line.
     if (/^\s*Usage by model:\s*$/.test(line)) {
       inModels = true
@@ -85,7 +85,7 @@ export function parseUsageReport(text: string): UsageReport | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// /context report — parsed into a native card with a fill gauge + category bars
+// /context report: parsed into a native card with a fill gauge + category bars
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A parsed `/context` report. On 2.1.209 the CLI emits GFM markdown: a `**Tokens:**
@@ -119,7 +119,7 @@ export function parseContextReport(text: string): ContextReport | null {
   }
 
   // Category table rows: "| System prompt | 2.1k | 0.2% |". Scan ONLY the "Estimated
-  // usage by category" section — from its heading to the next "### " sibling — so other
+  // usage by category" section (from its heading to the next "### " sibling) so other
   // token tables ("### Custom Agents", "### Skills") can never leak in as phantom bars.
   const catSection =
     /###\s+Estimated usage by category([\s\S]*?)(?=\n###\s|$)/i.exec(text)?.[1] ?? text
@@ -168,7 +168,7 @@ export function ContextCard({ report }: { report: ContextReport }): JSX.Element 
             </span>
             <span className="text-dim">{pct}%</span>
           </div>
-          {/* Fill gauge — a horizontal echo of the composer's context ring. */}
+          {/* Fill gauge: a horizontal echo of the composer's context ring. */}
           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-bg-raised">
             <div className={`h-full rounded-full ${fillTone}`} style={{ width: `${Math.max(1, pct)}%` }} />
           </div>

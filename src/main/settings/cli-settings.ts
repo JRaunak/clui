@@ -1,10 +1,10 @@
 /**
  * Read-only view of the user's `~/.claude/settings.json`.
  *
- * Clui NEVER writes this file — it belongs to the CLI. Clui reads it to inherit
+ * Clui NEVER writes this file; it belongs to the CLI. Clui reads it to inherit
  * what the user already told the CLI (model, effort, permission default) and to
- * find their Bedrock profile. Single reader for the whole app; three call sites
- * were opening it independently.
+ * find their Bedrock profile. Single reader for the whole app, so callers don't
+ * each open it independently.
  *
  * Deliberately UNCACHED: the "System Default" permission report wants a live read
  * every time, and the caller that needs a stable snapshot (the settings store)
@@ -21,9 +21,9 @@ import { join } from 'node:path'
 export interface CliSettings {
   /** `--model` value, usually Bedrock-prefixed (e.g. 'us.anthropic.claude-opus-5[1m]'). */
   model?: string
-  /** The CLI's persisted effort. Its own enum is low/medium/high/xhigh — no 'max'. */
+  /** The CLI's persisted effort. Its own enum is low/medium/high/xhigh (no 'max'). */
   effortLevel?: string
-  /** `permissions.defaultMode` — what Clui's 'inherit' mode resolves to. */
+  /** `permissions.defaultMode`: what Clui's 'inherit' mode resolves to. */
   defaultMode?: string
   /** Bedrock profile/region used to query the live model list. */
   bedrock: { profile?: string; region?: string }
