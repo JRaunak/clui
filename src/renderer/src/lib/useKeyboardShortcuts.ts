@@ -9,6 +9,7 @@
  *  2. App-internal keys that aren't menu commands are handled as DOM listeners:
  *       ⌃Tab / ⌃⇧Tab  — cycle to the next / previous live session
  *       ⌃C            — interrupt the active turn WHILE it is streaming
+ *       ⌘B            — collapse / expand the session sidebar (no menu collision)
  *
  * All bindings use modifiers, so they stay active even while the composer
  * textarea is focused (the macOS convention — ⌘/⌃ shortcuts are global). We never
@@ -25,8 +26,9 @@ export function useKeyboardShortcuts(opts: {
   onNewSession: () => void
   onOpenSettings: () => void
   onOpenPalette: () => void
+  onToggleSidebar: () => void
 }): void {
-  const { onNewSession, onOpenSettings, onOpenPalette } = opts
+  const { onNewSession, onOpenSettings, onOpenPalette, onToggleSidebar } = opts
 
   useEffect(() => {
     // 1. Native-menu actions (⌘N / ⌘W / ⌘,).
@@ -77,6 +79,14 @@ export function useKeyboardShortcuts(opts: {
         return
       }
 
+      // ⌘B — toggle the session sidebar. No native-menu binding (no macOS default
+      // on ⌘B outside a text field), so a DOM listener is the whole story.
+      if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault()
+        onToggleSidebar()
+        return
+      }
+
       // ⌃C — interrupt, but ONLY while a turn is streaming. Guarding on `busy`
       // means that when nothing is running, ⌃C is a no-op and the browser's
       // native copy-of-selection still works for users with that habit.
@@ -94,5 +104,5 @@ export function useKeyboardShortcuts(opts: {
       off()
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [onNewSession, onOpenSettings, onOpenPalette])
+  }, [onNewSession, onOpenSettings, onOpenPalette, onToggleSidebar])
 }

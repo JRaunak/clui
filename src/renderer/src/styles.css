@@ -284,6 +284,22 @@
   }
 }
 
+/* Sidebar focus-mode swap: the width snaps (the transform/opacity-only invariant rules
+   out animating width), and only the incoming content fades in. Enter-only, opacity-only;
+   the reduced-motion block below neutralizes it to instant. */
+@keyframes sidebar-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.sidebar-fade {
+  animation: sidebar-fade 120ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
 @keyframes dock-pulse {
   0%,
   100% {

@@ -46,6 +46,12 @@ export interface CluiSettings {
    * gates on live `detectCli` regardless of this flag.
    */
   onboarded: boolean
+  /**
+   * Collapsed session sidebar (focus mode). When true the left column shrinks to a
+   * status rail. Default false so first-run and the design-capture harness start
+   * expanded. Toggled by ⌘B or the header/rail button; persisted like `onboarded`.
+   */
+  sidebarCollapsed: boolean
 }
 
 /** A settings key (used by the per-field reset affordance). */
@@ -352,7 +358,8 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   // Dark is Clui's signature surface; light + system are opt-in.
   theme: 'dark',
   // First launch shows the intro card until dismissed.
-  onboarded: false
+  onboarded: false,
+  sidebarCollapsed: false
 }
 
 // Ordered by the risk ramp (safest concrete mode → riskiest), with System Default

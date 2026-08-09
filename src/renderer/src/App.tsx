@@ -14,7 +14,7 @@ import { SubagentView } from './components/SubagentView'
 import { WorkflowTray } from './components/WorkflowTray'
 import { Button } from './components/Button'
 import { Onboarding, cliHealth } from './components/Onboarding'
-import { IconSettings, IconPlus } from './components/Icon'
+import { IconSettings, IconPlus, IconSidebar } from './components/Icon'
 import { applyTheme } from './lib/theme'
 import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
 import type { CliInfo } from '../../shared/ipc'
@@ -31,6 +31,7 @@ export function App(): JSX.Element {
   // First-run intro flag. `null` = not yet loaded (don't flash the intro before we
   // know); once loaded it's true/false. Persisted in settings via `updateSettings`.
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [showCustomizations, setShowCustomizations] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
@@ -91,6 +92,7 @@ export function App(): JSX.Element {
     void window.clui.getSettings().then(({ values }) => {
       applyTheme(values.theme)
       setOnboarded(values.onboarded)
+      setSidebarCollapsed(values.sidebarCollapsed)
     })
   }, [])
 
@@ -150,46 +152,144 @@ export function App(): JSX.Element {
   // ⌘N new session · ⌘W close · ⌘, settings · ⌘K palette (native menu) + ⌃Tab / ⌃C.
   const openSettings = useCallback(() => setShowSettings(true), [])
   const openPalette = useCallback(() => setShowPalette(true), [])
+
+  // Toggle focus mode. Persist the new state, and if focus was sitting inside the
+  // sidebar, move it to the mirror control in the incoming layout so keyboard users
+  // aren't dumped on <body> when the old trigger button unmounts. Focus outside the
+  // sidebar is left alone. rAF waits for the swapped chrome to mount.
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      void window.clui.updateSettings({ sidebarCollapsed: next })
+      const inSidebar = document.activeElement?.closest('#app-sidebar')
+      if (inSidebar) {
+        requestAnimationFrame(() => {
+          const sel = next ? '[data-rail-expand]' : '[data-sidebar-collapse]'
+          document.querySelector<HTMLElement>(sel)?.focus()
+        })
+      }
+      return next
+    })
+  }, [])
+
   useKeyboardShortcuts({
     onNewSession: pickAndStart,
     onOpenSettings: openSettings,
-    onOpenPalette: openPalette
+    onOpenPalette: openPalette,
+    onToggleSidebar: toggleSidebar
   })
 
   return (
     <div className="flex h-screen overflow-hidden">
+      {/* One node, class-swapped by mode. Splitting collapsed/expanded into two keyed
+          <aside> branches remounts SessionsSidebar and blanks the list until the next
+          disk scan. */}
       <aside
+        key="sidebar"
         ref={asideRef}
-        className="flex h-screen min-h-0 w-72 shrink-0 flex-col gap-3 border-r border-border bg-bg-sidebar px-3 pt-4"
+        id="app-sidebar"
+        className={`flex h-screen min-h-0 shrink-0 flex-col border-r border-border bg-bg-sidebar pt-4 ${
+          sidebarCollapsed ? 'w-11 items-center gap-2.5' : 'w-72 gap-3 px-3'
+        }`}
       >
-        <div className="flex items-baseline gap-2 px-1">
-          <span className="font-serif text-2xl font-semibold tracking-tight text-content">Clui</span>
-          <span className="h-1.5 w-1.5 translate-y-[-2px] rounded-full bg-accent" aria-hidden="true" />
-        </div>
-        <Button data-new-session variant="primary" size="md" onClick={pickAndStart} className="w-full">
-          <IconPlus className="h-4 w-4" />
-          {cwd ? 'New session' : 'Pick a workspace'}
-        </Button>
-        {/* Settings moved here from the (now-deleted) top bar — one visible, 44px,
-            onboarding-critical door (a new user must find it to set the CLI path);
-            ⌘, + the native menu + ⌘K also open it. Configuration is ⌘K-only (infrequent
-            read-only audit — reshaped out of the sidebar to reclaim this scarce slot). */}
-        <Button variant="outline" size="md" onClick={() => setShowSettings(true)} className="w-full">
-          <IconSettings className="h-4 w-4" />
-          Settings
-        </Button>
-        <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-3">
-          <SessionsSidebar />
-        </div>
-        <div className="flex h-8 shrink-0 items-center justify-center gap-1.5 border-t border-border bg-bg-sidebar text-[12px] text-dim">
-          {cliInfo?.path ? (
-            <span className="truncate font-mono" title={cliInfo.path}>
-              claude {cliInfo.version ?? ''}
-            </span>
+        {/* Keyed by mode so the incoming controls remount and fade in. The list below
+            is deliberately unkeyed, so it stays mounted across a toggle. */}
+        <div
+          key={sidebarCollapsed ? 'rail-chrome' : 'expanded-chrome'}
+          className={`sidebar-fade flex shrink-0 flex-col ${
+            sidebarCollapsed ? 'items-center gap-2.5' : 'gap-3'
+          }`}
+        >
+          {sidebarCollapsed ? (
+            <>
+              <button
+                data-rail-expand
+                className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border-strong text-dim transition-colors hover:border-transparent hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
+                onClick={toggleSidebar}
+                aria-label="Expand sidebar"
+                aria-expanded={false}
+                aria-controls="app-sidebar"
+                title="Expand sidebar ⌘B"
+              >
+                <IconSidebar className="h-4 w-4" />
+              </button>
+              <div className="w-6 border-b border-border" />
+              <button
+                data-new-session
+                className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-accent text-on-accent transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
+                onClick={pickAndStart}
+                aria-label={cwd ? 'New session' : 'Pick a workspace'}
+                title={cwd ? 'New session' : 'Pick a workspace'}
+              >
+                <IconPlus className="h-4 w-4" />
+              </button>
+              <button
+                className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
+                onClick={() => setShowSettings(true)}
+                aria-label="Settings"
+                title="Settings"
+              >
+                <IconSettings className="h-4 w-4" />
+              </button>
+              <div className="w-6 border-b border-border" />
+            </>
           ) : (
-            <span className="text-err">claude CLI not found</span>
+            <>
+              <div className="flex items-center justify-between px-1">
+                <span className="flex items-baseline gap-2">
+                  <span className="font-serif text-2xl font-semibold tracking-tight text-content">Clui</span>
+                  <span className="h-1.5 w-1.5 translate-y-[-2px] rounded-full bg-accent" aria-hidden="true" />
+                </span>
+                <button
+                  data-sidebar-collapse
+                  className="flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  onClick={toggleSidebar}
+                  aria-label="Collapse sidebar"
+                  aria-expanded={true}
+                  aria-controls="app-sidebar"
+                  title="Collapse sidebar ⌘B"
+                >
+                  <IconSidebar className="h-4 w-4" />
+                </button>
+              </div>
+              <Button data-new-session variant="primary" size="md" onClick={pickAndStart} className="w-full">
+                <IconPlus className="h-4 w-4" />
+                {cwd ? 'New session' : 'Pick a workspace'}
+              </Button>
+              {/* A visible Settings door: onboarding needs a new user to find it to set
+                  the CLI path. ⌘, / native menu / ⌘K also open it. */}
+              <Button variant="outline" size="md" onClick={() => setShowSettings(true)} className="w-full">
+                <IconSettings className="h-4 w-4" />
+                Settings
+              </Button>
+            </>
           )}
         </div>
+
+        {/* Never key this: an unmount here drops SessionsSidebar's scanned list. */}
+        <div
+          className={`flex min-h-0 flex-1 flex-col ${
+            sidebarCollapsed ? 'w-full items-center' : 'border-t border-border pt-3'
+          }`}
+        >
+          <SessionsSidebar collapsed={sidebarCollapsed} />
+        </div>
+
+        {sidebarCollapsed ? (
+          // Footer text ("claude X.Y") clips at rail width, so the rail keeps only a
+          // bordered h-8 spacer to align its bottom divider with main's info bar.
+          <div className="h-8 w-full shrink-0 border-t border-border" />
+        ) : (
+          <div className="flex h-8 shrink-0 items-center justify-center gap-1.5 border-t border-border bg-bg-sidebar text-[12px] text-dim">
+            {cliInfo?.path ? (
+              <span className="truncate font-mono" title={cliInfo.path}>
+                claude {cliInfo.version ?? ''}
+              </span>
+            ) : (
+              <span className="text-err">claude CLI not found</span>
+            )}
+          </div>
+        )}
       </aside>
 
       <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -296,6 +396,11 @@ export function App(): JSX.Element {
               setShowPalette(false)
               setShowCustomizations(true)
             }}
+            onToggleSidebar={() => {
+              setShowPalette(false)
+              toggleSidebar()
+            }}
+            sidebarCollapsed={sidebarCollapsed}
           />
         )}
       </div>

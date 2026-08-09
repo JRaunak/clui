@@ -34,12 +34,16 @@ export function CommandPalette({
   onClose,
   onNewSession,
   onOpenSettings,
-  onOpenCustomizations
+  onOpenCustomizations,
+  onToggleSidebar,
+  sidebarCollapsed
 }: {
   onClose: () => void
   onNewSession: () => void
   onOpenSettings: () => void
   onOpenCustomizations: () => void
+  onToggleSidebar: () => void
+  sidebarCollapsed: boolean
 }): JSX.Element {
   const [query, setQuery] = useState('')
   const [sel, setSel] = useState(0)
@@ -152,6 +156,14 @@ export function CommandPalette({
           applyTheme(next)
           void window.clui.updateSettings({ theme: next })
         }
+      },
+      {
+        key: 'cmd:sidebar',
+        kind: 'command',
+        label: sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+        hint: '⌘B',
+        recency: 0,
+        run: onToggleSidebar
       },
       ...(activeId
         ? [

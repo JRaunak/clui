@@ -65,7 +65,7 @@ interface PendingDelete {
   title: string
 }
 
-export function SessionsSidebar(): JSX.Element {
+export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: boolean }): JSX.Element {
   const [groups, setGroups] = useState<ProjectGroup[]>([])
   const [loading, setLoading] = useState(true)
   /** Collapsed project cwds. */
@@ -225,6 +225,20 @@ export function SessionsSidebar(): JSX.Element {
       .join(',')
   )
 
+  // Activate a live session or resume a dormant one, refusing when its folder is gone.
+  // Shared so the expanded row and the collapsed monogram open identically.
+  const openMerged = useCallback(
+    (s: MergedSession, exists: boolean): void => {
+      if (s.live && s.handleId) activateSession(s.handleId)
+      else if (!exists)
+        setNotice(
+          `Can't resume: ${s.cwd} no longer exists. The transcript is safe. You can still export or delete it from the row menu.`
+        )
+      else if (s.id) void resumeSession(s.cwd, s.id)
+    },
+    [activateSession, resumeSession, setNotice]
+  )
+
   const toggleGroup = (cwd: string): void => {
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -351,6 +365,36 @@ export function SessionsSidebar(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, liveSig, pendingIds])
 
+  if (railMode) {
+    // Same source and order as the expanded list (groups sorted, sessions within each
+    // sorted), flattened to one monogram column with no group chrome. The undo toast
+    // still renders so a delete triggered before collapsing stays cancelable.
+    const flat = merged.flatMap((g) => g.sessions.map((s) => ({ s, exists: g.exists })))
+    return (
+      <div className="-mr-1 flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto pr-1">
+        {flat.map(({ s, exists }) => (
+          <SessionMonogram
+            key={s.handleId ?? s.id ?? `${s.cwd}-x`}
+            session={s}
+            active={Boolean(s.handleId) && s.handleId === activeHandleId}
+            onOpen={() => openMerged(s, exists)}
+          />
+        ))}
+        {pendingDelete && (
+          <Toast
+            key={pendingDelete.id}
+            message="Session deleted"
+            highlight={pendingDelete.title}
+            actionLabel="Undo"
+            onAction={undoDelete}
+            durationMs={UNDO_MS}
+            onDismiss={dismissDelete}
+          />
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-between px-1 pb-2">
@@ -417,18 +461,7 @@ export function SessionsSidebar(): JSX.Element {
                       key={s.handleId ?? s.id ?? `${g.cwd}-x`}
                       session={s}
                       active={Boolean(s.handleId) && s.handleId === activeHandleId}
-                      onOpen={() => {
-                        if (s.live && s.handleId) activateSession(s.handleId)
-                        // A live session activates regardless, since its process exists. A
-                        // dormant one is answered here rather than in resumeSession, which
-                        // would read the whole transcript and mount a slice before the cwd
-                        // guard tore it down.
-                        else if (!g.exists)
-                          setNotice(
-                            `Can't resume: ${g.cwd} no longer exists. The transcript is safe. You can still export or delete it from the row menu.`
-                          )
-                        else if (s.id) void resumeSession(s.cwd, s.id)
-                      }}
+                      onOpen={() => openMerged(s, g.exists)}
                       onClose={s.live && s.handleId ? () => void closeSession(s.handleId!) : undefined}
                       onDelete={
                         s.onDisk && s.projectSlug && s.id
@@ -627,6 +660,79 @@ function SessionRow({
           />
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * A 2-char session monogram for the collapsed rail: first char of the first word +
+ * first char of the next word that isn't a version token (v2, 4.8, …); a single word
+ * gives its first two chars. Uppercased. Two-letter collisions are expected; the full
+ * title rides in the button's aria-label, so the label disambiguates.
+ */
+function monogram(title: string): string {
+  const words = title.trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return '?'
+  const first = words[0]
+  const second = words.slice(1).find((w) => !/^v?\d+$/i.test(w))
+  if (second) return (first[0] + second[0]).toUpperCase()
+  return first.slice(0, 2).toUpperCase()
+}
+
+/**
+ * Collapsed-rail tile for one session. A 30px monogram button carrying the whole
+ * state grammar (dormant / live-idle / busy / pending / active) that the expanded row
+ * spreads across dots and badges. Visible text is only the 2 letters; the aria-label
+ * carries the real title + project so same-initial sessions stay distinguishable.
+ */
+function SessionMonogram({
+  session,
+  active,
+  onOpen
+}: {
+  session: MergedSession
+  active: boolean
+  onOpen: () => void
+}): JSX.Element {
+  const pending = session.pendingCount > 0
+  const project = basename(session.cwd)
+  let label = `${session.title} — ${project}`
+  if (pending)
+    label += ` — ${session.pendingCount} permission request${session.pendingCount > 1 ? 's' : ''} awaiting approval`
+
+  const tone = active || session.busy || pending ? 'text-content' : session.live ? 'text-dim' : 'text-faint'
+  const fill = active
+    ? 'bg-accent-surface'
+    : session.busy || pending
+      ? 'bg-bg-raised'
+      : 'border border-border'
+
+  return (
+    <div className="relative flex shrink-0 items-center justify-center">
+      {active && (
+        <span className="absolute -left-[7px] top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-accent" aria-hidden="true" />
+      )}
+      <button
+        className={`relative flex h-[30px] w-[30px] items-center justify-center rounded-lg text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${fill} ${tone} ${!active && !session.busy && !pending ? 'hover:bg-bg-raised' : ''}`}
+        style={session.busy ? { animation: 'var(--animate-breathe)' } : undefined}
+        aria-label={label}
+        title={session.title}
+        onClick={onOpen}
+      >
+        {monogram(session.title)}
+        {/* Pending permission is the blocking state, so its amber count-badge wins the
+            corner over the plain live dot. */}
+        {pending ? (
+          <span className="absolute -right-1 -top-1 flex h-[9px] min-w-[9px] items-center justify-center rounded-full bg-warn px-[3px] text-[8px] font-bold leading-none text-on-warn ring-[1.5px] ring-bg-sidebar">
+            {session.pendingCount}
+          </span>
+        ) : session.live ? (
+          <span
+            className={`absolute -right-0.5 -top-0.5 h-[7px] w-[7px] rounded-full bg-ok ring-[1.5px] ${session.busy ? 'ring-bg-raised' : 'ring-bg-sidebar'}`}
+            aria-hidden="true"
+          />
+        ) : null}
+      </button>
     </div>
   )
 }

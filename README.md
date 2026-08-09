@@ -28,7 +28,7 @@ It never modifies your `~/.claude/settings.json`. Every model, effort, and permi
 
 ## Features
 
-- **Multiple live sessions.** Each keeps its own `claude` process alive in the background. Switching is instant, and in-flight turns keep streaming across a switch.
+- **Multiple live sessions.** Each keeps its own `claude` process alive in the background. Switching is instant, and in-flight turns keep streaming across a switch. Collapse the session rail to a compact status strip with `⌘B` for a focused view.
 - **Live model & effort selection.** The model list is fetched live from your provider; effort switches mid-session without losing context.
 - **Per-session permission modes.** Seven of them, from Interactive (asks before each tool) to Autonomous (asks nothing), plus Adaptive, Auto Edit, and Plan Mode. Changeable mid-session, and two sessions can sit in different modes.
 - **Conversation search.** Find within a conversation (`⌘F`) or search across every session at once (`⌘⇧F`).

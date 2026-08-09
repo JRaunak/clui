@@ -80,7 +80,7 @@ function resolveInherited(storedPartial: StoredSettings, cli: CliSettings): Reso
  * This is a snapshot on purpose: comparing against the LIVE DEFAULT_SETTINGS would
  * silently re-run as a different migration every time a default changes.
  */
-const LEGACY_DEFAULTS: CluiSettings = {
+const LEGACY_DEFAULTS: Partial<CluiSettings> = {
   cliPath: '',
   editorCommand: 'code',
   permissionMode: 'inherit',

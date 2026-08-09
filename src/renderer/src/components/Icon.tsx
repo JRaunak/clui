@@ -108,6 +108,17 @@ export function IconChevron(p: IconProps): JSX.Element {
   )
 }
 
+// The editor panel-toggle glyph (⌘B convention). One shape for both states; the
+// aria-label carries the direction.
+export function IconSidebar(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" />
+    </Svg>
+  )
+}
+
 export function IconSliders(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
