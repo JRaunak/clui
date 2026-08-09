@@ -86,9 +86,9 @@ async function readSkillsIn(dir: string, origin: ConfigOrigin): Promise<SkillInf
   const skillsDir = join(dir, 'skills')
   let entries: string[]
   try {
-    entries = (await readdir(skillsDir, { withFileTypes: true }))
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
+    // A skill dir can be a symlink, which reports as a link (not a directory), so an
+    // isDirectory() filter drops it. List every name; the SKILL.md read below gates.
+    entries = await readdir(skillsDir)
   } catch {
     return []
   }
