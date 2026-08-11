@@ -16,7 +16,7 @@
  * each event into `sessions[handleId]`.
  */
 import { create } from 'zustand'
-import type { DomainEvent, SlashCommandInfo } from '../../shared/events'
+import type { DomainEvent, SessionTask, SlashCommandInfo } from '../../shared/events'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
@@ -226,6 +226,10 @@ export interface PerSessionState {
    *  composer filters this to a curated headless-safe allowlist. Empty until the
    *  init handshake lands → composer falls back to the hardcoded built-ins. */
   slashCommands: SlashCommandInfo[]
+  /** Live task list (Task tool family), read from disk by the main process and
+   *  pushed as `task-list` snapshots (last-write-wins). Empty when the session has
+   *  no tasks; drives the transcript's task puck + checklist panel. */
+  tasks: SessionTask[]
   /** Transient errors to surface. */
   lastError: string | null
   /**
@@ -411,6 +415,8 @@ export const EMPTY_SUBAGENT_MSGS: SubagentMessage[] = []
 export const EMPTY_NESTED_SUBAGENTS: NestedSubagent[] = []
 /** Stable empty ref for the live slash-command list (zustand-v5 selector safety). */
 export const EMPTY_SLASH_COMMANDS: SlashCommandInfo[] = []
+/** Stable empty ref for the live task list (zustand-v5 selector safety). */
+export const EMPTY_TASKS: SessionTask[] = []
 
 // --- One persistent event subscription (installed lazily on first use) ---
 
@@ -666,6 +672,7 @@ async function beginSession(
     subagentChildren: {},
     workflows: {},
     slashCommands: EMPTY_SLASH_COMMANDS,
+    tasks: EMPTY_TASKS,
     lastError: null,
     exited: false,
     createdMs: now,
@@ -1246,6 +1253,11 @@ export const useSession = create<SessionStore>((set, get) => ({
           // The CLI's live command list from the initialize response. Stored raw;
           // the composer curates it to a headless-safe allowlist at render time.
           patch.slashCommands = e.commands
+          break
+        case 'task-list':
+          // Authoritative disk snapshot (last-write-wins). Fall back to the shared
+          // empty ref when the list is empty so the puck-gating selector stays stable.
+          patch.tasks = e.tasks.length ? e.tasks : EMPTY_TASKS
           break
         case 'subagent-message': {
           // Accumulate a running subagent's forwarded text under its parent Agent

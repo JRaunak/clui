@@ -280,6 +280,39 @@ export function IconLock(p: IconProps): JSX.Element {
   )
 }
 
+/** Half-filled disc: an outlined circle with its right half filled solid. Marks an
+ *  in_progress task. The solid region makes it distinct from the hollow pending circle
+ *  in pure GREYSCALE. A thin partial arc over a faint track blurs into a full circle at
+ *  16px, which reads as state-by-color-alone; a filled half does not. */
+export function IconHalfRing(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}
+
+/** Thin hollow circle: a not-yet-started (pending/created) task. */
+export function IconCircle(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8" />
+    </Svg>
+  )
+}
+
+/** Pushpin: pins the task checklist panel open (aria-pressed carries the state; the
+ *  glyph is the affordance, no accent tint). */
+export function IconPin(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M12 17v5" />
+      <path d="M9 10.8V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v6.8a2 2 0 0 0 .5 1.3l1.5 1.7a1 1 0 0 1-.75 1.66H7.75A1 1 0 0 1 7 13.8l1.5-1.7a2 2 0 0 0 .5-1.3Z" />
+    </Svg>
+  )
+}
+
 /** Vertical kebab (⋮): the session-row overflow menu trigger for rare actions. */
 export function IconMore(p: IconProps): JSX.Element {
   return (

@@ -10,6 +10,22 @@
  * Keep this list minimal and defensive; never hard-depend on the raw jsonl shape.
  */
 
+/**
+ * One entry from the CLI's live task list (Task tool family), read from disk at
+ * `~/.claude/tasks/<sessionId>/N.json`. Only the fields the checklist renders are
+ * kept; `blockedBy` holds the ids of tasks that gate this one (resolved to their
+ * subjects in the UI). The dir exists only while the session is LIVE.
+ */
+export interface SessionTask {
+  id: string
+  subject: string
+  status: 'created' | 'pending' | 'in_progress' | 'completed'
+  /** Present-tense label the CLI shows while a task runs (e.g. "Wiring the store"). */
+  activeForm?: string
+  /** Ids of tasks that must finish first; non-empty = this task is blocked. */
+  blockedBy?: string[]
+}
+
 /** One slash command from the CLI's `initialize` response (dynamic discovery). */
 export interface SlashCommandInfo {
   /** Command name WITHOUT the leading slash (e.g. "compact"). */
@@ -213,6 +229,14 @@ export type DomainEvent =
     }
   /** Authoritative snapshot of all currently-running background tasks (ids only). */
   | { type: 'bg-tasks-changed'; taskIds: string[] }
+  /**
+   * Snapshot of the session's live task list (Task tool family), read from
+   * `~/.claude/tasks/<sessionId>/*.json` in the main process. Last-write-wins: the
+   * store replaces the whole list each time. Empty array = no tasks (dir absent or
+   * cleared), which hides the task puck. Sourced from DISK, not the stream, because
+   * the stream only confirms individual changes; disk is the authoritative set.
+   */
+  | { type: 'task-list'; tasks: SessionTask[] }
   /** Non-fatal error surfaced by the CLI or the wrapper. */
   | {
       type: 'error'

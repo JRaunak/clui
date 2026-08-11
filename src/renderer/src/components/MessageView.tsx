@@ -117,12 +117,19 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
           // Fallback (rebuilt-from-disk): text then tools.
           <>
             {message.text && <Markdown text={message.text} />}
-            <ToolGroup tools={message.tools} />
+            <ToolGroup tools={message.tools.filter((t) => !isTaskListTool(t.name))} />
           </>
         )}
       </div>
     </div>
   )
+}
+
+/** Task-family tool calls (TaskCreate/TaskUpdate/…, plus legacy TodoWrite) are surfaced
+ *  by the task puck, so their inline cards are noise here (the TUI hides them too). Bare
+ *  `Task` is excluded: it's the subagent tool, not the todo list. */
+function isTaskListTool(name: string): boolean {
+  return (name.startsWith('Task') && name !== 'Task') || name === 'TodoWrite'
 }
 
 /** Each maximal run of consecutive tool blocks becomes one ToolGroup, so aggregation
@@ -148,10 +155,10 @@ function OrderedBlocks({
       const run: ToolCall[] = []
       while (i < blocks.length && blocks[i].kind === 'tool') {
         const tc = byId.get((blocks[i] as { id: string }).id)
-        if (tc) run.push(tc)
+        if (tc && !isTaskListTool(tc.name)) run.push(tc)
         i++
       }
-      out.push(<ToolGroup key={key++} tools={run} />)
+      if (run.length) out.push(<ToolGroup key={key++} tools={run} />)
     }
   }
   return <>{out}</>

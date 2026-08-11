@@ -7,13 +7,16 @@
  * element of a foreground turn, so the aggregate subagent header renders static.
  * Absent during background work (the turn has ended → composer is freed).
  *
- * The verb rotates every few seconds so a long turn never reads as frozen.
+ * The verb rotates every few seconds so a long turn never reads as frozen. When the
+ * task puck is present (`taskMerged`), the verb is DROPPED (dots + timer only): the
+ * puck's in_progress activeForm already narrates the work, so the whimsical verb would
+ * be a second, competing status line.
  */
 import { useEffect, useRef, useState } from 'react'
 import { TypingDots } from './TypingDots'
 import { randomWorkingVerb } from '../lib/workingVerbs'
 
-export function WorkingStatus(): JSX.Element {
+export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }): JSX.Element {
   const [elapsed, setElapsed] = useState(0)
   const [verb, setVerb] = useState(randomWorkingVerb)
   const start = useRef(Date.now())
@@ -32,7 +35,7 @@ export function WorkingStatus(): JSX.Element {
   return (
     <span className="flex items-center gap-2 text-[13px]">
       <TypingDots className="text-ok" />
-      <span className="font-serif italic text-content">{verb}…</span>
+      {!taskMerged && <span className="font-serif italic text-content">{verb}…</span>}
       <span className="font-mono tabular-nums text-dim">{formatElapsed(elapsed)}</span>
     </span>
   )

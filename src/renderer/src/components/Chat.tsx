@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, type QueuedMessage } from '../store'
+import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage } from '../store'
 import { MessageView } from './MessageView'
 import { WorkingStatus } from './WorkingStatus'
 import { CompactSuggestion } from './CompactSuggestion'
 import { FindBar } from './FindBar'
+import { TaskPuck, useTaskUiActive } from './TaskPuck'
 import { IconChevron, IconClose, IconEdit, IconCheck } from './Icon'
 
 /**
@@ -31,6 +32,18 @@ export function Chat(): JSX.Element {
   const resumed = useActive((s) => s?.resumed ?? false)
   const historyCount = useActive((s) => s?.historyCount ?? 0)
   const activeHandleId = useActive((s) => s?.handleId ?? null)
+  const tasks = useActive((s) => s?.tasks ?? EMPTY_TASKS)
+
+  // Task puck: local UI state (open/pinned), reset when the session switches. The
+  // gate hides it when idle+all-done (after a linger) or when the list empties.
+  const [taskOpen, setTaskOpen] = useState(false)
+  const [taskPinned, setTaskPinned] = useState(false)
+  const taskUiActive = useTaskUiActive(tasks, busy)
+  useEffect(() => {
+    setTaskOpen(false)
+    setTaskPinned(false)
+  }, [activeHandleId])
+  const tasksDone = tasks.filter((t) => t.status === 'completed').length
 
   const scrollTarget = useSession((s) => s.scrollTarget)
   const [flashId, setFlashId] = useState<string | null>(null)
@@ -177,7 +190,28 @@ export function Chat(): JSX.Element {
         initialTopMostItemIndex={Math.max(0, messages.length - 1)}
         increaseViewportBy={{ top: 600, bottom: 600 }}
       />
-      {!atBottom && <JumpToLatest hasNew={hasNew} onClick={jumpToLatest} />}
+      {/* Puck (at bottom) and JumpToLatest (scrolled up) are mutually exclusive. When
+          scrolled up with active tasks, JumpToLatest absorbs the count into its label,
+          UNLESS the panel is pinned-open (then it keeps rendering above and JumpToLatest
+          would double the affordance, so suppress it). */}
+      {taskUiActive && (
+        <TaskPuck
+          tasks={tasks}
+          atBottom={atBottom}
+          open={taskOpen && (atBottom || taskPinned)}
+          pinned={taskPinned}
+          onOpenChange={setTaskOpen}
+          onPinnedChange={setTaskPinned}
+          reduce={reduce}
+        />
+      )}
+      {!atBottom && !(taskUiActive && taskPinned && taskOpen) && (
+        <JumpToLatest
+          hasNew={hasNew}
+          onClick={jumpToLatest}
+          taskCount={taskUiActive ? { done: tasksDone, total: tasks.length } : null}
+        />
+      )}
       <FindBar />
     </div>
   )
@@ -187,11 +221,16 @@ export function Chat(): JSX.Element {
 function ChatFooter(): JSX.Element {
   const busy = useActive((s) => s?.busy ?? false)
   const lastError = useActive((s) => s?.lastError ?? null)
+  // Merge the verb away while the puck is present: the puck's activeForm line already
+  // narrates the work, so the whimsical verb would be a competing status. Gated on the
+  // SAME condition the puck uses (non-empty task list), so they stay in lockstep.
+  const tasks = useActive((s) => s?.tasks ?? EMPTY_TASKS)
+  const taskMerged = useTaskUiActive(tasks, busy)
   return (
     <div className="px-7 pb-6">
       {busy && (
         <div className="border-l border-border/70 pl-3.5">
-          <WorkingStatus />
+          <WorkingStatus taskMerged={taskMerged} />
         </div>
       )}
       {/* Queued messages live at the very TAIL, below the streaming response: they aren't
@@ -328,16 +367,35 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
 }
 
 /** Accent stays scarce here: only the focus ring and the single "new" dot use it. 44px
- *  target. Reduced-motion is honored by the caller's `behavior`. */
-function JumpToLatest({ hasNew, onClick }: { hasNew: boolean; onClick: () => void }): JSX.Element {
+ *  target. Reduced-motion is honored by the caller's `behavior`. When tasks are active
+ *  the pill widens to absorb the progress count (the puck is hidden while scrolled up). */
+function JumpToLatest({
+  hasNew,
+  onClick,
+  taskCount
+}: {
+  hasNew: boolean
+  onClick: () => void
+  taskCount: { done: number; total: number } | null
+}): JSX.Element {
+  const label = hasNew ? 'Jump to latest — new messages below' : 'Jump to latest messages'
+  const taskLabel = taskCount ? `, ${taskCount.done} of ${taskCount.total} tasks done` : ''
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={hasNew ? 'Jump to latest — new messages below' : 'Jump to latest messages'}
-      className="absolute bottom-4 right-5 z-20 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-bg-raised text-dim shadow-md transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      aria-label={label + taskLabel}
+      className={`absolute bottom-4 right-5 z-20 flex h-11 items-center justify-center rounded-full border border-border bg-bg-raised text-dim shadow-md transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+        taskCount ? 'gap-1.5 px-3' : 'w-11'
+      }`}
     >
       <IconChevron className="h-5 w-5 rotate-90" />
+      {taskCount && (
+        <span className="font-mono text-xs tabular-nums" aria-hidden="true">
+          <span className="text-content">{taskCount.done}</span>
+          <span className="text-dim">/{taskCount.total}</span>
+        </span>
+      )}
       {hasNew && (
         <span
           className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-accent ring-2 ring-bg"
