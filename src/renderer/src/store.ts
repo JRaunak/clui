@@ -503,23 +503,34 @@ export async function loadPersistedCosts(): Promise<void> {
   } catch {
     // best-effort: cost display just starts empty if the sidecar is unreadable
   }
-  // Also load per-session model/effort prefs so a resume after relaunch restores the
-  // session's last-used model (the CLI reverts to the settings default otherwise).
-  try {
-    const models = await window.clui.getSessionModels()
-    for (const [sid, prefs] of Object.entries(models)) {
-      if (modelPrefsBySessionId.has(sid)) continue
-      // Validate the sidecar's effort against the known set (defensive against manual
-      // edits / a CLI enum change); drop an unrecognized effort rather than trust it.
-      const effort =
-        prefs.effort && (EFFORT_CHOICES as string[]).includes(prefs.effort)
-          ? (prefs.effort as EffortChoice)
-          : undefined
-      modelPrefsBySessionId.set(sid, { model: prefs.model, effort, ultracode: prefs.ultracode })
-    }
-  } catch {
-    // best-effort: resume just falls back to the Settings default model/effort
+  void ensureModelPrefsLoaded()
+}
+
+/** Load the per-session model/effort sidecar into `modelPrefsBySessionId` once (memoized;
+ *  the startup warm and the resume `await` share one read). In-memory prefs from the live
+ *  run win via the `has` guard, so this only fills cold entries after a relaunch. */
+let modelPrefsLoaded: Promise<void> | null = null
+export function ensureModelPrefsLoaded(): Promise<void> {
+  if (!modelPrefsLoaded) {
+    modelPrefsLoaded = (async () => {
+      try {
+        const models = await window.clui.getSessionModels()
+        for (const [sid, prefs] of Object.entries(models)) {
+          if (modelPrefsBySessionId.has(sid)) continue
+          // Validate the sidecar's effort against the known set (defensive against manual
+          // edits / a CLI enum change); drop an unrecognized effort rather than trust it.
+          const effort =
+            prefs.effort && (EFFORT_CHOICES as string[]).includes(prefs.effort)
+              ? (prefs.effort as EffortChoice)
+              : undefined
+          modelPrefsBySessionId.set(sid, { model: prefs.model, effort, ultracode: prefs.ultracode })
+        }
+      } catch {
+        // best-effort: resume just falls back to the Settings default model/effort
+      }
+    })()
   }
+  return modelPrefsLoaded
 }
 
 function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void): void {
@@ -576,7 +587,10 @@ async function beginSession(
   // On RESUME, restore the session's last-used model/effort from the sidecar (the CLI
   // reverts to the settings.json default on --resume, so a mid-session switch would
   // otherwise be lost). Fresh sessions use the Settings default. `remembered` is only
-  // consulted for a resume with a known sessionId.
+  // consulted for a resume with a known sessionId. Await the sidecar load first: it's
+  // warmed fire-and-forget at startup, so a resume-click before that lands would read
+  // an empty map and revert to the default.
+  if (opts.resumeSessionId) await ensureModelPrefsLoaded()
   const remembered = opts.resumeSessionId ? modelPrefsBySessionId.get(opts.resumeSessionId) : undefined
   const modelChoice = opts.model ?? remembered?.model ?? settings.model
   const effortChoice = opts.effort ?? remembered?.effort ?? settings.effort
@@ -1114,6 +1128,9 @@ export const useSession = create<SessionStore>((set, get) => ({
     // it). A holder object (not a bare `let`) so TS doesn't narrow it to `never` across
     // the `set` closure boundary (it can't see the closure mutation).
     const release: { queued: { handleId: string; msg: QueuedMessage } | null } = { queued: null }
+    // Set in the session-init case, acted on post-commit (see there). Holder like `release`.
+    const flush: { prefs: { sessionId: string; model: ModelChoice; effort: EffortChoice; ultracode: boolean } | null } =
+      { prefs: null }
     set((state) => {
       const slice = state.sessions[handleId]
       // Slice not created yet: buffer until insertSlice flushes it (race guard).
@@ -1136,6 +1153,17 @@ export const useSession = create<SessionStore>((set, get) => ({
 
       switch (e.type) {
         case 'session-init':
+          // A pick made before the first message had no sessionId to persist under (null
+          // until now), so persist it once the id exists. The null→real gate excludes a
+          // resume, whose slice is already seeded from the sidecar, from re-flushing over it.
+          if (!slice.sessionId && e.sessionId) {
+            flush.prefs = {
+              sessionId: e.sessionId,
+              model: slice.modelChoice,
+              effort: slice.effortChoice,
+              ultracode: slice.ultracode
+            }
+          }
           patch.sessionId = e.sessionId
           patch.model = e.model
           patch.permissionMode = e.permissionMode
@@ -1200,7 +1228,6 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (t) {
             t.input = e.input
             if (WRITE_TOOLS.has(t.name)) {
-              // NotebookEdit keys its path notebook_path, not file_path.
               const inp = e.input as { file_path?: unknown; notebook_path?: unknown }
               const fp = typeof inp?.file_path === 'string' ? inp.file_path : inp?.notebook_path
               if (typeof fp === 'string' && fp) {
@@ -1538,6 +1565,14 @@ export const useSession = create<SessionStore>((set, get) => ({
     // so the queue and the new turn never race. Fire-and-forget (matches sendMessage).
     if (release.queued) {
       void dispatchTurn(set, release.queued.handleId, release.queued.msg.text, release.queued.msg.attachments)
+    }
+    // Side-effect, so it runs after the reducer commits, not inside the updater.
+    if (flush.prefs) {
+      rememberModelPrefs(flush.prefs.sessionId, {
+        model: flush.prefs.model,
+        effort: flush.prefs.effort,
+        ultracode: flush.prefs.ultracode
+      })
     }
   },
 
