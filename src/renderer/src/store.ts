@@ -418,6 +418,10 @@ export const EMPTY_SLASH_COMMANDS: SlashCommandInfo[] = []
 /** Stable empty ref for the live task list (zustand-v5 selector safety). */
 export const EMPTY_TASKS: SessionTask[] = []
 
+/** Read shares the file_path key but writes nothing, so changed-files gates on the tool
+ *  name, not the key's presence. */
+const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
+
 // --- One persistent event subscription (installed lazily on first use) ---
 
 let subscribed = false
@@ -1195,12 +1199,13 @@ export const useSession = create<SessionStore>((set, get) => ({
           const t = m.tools.find((t) => t.id === e.id)
           if (t) {
             t.input = e.input
-            // Track files touched by Write/Edit-family tools. Detect by the
-            // presence of a file_path in the input rather than tool name, so it
-            // works for Write/Edit/MultiEdit/NotebookEdit alike.
-            const fp = (e.input as { file_path?: unknown })?.file_path
-            if (typeof fp === 'string' && fp) {
-              patch.changedFiles = [fp, ...slice.changedFiles.filter((f) => f !== fp)]
+            if (WRITE_TOOLS.has(t.name)) {
+              // NotebookEdit keys its path notebook_path, not file_path.
+              const inp = e.input as { file_path?: unknown; notebook_path?: unknown }
+              const fp = typeof inp?.file_path === 'string' ? inp.file_path : inp?.notebook_path
+              if (typeof fp === 'string' && fp) {
+                patch.changedFiles = [fp, ...slice.changedFiles.filter((f) => f !== fp)]
+              }
             }
           }
           break
