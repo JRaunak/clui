@@ -17,6 +17,7 @@
  */
 import { create } from 'zustand'
 import type { DomainEvent, SessionTask, SlashCommandInfo } from '../../shared/events'
+import type { ProjectGroup } from '../../shared/sessions'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
@@ -288,6 +289,15 @@ interface SessionStore {
    * clear it after consumption, since Chat keys off the nonce change.
    */
   scrollTarget: { messageId: string; nonce: number } | null
+
+  /** On-disk session list (grouped by project), owned here so both the sidebar and
+   *  any store-side trigger read/refresh one copy. Sourced from `listSessions()`. */
+  sessionGroups: ProjectGroup[]
+  /** True while a `refreshSessions()` scan is in flight (drives the sidebar skeleton). */
+  sessionsLoading: boolean
+  /** Re-scan `~/.claude/projects` and replace `sessionGroups`. Awaitable so a caller can
+   *  sequence work after the list lands (e.g. the delete-commit that hides a row). */
+  refreshSessions: () => Promise<void>
 
   /** Open/close the ⌘F find bar (no-op-open while viewing a subagent transcript). */
   setFindOpen: (open: boolean) => void
@@ -842,6 +852,16 @@ export const useSession = create<SessionStore>((set, get) => ({
   findOpen: false,
   globalSearchOpen: false,
   scrollTarget: null,
+  sessionGroups: [],
+  sessionsLoading: true,
+
+  refreshSessions: async () => {
+    // TODO: CommandPalette still fetches listSessions() independently; fold it onto this
+    // store copy so its list can't drift from the sidebar's.
+    set(() => ({ sessionsLoading: true }))
+    const groups = await window.clui.listSessions()
+    set(() => ({ sessionGroups: groups, sessionsLoading: false }))
+  },
 
   startSession: async (cwd, mode, opts) => {
     await beginSession(get, set, { cwd, permissionMode: mode, ...opts })
@@ -1131,6 +1151,10 @@ export const useSession = create<SessionStore>((set, get) => ({
     // Set in the session-init case, acted on post-commit (see there). Holder like `release`.
     const flush: { prefs: { sessionId: string; model: ModelChoice; effort: EffortChoice; ultracode: boolean } | null } =
       { prefs: null }
+    // A `/rename` writes the session's on-disk title but emits no stream event to map, so
+    // nothing else refreshes the sidebar. Detected at the turn boundary below (the CLI has
+    // written the title by then) and acted on post-commit. Holder like `release`.
+    const rescanSessions = { needed: false }
     set((state) => {
       const slice = state.sessions[handleId]
       // Slice not created yet: buffer until insertSlice flushes it (race guard).
@@ -1489,6 +1513,10 @@ export const useSession = create<SessionStore>((set, get) => ({
               patch.queuedMessages = rest
               release.queued = { handleId, msg: next }
             }
+            // Matched at the command boundary (leading token only), so a mid-sentence
+            // "/rename" or another command never triggers the re-scan.
+            const lastUser = slice.messages.findLast((m) => m.role === 'user')
+            if (lastUser && /^\/rename(\s|$)/.test(lastUser.text.trim())) rescanSessions.needed = true
           }
           // The CLI's `total_cost_usd` is PER-INVOCATION (not cumulative across a
           // --resume, and it resets on an effort-respawn), so ACCUMULATE it rather
@@ -1566,6 +1594,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (release.queued) {
       void dispatchTurn(set, release.queued.handleId, release.queued.msg.text, release.queued.msg.attachments)
     }
+    if (rescanSessions.needed) void get().refreshSessions()
     // Side-effect, so it runs after the reducer commits, not inside the updater.
     if (flush.prefs) {
       rememberModelPrefs(flush.prefs.sessionId, {

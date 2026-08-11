@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import type { ProjectGroup, SessionSummary } from '../../../shared/sessions'
+import type { SessionSummary } from '../../../shared/sessions'
 import { useSession, forgetSessionCost } from '../store'
 import {
   IconRefresh,
@@ -65,8 +65,6 @@ interface PendingDelete {
 }
 
 export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: boolean }): JSX.Element {
-  const [groups, setGroups] = useState<ProjectGroup[]>([])
-  const [loading, setLoading] = useState(true)
   /** Collapsed project cwds. */
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   // Session pending an undoable delete (hidden from the list; not yet on-disk-
@@ -76,10 +74,10 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   // it just finalizes the first (its undo window ends early, an accepted tradeoff
   // the user chose over stacking).
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
-  // Ids whose on-disk delete is COMMITTED but whose refresh() hasn't landed yet.
+  // Ids whose on-disk delete is COMMITTED but whose refreshSessions() hasn't landed yet.
   // These stay hidden so the row never flashes back for a frame between "no longer
   // the pending toast" and "gone from groups" (the reported reappear-bug). Cleared
-  // once refresh() has dropped the row from `groups`.
+  // once refreshSessions() has dropped the row from `groups`.
   const [committingIds, setCommittingIds] = useState<Set<string>>(() => new Set())
   // The undo timer lives in a ref, NOT in state: side effects must never run
   // inside a setState updater (React StrictMode double-invokes updaters in dev,
@@ -92,6 +90,11 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   const closeSession = useSession((s) => s.closeSession)
   const forkSession = useSession((s) => s.forkSession)
   const setNotice = useSession((s) => s.setNotice)
+  // The on-disk session list is store-owned so a store-side trigger (a `/rename` turn)
+  // can refresh the same copy this renders; see refreshSessions in the store.
+  const groups = useSession((s) => s.sessionGroups)
+  const loading = useSession((s) => s.sessionsLoading)
+  const refreshSessions = useSession((s) => s.refreshSessions)
 
   // Export a session to Markdown (on-disk sessions only). Reads the jsonl in main
   // (no resume/spawn, so it's safe on dormant sessions); a native Save dialog picks the path.
@@ -116,7 +119,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
 
   // Commit the actual (irreversible) on-disk delete. The id is kept in
   // `committingIds` (hidden) across the async delete + refresh, and only removed
-  // AFTER refresh() has dropped the row from `groups`, so the row is continuously
+  // AFTER refreshSessions() has dropped the row from `groups`, so the row is continuously
   // hidden and never flashes back, even when a second delete has already moved
   // `pendingDelete` on to a different session.
   const commitDelete = useCallback(async (pd: PendingDelete): Promise<void> => {
@@ -126,7 +129,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     // in-memory cost map doesn't leak orphaned entries (done here, NOT on undo,
     // since undo keeps the session). pd.id is the CLI sessionId.
     forgetSessionCost(pd.id)
-    await refresh()
+    await refreshSessions()
     setCommittingIds((cur) => {
       const next = new Set(cur)
       next.delete(pd.id)
@@ -174,7 +177,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     // disk. Re-scan so the restored session reappears in the sidebar as a
     // resumable (dormant) row; otherwise Undo would have no visible effect and the
     // user is stranded (e.g. on the welcome screen after deleting the only session).
-    void refresh()
+    void refreshSessions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearDeleteTimer])
 
@@ -247,25 +250,18 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     })
   }
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    const g = await window.clui.listSessions()
-    setGroups(g)
-    setLoading(false)
-  }, [])
-
   useEffect(() => {
-    void refresh()
-  }, [refresh])
+    void refreshSessions()
+  }, [refreshSessions])
 
   // Re-scan disk when the set of live/persisted sessions changes (a new session
   // was created or one was closed) so freshly-persisted sessions get their titles.
   useEffect(() => {
-    void refresh()
-  }, [liveIdsKey, refresh])
+    void refreshSessions()
+  }, [liveIdsKey, refreshSessions])
 
   // Session ids to hide from the list: the one showing the undo toast PLUS any whose
-  // on-disk delete has been committed but whose refresh() hasn't landed yet (so a
+  // on-disk delete has been committed but whose refreshSessions() hasn't landed yet (so a
   // just-superseded delete stays hidden across its async commit; no reappear-flash).
   const pendingIds = useMemo(() => {
     const s = new Set(committingIds)
@@ -411,7 +407,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
         </span>
         <button
           className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content"
-          onClick={() => void refresh()}
+          onClick={() => void refreshSessions()}
           title="Refresh sessions"
         >
           <IconRefresh className="h-3.5 w-3.5" />
@@ -473,7 +469,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
                       onFork={
                         s.id && g.exists ? () => void forkSession(s.cwd, s.id!) : undefined
                       }
-                      onChanged={refresh}
+                      onChanged={refreshSessions}
                     />
                   ))}
                 </div>

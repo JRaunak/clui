@@ -42,7 +42,8 @@ export const HEADLESS_SAFE_COMMANDS: readonly string[] = [
   'usage', // native card (UsageCard)
   'init', // analyze the codebase → CLAUDE.md
   'code-review', // review a PR / the working diff (canonical name; `review` is its alias pre-2.1.223)
-  'mcp' // manage MCP servers (reconnect/enable/disable); no Clui-native equivalent
+  'mcp', // manage MCP servers (reconnect/enable/disable); no Clui-native equivalent
+  'rename' // set the session's on-disk title; free local command, reflects in the sidebar on send
 ]
 
 /** Bundled fallback descriptions, used only until the live list arrives (pre-handshake)
