@@ -126,6 +126,7 @@ function buildMenu(): void {
       label: 'File',
       submenu: [
         { label: 'New Session', accelerator: 'CmdOrCtrl+N', click: () => send('new-session') },
+        { label: 'New Named Session…', accelerator: 'CmdOrCtrl+Shift+N', click: () => send('new-named-session') },
         { label: 'Quick Switcher…', accelerator: 'CmdOrCtrl+K', click: () => send('open-palette') },
         { label: 'Close Session', accelerator: 'CmdOrCtrl+W', click: () => send('close-session') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
@@ -259,6 +260,7 @@ function registerIpc(): void {
       cwd: opts.cwd,
       resumeSessionId: opts.resumeSessionId,
       fork: opts.fork,
+      name: opts.name,
       env: authEnv,
       // Model/effort: per-session override wins over the global default.
       // model is the raw --model value (id or alias).

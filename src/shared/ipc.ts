@@ -47,6 +47,11 @@ export interface StartSessionOptions {
   effort?: EffortChoice
   /** Ultracode on for this session (xhigh + workflow orchestration). Default false. */
   ultracode?: boolean
+  /** Session title passed as `claude -n "<name>"` at spawn, writing the on-disk
+   *  custom-title from turn zero (a post-spawn rename lands too late for a skill that
+   *  greps the title on its first turn). Empty/whitespace is dropped in buildArgs, so
+   *  every caller inherits that one guard. Not persisted: the CLI owns the resulting title. */
+  name?: string
 }
 
 /** Permission-mode choices selectable per session. Aliased to the settings union so the
@@ -237,6 +242,7 @@ export interface CluiApi {
 /** Actions emitted by the native application menu. */
 export type MenuAction =
   | 'new-session'
+  | 'new-named-session'
   | 'close-session'
   | 'open-settings'
   | 'open-palette'

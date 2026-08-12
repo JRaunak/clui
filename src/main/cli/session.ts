@@ -56,6 +56,8 @@ export interface ClaudeSessionOptions {
    *  session id carrying the resumed context, leaving the original jsonl untouched
    *  (verified live 2.1.220). Fork-from-HEAD only. Ignored without a resume id. */
   fork?: boolean
+  /** Session title → `-n` (see buildArgs). */
+  name?: string
   /** Extra env for the child (merged over process.env). */
   env?: Record<string, string>
 }
@@ -123,6 +125,10 @@ export class ClaudeSession extends EventEmitter {
     // the CLI honor the user's ~/.claude/settings.json defaultMode ("inherit").
     if (this.opts.permissionMode) {
       args.push('--permission-mode', this.opts.permissionMode)
+    }
+    if (this.opts.name?.trim()) {
+      // Whitespace-only name → no flag, so a blank name spawns an unnamed session.
+      args.push('-n', this.opts.name.trim())
     }
     if (this.opts.model) {
       args.push('--model', this.opts.model)

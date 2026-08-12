@@ -33,6 +33,7 @@ interface PaletteItem {
 export function CommandPalette({
   onClose,
   onNewSession,
+  onNewNamedSession,
   onOpenSettings,
   onOpenCustomizations,
   onToggleSidebar,
@@ -40,6 +41,7 @@ export function CommandPalette({
 }: {
   onClose: () => void
   onNewSession: () => void
+  onNewNamedSession: () => void
   onOpenSettings: () => void
   onOpenCustomizations: () => void
   onToggleSidebar: () => void
@@ -129,6 +131,14 @@ export function CommandPalette({
         run: onNewSession
       },
       {
+        key: 'cmd:new-named',
+        kind: 'command',
+        label: 'New named session…',
+        hint: '⌘⇧N',
+        recency: 0,
+        run: onNewNamedSession
+      },
+      {
         key: 'cmd:settings',
         kind: 'command',
         label: 'Open Settings',
@@ -201,7 +211,7 @@ export function CommandPalette({
         : [])
     ]
     return [...out, ...commands]
-  }, [commandMode, disk, onNewSession, onOpenSettings, onOpenCustomizations])
+  }, [commandMode, disk, onNewSession, onNewNamedSession, onOpenSettings, onOpenCustomizations])
 
   // Filter + rank by the (scope-stripped) query. Match the LABEL (title) first; its
   // matched indices drive the highlight. If the label doesn't match, fall back

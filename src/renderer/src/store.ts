@@ -310,7 +310,7 @@ interface SessionStore {
   startSession: (
     cwd: string,
     mode?: PermissionModeChoice,
-    opts?: { model?: ModelChoice; effort?: EffortChoice }
+    opts?: { model?: ModelChoice; effort?: EffortChoice; name?: string }
   ) => Promise<void>
   /** Resume an on-disk session (loads history) and make it active. */
   resumeSession: (cwd: string, resumeSessionId: string, mode?: PermissionModeChoice) => Promise<void>
@@ -584,6 +584,8 @@ async function beginSession(
      *  passes these. The UI has no "start a session as X" control, it switches after. */
     model?: ModelChoice
     effort?: EffortChoice
+    /** Session title → `-n` at spawn (named-session dialog); not persisted. */
+    name?: string
   }
 ): Promise<void> {
   ensureSubscribed(get().applyEvent)

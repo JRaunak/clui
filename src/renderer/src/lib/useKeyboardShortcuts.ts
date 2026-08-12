@@ -20,15 +20,17 @@ import { useSession } from '../store'
 
 /**
  * @param onNewSession open the workspace picker / start a session (⌘N)
+ * @param onNewNamedSession open the name-this-session dialog (⌘⇧N)
  * @param onOpenSettings open the Settings modal (⌘,)
  */
 export function useKeyboardShortcuts(opts: {
   onNewSession: () => void
+  onNewNamedSession: () => void
   onOpenSettings: () => void
   onOpenPalette: () => void
   onToggleSidebar: () => void
 }): void {
-  const { onNewSession, onOpenSettings, onOpenPalette, onToggleSidebar } = opts
+  const { onNewSession, onNewNamedSession, onOpenSettings, onOpenPalette, onToggleSidebar } = opts
 
   useEffect(() => {
     // 1. Native-menu actions (⌘N / ⌘W / ⌘,).
@@ -37,6 +39,9 @@ export function useKeyboardShortcuts(opts: {
       switch (action) {
         case 'new-session':
           onNewSession()
+          break
+        case 'new-named-session':
+          onNewNamedSession()
           break
         case 'close-session': {
           const id = store.activeHandleId
@@ -104,5 +109,5 @@ export function useKeyboardShortcuts(opts: {
       off()
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [onNewSession, onOpenSettings, onOpenPalette, onToggleSidebar])
+  }, [onNewSession, onNewNamedSession, onOpenSettings, onOpenPalette, onToggleSidebar])
 }

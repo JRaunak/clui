@@ -8,6 +8,7 @@ import { Customizations } from './components/Customizations'
 import { ChangedFiles } from './components/ChangedFiles'
 import { Settings } from './components/Settings'
 import { CommandPalette } from './components/CommandPalette'
+import { NewNamedSessionDialog } from './components/NewNamedSessionDialog'
 import { GlobalSearch } from './components/GlobalSearch'
 import { BackgroundTasks } from './components/BackgroundTasks'
 import { SubagentView } from './components/SubagentView'
@@ -35,6 +36,7 @@ export function App(): JSX.Element {
   const [showCustomizations, setShowCustomizations] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
+  const [showNamedSession, setShowNamedSession] = useState(false)
   const globalSearchOpen = useSession((s) => s.globalSearchOpen)
   const permissionPending = useActive((s) => (s?.pendingPermissions ?? EMPTY_PENDING).length > 0)
 
@@ -52,7 +54,12 @@ export function App(): JSX.Element {
   // would otherwise be what we captured.
   const lastBgFocusRef = useRef<HTMLElement | null>(null)
   const anyOverlayOpen =
-    showSettings || showCustomizations || showPalette || globalSearchOpen || permissionPending
+    showSettings ||
+    showCustomizations ||
+    showPalette ||
+    showNamedSession ||
+    globalSearchOpen ||
+    permissionPending
 
   useEffect(() => {
     const onFocusIn = (e: FocusEvent): void => {
@@ -149,9 +156,22 @@ export function App(): JSX.Element {
     if (dir) await startSession(dir)
   }, [startSession])
 
-  // ⌘N new session · ⌘W close · ⌘, settings · ⌘K palette (native menu) + ⌃Tab / ⌃C.
+  // Close FIRST (clears inert, restores focus) so the OS folder picker isn't stacked
+  // behind a still-open Clui dialog, then pick + spawn.
+  const startNamedSession = useCallback(
+    async (name: string): Promise<void> => {
+      setShowNamedSession(false)
+      const dir = await window.clui.pickWorkspace()
+      if (dir) await startSession(dir, undefined, { name })
+    },
+    [startSession]
+  )
+
+  // ⌘N new session · ⌘⇧N named session · ⌘W close · ⌘, settings · ⌘K palette (native
+  // menu) + ⌃Tab / ⌃C.
   const openSettings = useCallback(() => setShowSettings(true), [])
   const openPalette = useCallback(() => setShowPalette(true), [])
+  const openNamedSession = useCallback(() => setShowNamedSession(true), [])
 
   // Toggle focus mode. Persist the new state, and if focus was sitting inside the
   // sidebar, move it to the mirror control in the incoming layout so keyboard users
@@ -174,6 +194,7 @@ export function App(): JSX.Element {
 
   useKeyboardShortcuts({
     onNewSession: pickAndStart,
+    onNewNamedSession: openNamedSession,
     onOpenSettings: openSettings,
     onOpenPalette: openPalette,
     onToggleSidebar: toggleSidebar
@@ -218,8 +239,8 @@ export function App(): JSX.Element {
                 data-new-session
                 className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-accent text-on-accent transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
                 onClick={pickAndStart}
-                aria-label={cwd ? 'New session' : 'Pick a workspace'}
-                title={cwd ? 'New session' : 'Pick a workspace'}
+                aria-label="New session"
+                title="New session"
               >
                 <IconPlus className="h-4 w-4" />
               </button>
@@ -254,7 +275,7 @@ export function App(): JSX.Element {
               </div>
               <Button data-new-session variant="primary" size="md" onClick={pickAndStart} className="w-full">
                 <IconPlus className="h-4 w-4" />
-                {cwd ? 'New session' : 'Pick a workspace'}
+                New session
               </Button>
               {/* A visible Settings door: onboarding needs a new user to find it to set
                   the CLI path. ⌘, / native menu / ⌘K also open it. */}
@@ -365,7 +386,11 @@ export function App(): JSX.Element {
             </p>
             <Button variant="primary" size="lg" className="mt-7" onClick={pickAndStart}>
               <IconPlus className="h-4 w-4" />
-              Pick a workspace
+              New session
+            </Button>
+            {/* Ghost, not a second accent: the hero's boldness is spent on the primary. */}
+            <Button variant="ghost" size="md" className="mt-2" onClick={openNamedSession}>
+              New named session…
             </Button>
           </div>
         )}
@@ -379,6 +404,12 @@ export function App(): JSX.Element {
       <div data-overlay-host>
         <PermissionDialog />
         <GlobalSearch />
+        {showNamedSession && (
+          <NewNamedSessionDialog
+            onClose={() => setShowNamedSession(false)}
+            onConfirm={(name) => void startNamedSession(name)}
+          />
+        )}
         {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} />}
         {showSettings && <Settings onClose={() => setShowSettings(false)} />}
         {showPalette && (
@@ -387,6 +418,10 @@ export function App(): JSX.Element {
             onNewSession={() => {
               setShowPalette(false)
               void pickAndStart()
+            }}
+            onNewNamedSession={() => {
+              setShowPalette(false)
+              openNamedSession()
             }}
             onOpenSettings={() => {
               setShowPalette(false)
