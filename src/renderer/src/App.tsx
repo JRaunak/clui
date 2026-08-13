@@ -14,6 +14,7 @@ import { BackgroundTasks } from './components/BackgroundTasks'
 import { SubagentView } from './components/SubagentView'
 import { WorkflowTray } from './components/WorkflowTray'
 import { Button } from './components/Button'
+import { SplitNewSession } from './components/SplitNewSession'
 import { Onboarding, cliHealth } from './components/Onboarding'
 import { IconSettings, IconPlus, IconSidebar } from './components/Icon'
 import { applyTheme } from './lib/theme'
@@ -273,10 +274,7 @@ export function App(): JSX.Element {
                   <IconSidebar className="h-4 w-4" />
                 </button>
               </div>
-              <Button data-new-session variant="primary" size="md" onClick={pickAndStart} className="w-full">
-                <IconPlus className="h-4 w-4" />
-                New session
-              </Button>
+              <SplitNewSession onNew={pickAndStart} onNewNamed={openNamedSession} />
               {/* A visible Settings door: onboarding needs a new user to find it to set
                   the CLI path. ⌘, / native menu / ⌘K also open it. */}
               <Button variant="outline" size="md" onClick={() => setShowSettings(true)} className="w-full">
