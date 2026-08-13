@@ -54,6 +54,8 @@ export function App(): JSX.Element {
   // an effect, because a child's open-focus (search input) runs before App's effect and
   // would otherwise be what we captured.
   const lastBgFocusRef = useRef<HTMLElement | null>(null)
+  // Holds the previous overlay state so the restore below skips the initial mount.
+  const wasOverlayOpenRef = useRef(false)
   const anyOverlayOpen =
     showSettings ||
     showCustomizations ||
@@ -78,7 +80,9 @@ export function App(): JSX.Element {
   useLayoutEffect(() => {
     if (asideRef.current) asideRef.current.inert = anyOverlayOpen
     if (mainRef.current) mainRef.current.inert = anyOverlayOpen
-    if (!anyOverlayOpen) {
+    // Only on a real close (was-open → now-closed), NOT on mount: a programmatic .focus()
+    // on launch paints the keyboard focus-visible ring with no key pressed.
+    if (!anyOverlayOpen && wasOverlayOpenRef.current) {
       const prev = lastBgFocusRef.current
       const fallback =
         document.querySelector<HTMLElement>('[data-composer-input]') ??
@@ -86,6 +90,7 @@ export function App(): JSX.Element {
       if (prev && document.contains(prev)) prev.focus()
       else fallback?.focus()
     }
+    wasOverlayOpenRef.current = anyOverlayOpen
   }, [anyOverlayOpen])
 
   useEffect(() => {
