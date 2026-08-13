@@ -43,7 +43,8 @@ export const HEADLESS_SAFE_COMMANDS: readonly string[] = [
   'init', // analyze the codebase → CLAUDE.md
   'code-review', // review a PR / the working diff (canonical name; `review` is its alias pre-2.1.223)
   'mcp', // manage MCP servers (reconnect/enable/disable); no Clui-native equivalent
-  'rename' // set the session's on-disk title; free local command, reflects in the sidebar on send
+  'rename', // set the session's on-disk title; free local command, reflects in the sidebar on send
+  'security-review' // review the branch's pending changes for security issues (prompt command, like code-review)
 ]
 
 /** Bundled fallback descriptions, used only until the live list arrives (pre-handshake)
