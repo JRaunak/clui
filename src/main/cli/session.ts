@@ -213,6 +213,18 @@ export class ClaudeSession extends EventEmitter {
       const text = chunk.trim()
       if (!text) return
       if (/^(warning|warn|note|info)\b[:\s]/i.test(text)) return // benign diagnostic; drop
+      // [claude-code:...] tags are machine diagnostics for SDK consumers, not user errors.
+      if (/^\[claude-code:/i.test(text)) return
+      // An untrusted workspace still runs, so these notices aren't failures. The context
+      // guard keeps a genuine "certificate not trusted" error red.
+      const untrusted =
+        /^Ignoring \d+ permissions?\.(?:allow|deny|ask)\b/i.test(text) ||
+        (/\bnot (?:been )?trusted\b/i.test(text) &&
+          /\b(?:workspace|folder|trust dialog|hasTrustDialogAccepted|frontmatter hooks|plugins?)\b/i.test(text))
+      if (untrusted) {
+        this.emitEvent({ type: 'error', severity: 'info', message: text })
+        return
+      }
       this.emitEvent({ type: 'error', message: text })
     })
 
