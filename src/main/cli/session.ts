@@ -219,7 +219,7 @@ export class ClaudeSession extends EventEmitter {
       // guard keeps a genuine "certificate not trusted" error red.
       const untrusted =
         /^Ignoring \d+ permissions?\.(?:allow|deny|ask)\b/i.test(text) ||
-        (/\bnot (?:been )?trusted\b/i.test(text) &&
+        ((/\bnot (?:been )?trusted\b/i.test(text) || /\bno persisted trust\b/i.test(text)) &&
           /\b(?:workspace|folder|trust dialog|hasTrustDialogAccepted|frontmatter hooks|plugins?)\b/i.test(text))
       if (untrusted) {
         this.emitEvent({ type: 'error', severity: 'info', message: text })
