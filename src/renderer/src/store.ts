@@ -1074,24 +1074,27 @@ export const useSession = create<SessionStore>((set, get) => ({
     const slice = get().sessions[handleId]
     const task = slice?.backgroundTasks[taskId]
     if (!task || task.status !== 'running') return
-    // Per-task kill is TOOL-MEDIATED (verified): there is no direct control
-    // channel for it, so we inject a user turn instructing the model to call
-    // TaskStop(taskId). It therefore costs a turn and isn't instant; reflect that
-    // with a `stopping` flag until the task_updated:killed event lands. A new turn
-    // also makes the session busy again.
+    // Mark it stopping until the task_updated:killed event lands.
     set((s) =>
       patchSlice(s, handleId, {
-        busy: true,
         backgroundTasks: {
           ...(s.sessions[handleId]?.backgroundTasks ?? {}),
           [taskId]: { ...task, stopping: true }
         }
       })
     )
-    await window.clui.sendMessage(
-      handleId,
-      `Stop the background task with id ${taskId} now using the TaskStop tool. Do not do anything else.`
-    )
+    // Kill it directly over the control protocol (instant, no model turn). Fall back to
+    // the tool-mediated stop (inject a turn telling the model to call TaskStop, which makes
+    // the session busy) only if the control request errors or times out, since the protocol
+    // drifts across CLI versions.
+    const ok = await window.clui.stopTask(handleId, taskId)
+    if (!ok) {
+      set((s) => patchSlice(s, handleId, { busy: true }))
+      await window.clui.sendMessage(
+        handleId,
+        `Stop the background task with id ${taskId} now using the TaskStop tool. Do not do anything else.`
+      )
+    }
   },
 
   clearCompletedBgWork: (kind) =>

@@ -287,6 +287,10 @@ function registerIpc(): void {
     manager.interrupt(handleId)
   })
 
+  ipcMain.handle(IpcChannels.stopTask, async (_e, handleId: string, taskId: string) => {
+    return manager.stopTask(handleId, taskId)
+  })
+
   ipcMain.handle(
     IpcChannels.setPermissionMode,
     async (_e, handleId: string, mode: PermissionModeChoice) => {

@@ -85,6 +85,10 @@ export class SessionManager {
     this.sessions.get(handleId)?.interrupt()
   }
 
+  stopTask(handleId: string, taskId: string): Promise<boolean> {
+    return this.sessions.get(handleId)?.stopTask(taskId) ?? Promise.resolve(false)
+  }
+
   setPermissionMode(handleId: string, mode: string): void {
     this.sessions.get(handleId)?.setPermissionMode(mode)
   }

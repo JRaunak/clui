@@ -24,6 +24,8 @@ const api: CluiApi = {
   sendMessage: (handleId: string, text: string, attachments?: WireAttachment[]) =>
     ipcRenderer.invoke(IpcChannels.sendMessage, handleId, text, attachments),
   interrupt: (handleId: string) => ipcRenderer.invoke(IpcChannels.interrupt, handleId),
+  stopTask: (handleId: string, taskId: string) =>
+    ipcRenderer.invoke(IpcChannels.stopTask, handleId, taskId),
   setPermissionMode: (handleId: string, mode: PermissionModeChoice) =>
     ipcRenderer.invoke(IpcChannels.setPermissionMode, handleId, mode),
   setModel: (handleId: string, model: ModelChoice) =>

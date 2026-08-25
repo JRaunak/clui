@@ -126,6 +126,9 @@ export interface CluiApi {
   sendMessage: (handleId: string, text: string, attachments?: WireAttachment[]) => Promise<void>
   /** Interrupt the current turn. */
   interrupt: (handleId: string) => Promise<void>
+  /** Kill a background task directly (control protocol); false means the caller should
+   *  fall back to the tool-mediated stop. */
+  stopTask: (handleId: string, taskId: string) => Promise<boolean>
   /** Change a running session's permission mode mid-session (per-session only). */
   setPermissionMode: (handleId: string, mode: PermissionModeChoice) => Promise<void>
   /** Change a running session's model live (per-session only). */
@@ -258,6 +261,7 @@ export const IpcChannels = {
   startSession: 'clui:startSession',
   sendMessage: 'clui:sendMessage',
   interrupt: 'clui:interrupt',
+  stopTask: 'clui:stopTask',
   setPermissionMode: 'clui:setPermissionMode',
   setModel: 'clui:setModel',
   setEffort: 'clui:setEffort',

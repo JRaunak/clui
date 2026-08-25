@@ -492,6 +492,13 @@ export class ClaudeSession extends EventEmitter {
     })
   }
 
+  /** Kill a background task directly via the control protocol (`stop_task`), verified to
+   *  terminate it and emit task_updated:killed with no model turn. Returns false on
+   *  error/timeout so the caller can fall back to the tool-mediated stop. */
+  stopTask(taskId: string): Promise<boolean> {
+    return this.sendControl('stop_task', { task_id: taskId })
+  }
+
   /**
    * Answer a pending permission request. `allow` echoes/overrides the input;
    * deny surfaces `message` back to the model.
