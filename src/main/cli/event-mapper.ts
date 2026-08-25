@@ -76,8 +76,11 @@ interface RawEnvelope {
   tool_use_id?: string
   description?: string
   task_type?: string
+  /** true = running in the background (2.1.243+): set at spawn on task_started, or on a
+   *  later foreground→background move reported via task_updated.patch. */
+  is_backgrounded?: boolean
   summary?: string
-  patch?: { status?: string; end_time?: number }
+  patch?: { status?: string; end_time?: number; is_backgrounded?: boolean }
   tasks?: Array<{ task_id?: string; task_type?: string; description?: string }>
   // Dynamic-workflow fields (task_type 'local_workflow' + system/task_progress).
   workflow_name?: string
@@ -141,6 +144,10 @@ export class EventMapper {
    *  'local_agent', the reliable "this subagent was backgrounded" signal (a foreground
    *  subagent never appears in that snapshot). Consumed by the task_started handler. */
   private bgAgentTaskIds = new Set<string>()
+  /** tool_use_id + description per local_agent task_id, so a subagent moved to the
+   *  background AFTER its task_started (no fresh one fires) can still get a tray handle
+   *  from its later task_updated. Cleared on the task's terminal notification. */
+  private agentTaskMeta = new Map<string, { toolUseId?: string; description?: string }>()
 
   /** Best-effort context window for a model id (fallback when result absent). */
   private contextWindowFor(model: string | undefined): number {
@@ -288,19 +295,24 @@ export class EventMapper {
             }
           ]
         }
-        // A BACKGROUNDED subagent (local_agent that was announced in a preceding
-        // background_tasks_changed snapshot). It keeps running after the turn's result,
-        // so it earns a tray handle. `toolUseId` is the Agent tool_use id = the PTU the
-        // SubagentView/forwardSubagentText transcript is keyed by, so the tray row can
-        // open its transcript. A foreground subagent (not in bgAgentTaskIds) still falls
-        // through to `return []` below, unchanged, no double-count, no toast.
-        if (env.task_id && env.task_type === 'local_agent' && this.bgAgentTaskIds.has(env.task_id)) {
+        // Record every local_agent's meta up front (see agentTaskMeta) so a later
+        // background move can recover a tray handle for it.
+        if (env.task_id && env.task_type === 'local_agent') {
+          this.agentTaskMeta.set(env.task_id, { toolUseId: env.tool_use_id, description: env.description })
+        }
+        // A BACKGROUNDED subagent earns a tray handle (keyed by the Agent tool_use id so the
+        // row opens its transcript). Backgrounded-ness = `is_backgrounded` (2.1.243+) or, as
+        // a fallback, membership in bgAgentTaskIds from a preceding background_tasks_changed
+        // snapshot. A foreground subagent matches neither and falls through to `return []`,
+        // unchanged, so no double-count or toast.
+        if (
+          env.task_id &&
+          env.task_type === 'local_agent' &&
+          (env.is_backgrounded === true || this.bgAgentTaskIds.has(env.task_id))
+        ) {
           this.bgSubagentIds.add(env.task_id)
-          // Consumed: the id has done its "was backgrounded" handoff into bgSubagentIds
-          // (which gates all later events). Drop it so this Set, the only one without a
-          // reclamation path, doesn't retain an id per backgrounded subagent for the
-          // whole session. (A later background_tasks_changed can re-add a still-running
-          // id; that's fine, it's re-consumed here, so growth stays bounded.)
+          // Drop the snapshot id (bgAgentTaskIds has no other reclamation path); a later
+          // snapshot can re-add a still-running id, so growth stays bounded.
           this.bgAgentTaskIds.delete(env.task_id)
           return [
             {
@@ -352,12 +364,35 @@ export class EventMapper {
           }
         ]
       }
-      case 'task_updated':
+      case 'task_updated': {
+        // A subagent moved to the background AFTER its task_started (auto-background timer,
+        // or a client `background_tasks` request) arrives here with patch.is_backgrounded and
+        // no fresh task_started to promote it. Give it the tray handle now from its meta.
+        if (
+          env.patch?.is_backgrounded === true &&
+          env.task_id &&
+          !this.bgSubagentIds.has(env.task_id) &&
+          !this.bgTaskIds.has(env.task_id)
+        ) {
+          this.bgSubagentIds.add(env.task_id)
+          const meta = this.agentTaskMeta.get(env.task_id)
+          return [
+            {
+              type: 'bg-task-started',
+              taskId: env.task_id,
+              toolUseId: meta?.toolUseId,
+              description: meta?.description ?? 'Background subagent',
+              taskType: 'local_agent'
+            },
+            { type: 'bg-task-updated', taskId: env.task_id, status: env.patch?.status }
+          ]
+        }
         // Tracked bg work only: local_bash tasks OR backgrounded subagents. A
         // FOREGROUND subagent's update is not tray work → dropped.
         return env.task_id && (this.bgTaskIds.has(env.task_id) || this.bgSubagentIds.has(env.task_id))
           ? [{ type: 'bg-task-updated', taskId: env.task_id, status: env.patch?.status }]
           : []
+      }
       case 'task_notification': {
         // A workflow's terminal notification → workflow-ended (its own path).
         if (env.task_id && this.workflowIds.has(env.task_id)) {
@@ -365,6 +400,11 @@ export class EventMapper {
             this.workflowIds.delete(env.task_id)
           }
           return [{ type: 'workflow-ended', taskId: env.task_id, status: env.status }]
+        }
+        // Release this local_agent's meta on a terminal status (trayed or not) so the map
+        // doesn't retain an entry per foreground subagent.
+        if (env.task_id && (env.status === 'killed' || env.status === 'completed' || env.status === 'failed')) {
+          this.agentTaskMeta.delete(env.task_id)
         }
         // Only tracked bg tasks (local_bash OR backgrounded subagent) get a completion
         // toast; a foreground subagent finishing must NOT. Drop the id from its set on a
