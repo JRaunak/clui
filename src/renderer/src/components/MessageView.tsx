@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSession, type ChatMessage, type MessageAttachment, type ToolCall } from '../store'
 import { TypingDots } from './TypingDots'
 import { Markdown } from './Markdown'
-import { IconChevron, IconCheck, IconClose, IconFile } from './Icon'
+import { IconChevron, IconCheck, IconClose, IconFile, IconChecklist } from './Icon'
 
 /** Non-image attachments render as a file chip matching the composer pill's language. */
 function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element {
@@ -74,6 +74,19 @@ function renderUserText(text: string): (string | JSX.Element)[] {
 
 export function MessageView({ message }: { message: ChatMessage }): JSX.Element {
   const isUser = message.role === 'user'
+  // An assistant turn whose only content is entering plan mode renders as a bare full-width
+  // marker, not an empty "Claude" bubble: the EnterPlanMode card is dropped for a divider, so
+  // with no text/thinking or other visible tools the bubble chrome would wrap nothing.
+  if (
+    !isUser &&
+    !message.text &&
+    !message.thinking &&
+    message.tools.length > 0 &&
+    message.tools.some((t) => isPlanEntry(t.name)) &&
+    message.tools.every((t) => isPlanEntry(t.name) || isTaskListTool(t.name))
+  ) {
+    return <PlanModeDivider />
+  }
   return (
     <div className="flex flex-col gap-2">
       <div
@@ -114,10 +127,11 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
           // cards → closing text), coalescing consecutive tool blocks into one group.
           <OrderedBlocks blocks={message.blocks} tools={message.tools} />
         ) : (
-          // Fallback (rebuilt-from-disk): text then tools.
+          // Fallback (rebuilt-from-disk): text, a plan-mode marker if it was entered, then tools.
           <>
             {message.text && <Markdown text={message.text} />}
-            <ToolGroup tools={message.tools.filter((t) => !isTaskListTool(t.name))} />
+            {message.tools.some((t) => isPlanEntry(t.name)) && <PlanModeDivider />}
+            <ToolGroup tools={message.tools.filter((t) => !isTaskListTool(t.name) && !isPlanEntry(t.name))} />
           </>
         )}
       </div>
@@ -130,6 +144,27 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
  *  `Task` is excluded: it's the subagent tool, not the todo list. */
 function isTaskListTool(name: string): boolean {
   return (name.startsWith('Task') && name !== 'Task') || name === 'TodoWrite'
+}
+
+/** Entering plan mode (EnterPlanMode, empty input) is a state transition, not a tool result
+ *  worth a card. Its inline card is dropped and a divider marks the transition instead. */
+function isPlanEntry(name: string): boolean {
+  return name === 'EnterPlanMode'
+}
+
+/** Full-width transcript marker for the model switching into plan mode, mirroring the
+ *  "resumed here" divider but carrying plan mode's info-blue identity. */
+function PlanModeDivider(): JSX.Element {
+  return (
+    <div className="my-6 flex items-center gap-2 text-[11px]">
+      <span className="h-px flex-1 bg-border" aria-hidden="true" />
+      <span className="flex items-center gap-1.5 text-info">
+        <IconChecklist className="h-3.5 w-3.5" aria-hidden="true" />
+        <span className="uppercase tracking-[0.14em]">entered plan mode</span>
+      </span>
+      <span className="h-px flex-1 bg-border" aria-hidden="true" />
+    </div>
+  )
 }
 
 /** Each maximal run of consecutive tool blocks becomes one ToolGroup, so aggregation
@@ -151,14 +186,29 @@ function OrderedBlocks({
       if (b.text.trim()) out.push(<Markdown key={key++} text={b.text} />)
       i++
     } else {
-      // Gather a maximal run of tool blocks so ToolGroup can aggregate them.
+      // Gather a maximal run of tool blocks so ToolGroup can aggregate them. An EnterPlanMode
+      // block interrupts the run to drop a plan-mode divider at its stream position, so the
+      // marker lands exactly where the model switched, between the surrounding tool cards.
       const run: ToolCall[] = []
+      const flush = (): void => {
+        if (run.length) {
+          out.push(<ToolGroup key={key++} tools={[...run]} />)
+          run.length = 0
+        }
+      }
       while (i < blocks.length && blocks[i].kind === 'tool') {
         const tc = byId.get((blocks[i] as { id: string }).id)
-        if (tc && !isTaskListTool(tc.name)) run.push(tc)
+        if (tc) {
+          if (isPlanEntry(tc.name)) {
+            flush()
+            out.push(<PlanModeDivider key={key++} />)
+          } else if (!isTaskListTool(tc.name)) {
+            run.push(tc)
+          }
+        }
         i++
       }
-      if (run.length) out.push(<ToolGroup key={key++} tools={run} />)
+      flush()
     }
   }
   return <>{out}</>
