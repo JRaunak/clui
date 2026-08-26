@@ -54,6 +54,10 @@ export function Composer(): JSX.Element {
   const hasSession = useActive((s) => !!s)
   const cwd = useActive((s) => s?.cwd ?? null)
   const modeChoice = useActive((s) => s?.modeChoice ?? 'inherit')
+  // A mode the model switched into (e.g. plan) shadows the user's pick on the chip only,
+  // so the chip reflects the session's actual mode without rewriting their selection.
+  const modelMode = useActive((s) => s?.modelMode ?? null)
+  const displayMode = modelMode ?? modeChoice
   const contextPercent = useActive((s) => s?.contextPercent ?? null)
   const contextTokens = useActive((s) => s?.contextTokens ?? null)
   const contextWindow = useActive((s) => s?.contextWindow ?? null)
@@ -281,13 +285,13 @@ export function Composer(): JSX.Element {
           {/* C3: instrument control chips, model/effort + permission grouped. */}
           <ModelEffortPicker />
           <Dropdown<PermissionModeChoice>
-            value={modeChoice}
+            value={displayMode}
             options={permOptions}
             onChange={(m) => void setPermissionMode(m)}
             title="Permission mode — this session only; never writes settings.json"
             direction="up"
             menuClassName="w-64"
-            icon={<PermissionIcon mode={modeChoice} />}
+            icon={<PermissionIcon mode={displayMode} />}
           />
           <UltracodeToggle />
 

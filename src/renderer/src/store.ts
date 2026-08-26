@@ -172,6 +172,10 @@ export interface PerSessionState {
   permissionMode: string | null
   /** The user's selected mode choice for this session (drives the picker). */
   modeChoice: PermissionModeChoice
+  /** The mode the MODEL switched into (only ever plan), shown on the chip in place of
+   *  modeChoice WITHOUT overwriting the user's pick. null while not in plan, so leaving
+   *  plan restores their own selection's label. */
+  modelMode: PermissionModeChoice | null
   /** The user's selected model choice for this session (drives the picker). */
   modelChoice: ModelChoice
   /** Ultracode on for this session (xhigh + workflow orchestration). Per-session,
@@ -679,6 +683,7 @@ async function beginSession(
     model: null,
     permissionMode: null,
     modeChoice: choice,
+    modelMode: null,
     modelChoice,
     effortChoice,
     ultracode,
@@ -956,6 +961,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     set((s) =>
       patchSlice(s, active.handleId, {
         modeChoice: mode,
+        // A manual pick wins: drop any model-driven override so the chip shows their choice.
+        modelMode: null,
         permissionMode: mode === 'inherit' ? 'default' : mode
       })
     )
@@ -1230,6 +1237,17 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.lastError = null
           clearNotice = true
           break
+        case 'permission-mode-changed': {
+          // The model only ever switches the session INTO plan mode (via EnterPlanMode).
+          // Any other reported mode is the session's resting base: whatever the user's
+          // choice resolves to, which for 'inherit' is their settings.json default (often
+          // bypassPermissions) and isn't knowable client-side. So show plan as an override
+          // and clear otherwise, letting the chip fall back to the user's own pick label.
+          // modeChoice is never touched.
+          patch.permissionMode = e.mode
+          patch.modelMode = e.mode === 'plan' ? 'plan' : null
+          break
+        }
         case 'text-delta': {
           const m = currentAssistant(messages)
           m.text += e.text
