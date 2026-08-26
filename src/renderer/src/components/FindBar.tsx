@@ -10,7 +10,7 @@
  * Inline term-highlight INSIDE rendered markdown is deferred (v1 flashes the card);
  * this is the settled scope.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useActive, useSession, EMPTY_MESSAGES } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { IconSearch, IconClose, IconChevron } from './Icon'
@@ -35,14 +35,18 @@ export function FindBar(): JSX.Element | null {
   const requestScrollTo = useSession((s) => s.requestScrollTo)
   const messages = useActive((s) => s?.messages ?? EMPTY_MESSAGES)
   const [query, setQuery] = useState('')
+  // Defer the query that drives filtering + scroll so fast typing over a long conversation
+  // doesn't refilter (and jump the transcript) on every keystroke. The input stays bound to
+  // the immediate `query`, so typing stays responsive while matches lag a beat behind.
+  const deferredQuery = useDeferredValue(query)
   const [current, setCurrent] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const matches = useMemo<string[]>(() => {
-    const q = query.trim().toLowerCase()
+    const q = deferredQuery.trim().toLowerCase()
     if (!q) return []
     return messages.filter((m) => messageText(m).toLowerCase().includes(q)).map((m) => m.id)
-  }, [query, messages])
+  }, [deferredQuery, messages])
 
   const close = useCallback(() => {
     setFindOpen(false)
@@ -70,20 +74,21 @@ export function FindBar(): JSX.Element | null {
     [matches, requestScrollTo]
   )
 
-  // Jump to the first match when the QUERY changes, NOT on every `matches` identity.
-  // `messages` gets a fresh array on every streamed token (store copies it per delta), so
-  // keying this on `[matches]` re-fired it each token during an active turn: current snapped
-  // back to 0 and the transcript scroll-jumped to the first match, making find unusable
-  // while streaming. Keying on `[query]` scrolls only on a real query change.
+  // On a real query change, jump to the LAST match rather than the first: it sits nearest
+  // where the user is already reading (the transcript tail), so a long conversation doesn't
+  // scroll all the way up to a top-most hit. Keyed on the deferred query, which changes only
+  // on real input, never on the fresh `messages` array a streamed token produces, so an
+  // active turn can't re-fire this and hijack the scroll.
   useEffect(() => {
     if (matches.length > 0) {
-      setCurrent(0)
-      requestScrollTo(matches[0])
+      const last = matches.length - 1
+      setCurrent(last)
+      requestScrollTo(matches[last])
     } else {
       setCurrent(0)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query])
+  }, [deferredQuery])
 
   // Keep `current` in range as matches stream in/out mid-turn WITHOUT scrolling, so the
   // "N of M" count stays honest (M can grow) but the user's position isn't hijacked.
@@ -132,7 +137,7 @@ export function FindBar(): JSX.Element | null {
         className="min-w-[3.5rem] shrink-0 text-right font-mono text-[11px] tabular-nums text-dim"
         aria-live="polite"
       >
-        {query.trim() ? (count ? `${current + 1} of ${count}` : 'No results') : ''}
+        {deferredQuery.trim() ? (count ? `${current + 1} of ${count}` : 'No results') : ''}
       </span>
       <div className="flex items-center">
         <button

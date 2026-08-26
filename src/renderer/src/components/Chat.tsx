@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage } from '../store'
 import { MessageView } from './MessageView'
@@ -91,17 +91,25 @@ export function Chat(): JSX.Element {
     prevLen.current = messages.length
   }, [messages, behavior])
 
-  // Re-pin to bottom on window resize IF the user was at bottom (reflow can otherwise
-  // leave a gap). If scrolled up, Virtuoso's own anchoring keeps their position.
-  useEffect(() => {
-    const onResize = (): void => {
-      if (atBottomRef.current) {
-        virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' })
-      }
+  // Re-pin to bottom after a reflow IF the user was already there (else leave a scrolled-up
+  // user where they are). Covers window resize AND the Virtuoso Footer growing: the tail
+  // that holds WorkingStatus + queued drafts. followOutput only re-pins on item-count
+  // change, so a Footer-height change (Claude starts thinking, a message is queued) would
+  // otherwise leave that new tail a hair below the fold, under the composer.
+  const repinIfAtBottom = useCallback(() => {
+    if (atBottomRef.current) {
+      // scrollTo the true bottom rather than the last item's edge: the Footer and its bottom
+      // padding sit below the last item, so scrollToIndex('LAST') would leave a few px of
+      // footer under the fold. A max scrollTop clamps to the real bottom, footer included.
+      virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: 'auto' })
     }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
   }, [])
+  useEffect(() => {
+    window.addEventListener('resize', repinIfAtBottom)
+    return () => window.removeEventListener('resize', repinIfAtBottom)
+  }, [repinIfAtBottom])
+  // Memoized so the Footer's resize effect (keyed on context) isn't rebuilt on every render.
+  const footerContext = useMemo(() => ({ repin: repinIfAtBottom }), [repinIfAtBottom])
 
   const jumpToLatest = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior })
@@ -184,6 +192,7 @@ export function Chat(): JSX.Element {
           </div>
         )}
         components={{ Footer: ChatFooter }}
+        context={footerContext}
         followOutput={followOutput}
         atBottomStateChange={onAtBottom}
         atBottomThreshold={80}
@@ -217,8 +226,12 @@ export function Chat(): JSX.Element {
   )
 }
 
+interface FooterContext {
+  repin: () => void
+}
+
 /** Reads the store itself so it stays reactive as a Virtuoso Footer without prop threading. */
-function ChatFooter(): JSX.Element {
+function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
   const busy = useActive((s) => s?.busy ?? false)
   const lastError = useActive((s) => s?.lastError ?? null)
   // Merge the verb away while the puck is present: the puck's activeForm line already
@@ -226,8 +239,27 @@ function ChatFooter(): JSX.Element {
   // SAME condition the puck uses (non-empty task list), so they stay in lockstep.
   const tasks = useActive((s) => s?.tasks ?? EMPTY_TASKS)
   const taskMerged = useTaskUiActive(tasks, busy)
+  // The Footer grows when WorkingStatus mounts or a queued draft appears; neither is a
+  // list item, so Virtuoso's followOutput never re-pins for them. Observe our own height and
+  // ask Chat to re-stick to the bottom (a no-op unless the user was already there). rAF
+  // coalesces bursts and sidesteps the ResizeObserver-loop warning.
+  const rootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(context.repin)
+    })
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      cancelAnimationFrame(raf)
+    }
+  }, [context])
   return (
-    <div className="px-7 pb-6">
+    <div ref={rootRef} className="px-7 pb-6">
       {busy && (
         <div className="border-l border-border/70 pl-3.5">
           <WorkingStatus taskMerged={taskMerged} />
