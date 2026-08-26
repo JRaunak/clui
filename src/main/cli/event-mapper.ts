@@ -452,10 +452,9 @@ export class EventMapper {
         ]
       }
       case 'status':
-        // A live permission-mode switch (the model entering/leaving plan mode, or a user
-        // change) arrives as a status envelope carrying the new permissionMode. The
-        // status:'requesting' heartbeats carry none, so the presence of the field is the
-        // gate. Surfacing it lets the composer chip track a mode the model changed.
+        // A live permission-mode switch arrives as a status envelope carrying the new
+        // permissionMode; the status:'requesting' heartbeats carry none, so the field's
+        // presence is the gate. Surfacing it lets the chip track a model-driven switch.
         if (typeof env.permissionMode === 'string' && env.permissionMode) {
           return [{ type: 'permission-mode-changed', mode: env.permissionMode }]
         }

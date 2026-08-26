@@ -150,9 +150,8 @@ const COMPONENTS: Components = {
   td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>
 }
 
-/** Heading overrides for markdown inside a chrome-titled container (the plan dialog): one
- *  step down from the transcript ramp so the body's largest heading stays below the
- *  container's own title instead of rivaling it. */
+/** Heading overrides for markdown inside a chrome-titled container (the plan dialog): a step
+ *  down from the transcript ramp so the body's largest heading stays below the dialog title. */
 const COMPACT_HEADINGS: Partial<Components> = {
   h1: ({ children }) => <h1 className="mt-3 mb-1.5 text-base font-semibold first:mt-0">{children}</h1>,
   h2: ({ children }) => <h2 className="mt-3 mb-1.5 text-sm font-semibold first:mt-0">{children}</h2>,

@@ -172,9 +172,8 @@ export interface PerSessionState {
   permissionMode: string | null
   /** The user's selected mode choice for this session (drives the picker). */
   modeChoice: PermissionModeChoice
-  /** The mode the MODEL switched into (only ever plan), shown on the chip in place of
-   *  modeChoice WITHOUT overwriting the user's pick. null while not in plan, so leaving
-   *  plan restores their own selection's label. */
+  /** The mode the MODEL switched into (only ever plan), shown on the chip in place of the
+   *  user's modeChoice without overwriting it. null while not in plan. */
   modelMode: PermissionModeChoice | null
   /** The user's selected model choice for this session (drives the picker). */
   modelChoice: ModelChoice
@@ -1238,12 +1237,10 @@ export const useSession = create<SessionStore>((set, get) => ({
           clearNotice = true
           break
         case 'permission-mode-changed': {
-          // The model only ever switches the session INTO plan mode (via EnterPlanMode).
-          // Any other reported mode is the session's resting base: whatever the user's
-          // choice resolves to, which for 'inherit' is their settings.json default (often
-          // bypassPermissions) and isn't knowable client-side. So show plan as an override
-          // and clear otherwise, letting the chip fall back to the user's own pick label.
-          // modeChoice is never touched.
+          // The model only switches INTO plan (via EnterPlanMode); any other reported mode is
+          // the session's resting base, which for 'inherit' is their settings.json default and
+          // isn't knowable here. So show plan as an override, clear otherwise, and never touch
+          // modeChoice, so leaving plan falls back to the user's own pick.
           patch.permissionMode = e.mode
           patch.modelMode = e.mode === 'plan' ? 'plan' : null
           break

@@ -108,6 +108,16 @@ export function IconChevron(p: IconProps): JSX.Element {
   )
 }
 
+/** Luggage-style tag with its punched hole. */
+export function IconTag(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+      <path d="M7 7h.01" />
+    </Svg>
+  )
+}
+
 // The editor panel-toggle glyph (⌘B convention). One shape for both states; the
 // aria-label carries the direction.
 export function IconSidebar(p: IconProps): JSX.Element {

@@ -75,8 +75,7 @@ function renderUserText(text: string): (string | JSX.Element)[] {
 export function MessageView({ message }: { message: ChatMessage }): JSX.Element {
   const isUser = message.role === 'user'
   // An assistant turn whose only content is entering plan mode renders as a bare full-width
-  // marker, not an empty "Claude" bubble: the EnterPlanMode card is dropped for a divider, so
-  // with no text/thinking or other visible tools the bubble chrome would wrap nothing.
+  // marker, not an empty "Claude" bubble (the card is dropped for a divider, nothing else left).
   if (
     !isUser &&
     !message.text &&
@@ -186,9 +185,8 @@ function OrderedBlocks({
       if (b.text.trim()) out.push(<Markdown key={key++} text={b.text} />)
       i++
     } else {
-      // Gather a maximal run of tool blocks so ToolGroup can aggregate them. An EnterPlanMode
-      // block interrupts the run to drop a plan-mode divider at its stream position, so the
-      // marker lands exactly where the model switched, between the surrounding tool cards.
+      // Gather a maximal run of tool blocks for ToolGroup to aggregate. An EnterPlanMode block
+      // interrupts the run to drop the divider at its stream position, between the tool cards.
       const run: ToolCall[] = []
       const flush = (): void => {
         if (run.length) {

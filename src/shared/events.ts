@@ -186,9 +186,8 @@ export type DomainEvent =
    * renderer dismisses that dialog so it doesn't hang.
    */
   | { type: 'permission-cancel'; requestId: string }
-  // The session's permission mode changed mid-run (the model entering or leaving plan
-  // mode). Carries the CLI's newly-reported mode so the composer chip can reflect what
-  // the session is actually in, not just what the user last picked.
+  // The session's permission mode changed mid-run (the model entering or leaving plan mode).
+  // Carries the CLI's new mode so the composer chip reflects the session's actual mode.
   | { type: 'permission-mode-changed'; mode: string }
   /**
    * Context-window usage update (for the composer's context ring). Computed from

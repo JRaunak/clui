@@ -1,11 +1,9 @@
 /**
  * Plan decision dialog: the model's ExitPlanMode request. The CLI surfaces it as a
  * can_use_tool with requires_user_interaction (like AskUserQuestion), so PermissionDialog
- * routes it here rather than into the generic Allow/Deny box, which would bury the plan as
- * escaped JSON and frame a decision as a raw permission grant. The plan markdown is in-band
- * on request.input.plan; we render it and offer proceed vs keep-planning, mapped to allow
- * vs deny(+message). request.input.planFilePath (~/.claude/plans) is ignored: Clui reads
- * the plan from the wire, never from disk.
+ * routes it here instead of the generic Allow/Deny box (which buries the plan as escaped
+ * JSON). The plan markdown is read in-band from request.input.plan and rendered; proceed
+ * vs keep-planning map to allow vs deny(+message). planFilePath (~/.claude/plans) is ignored.
  */
 import { useCallback } from 'react'
 import { useActive, useSession, type PendingPermission } from '../store'
@@ -83,9 +81,8 @@ export function PlanDialog({ request }: { request: PendingPermission }): JSX.Ele
           )}
         </div>
 
-        {/* Safe action (Keep planning) is DOM-first so the first Tab lands on it, and nothing
-            is autofocused. Approving a plan is the consequential action, so Enter stays inert
-            on the container (no Enter-to-primary bind), and a reflexive keypress can't start work. */}
+        {/* Safe action (Keep planning) is DOM-first and nothing is autofocused; Enter isn't
+            bound to the primary, so a reflexive keypress can't start building. */}
         <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
           <Button variant="secondary" size="md" onClick={keepPlanning}>
             Keep planning

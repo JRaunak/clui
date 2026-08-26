@@ -1,10 +1,10 @@
 /**
  * The expanded sidebar's New session control: a split-button. The wide segment starts an
- * unnamed session; the caret opens the named-session dialog directly. With a single
+ * unnamed session; the tag segment opens the named-session dialog directly. With a single
  * alternative action, a menu would be overhead. One accent fill, subdivided, so the
  * scarce accent isn't spent on a second control. The collapsed rail omits it (⌘⇧N).
  */
-import { IconPlus, IconChevron } from './Icon'
+import { IconPlus, IconTag } from './Icon'
 
 export function SplitNewSession({
   onNew,
@@ -29,12 +29,13 @@ export function SplitNewSession({
       <button
         aria-haspopup="dialog"
         aria-label="New named session"
-        title="New named session  ⌘⇧N"
+        title="New named session ⌘⇧N"
         onClick={onNewNamed}
         className={`${seg} w-9 shrink-0 rounded-r-md border-l border-on-accent/25`}
       >
-        {/* Static: it opens a dialog, not an in-place disclosure, so the chevron doesn't rotate. */}
-        <IconChevron className="h-3.5 w-3.5 rotate-90" />
+        {/* A tag, not a chevron: this opens the name dialog, so it signals labeling the
+            session rather than a menu to disclose. */}
+        <IconTag className="h-3.5 w-3.5" />
       </button>
     </div>
   )
