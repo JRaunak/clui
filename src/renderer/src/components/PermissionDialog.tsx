@@ -2,6 +2,7 @@ import { useActive, useSession, EMPTY_PENDING, type PendingPermission } from '..
 import { Button } from './Button'
 import { IconShield } from './Icon'
 import { QuestionDialog } from './QuestionDialog'
+import { PlanDialog } from './PlanDialog'
 import { useDialogFocus } from '../lib/useDialogFocus'
 
 /**
@@ -24,6 +25,12 @@ export function PermissionDialog(): JSX.Element | null {
   // it to a dedicated picker instead of the wrong Allow/Deny dialog.
   if (current.toolName === 'AskUserQuestion') {
     return <QuestionDialog request={current} />
+  }
+
+  // ExitPlanMode is a decision (approve the plan → start building), not a raw grant, so it
+  // gets a dedicated dialog that renders the plan instead of the Allow/Deny box.
+  if (current.toolName === 'ExitPlanMode') {
+    return <PlanDialog request={current} />
   }
 
   const allow = (): void => {

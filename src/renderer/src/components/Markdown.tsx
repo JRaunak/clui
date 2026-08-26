@@ -150,7 +150,22 @@ const COMPONENTS: Components = {
   td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>
 }
 
-export const Markdown = memo(function Markdown({ text }: { text: string }): JSX.Element {
+/** Heading overrides for markdown inside a chrome-titled container (the plan dialog): one
+ *  step down from the transcript ramp so the body's largest heading stays below the
+ *  container's own title instead of rivaling it. */
+const COMPACT_HEADINGS: Partial<Components> = {
+  h1: ({ children }) => <h1 className="mt-3 mb-1.5 text-base font-semibold first:mt-0">{children}</h1>,
+  h2: ({ children }) => <h2 className="mt-3 mb-1.5 text-sm font-semibold first:mt-0">{children}</h2>,
+  h3: ({ children }) => <h3 className="mt-2.5 mb-1 text-xs font-semibold first:mt-0">{children}</h3>
+}
+
+export const Markdown = memo(function Markdown({
+  text,
+  headingScale = 'default'
+}: {
+  text: string
+  headingScale?: 'default' | 'compact'
+}): JSX.Element {
   // The `/usage` report is preformatted column text that markdown would flatten
   // into one run-on line. Detect it and render a native card instead. Anything
   // unrecognized (incl. mid-stream partials) falls through to normal markdown.
@@ -161,9 +176,10 @@ export const Markdown = memo(function Markdown({ text }: { text: string }): JSX.
   const context = parseContextReport(text)
   if (context) return <ContextCard report={context} />
 
+  const components = headingScale === 'compact' ? { ...COMPONENTS, ...COMPACT_HEADINGS } : COMPONENTS
   return (
     <div className="text-sm leading-relaxed text-content [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {text}
       </ReactMarkdown>
     </div>
