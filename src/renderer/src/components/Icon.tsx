@@ -118,6 +118,18 @@ export function IconTag(p: IconProps): JSX.Element {
   )
 }
 
+/** Diagonal arrow tucking into a bottom-right corner: send a running tool to the background.
+ *  Deliberately not the vertical download-arrow-onto-a-line. */
+export function IconSendToTray(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="m5 5 10 10" />
+      <path d="M15 9v6h-6" />
+      <path d="M15 21h6v-6" />
+    </Svg>
+  )
+}
+
 // The editor panel-toggle glyph (⌘B convention). One shape for both states; the
 // aria-label carries the direction.
 export function IconSidebar(p: IconProps): JSX.Element {

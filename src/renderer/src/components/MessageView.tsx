@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSession, type ChatMessage, type MessageAttachment, type ToolCall } from '../store'
 import { TypingDots } from './TypingDots'
 import { Markdown } from './Markdown'
-import { IconChevron, IconCheck, IconClose, IconFile, IconChecklist } from './Icon'
+import { IconChevron, IconCheck, IconClose, IconFile, IconChecklist, IconSendToTray } from './Icon'
 
 /** Non-image attachments render as a file chip matching the composer pill's language. */
 function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element {
@@ -303,6 +303,7 @@ function ThinkingBlock({ text }: { text: string }): JSX.Element {
 function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean }): JSX.Element {
   const [open, setOpen] = useState(false)
   const viewSubagent = useSession((s) => s.viewSubagent)
+  const sendToBackground = useSession((s) => s.backgroundTask)
   const summary = summarizeInput(tool.input)
   const running = tool.result === undefined
   // Task (renamed → Agent in CLI 2.1.63; Task kept as alias) both mean "subagent";
@@ -316,8 +317,12 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
   // instant it launches was the reported bug).
   const isBackgrounded =
     tool.name === 'Workflow' ||
+    Boolean(tool.sentToBackground) ||
     Boolean(tool.input && typeof tool.input === 'object' &&
       (tool.input as { run_in_background?: unknown }).run_in_background === true)
+  // Only a foreground Bash is worth moving: run_in_background / Workflow tools are already
+  // tray-bound, and other tools finish too fast to bother.
+  const canSendToBackground = running && !isBackgrounded && tool.name === 'Bash'
   return (
     <div
       className={`overflow-hidden rounded-md border bg-tool ${
@@ -396,6 +401,19 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
         {/* subagent: a hint that the card opens the transcript (→). */}
         {isSubagent && <span className="ml-2 shrink-0 font-mono text-[11px] text-faint">→</span>}
       </button>
+      {/* Sibling of the head button, not nested: button-in-button is invalid. Persistent,
+          not hover-only, so it stays discoverable. */}
+      {canSendToBackground && (
+        <button
+          type="button"
+          onClick={() => void sendToBackground(tool.id)}
+          className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint transition-colors hover:text-content focus-visible:text-content focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-accent"
+          title="Send to background"
+          aria-label="Send to background"
+        >
+          <IconSendToTray className="h-3.5 w-3.5" />
+        </button>
+      )}
       </div>
       {open && !isSubagent && (
         <div className="border-t border-border px-3 py-2.5">

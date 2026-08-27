@@ -499,6 +499,12 @@ export class ClaudeSession extends EventEmitter {
     return this.sendControl('stop_task', { task_id: taskId })
   }
 
+  /** Move a RUNNING foreground tool to the background; it keeps running in the tray.
+   *  Must be sent while the task runs (after task_started), else it returns backgrounded:false. */
+  backgroundTask(toolUseId: string): Promise<boolean> {
+    return this.sendControl('background_tasks', { tool_use_id: toolUseId })
+  }
+
   /**
    * Answer a pending permission request. `allow` echoes/overrides the input;
    * deny surfaces `message` back to the model.

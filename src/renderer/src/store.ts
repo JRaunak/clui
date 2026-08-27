@@ -157,6 +157,9 @@ export interface ToolCall {
    *  Optional: only set for live tool calls; rebuilt-from-disk tools are already
    *  complete (result present), so they never show the timer. */
   startMs?: number
+  /** Set when the user backgrounds this running foreground tool: makes the card read
+   *  "launched" not "done" (its result lands at move-time but carries no bg flag). */
+  sentToBackground?: boolean
 }
 
 /** All state for a single live session, keyed by its `handleId` in the store. */
@@ -341,6 +344,8 @@ interface SessionStore {
   interrupt: () => Promise<void>
   /** Stop a running background task (tool-mediated TaskStop; costs a turn). */
   stopBackgroundTask: (handleId: string, taskId: string) => Promise<void>
+  /** Move a running foreground tool to the background (keeps running in the tray). */
+  backgroundTask: (toolUseId: string) => Promise<boolean>
   /** Clear the LINGERING completed subagents + ended workflows from the active session's
    *  trays (fired when they're opened, displaced by new same-kind work, or a grace timer
    *  elapses). Never touches running items. `kind` scopes it to one tray or both. */
@@ -1101,6 +1106,28 @@ export const useSession = create<SessionStore>((set, get) => ({
         `Stop the background task with id ${taskId} now using the TaskStop tool. Do not do anything else.`
       )
     }
+  },
+
+  backgroundTask: async (toolUseId) => {
+    const active = activeSlice(get())
+    if (!active) return false
+    // Flag optimistically so the card flips to "launching…"/"launched" on click (the move-time
+    // result carries no flag to infer from); revert if it wasn't backgrounded, e.g. tool already done.
+    const setFlag = (val: boolean): void =>
+      set((s) => {
+        const slice = s.sessions[active.handleId]
+        if (!slice) return {}
+        const messages = slice.messages.map((m) =>
+          m.tools.some((t) => t.id === toolUseId)
+            ? { ...m, tools: m.tools.map((t) => (t.id === toolUseId ? { ...t, sentToBackground: val } : t)) }
+            : m
+        )
+        return patchSlice(s, active.handleId, { messages })
+      })
+    setFlag(true)
+    const ok = await window.clui.backgroundTask(active.handleId, toolUseId)
+    if (!ok) setFlag(false)
+    return ok
   },
 
   clearCompletedBgWork: (kind) =>

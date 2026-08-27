@@ -129,6 +129,8 @@ export interface CluiApi {
   /** Kill a background task directly (control protocol); false means the caller should
    *  fall back to the tool-mediated stop. */
   stopTask: (handleId: string, taskId: string) => Promise<boolean>
+  /** Move a running foreground tool to the background (keeps running in the tray). */
+  backgroundTask: (handleId: string, toolUseId: string) => Promise<boolean>
   /** Change a running session's permission mode mid-session (per-session only). */
   setPermissionMode: (handleId: string, mode: PermissionModeChoice) => Promise<void>
   /** Change a running session's model live (per-session only). */
@@ -262,6 +264,7 @@ export const IpcChannels = {
   sendMessage: 'clui:sendMessage',
   interrupt: 'clui:interrupt',
   stopTask: 'clui:stopTask',
+  backgroundTask: 'clui:backgroundTask',
   setPermissionMode: 'clui:setPermissionMode',
   setModel: 'clui:setModel',
   setEffort: 'clui:setEffort',

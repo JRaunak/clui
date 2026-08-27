@@ -26,6 +26,8 @@ const api: CluiApi = {
   interrupt: (handleId: string) => ipcRenderer.invoke(IpcChannels.interrupt, handleId),
   stopTask: (handleId: string, taskId: string) =>
     ipcRenderer.invoke(IpcChannels.stopTask, handleId, taskId),
+  backgroundTask: (handleId: string, toolUseId: string) =>
+    ipcRenderer.invoke(IpcChannels.backgroundTask, handleId, toolUseId),
   setPermissionMode: (handleId: string, mode: PermissionModeChoice) =>
     ipcRenderer.invoke(IpcChannels.setPermissionMode, handleId, mode),
   setModel: (handleId: string, model: ModelChoice) =>

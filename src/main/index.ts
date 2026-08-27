@@ -291,6 +291,10 @@ function registerIpc(): void {
     return manager.stopTask(handleId, taskId)
   })
 
+  ipcMain.handle(IpcChannels.backgroundTask, async (_e, handleId: string, toolUseId: string) => {
+    return manager.backgroundTask(handleId, toolUseId)
+  })
+
   ipcMain.handle(
     IpcChannels.setPermissionMode,
     async (_e, handleId: string, mode: PermissionModeChoice) => {

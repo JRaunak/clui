@@ -89,6 +89,10 @@ export class SessionManager {
     return this.sessions.get(handleId)?.stopTask(taskId) ?? Promise.resolve(false)
   }
 
+  backgroundTask(handleId: string, toolUseId: string): Promise<boolean> {
+    return this.sessions.get(handleId)?.backgroundTask(toolUseId) ?? Promise.resolve(false)
+  }
+
   setPermissionMode(handleId: string, mode: string): void {
     this.sessions.get(handleId)?.setPermissionMode(mode)
   }
