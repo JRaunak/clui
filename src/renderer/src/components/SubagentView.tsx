@@ -32,6 +32,7 @@ import { ToolGroup } from './MessageView'
 import { IconClose } from './Icon'
 import type { HistoryMessage } from '../../../shared/sessions'
 import type { SubagentMessage } from '../store'
+import { deriveModelInfo, EFFORT_LABELS, isEffortChoice } from '../../../shared/settings'
 
 function findAgentTool(
   messages: { tools: ToolCall[] }[],
@@ -449,6 +450,35 @@ export function SubagentView(): JSX.Element | null {
     }
   }, [parentId, liveCount])
 
+  // The subagent's model + effort for the header chip, read from its on-disk transcript (the
+  // live stream carries neither). Separate from the diskMsgs fallback above, which is skipped
+  // on the live path.
+  const [agentMeta, setAgentMeta] = useState<{ model?: string; effort?: string | null }>({})
+  useEffect(() => {
+    setAgentMeta({})
+    if (!parentId) return
+    let cancelled = false
+    let tries = 0
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const load = (): void => {
+      void window.clui.readAgentTranscriptByToolUseId(parentId).then((r) => {
+        if (cancelled) return
+        if (r.agentModel) {
+          setAgentMeta({ model: r.agentModel, effort: r.agentEffort })
+        } else if (tries++ < 12) {
+          // A live subagent's on-disk jsonl lags its stream, so its first assistant record
+          // (which carries the model) can take several seconds to land.
+          timer = setTimeout(load, 1500)
+        }
+      })
+    }
+    load()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [parentId])
+
   // Esc pops one level (back up the trail), closing the view at the root. LIFO stack.
   useEscape(parentId !== null, popSubagent)
 
@@ -463,6 +493,13 @@ export function SubagentView(): JSX.Element | null {
   const name = meta.name
   const subtype = meta.subtype
   const desc = meta.desc
+  // Humanize the raw model id ("claude-opus-4-8" → "Opus 4.8"); effort falls back to the raw
+  // word if a CLI bump adds a level the labels don't know, so the chip never blanks.
+  const modelLabel = agentMeta.model ? deriveModelInfo(agentMeta.model).label : null
+  const effortLabel =
+    agentMeta.effort && isEffortChoice(agentMeta.effort)
+      ? EFFORT_LABELS[agentMeta.effort]
+      : (agentMeta.effort ?? null)
   // Status source, in order of authority:
   //  1. A BACKGROUNDED subagent's own bg-task lifecycle. Its launching Agent tool returns
   //     immediately ("Async agent launched successfully"), so the tool's `result` says
@@ -521,6 +558,15 @@ export function SubagentView(): JSX.Element | null {
         {subtype && (
           <span className="rounded bg-bg-raised px-1.5 py-0.5 font-mono text-[11px] text-faint">
             {subtype}
+          </span>
+        )}
+        {modelLabel && (
+          <span
+            className="shrink-0 whitespace-nowrap rounded bg-bg-raised px-1.5 py-0.5 font-mono text-[11px] text-faint"
+            title={`Ran on ${modelLabel}${effortLabel ? ` at ${effortLabel} effort` : ''}`}
+          >
+            {modelLabel}
+            {effortLabel && <>{' · '}{effortLabel}</>}
           </span>
         )}
         <span className="ml-auto flex items-center gap-2 font-mono text-[12px]">

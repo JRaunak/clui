@@ -91,6 +91,10 @@ export interface TranscriptResult {
    * resume instead of 0% until the first new turn. Null if no usage was found.
    */
   contextTokens: number | null
+  /** A subagent's model + effort, read from its on-disk transcript (the live stream carries
+   *  neither). Absent for a main-session transcript. */
+  agentModel?: string
+  agentEffort?: string | null
 }
 
 // ── Conversation search ──────────────────────────────────────────────────────

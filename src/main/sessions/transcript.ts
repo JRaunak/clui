@@ -38,8 +38,11 @@ interface RawEntry {
     role?: string
     content?: unknown
     usage?: RawUsage
+    model?: string
   }
   usage?: RawUsage
+  /** Record-level effort on an agent transcript's assistant entries (effort-capable models). */
+  effort?: string
 }
 
 /** Unwrap <local-command-stdout>…</local-command-stdout> to the inner text. */
@@ -316,6 +319,10 @@ async function parseTranscriptFile(
   // Track the LAST usage seen so the context ring reflects the real fill on resume
   // (assistant entries carry usage; the final one is the resident context).
   let lastContextTokens = 0
+  // First assistant record's model + effort, for an agent transcript's header chip (the live
+  // stream carries neither).
+  let agentModel: string | undefined
+  let agentEffort: string | null | undefined
 
   const rl = createInterface({
     input: createReadStream(file, { encoding: 'utf8' }),
@@ -356,6 +363,10 @@ async function parseTranscriptFile(
       const role = entry.message?.role
       if (entry.type !== 'user' && entry.type !== 'assistant') continue
       if (role !== 'user' && role !== 'assistant') continue
+      if (!agentModel && role === 'assistant' && typeof entry.message?.model === 'string') {
+        agentModel = entry.message.model
+        agentEffort = typeof entry.effort === 'string' ? entry.effort : null
+      }
 
       const content = entry.message?.content
       const blocks: ContentBlock[] =
@@ -493,7 +504,7 @@ async function parseTranscriptFile(
   // Only trips at the OOM safety ceiling (SAFETY_CAP), never in normal use: the UI
   // is virtualized, so the full transcript renders fine. `capped` stays for shape.
   if (total > cap) {
-    return { messages: messages.slice(total - cap), total, capped: true, contextTokens }
+    return { messages: messages.slice(total - cap), total, capped: true, contextTokens, agentModel, agentEffort }
   }
-  return { messages, total, capped: false, contextTokens }
+  return { messages, total, capped: false, contextTokens, agentModel, agentEffort }
 }
