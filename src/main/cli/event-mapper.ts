@@ -120,6 +120,10 @@ export class EventMapper {
    *  but NO message_start/text_delta, so we detect that (snapshot text + nothing
    *  streamed) and surface the text so it renders instead of being dropped. */
   private streamedTextSinceStart = false
+  /** Set when the user pressed Stop. The interrupt makes the CLI end the turn with a
+   *  `result{is_error:true}`, which is a user action, not a failure to surface. Consumed
+   *  (and cleared) by the next `result` so it suppresses that one turn's error box only. */
+  private interrupted = false
   /** task_ids that are TRUE background work (Bash run_in_background = 'local_bash').
    *  Only these belong in the bg tray. `task_started` is the only event that carries
    *  a reliable `task_type`, so we record the local_bash ids here and gate the later
@@ -149,6 +153,11 @@ export class EventMapper {
    *  background AFTER its task_started (no fresh one fires) can still get a tray handle
    *  from its later task_updated. Cleared on the task's terminal notification. */
   private agentTaskMeta = new Map<string, { toolUseId?: string; description?: string }>()
+
+  /** Suppress the next result's is_error box (see the `interrupted` field). */
+  markInterrupted(): void {
+    this.interrupted = true
+  }
 
   /** Best-effort context window for a model id (fallback when result absent). */
   private contextWindowFor(model: string | undefined): number {
@@ -221,11 +230,15 @@ export class EventMapper {
       case 'result': {
         // Turn boundary: reset the streamed-text flag so the NEXT turn (which may
         // be another non-streaming slash command with no message_start) is detected.
+        const hadText = this.streamedTextSinceStart
+        const wasInterrupted = this.interrupted
         this.streamedTextSinceStart = false
+        this.interrupted = false
         // The result carries the authoritative contextWindow for the model.
         const cw = env.modelUsage ? Object.values(env.modelUsage)[0]?.contextWindow : undefined
         if (typeof cw === 'number' && cw > 0) this.contextWindow = cw
-        return [
+        const fromTaskNotification = env.origin?.kind === 'task-notification'
+        const out: DomainEvent[] = [
           {
             type: 'result',
             sessionId: env.session_id ?? '',
@@ -236,9 +249,19 @@ export class EventMapper {
             // streamed text + this result) tagged origin.kind='task-notification'. Its
             // cost + text ARE real (accrue + render them), but it must NOT clear the
             // user's foreground `busy`, so flag it so the store can guard that.
-            fromTaskNotification: env.origin?.kind === 'task-notification'
+            fromTaskNotification
           }
         ]
+        // A turn that failed with ONLY a result envelope (no assistant text, nothing on
+        // stderr) otherwise ends looking successful: the store's result case reads
+        // neither is_error nor the result text. Surface it as the in-chat error box.
+        // hadText de-dups the API-error case (243 #22/#23) where the failure already
+        // arrived as an assistant snapshot; the interrupt is the user's own Stop, not a
+        // failure; a bg subagent's failing result must not red-banner the foreground.
+        if (env.is_error && !hadText && !wasInterrupted && !fromTaskNotification) {
+          out.push({ type: 'error', message: env.result ?? 'The request failed.', severity: 'error' })
+        }
+        return out
       }
       default:
         return []

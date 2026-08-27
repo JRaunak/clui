@@ -485,6 +485,8 @@ export class ClaudeSession extends EventEmitter {
 
   /** Interrupt the current turn via the control protocol. */
   interrupt(): void {
+    // Flag the mapper so the interrupt's is_error result isn't surfaced as an error box.
+    this.mapper.markInterrupted()
     this.writeLine({
       type: 'control_request',
       request_id: `int-${Date.now().toString(36)}`,
