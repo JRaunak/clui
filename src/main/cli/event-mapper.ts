@@ -5,7 +5,7 @@
  * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
  * drift skips the envelope instead of crashing the app.
  */
-import type { DomainEvent } from '../../shared/events'
+import type { DomainEvent, PermissionSuggestion } from '../../shared/events'
 
 // Minimal structural typing of the raw envelopes we care about.
 interface RawEnvelope {
@@ -29,6 +29,7 @@ interface RawEnvelope {
     title?: string
     display_name?: string
     description?: string
+    permission_suggestions?: PermissionSuggestion[]
   }
   event?: {
     type?: string
@@ -611,7 +612,8 @@ export class EventMapper {
           toolUseId: req.tool_use_id,
           title: req.title,
           displayName: req.display_name,
-          description: req.description
+          description: req.description,
+          permissionSuggestions: req.permission_suggestions
         }
       ]
     }

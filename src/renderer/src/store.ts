@@ -16,7 +16,7 @@
  * each event into `sessions[handleId]`.
  */
 import { create } from 'zustand'
-import type { DomainEvent, SessionTask, SlashCommandInfo } from '../../shared/events'
+import type { DomainEvent, PermissionSuggestion, SessionTask, SlashCommandInfo } from '../../shared/events'
 import type { ProjectGroup } from '../../shared/sessions'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
@@ -29,6 +29,8 @@ export interface PendingPermission {
   input: unknown
   displayName?: string
   description?: string
+  /** Actions the CLI suggests with this request (2.1.245+), e.g. "accept edits this session". */
+  permissionSuggestions?: PermissionSuggestion[]
 }
 
 /**
@@ -1327,7 +1329,8 @@ export const useSession = create<SessionStore>((set, get) => ({
               toolName: e.toolName,
               input: e.input,
               displayName: e.displayName,
-              description: e.description
+              description: e.description,
+              permissionSuggestions: e.permissionSuggestions
             }
           ]
           patch.lastActivityMs = Date.now()

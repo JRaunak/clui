@@ -36,6 +36,14 @@ export interface SlashCommandInfo {
   aliases?: string[]
 }
 
+/** An action the CLI suggests alongside a permission request (2.1.245+), e.g.
+ *  {type:'setMode', mode:'acceptEdits', destination:'session'}. */
+export interface PermissionSuggestion {
+  type: string
+  mode?: string
+  destination?: string
+}
+
 export type DomainEvent =
   /** Session started; carries the CLI-assigned session id + metadata. */
   | {
@@ -179,6 +187,7 @@ export type DomainEvent =
       title?: string
       displayName?: string
       description?: string
+      permissionSuggestions?: PermissionSuggestion[]
     }
   /**
    * The CLI withdrew a still-pending permission request (e.g. the turn was
