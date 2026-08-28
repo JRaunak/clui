@@ -70,6 +70,20 @@ function isCommandPlumbing(text: string): boolean {
   )
 }
 
+/**
+ * Parse an inbound peer message off a resumed transcript: an isMeta user record whose text
+ * embeds a `<cross-session-message from-name="…">…</cross-session-message>` wrapper.
+ * `isCommandPlumbing` is start-anchored so it misses this, and the record would otherwise
+ * render as a raw-XML "You" bubble. Returns sender + body (from-name wins over from).
+ */
+function parseCrossSessionMessage(text: string): { from: string; body: string } | null {
+  const m = /<cross-session-message\b([^>]*)>\n?([\s\S]*?)\n?<\/cross-session-message>/.exec(text)
+  if (!m) return null
+  const attrs = m[1]
+  const name = /\bfrom-name="([^"]+)"/.exec(attrs) ?? /\bfrom="([^"]+)"/.exec(attrs)
+  return { from: name ? name[1] : 'a peer', body: m[2].trim() }
+}
+
 interface RawUsage {
   input_tokens?: number
   cache_read_input_tokens?: number
@@ -485,6 +499,16 @@ async function parseTranscriptFile(
         }
       }
 
+      // Recover an inbound peer message into the peer block (role stays 'user' on disk).
+      if (role === 'user' && msg.tools.length === 0 && !msg.thinking) {
+        const peer = parseCrossSessionMessage(msg.text)
+        if (peer) {
+          msg.peer = { from: peer.from }
+          msg.text = peer.body
+          messages.push(msg)
+          continue
+        }
+      }
       // Skip empty shells (e.g. an assistant entry that was only signatures). An
       // attachments-only user turn is NOT empty: it has chips/thumbnails to render.
       if (!msg.text && !msg.thinking && msg.tools.length === 0 && !msg.attachments?.length) continue

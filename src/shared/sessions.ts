@@ -76,6 +76,10 @@ export interface HistoryMessage {
   tools: HistoryToolCall[]
   /** Attachments recovered from the transcript for a resumed USER turn. Absent when none. */
   attachments?: HistoryAttachment[]
+  /** Set on an inbound peer message (an isMeta user record on disk): the sender name; `text`
+   *  holds the body. Role stays 'user' so search/export are untouched; the renderer promotes
+   *  it to a 'peer' block on resume. */
+  peer?: { from: string }
 }
 
 /** Result of reading a session transcript (may be capped for huge sessions). */

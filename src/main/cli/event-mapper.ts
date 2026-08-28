@@ -65,11 +65,15 @@ interface RawEnvelope {
   result?: string | null
   total_cost_usd?: number
   modelUsage?: Record<string, { contextWindow?: number }>
-  /** On the SECOND `result` a backgrounded subagent emits when it finishes, the
-   *  CLI tags it `origin.kind:'task-notification'` (the first, foreground turn's result
-   *  has origin null). Used so the store doesn't let this completion-turn result clear
-   *  the composer's `busy` (which belongs to the user's own turn). Verified live 2.1.216. */
-  origin?: { kind?: string }
+  /** Origin of a turn's result. `kind:'task-notification'` = a backgrounded subagent's
+   *  completion turn (foreground result has origin null). `kind:'peer'` = a cross-session
+   *  message woke this session; its sender + body ride here (the only place). Live 2.1.250. */
+  origin?: { kind?: string; name?: string; body?: string; from?: string; msg_id?: string; fromMode?: string }
+  /** `command_lifecycle` envelope: brackets a peer-triggered turn. `state:'started'` fires
+   *  before the autonomous reply streams, 'completed'/'cancelled' at the very end. Clui's
+   *  own stdin turns carry no client-supplied uuid, so they never get a lifecycle. */
+  command_uuid?: string
+  state?: string
   // Background-task lifecycle (system/{task_started,task_updated,task_notification,
   // background_tasks_changed}). Verified live: task_id is stable; tasks[] is the
   // authoritative running snapshot; patch carries the status change.
@@ -238,6 +242,7 @@ export class EventMapper {
         const cw = env.modelUsage ? Object.values(env.modelUsage)[0]?.contextWindow : undefined
         if (typeof cw === 'number' && cw > 0) this.contextWindow = cw
         const fromTaskNotification = env.origin?.kind === 'task-notification'
+        const fromPeer = env.origin?.kind === 'peer'
         const out: DomainEvent[] = [
           {
             type: 'result',
@@ -249,20 +254,37 @@ export class EventMapper {
             // streamed text + this result) tagged origin.kind='task-notification'. Its
             // cost + text ARE real (accrue + render them), but it must NOT clear the
             // user's foreground `busy`, so flag it so the store can guard that.
-            fromTaskNotification
+            fromTaskNotification,
+            // A peer-woken turn ends with origin.kind='peer'; same guard as above so it
+            // doesn't clear the user's busy or run user-turn side effects.
+            fromPeer
           }
         ]
+        // Backfill the pending placeholder (or insert a resolved block) with the peer's sender + body.
+        if (fromPeer && typeof env.origin?.body === 'string') {
+          out.push({
+            type: 'peer-message',
+            from: env.origin.name ?? env.origin.from ?? 'a peer',
+            body: env.origin.body
+          })
+        }
         // A turn that failed with ONLY a result envelope (no assistant text, nothing on
         // stderr) otherwise ends looking successful: the store's result case reads
         // neither is_error nor the result text. Surface it as the in-chat error box.
         // hadText de-dups the API-error case (243 #22/#23) where the failure already
         // arrived as an assistant snapshot; the interrupt is the user's own Stop, not a
-        // failure; a bg subagent's failing result must not red-banner the foreground.
-        if (env.is_error && !hadText && !wasInterrupted && !fromTaskNotification) {
+        // failure; a bg subagent's or peer's failing result must not red-banner the user.
+        if (env.is_error && !hadText && !wasInterrupted && !fromTaskNotification && !fromPeer) {
           out.push({ type: 'error', message: env.result ?? 'The request failed.', severity: 'error' })
         }
         return out
       }
+      case 'command_lifecycle':
+        // Brackets a peer-triggered turn. `started` fires before the reply, so the placeholder
+        // lands above it; the terminal state sweeps a placeholder that never resolved.
+        if (env.state === 'started') return [{ type: 'peer-pending' }]
+        if (env.state === 'completed' || env.state === 'cancelled') return [{ type: 'peer-lifecycle-end' }]
+        return []
       default:
         return []
     }

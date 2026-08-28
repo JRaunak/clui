@@ -407,6 +407,51 @@
   }
 }
 
+/* Peer placeholder ellipsis. Sibling of TypingDots (same 1.2s / 0.16s stagger) but an
+   opacity fade instead of the translateY bounce, so "…messaging" reads distinct from
+   "Claude thinking". The dots are decorative and aria-hidden and the meaning is the static
+   sentence, so opacity may go fully to 0 (no contrast-floor concern). Three literal glyphs,
+   each on a staggered keyframe; no textContent swap (that would break
+   animate-only-transform/opacity). */
+@keyframes peer-ellipsis {
+  0% {
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.peer-ellipsis b {
+  font-weight: inherit;
+  animation: peer-ellipsis 1.2s ease-in-out infinite both;
+}
+.peer-ellipsis b:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.peer-ellipsis b:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+/* Backfill: fade the resolved peer header in over one normal duration (the slot is
+   reserved from the placeholder, so nothing below shifts). */
+@keyframes peer-head-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.peer-head-in {
+  animation: peer-head-in var(--duration-normal) var(--ease-out);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
    Base
    ───────────────────────────────────────────────────────────────────────── */
@@ -494,6 +539,14 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* Pin the peer ellipsis ON (a resting "..."). Without this the neutralizer above
+     freezes the `both`-filled dots at the 100% frame (opacity:0, invisible), hiding the
+     ellipsis entirely, so this override is load-bearing. */
+  .peer-ellipsis b {
+    animation: none !important;
+    opacity: 1 !important;
   }
 }
 

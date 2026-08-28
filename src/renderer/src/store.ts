@@ -118,11 +118,20 @@ export interface SendAttachment {
   display: MessageAttachment
 }
 
+/** An inbound cross-session peer message rendered as its own attributed transcript block
+ *  (`role:'peer'`). `pending` = the anonymous placeholder shown from command_lifecycle:started
+ *  until the peer-origin result backfills the sender (`from`) + body (`text`). */
+export interface PeerMessage {
+  from: string
+  pending: boolean
+}
+
 export interface ChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'peer'
   /** Visible text (assistant text deltas concatenated), kept for the fallback
-   *  render path + transcript rebuild; live rendering uses `blocks` for ordering. */
+   *  render path + transcript rebuild; live rendering uses `blocks` for ordering.
+   *  For a 'peer' message this holds the peer's body. */
   text: string
   /** Shown collapsed. */
   thinking: string
@@ -133,6 +142,9 @@ export interface ChatMessage {
   /** Attachments the user added to this turn (image thumbnails / file chips in their
    *  own bubble). Optional so the huge majority of messages stay untouched. */
   attachments?: MessageAttachment[]
+  /** Set on a `role:'peer'` message: the inbound cross-session block's sender + pending
+   *  state. Absent on every normal user/assistant message. */
+  peer?: PeerMessage
 }
 
 /**
@@ -632,7 +644,10 @@ async function beginSession(
       const t = await window.clui.readTranscript(opts.resumeSessionId)
       history = t.messages.map((m) => ({
         id: m.id,
-        role: m.role,
+        // A recovered inbound peer message becomes a 'peer' block; it's resolved (never
+        // pending) since it's read whole from disk.
+        role: m.peer ? ('peer' as const) : m.role,
+        peer: m.peer ? { from: m.peer.from, pending: false } : undefined,
         text: m.text,
         thinking: m.thinking,
         tools: m.tools.map((tc) => ({ ...tc })),
@@ -852,7 +867,10 @@ function touchesMessages(type: DomainEvent['type']): boolean {
     type === 'thinking-delta' ||
     type === 'tool-use-start' ||
     type === 'tool-use-stop' ||
-    type === 'tool-result'
+    type === 'tool-result' ||
+    type === 'peer-pending' ||
+    type === 'peer-message' ||
+    type === 'peer-lifecycle-end'
   )
 }
 
@@ -1544,14 +1562,54 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.backgroundTasks = next
           break
         }
+        case 'peer-pending': {
+          // The anonymous placeholder, above the reply that streams after (cause before effect).
+          // A non-'assistant' role means the reply won't fold into it; a fresh message forms below.
+          messages.push({
+            id: `peer-${Date.now()}-${messages.length}`,
+            role: 'peer',
+            text: '',
+            thinking: '',
+            tools: [],
+            blocks: [],
+            peer: { from: '', pending: true }
+          })
+          patch.lastActivityMs = Date.now()
+          break
+        }
+        case 'peer-message': {
+          // Backfill the open placeholder in place (slot reserved from `started`, no shift).
+          // If none is open (degraded result-only path), append a resolved block.
+          const idx = messages.findLastIndex((m) => m.role === 'peer' && m.peer?.pending)
+          if (idx >= 0) {
+            messages[idx] = { ...messages[idx], text: e.body, peer: { from: e.from, pending: false } }
+          } else {
+            messages.push({
+              id: `peer-${Date.now()}-${messages.length}`,
+              role: 'peer',
+              text: e.body,
+              thinking: '',
+              tools: [],
+              blocks: [],
+              peer: { from: e.from, pending: false }
+            })
+          }
+          patch.lastActivityMs = Date.now()
+          break
+        }
+        case 'peer-lifecycle-end': {
+          // Lifecycle ended with a placeholder still pending (non-peer lifecycle, or a
+          // cancelled send): drop it rather than leave a phantom.
+          const idx = messages.findLastIndex((m) => m.role === 'peer' && m.peer?.pending)
+          if (idx >= 0) messages.splice(idx, 1)
+          break
+        }
         case 'result':
-          // A backgrounded subagent's COMPLETION arrives as its own result tagged
-          // `fromTaskNotification`. Its cost + text are real (accrued/rendered below +
-          // via the normal text path), but this result is NOT the user's foreground turn
-          // ending, so it must NOT clear `busy` (that would free the composer mid-turn
-          // if the user has since started a new prompt) and must NOT be treated as a
-          // turn boundary for lastActivity. Only a genuine turn-end clears busy.
-          if (!e.fromTaskNotification) {
+          // A bg-subagent completion (`fromTaskNotification`) or a peer-woken turn (`fromPeer`)
+          // arrives as its own result: cost is real (accrued below) but it's not the user's
+          // turn ending, so it must not clear `busy`, release the queue, or trigger the
+          // /rename rescan. Only a genuine user turn-end does those.
+          if (!e.fromTaskNotification && !e.fromPeer) {
             patch.busy = false
             patch.lastActivityMs = Date.now()
             // A real turn boundary: if the user queued message(s) during this turn, release

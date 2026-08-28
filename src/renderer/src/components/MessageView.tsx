@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
-import { useSession, type ChatMessage, type MessageAttachment, type ToolCall } from '../store'
+import { useEffect, useRef, useState } from 'react'
+import { useSession, type ChatMessage, type MessageAttachment, type PeerMessage, type ToolCall } from '../store'
 import { TypingDots } from './TypingDots'
 import { Markdown } from './Markdown'
-import { IconChevron, IconCheck, IconClose, IconFile, IconChecklist, IconSendToTray } from './Icon'
+import { IconChevron, IconCheck, IconClose, IconFile, IconChecklist, IconMessage, IconSendToTray } from './Icon'
 
 /** Non-image attachments render as a file chip matching the composer pill's language. */
 function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element {
@@ -73,6 +73,7 @@ function renderUserText(text: string): (string | JSX.Element)[] {
 }
 
 export function MessageView({ message }: { message: ChatMessage }): JSX.Element {
+  if (message.role === 'peer' && message.peer) return <PeerMessageView message={message} peer={message.peer} />
   const isUser = message.role === 'user'
   // An assistant turn whose only content is entering plan mode renders as a bare full-width
   // marker, not an empty "Claude" bubble (the card is dropped for a divider, nothing else left).
@@ -162,6 +163,104 @@ function PlanModeDivider(): JSX.Element {
         <span className="uppercase tracking-[0.14em]">entered plan mode</span>
       </span>
       <span className="h-px flex-1 bg-border" aria-hidden="true" />
+    </div>
+  )
+}
+
+/** A body that fits one line renders expanded with no chevron (collapsing a one-liner is
+ *  pointless friction); longer bodies collapse by default to a one-line preview. */
+const PEER_COLLAPSE_OVER = 72
+
+/**
+ * An inbound cross-session PEER message. Info-blue (never terracotta), with identity on the
+ * glyph + `@` sigil + serif name + verb, not hue alone. `pending` is the anonymous
+ * placeholder that backfills in place when the peer-origin result lands. Collapsible via
+ * ToolGroup's local-state pattern; Virtuoso remeasures on the height change.
+ */
+function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMessage }): JSX.Element {
+  const long = message.text.includes('\n') || message.text.length > PEER_COLLAPSE_OVER
+  const [open, setOpen] = useState(!long)
+  // Crossfade the resolved header ONLY on the live pending→resolved flip (same mounted
+  // item), not on a fresh mount of an already-resolved block (resume / scroll re-entry),
+  // where prevPending starts false.
+  const [justResolved, setJustResolved] = useState(false)
+  const prevPending = useRef(peer.pending)
+  useEffect(() => {
+    if (prevPending.current && !peer.pending) {
+      setJustResolved(true)
+      const t = setTimeout(() => setJustResolved(false), 220)
+      prevPending.current = peer.pending
+      return () => clearTimeout(t)
+    }
+    prevPending.current = peer.pending
+    return undefined
+  }, [peer.pending])
+
+  const shell = 'rounded-r-md border-l-2 border-info bg-info/7 py-[9px] pl-[13px] pr-3'
+  // A fixed leading slot for the chevron; the pending and short headers hold an empty one so
+  // the glyph/name column aligns across states (else stacked short + collapsed blocks don't).
+  const gutter = <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+
+  if (peer.pending) {
+    return (
+      <div className={`${shell} border-dashed`}>
+        <div className="flex items-center gap-2">
+          {gutter}
+          <IconMessage className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
+          {/* Accessible text is the stable sentence; the dots are decorative. */}
+          <span className="font-serif text-[13px] font-medium italic text-faint">
+            A peer session is messaging this session
+            <span className="peer-ellipsis inline-flex" aria-hidden="true">
+              <b>.</b>
+              <b>.</b>
+              <b>.</b>
+            </span>
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  const head = justResolved ? 'peer-head-in' : ''
+  const glyph = <IconMessage className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
+  const name = <span className="shrink-0 font-serif text-[13px] font-semibold text-info">@{peer.from}</span>
+  // Full-strength info (not reduced opacity) for the contrast margin lux verified.
+  const verb = <span className="shrink-0 text-[11px] uppercase tracking-[0.12em] text-info">messaged</span>
+
+  return (
+    <div className={shell}>
+      {long ? (
+        <button
+          type="button"
+          className={`flex w-full items-center gap-2 text-left ${head}`}
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <IconChevron
+            className={`h-3.5 w-3.5 shrink-0 text-info transition-transform ${open ? 'rotate-90' : ''}`}
+            aria-hidden="true"
+          />
+          {glyph}
+          {name}
+          {open ? (
+            verb
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-[13.5px] italic text-dim">{message.text}</span>
+          )}
+        </button>
+      ) : (
+        <div className={`flex items-center gap-2 ${head}`}>
+          {gutter}
+          {glyph}
+          {name}
+          {verb}
+        </div>
+      )}
+      {open && (
+        <div className="mb-px mt-2 whitespace-pre-wrap pl-[43px] text-[15px] leading-[1.55] text-content">
+          {message.text}
+        </div>
+      )}
     </div>
   )
 }

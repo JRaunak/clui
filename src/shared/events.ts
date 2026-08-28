@@ -176,7 +176,20 @@ export type DomainEvent =
        *  (CLI `origin.kind:'task-notification'`), not the user's own turn ending. Its
        *  cost is real (still accrued) but it must NOT clear the composer's `busy`. */
       fromTaskNotification?: boolean
+      /** True when this result ends a peer-woken turn (`origin.kind:'peer'`). Like
+       *  `fromTaskNotification`: cost is real but it isn't the user's turn, so it must not
+       *  clear `busy` or run turn-end side effects. */
+      fromPeer?: boolean
     }
+  /** A peer began messaging this session (`command_lifecycle:started`): insert the
+   *  anonymous placeholder, backfilled by `peer-message` at the result. */
+  | { type: 'peer-pending' }
+  /** An inbound peer message resolved (sender + body from `result.origin.kind:'peer'`):
+   *  backfill the open placeholder in place, or append if none is open. */
+  | { type: 'peer-message'; from: string; body: string }
+  /** The peer turn's `command_lifecycle` ended (completed/cancelled): drop a still-pending
+   *  placeholder that never resolved, so a non-peer lifecycle can't leave a phantom. */
+  | { type: 'peer-lifecycle-end' }
   /** The CLI wants approval for a tool call. */
   | {
       type: 'permission-request'
