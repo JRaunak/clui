@@ -271,14 +271,14 @@ export function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-[12vh]"
+      className="glass-scrim fixed inset-0 z-50 flex items-start justify-center pt-[12vh]"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="flex max-h-[70vh] w-[min(640px,92%)] flex-col overflow-hidden rounded-xl border border-border bg-bg-elev shadow-lg"
+        className="glass-panel flex max-h-[70vh] w-[min(640px,92%)] flex-col overflow-hidden rounded-xl border border-border-strong"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
