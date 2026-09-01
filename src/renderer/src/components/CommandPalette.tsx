@@ -278,7 +278,7 @@ export function CommandPalette({
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="glass-panel flex max-h-[70vh] w-[min(640px,92%)] flex-col overflow-hidden rounded-xl border border-border-strong"
+        className="glass-panel flex max-h-[70vh] w-[min(640px,92%)] flex-col overflow-hidden rounded-2xl border border-border-strong"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
@@ -367,7 +367,7 @@ function Row({
          terracotta left-edge bar plus the raised fill) so the eye tracks selection
          where names are read (the left). */
       className={`relative flex w-full items-center gap-2.5 px-4 py-2 text-left ${
-        selected ? 'bg-bg-raised' : ''
+        selected ? 'glass-row-selected' : ''
       }`}
     >
       {selected && (

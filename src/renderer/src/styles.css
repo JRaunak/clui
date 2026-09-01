@@ -106,6 +106,7 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
 
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.28);
   --shadow-md: 0 4px 12px rgb(0 0 0 / 0.32);
@@ -113,13 +114,16 @@
   --shadow-glow: 0 0 0 1px color-mix(in oklab, var(--terra-500) 40%, transparent),
     0 4px 20px color-mix(in oklab, var(--terra-500) 22%, transparent);
 
-  /* Liquid-glass material for elevated overlays. Fills COMPOSE --color-bg-elev via
-     color-mix so they track the semantic surface; saturate() is deliberately absent
-     so a saturated backdrop can't bleed a tint into the neutral fill. */
-  --glass-fill: color-mix(in srgb, var(--color-bg-elev) 90%, transparent);
-  --glass-blur: 24px;
-  --glass-scrim: rgb(0 0 0 / 0.66);
-  --glass-edge: inset 0 1px 0 rgb(255 255 255 / 0.07);
+  /* Liquid-glass material for elevated overlays. Dark = "smoked": bg-elev mixed
+     toward black at low opacity, so the blurred backdrop reads through a dark tint.
+     --glass-filter is blur-only here (no saturate) so a saturated backdrop can't
+     bleed a hue into the neutral fill; light adds a sub-1 saturate that mutes the
+     terracotta syntax bleeding through. */
+  --glass-fill: color-mix(in srgb, color-mix(in srgb, var(--color-bg-elev), #000 66%) 30%, transparent);
+  --glass-blur: 16px;
+  --glass-filter: blur(var(--glass-blur));
+  --glass-scrim: rgb(0 0 0 / 0.50);
+  --glass-edge: inset 0 1px 0 rgb(255 255 255 / 0.12);
   --glass-shadow: 0 16px 48px rgb(0 0 0 / 0.5);
 
   --duration-fast: 150ms;
@@ -217,50 +221,50 @@
    in index.html + theme.ts; 'system' is resolved to a concrete value in JS).
    `:root[data-theme=…]` out-specifies the `@theme`→`:root` dark defaults above.
 
-   Colors are RE-DERIVED, never inverted — the design skill's rule. Terracotta
-   #d97757 is only ~2.3:1 on white, so accent/ring/status hues are darkened until
-   every text + fill + focus pair clears WCAG AA. Verified with a contrast script
-   (/tmp/contrast.mjs during dev): body/dim/accent ≥4.5:1 on every surface they
-   touch, paired foregrounds ≥4.5:1 on their fills, ring ≥3:1. Warm-paper palette
-   echoes the light app-icon background (#f4f1ea) so the identity carries over.
+   Colors are RE-DERIVED, never inverted — the design skill's rule. Surfaces are a
+   NEUTRAL gray ramp (no warm cast): the accent works by scarcity, so it must sit on
+   a neutral field. Terracotta #de7356 is only ~2.3:1 on white, so accent/ring/status
+   hues are darkened until every text + fill + focus pair clears WCAG AA. Verified:
+   body/dim/accent ≥4.5:1 on every surface they touch, paired foregrounds ≥4.5:1 on
+   their fills, ring ≥3:1.
    ───────────────────────────────────────────────────────────────────────── */
 :root[data-theme='light'] {
-  /* Surfaces — warm off-white canvas; elevation reads BRIGHTER (toward white),
-     sidebar recedes into a deeper cream, hover/chips darken a step. */
-  --color-bg: #f6f3ee;
-  --color-bg-elev: #fffdfa;
-  --color-bg-sidebar: #efe9e0;
-  --color-bg-raised: #e7e0d4;
-  --color-border: #e0d8ca;
-  --color-border-strong: #cabfac;
+  /* Surfaces — neutral off-white canvas; elevation reads BRIGHTER (to pure white),
+     sidebar recedes a step, hover/chips darken a step. */
+  --color-bg: #fafafa;
+  --color-bg-elev: #ffffff;
+  --color-bg-sidebar: #f2f2f2;
+  --color-bg-raised: #eaeaea;
+  --color-border: #dedede;
+  --color-border-strong: #c2c2c2;
   /* A shallow recess on paper: 3% black gives the pill a visible boundary against the
      bg-elev composer shell, and hover CANNOT exceed 4%: a darker fill drops the light
      X-High effort readout (dark-ish text) below 4.5:1 (verified 4% = 4.55, 7% = 4.16). */
   --color-control: color-mix(in oklab, #000 3%, var(--color-bg-elev));
   --color-control-hover: color-mix(in oklab, #000 4%, var(--color-bg-elev));
-  --color-control-danger-hover: color-mix(in oklab, var(--color-err) 10%, #fffdfa);
+  --color-control-danger-hover: color-mix(in oklab, var(--color-err) 10%, #ffffff);
   --color-row-hover: color-mix(in oklab, #000 5%, var(--color-bg-elev));
 
-  /* Text — warm near-black ramp (14.7 / 6.6 / 5.0 :1 on the base surface). */
-  --color-content: #22201c;
-  --color-dim: #5c554c;
-  /* faint darkened #6f675c→#645d52 so it clears AA as text on the darkest light
-     surface it touches (4.96:1 on bg-raised #e7e0d4, 5.88:1 on bg; the old value
-     was 4.25:1 on raised — a fail), still a step lighter than `dim`. */
-  --color-faint: #645d52;
+  /* Text — neutral near-black ramp (16.7 / 8.5 / 6.9 :1 on the base surface). */
+  --color-content: #1a1a1a;
+  --color-dim: #4a4a4a;
+  /* faint = tertiary meta; clears AA as text on the darkest surface it lands on
+     (6.01:1 on bg-raised #eaeaea, 4.78:1 on the palette's scoped raised #d2d2d2),
+     still a step lighter than `dim`. */
+  --color-faint: #575757;
 
   /* Accent — #de7356 darkened for AA as text/marks/ring on paper (it's only ~3:1
-     on white at full strength; #a8492a gives 5.2:1). Paired foreground flips to
-     white (5.75:1 on the fill). Tinted surface = warm terracotta paper anchor. */
+     on white at full strength; #a8492a gives 5.5:1). Paired foreground flips to
+     white. Tinted surface neutralized to gray so the accent stays the only warm note. */
   --color-accent: #a8492a;
   --color-accent-hover: #8f3d20;
   --color-accent-deep: #7a3216;
-  --color-accent-surface: #f3e4dc;
+  --color-accent-surface: #e6e6e6;
   --color-on-accent: #ffffff;
 
-  /* Message + tool surfaces — subtle warm cards, text ≥12:1. */
-  --color-user: #ece4d7;
-  --color-tool: #efe9df;
+  /* Message + tool surfaces — neutral gray cards, text ≥12:1. */
+  --color-user: #f0f0f0;
+  --color-tool: #f4f4f4;
 
   /* Status — darkened so each clears 4.5:1 on both bg and elevated surfaces.
      Paired foregrounds flip: warn/err fills are now dark → white text on them. */
@@ -297,12 +301,16 @@
      correctly on paper — the --shadow-* primitives above are unused, so there's
      nothing theme-specific to re-map here.) */
 
-  /* Paper needs its own glass values, not the dark ones inverted: lighter scrim,
-     a brighter top rim on the off-white fill, and a warm-neutral shadow. */
-  --glass-fill: color-mix(in srgb, var(--color-bg-elev) 90%, transparent);
-  --glass-scrim: rgb(0 0 0 / 0.45);
-  --glass-edge: inset 0 1px 0 rgb(255 255 255 / 0.55);
-  --glass-shadow: 0 16px 48px rgb(40 33 28 / 0.16);
+  /* Light glass = a translucent frosted-gray pane (dark-glass technique on paper):
+     a near-white neutral fill at low opacity so the backdrop reads through, with a
+     sub-1 saturate so terracotta bleeding through stays muted. The scoped specular
+     rim (below) replaces dark's flat inset highlight. */
+  --glass-fill: color-mix(in srgb, color-mix(in srgb, #fff, #000 5%) 33%, transparent);
+  --glass-blur: 16px;
+  --glass-filter: blur(var(--glass-blur)) saturate(0.7);
+  --glass-scrim: rgb(0 0 0 / 0.20);
+  --glass-edge: inset 0 0 20px rgb(255 255 255 / 0.10), inset 0 -1px 0 rgb(0 0 0 / 0.05);
+  --glass-shadow: 0 8px 32px rgb(0 0 0 / 0.18), 0 2px 6px rgb(0 0 0 / 0.08);
 }
 
 /* The live-dot "breath" is carried by SCALE ONLY — opacity stays at 1. Dipping
@@ -594,8 +602,44 @@ body {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+  /* The specular rim is a glass affordance; on the opaque fallback it's noise. */
+  .glass-panel::before {
+    display: none;
+  }
   .glass-scrim {
     background: rgb(0 0 0 / 0.55);
+  }
+}
+
+/* Light glass is a frosted-gray pane, so it gets a crisper specular RIM (a
+   masked 1px gradient border) than the flat inset highlight the dark edge uses.
+   Unlayered + higher specificity → beats the @utility. */
+:root[data-theme='light'] .glass-panel {
+  position: relative;
+}
+:root[data-theme='light'] .glass-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(to bottom, rgb(255 255 255 / 0.7), rgb(255 255 255 / 0) 40%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+/* Selected/hover row reads as a lit segment of the glass, not an opaque block:
+   a translucent wash over the transparent panel. The terracotta left-bar stays
+   the primary selection cue. */
+.glass-row-selected { background: rgb(255 255 255 / 0.10); }
+:root[data-theme='light'] .glass-row-selected { background: rgb(0 0 0 / 0.07); }
+
+/* No backdrop-filter support at all → an opaque near-solid surface. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-panel {
+    background: rgb(242 242 242 / 0.95);
   }
 }
 
@@ -619,8 +663,8 @@ body {
 /* The glass material, applied to overlay panels. Tokens + rationale above. */
 @utility glass-panel {
   background: var(--glass-fill);
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
   box-shadow: var(--glass-shadow), var(--glass-edge);
 }
 @utility glass-scrim {
