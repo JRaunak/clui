@@ -359,18 +359,19 @@ export const DEFAULT_SETTINGS: CluiSettings = {
 }
 
 // Ordered by the risk ramp (safest concrete mode → riskiest), with System Default
-// (settings.json-honoring) pinned first. `dontAsk`/`auto` are 2.1.210 CLI modes
-// (verified accepted headless): dontAsk = never prompts, DENIES anything not
-// pre-approved (most restrictive; verified it hard-denies a safe-but-unlisted
-// command); auto = runs low-risk silently + delegates risk to Claude's classifier
-// (Claude Code's new default).
+// (settings.json-honoring) pinned first. `plan` sits among the asking modes since it
+// only PROPOSES (touches nothing until approved), so it's no riskier than Interactive.
+// `dontAsk`/`auto` are 2.1.210 CLI modes (verified accepted headless): dontAsk = never
+// prompts, DENIES anything not pre-approved (most restrictive; verified it hard-denies a
+// safe-but-unlisted command); auto = runs low-risk silently + delegates risk to Claude's
+// classifier (Claude Code's new default).
 export const PERMISSION_MODES: CluiSettings['permissionMode'][] = [
   'inherit',
   'dontAsk',
   'default',
+  'plan',
   'auto',
   'acceptEdits',
-  'plan',
   'bypassPermissions'
 ]
 

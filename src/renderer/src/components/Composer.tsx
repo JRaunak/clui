@@ -22,7 +22,7 @@ import {
   IconEdit,
   IconChecklist,
   IconShieldOff,
-  IconImage,
+  IconPlus,
   IconFile,
   IconClose
 } from './Icon'
@@ -200,7 +200,10 @@ export function Composer(): JSX.Element {
     label: PERMISSION_MODE_LABELS[m],
     color: PERMISSION_MODE_COLORS[m],
     description: PERMISSION_MODE_DESCRIPTIONS[m],
-    icon: <PermissionIcon mode={m} />
+    icon: <PermissionIcon mode={m} className="h-4 w-4" />,
+    // Autonomous (bypassPermissions) is the full-access danger tier: the whole row
+    // goes err, not a new hue (terracotta stays scarce).
+    tone: m === 'bypassPermissions' ? ('danger' as const) : undefined
   }))
 
   return (
@@ -223,8 +226,8 @@ export function Composer(): JSX.Element {
         {dragOver && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg-elev/85">
             <div className="flex items-center gap-2 text-sm font-medium text-accent">
-              <IconImage className="h-5 w-5" />
-              Drop to attach — images inline, other files as @references
+              <IconPlus className="h-5 w-5" />
+              Drop to attach · images inline, other files as @references
             </div>
           </div>
         )}
@@ -255,13 +258,14 @@ export function Composer(): JSX.Element {
             rows={2}
           />
         </div>
-        <div className="flex items-center gap-2">
-          {/* Attach-file button (keyboard/a11y affordance for paste + drop). Accepts the
-              same set the drop handler routes: images, PDFs, and common text files. */}
+        <div className="flex items-center">
+          {/* Attach-file button (keyboard/a11y affordance for paste + drop). No `accept`
+              filter: the picker routes every file the same way the drop handler does.
+              Images go inline; everything else (incl. .docx/.xlsx) becomes an @path token
+              the model Reads on demand. A curated allowlist only drifted out of parity. */}
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/*,.md,.csv,.tsv,.json,.jsonl,.yaml,.yml,.toml,.log,.xml,.ts,.tsx,.js,.jsx,.py,.rs,.go,.sh,.sql,.c,.cpp,.java"
             multiple
             className="hidden"
             onChange={onPickFiles}
@@ -270,32 +274,36 @@ export function Composer(): JSX.Element {
           />
           <button
             type="button"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-dim transition-colors hover:border-border-strong hover:text-content disabled:cursor-default disabled:opacity-50"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-control text-dim transition-colors hover:bg-control-hover hover:text-content disabled:cursor-default disabled:opacity-50"
             onClick={() => fileInputRef.current?.click()}
             disabled={!hasSession}
-            title="Attach a file — images, PDFs & text files"
-            aria-label="Attach a file"
+            title="Attach an image or file"
+            aria-label="Attach an image or file"
           >
-            <IconImage className="h-4 w-4" />
+            <IconPlus className="h-4 w-4" />
           </button>
-          {/* Attach is a message-content action; everything to its right is run
-              configuration. This is the only divider in the row: peers within the
-              run-config group are not separated, so one rule marks the one real boundary. */}
-          <span className="h-6 w-px shrink-0 bg-border-strong" aria-hidden="true" />
-          {/* C3: instrument control chips, model/effort + permission grouped. */}
-          <ModelEffortPicker />
+          {/* Attach is a message-content action; the config pills to its right are one
+              group. Proximity marks the boundary (ml-3 here vs the tight gap-1.5 inside
+              the group); the borderless-well pills need no divider rule between them. */}
+          <div className="ml-3 flex items-center gap-1.5">
+            <ModelEffortPicker />
           <Dropdown<PermissionModeChoice>
             value={displayMode}
             options={permOptions}
             onChange={(m) => void setPermissionMode(m)}
-            title="Permission mode — this session only; never writes settings.json"
+            title="Change permissions"
             direction="up"
-            menuClassName="w-64"
+            variant="pill"
+            menuClassName="w-72"
             icon={<PermissionIcon mode={displayMode} />}
           />
-          <UltracodeToggle />
+            <UltracodeToggle />
+          </div>
 
-          <div className="ml-auto flex items-center gap-3">
+          {/* pr-[3px] equalizes the send button's corner inset: it's 26px centered in the
+              32px row, so it already floats 3px above the shell's bottom padding; matching
+              that on the right seats it the same distance from both walls. */}
+          <div className="ml-auto flex items-center gap-4 pr-[3px]">
             {/* The verb+timer lives in the chat footer (WorkingStatus) for CLI-parity,
                 so the transcript tail is the single foreground activity signal. Here the
                 dock keeps only the context gauge + Stop; the dock-edge pulse is ambient. */}
@@ -304,23 +312,26 @@ export function Composer(): JSX.Element {
               usedTokens={contextTokens}
               contextWindow={contextWindow}
             />
-            {/* C2: send/stop morph. */}
+            {/* Send/stop morph in place: a 26px disc, enough below the 30px gauge beside
+                it that the two circles don't read as equal siblings (a solid fill outweighs
+                a thin ring at equal size). Fill + glyph shape carry the state (arrow↔stop),
+                never color alone. */}
             {busy ? (
               <button
-                className="flex h-9 w-9 items-center justify-center rounded-lg bg-err text-on-err transition-transform hover:scale-105 active:scale-95"
+                className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-err text-on-err transition-transform active:scale-95"
                 onClick={() => void interrupt()}
                 title="Stop"
               >
-                <IconStop className="h-4 w-4" />
+                <IconStop className="h-3 w-3" />
               </button>
             ) : (
               <button
-                className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-on-accent transition-[background-color,transform] hover:bg-accent-hover active:scale-95 disabled:cursor-default disabled:bg-border disabled:text-faint"
+                className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-accent text-on-accent transition-[background-color,transform] hover:bg-accent-hover active:scale-95 disabled:cursor-default disabled:bg-border disabled:text-faint"
                 onClick={() => void submit()}
                 disabled={!text.trim() && attachments.length === 0}
                 title="Send"
               >
-                <IconArrowUp className="h-4 w-4" />
+                <IconArrowUp className="h-3 w-3 translate-y-[0.5px]" />
               </button>
             )}
           </div>
@@ -362,9 +373,15 @@ const PERMISSION_MODE_ICONS: Record<
   bypassPermissions: IconShieldOff
 }
 
-function PermissionIcon({ mode }: { mode: PermissionModeChoice }): JSX.Element {
+function PermissionIcon({
+  mode,
+  className = 'h-3.5 w-3.5'
+}: {
+  mode: PermissionModeChoice
+  className?: string
+}): JSX.Element {
   const Glyph = PERMISSION_MODE_ICONS[mode]
-  return <Glyph className={`h-3.5 w-3.5 shrink-0 ${PERMISSION_MODE_COLORS[mode]}`} />
+  return <Glyph className={`${className} shrink-0 ${PERMISSION_MODE_COLORS[mode]}`} />
 }
 
 /** A thumbnail chip for one staged attachment: image preview + filename + remove ✕.

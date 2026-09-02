@@ -131,6 +131,19 @@
   --color-bg-raised: var(--ink-850);
   --color-border: var(--ink-820);
   --color-border-strong: var(--ink-780);
+  /* Recessed-well fill for the composer's borderless config pills. It sits BELOW
+     bg-elev's luminance (not a raised translucent chip) so the saturated effort
+     readout keeps its contrast headroom; a lighter fill fails the err-red gate. */
+  --color-control: color-mix(in oklab, #000 10%, var(--color-bg-elev));
+  --color-control-hover: color-mix(in oklab, #000 30%, var(--color-bg-elev));
+  /* The danger permission row's own hover fill: neutral control-hover would drop
+     err below 4.5:1, so it darkens toward err instead (keeps err at 4.54:1). */
+  --color-control-danger-hover: color-mix(in oklab, var(--color-err) 14%, #121213);
+  /* Menu-row hover for the composer cards. In dark it lifts (bg-raised is lighter than
+     the card); in light there's nothing brighter than the near-white card, so it's a
+     soft warm darken — kept well short of bg-raised's heavier tan. Scoped to these cards
+     so the app's other menus keep their standard bg-raised hover. */
+  --color-row-hover: var(--color-bg-raised);
   --color-content: var(--paper-100);
   --color-dim: var(--paper-400);
   --color-faint: var(--paper-500);
@@ -211,6 +224,13 @@
   --color-bg-raised: #e7e0d4;
   --color-border: #e0d8ca;
   --color-border-strong: #cabfac;
+  /* A shallow recess on paper: 3% black gives the pill a visible boundary against the
+     bg-elev composer shell, and hover CANNOT exceed 4%: a darker fill drops the light
+     X-High effort readout (dark-ish text) below 4.5:1 (verified 4% = 4.55, 7% = 4.16). */
+  --color-control: color-mix(in oklab, #000 3%, var(--color-bg-elev));
+  --color-control-hover: color-mix(in oklab, #000 4%, var(--color-bg-elev));
+  --color-control-danger-hover: color-mix(in oklab, var(--color-err) 10%, #fffdfa);
+  --color-row-hover: color-mix(in oklab, #000 5%, var(--color-bg-elev));
 
   /* Text — warm near-black ramp (14.7 / 6.6 / 5.0 :1 on the base surface). */
   --color-content: #22201c;

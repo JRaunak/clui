@@ -121,7 +121,9 @@ export function ModelEffortPicker(): JSX.Element {
       <button
         ref={triggerRef}
         type="button"
-        className="flex h-8 items-center gap-1.5 rounded-md border border-border bg-bg px-2.5 text-xs text-content transition-colors hover:border-border-strong focus:border-accent focus:outline-none"
+        className={`flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs text-content transition-colors ${
+          open ? 'bg-control-hover' : 'bg-control hover:bg-control-hover'
+        }`}
         onClick={() => {
           setOpen((o) => !o)
           setHover(null)
@@ -158,7 +160,7 @@ export function ModelEffortPicker(): JSX.Element {
 
       {open && (
         <div
-          className="absolute bottom-full left-0 mb-1.5 w-[180px] rounded-lg border border-border bg-bg-elev py-1 text-xs shadow-2xl"
+          className="absolute bottom-full left-0 mb-1.5 w-[180px] rounded-xl bg-bg-elev py-1 text-xs shadow-lg"
           onMouseLeave={scheduleHide}
         >
           <div className="flex items-center justify-between px-3 py-1 text-[11px] uppercase tracking-wide text-dim">
@@ -234,11 +236,7 @@ export function ModelEffortPicker(): JSX.Element {
                     refinement via the ▶ chevron (click to open the flyout, also opens
                     on hover) so it stays reachable by both click + keyboard without
                     gating the common case. */}
-                <div
-                  className={`flex w-full items-center hover:bg-user ${
-                    info.id === modelChoice ? 'text-accent' : 'text-content'
-                  }`}
-                >
+                <div className="flex w-full items-center text-content hover:bg-row-hover">
                   <button
                     type="button"
                     className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left"
@@ -248,7 +246,7 @@ export function ModelEffortPicker(): JSX.Element {
                       setOpen(false)
                     }}
                   >
-                    <span className="w-3 shrink-0 text-dim">
+                    <span className="w-3 shrink-0 text-accent">
                       {info.id === modelChoice ? '✓' : ''}
                     </span>
                     <span className="flex-1 truncate">{info.label}</span>
@@ -329,7 +327,7 @@ function EffortFlyout({
 
   return (
     <div
-      className="absolute top-1/2 left-full z-50 ml-1 w-56 -translate-y-1/2 rounded-lg border border-border bg-bg-elev p-3 shadow-2xl"
+      className="absolute top-1/2 left-full z-50 ml-1 w-56 -translate-y-1/2 rounded-lg bg-bg-elev p-3 shadow-lg"
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
     >

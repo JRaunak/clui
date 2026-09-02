@@ -12,6 +12,10 @@ export interface DropdownOption<T extends string> {
   description?: string
   /** Optional leading glyph for this option (e.g. a per-mode permission icon). */
   icon?: React.ReactNode
+  /** Marks a full-access / destructive option. In the `pill` variant its whole row
+     renders in `err` with its own darker hover fill. Scoped per-option so the shared
+     Settings/GlobalSearch dropdowns are unaffected. */
+  tone?: 'danger'
 }
 
 /** A custom dropdown replacing the native <select>, which renders as the OS default
@@ -25,6 +29,7 @@ export function Dropdown<T extends string>({
   menuClassName,
   align = 'left',
   direction = 'down',
+  variant = 'default',
   icon
 }: {
   value: T
@@ -38,6 +43,9 @@ export function Dropdown<T extends string>({
   align?: 'left' | 'right'
   /** Open the menu upward (for bottom-docked controls). */
   direction?: 'up' | 'down'
+  /** `pill` = the composer's borderless recessed-well trigger + a radius-xl
+   *  borderless card. `default` = the bordered chip used in Settings/GlobalSearch. */
+  variant?: 'default' | 'pill'
   /** Optional leading icon. */
   icon?: React.ReactNode
 }): JSX.Element {
@@ -51,17 +59,32 @@ export function Dropdown<T extends string>({
   useEscape(open, dismiss)
 
   const current = options.find((o) => o.value === value)
+  const isPill = variant === 'pill'
 
   return (
     <div ref={ref} className={`relative ${className ?? ''}`} title={title}>
       <button
         type="button"
-        className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-bg px-2.5 text-xs transition-colors hover:border-border-strong focus:border-accent focus:outline-none focus-visible:outline-none"
+        className={
+          isPill
+            ? `group flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs transition-colors ${
+                open ? 'bg-control-hover' : 'bg-control hover:bg-control-hover'
+              }`
+            : 'flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-bg px-2.5 text-xs transition-colors hover:border-border-strong focus:border-accent focus:outline-none focus-visible:outline-none'
+        }
         onClick={() => setOpen((o) => !o)}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           {icon}
-          <span className={`whitespace-nowrap font-medium ${current?.color ?? 'text-content'}`}>
+          {/* Pill trigger keeps the label NEUTRAL (dim→content) so the per-mode color
+              lives only on the icon; the bordered variant tints the label per-option. */}
+          <span
+            className={`whitespace-nowrap font-medium ${
+              isPill
+                ? `${open ? 'text-content' : 'text-dim'} group-hover:text-content`
+                : (current?.color ?? 'text-content')
+            }`}
+          >
             {current?.label ?? value}
           </span>
         </span>
@@ -80,7 +103,58 @@ export function Dropdown<T extends string>({
           <path d="M3 4.5 6 7.5 9 4.5" />
         </svg>
       </button>
-      {open && (
+      {open && isPill && (
+        <div
+          className={`absolute z-50 min-w-full overflow-hidden rounded-xl bg-bg-elev p-1.5 shadow-lg ${
+            align === 'right' ? 'right-0' : 'left-0'
+          } ${direction === 'up' ? 'bottom-full mb-1.5' : 'top-full mt-1.5'} ${menuClassName ?? ''}`}
+        >
+          {options.map((o) => {
+            const selected = o.value === value
+            const danger = o.tone === 'danger'
+            // Selection reads as a trailing ✓ glyph in accent (accent-as-glyph clears the
+            // 3:1 non-text floor where accent-as-text on the hover fill would fail, and
+            // keeps the scarce accent off the title). Danger rows go fully err with their
+            // own darker hover fill; other rows keep a neutral title + faint description.
+            return (
+              <button
+                key={o.value}
+                type="button"
+                aria-current={selected ? 'true' : undefined}
+                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors ${
+                  danger ? 'text-err hover:bg-control-danger-hover' : 'hover:bg-row-hover'
+                }`}
+                onClick={() => {
+                  onChange(o.value)
+                  setOpen(false)
+                }}
+              >
+                {o.icon && <span className="shrink-0">{o.icon}</span>}
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className={`text-sm font-medium ${danger ? '' : 'text-content'}`}>
+                    {o.label}
+                  </span>
+                  {o.description && (
+                    <span
+                      className={`whitespace-normal text-xs leading-snug ${
+                        danger ? '' : 'text-faint'
+                      }`}
+                    >
+                      {o.description}
+                    </span>
+                  )}
+                </span>
+                {selected && (
+                  <span className="shrink-0 self-center text-accent" aria-hidden="true">
+                    ✓
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
+      {open && !isPill && (
         <div
           className={`absolute z-50 min-w-full overflow-hidden rounded-lg border border-border bg-bg-elev py-1 shadow-2xl ${
             align === 'right' ? 'right-0' : 'left-0'
