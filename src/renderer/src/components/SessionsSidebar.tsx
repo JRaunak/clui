@@ -368,7 +368,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     // still renders so a delete triggered before collapsing stays cancelable.
     const flat = merged.flatMap((g) => g.sessions.map((s) => ({ s, exists: g.exists })))
     return (
-      <div className="-mr-1 flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto pr-1">
+      <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto scrollbar-none pt-2.5 pb-3">
         {flat.map(({ s, exists }) => (
           <SessionMonogram
             key={s.handleId ?? s.id ?? `${s.cwd}-x`}

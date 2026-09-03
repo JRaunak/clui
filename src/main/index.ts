@@ -176,6 +176,10 @@ function createWindow(): void {
     show: false,
     title: 'Clui',
     backgroundColor: THEME_BG[resolveTheme()],
+    // Hide the native title bar so the sidebar extends to the window top; the traffic
+    // lights overlay the sidebar's top-left band. y centers the 12px dots in the 44px band.
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 19, y: 16 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,

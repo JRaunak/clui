@@ -49,6 +49,9 @@ export function App(): JSX.Element {
   // of these regions (below), so inerting both leaves only the open dialog reachable.
   const asideRef = useRef<HTMLElement>(null)
   const mainRef = useRef<HTMLElement>(null)
+  // The sidebar toggle is anchored by the traffic lights (outside <aside> so it holds a
+  // fixed spot in both states), so it needs inerting alongside aside/main under a modal.
+  const titleToggleRef = useRef<HTMLButtonElement>(null)
   // Where focus sat in the background before a dialog opened, so we can return it on
   // close. Tracked live (any focusin outside the overlay host) rather than captured in
   // an effect, because a child's open-focus (search input) runs before App's effect and
@@ -80,6 +83,7 @@ export function App(): JSX.Element {
   useLayoutEffect(() => {
     if (asideRef.current) asideRef.current.inert = anyOverlayOpen
     if (mainRef.current) mainRef.current.inert = anyOverlayOpen
+    if (titleToggleRef.current) titleToggleRef.current.inert = anyOverlayOpen
     // Only on a real close (was-open → now-closed), NOT on mount: a programmatic .focus()
     // on launch paints the keyboard focus-visible ring with no key pressed.
     if (!anyOverlayOpen && wasOverlayOpenRef.current) {
@@ -179,21 +183,13 @@ export function App(): JSX.Element {
   const openPalette = useCallback(() => setShowPalette(true), [])
   const openNamedSession = useCallback(() => setShowNamedSession(true), [])
 
-  // Toggle focus mode. Persist the new state, and if focus was sitting inside the
-  // sidebar, move it to the mirror control in the incoming layout so keyboard users
-  // aren't dumped on <body> when the old trigger button unmounts. Focus outside the
-  // sidebar is left alone. rAF waits for the swapped chrome to mount.
+  // The sidebar's chrome remounts across a toggle, so if focus sat inside it, move it to the
+  // persistent title-bar toggle rather than let it fall to <body>. Focus outside is left alone.
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => {
       const next = !prev
       void window.clui.updateSettings({ sidebarCollapsed: next })
-      const inSidebar = document.activeElement?.closest('#app-sidebar')
-      if (inSidebar) {
-        requestAnimationFrame(() => {
-          const sel = next ? '[data-rail-expand]' : '[data-sidebar-collapse]'
-          document.querySelector<HTMLElement>(sel)?.focus()
-        })
-      }
+      if (asideRef.current?.contains(document.activeElement)) titleToggleRef.current?.focus()
       return next
     })
   }, [])
@@ -207,7 +203,7 @@ export function App(): JSX.Element {
   })
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="relative flex h-screen overflow-hidden">
       {/* One node, class-swapped by mode. Splitting collapsed/expanded into two keyed
           <aside> branches remounts SessionsSidebar and blanks the list until the next
           disk scan. */}
@@ -215,32 +211,35 @@ export function App(): JSX.Element {
         key="sidebar"
         ref={asideRef}
         id="app-sidebar"
-        className={`flex h-screen min-h-0 shrink-0 flex-col border-r border-border bg-bg-sidebar pt-4 ${
-          sidebarCollapsed ? 'w-11 items-center gap-2.5' : 'w-72 gap-3 px-3'
+        className={`sidebar-anim flex h-screen min-h-0 shrink-0 flex-col ${
+          sidebarCollapsed ? 'w-11 items-center gap-2.5 bg-bg' : 'w-72 gap-3 bg-bg-sidebar'
         }`}
       >
+        {/* Top band under the OS title bar (titleBarStyle:hiddenInset). Its drag region starts
+            at the wordmark (ml-[124px]), so the leftmost 124px (lights + toggle) stays
+            clickable; a drag region swallows clicks on anything over it. */}
+        <div className="flex h-11 shrink-0 items-center">
+          {!sidebarCollapsed && (
+            <div className="ml-[124px] flex h-full flex-1 items-center [-webkit-app-region:drag]">
+              <span className="flex items-baseline gap-2">
+                <span className="font-serif text-2xl font-semibold tracking-tight text-content">
+                  Clui
+                </span>
+                <span className="h-1.5 w-1.5 translate-y-[-2px] rounded-full bg-accent" aria-hidden="true" />
+              </span>
+            </div>
+          )}
+        </div>
         {/* Keyed by mode so the incoming controls remount and fade in. The list below
             is deliberately unkeyed, so it stays mounted across a toggle. */}
         <div
           key={sidebarCollapsed ? 'rail-chrome' : 'expanded-chrome'}
           className={`sidebar-fade flex shrink-0 flex-col ${
-            sidebarCollapsed ? 'items-center gap-2.5' : 'gap-3'
+            sidebarCollapsed ? 'items-center gap-2.5' : 'gap-3 px-3'
           }`}
         >
           {sidebarCollapsed ? (
             <>
-              <button
-                data-rail-expand
-                className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border-strong text-dim transition-colors hover:border-transparent hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
-                onClick={toggleSidebar}
-                aria-label="Expand sidebar"
-                aria-expanded={false}
-                aria-controls="app-sidebar"
-                title="Expand sidebar ⌘B"
-              >
-                <IconSidebar className="h-4 w-4" />
-              </button>
-              <div className="w-6 border-b border-border" />
               <button
                 data-new-session
                 className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-accent text-on-accent transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
@@ -258,27 +257,9 @@ export function App(): JSX.Element {
               >
                 <IconSettings className="h-4 w-4" />
               </button>
-              <div className="w-6 border-b border-border" />
             </>
           ) : (
             <>
-              <div className="flex items-center justify-between px-1">
-                <span className="flex items-baseline gap-2">
-                  <span className="font-serif text-2xl font-semibold tracking-tight text-content">Clui</span>
-                  <span className="h-1.5 w-1.5 translate-y-[-2px] rounded-full bg-accent" aria-hidden="true" />
-                </span>
-                <button
-                  data-sidebar-collapse
-                  className="flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                  onClick={toggleSidebar}
-                  aria-label="Collapse sidebar"
-                  aria-expanded={true}
-                  aria-controls="app-sidebar"
-                  title="Collapse sidebar ⌘B"
-                >
-                  <IconSidebar className="h-4 w-4" />
-                </button>
-              </div>
               <SplitNewSession onNew={pickAndStart} onNewNamed={openNamedSession} />
               {/* A visible Settings door: onboarding needs a new user to find it to set
                   the CLI path. ⌘, / native menu / ⌘K also open it. */}
@@ -290,7 +271,9 @@ export function App(): JSX.Element {
           )}
         </div>
 
-        {/* Never key this: an unmount here drops SessionsSidebar's scanned list. */}
+        {/* Never key this: an unmount here drops SessionsSidebar's scanned list. Collapsed has
+            no divider (the rail is one bg-bg surface); the scroller's own pt-2.5 supplies the
+            top inset. */}
         <div
           className={`flex min-h-0 flex-1 flex-col ${
             sidebarCollapsed ? 'w-full items-center' : 'border-t border-border pt-3'
@@ -300,9 +283,10 @@ export function App(): JSX.Element {
         </div>
 
         {sidebarCollapsed ? (
-          // Footer text ("claude X.Y") clips at rail width, so the rail keeps only a
-          // bordered h-8 spacer to align its bottom divider with main's info bar.
-          <div className="h-8 w-full shrink-0 border-t border-border" />
+          // Footer text ("claude X.Y") clips at rail width, so the rail keeps only a bordered
+          // h-8 spacer to align its bottom divider with main's info bar. That bar exists only
+          // with a session open, so on the welcome screen (no cwd) the divider is dropped.
+          cwd ? <div className="h-8 w-full shrink-0 border-t border-border" /> : null
         ) : (
           <div className="flex h-8 shrink-0 items-center justify-center gap-1.5 border-t border-border bg-bg-sidebar text-[12px] text-dim">
             {cliInfo?.path ? (
@@ -317,10 +301,20 @@ export function App(): JSX.Element {
       </aside>
 
       <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* No top bar: Settings lives in the sidebar (below New Session). macOS draws the
-            native title bar, so a custom header would be empty chrome that miscues as a
-            title bar and steals ~40px of transcript height. The notice banner + chat carry
-            their own top borders. */}
+        {/* No in-app top bar: the sidebar's drag band spans the window top with the OS
+            traffic lights over its left, and Settings lives in the sidebar. */}
+        {/* Collapsed only: spacer that pushes the wrapper's border-l divider below the title
+            band. Its drag starts at x=124 (ml-20 past main's 44px left edge) so the toggle's
+            pixels stay undraggable, else a drag region there eats the toggle click. */}
+        {sidebarCollapsed && (
+          <div className="ml-20 h-11 shrink-0 [-webkit-app-region:drag]" aria-hidden="true" />
+        )}
+        {/* No divider when collapsed: the rail is painted bg-bg (main's surface), so a
+            border-l would draw a line through one uniform surface. Expanded, it separates
+            the bg-bg-sidebar rail from bg-bg main. */}
+        <div
+          className={`flex min-h-0 flex-1 flex-col ${sidebarCollapsed ? '' : 'border-l border-border'}`}
+        >
         {notice && (
           <div className="flex items-center gap-2 border-b border-warn/40 bg-warn/10 px-4 py-1.5 text-[12px] text-warn">
             <span className="flex-1">{notice}</span>
@@ -397,7 +391,25 @@ export function App(): JSX.Element {
             </Button>
           </div>
         )}
+        </div>
       </main>
+
+      {/* Sidebar toggle at a fixed window position in both states, beside the traffic lights.
+          no-drag on the button alone isn't enough: a drag band folded after it re-covers the
+          pixels, so the bands themselves stop short of x=124 (expanded aside ml-[124px],
+          collapsed spacer ml-20). */}
+      <button
+        ref={titleToggleRef}
+        data-sidebar-collapse
+        className="absolute left-[84px] top-2 z-20 flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [-webkit-app-region:no-drag]"
+        onClick={toggleSidebar}
+        aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        aria-expanded={!sidebarCollapsed}
+        aria-controls="app-sidebar"
+        title={`${sidebarCollapsed ? 'Expand' : 'Collapse'} sidebar ⌘B`}
+      >
+        <IconSidebar className="h-4 w-4" />
+      </button>
 
       {/* Overlays mount OUTSIDE <aside>/<main> (both siblings here) so those regions
           can be inerted wholesale while a dialog is open (see the inert effect above).
