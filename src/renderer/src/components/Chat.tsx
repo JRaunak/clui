@@ -170,7 +170,7 @@ export function Chat(): JSX.Element {
           // by that padding (a react-virtuoso width-math quirk) → a spurious 28px
           // horizontal scrollbar that clips right-aligned card content. Keep the
           // scroller padding-free; the Footer + empty state carry their own px-7.
-          <div className="px-7 pb-6 [&:first-child]:pt-6">
+          <div className="mx-auto max-w-5xl px-7 pb-6 [&:first-child]:pt-6">
             {resumed && historyCount > 0 && index === historyCount && (
               <div className="mb-6 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-faint">
                 <span className="h-px flex-1 bg-border" />
@@ -259,12 +259,8 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
     }
   }, [context])
   return (
-    <div ref={rootRef} className="px-7 pb-6">
-      {busy && (
-        <div className="border-l border-border/70 pl-3.5">
-          <WorkingStatus taskMerged={taskMerged} />
-        </div>
-      )}
+    <div ref={rootRef} className="mx-auto max-w-5xl px-7 pb-6">
+      {busy && <WorkingStatus taskMerged={taskMerged} />}
       {/* Queued messages live at the very TAIL, below the streaming response: they aren't
           committed transcript yet, just renderer-held drafts pending until their turn starts,
           so they stay editable and cancelable here before anything reaches the CLI. */}

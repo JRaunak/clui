@@ -207,7 +207,7 @@ export function Composer(): JSX.Element {
   }))
 
   return (
-    <div className="px-4 pb-4">
+    <div className="mx-auto w-full max-w-5xl px-7 pb-4">
       <div
         className={`relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 shadow-md transition-colors ${
           dragOver

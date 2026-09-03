@@ -169,7 +169,7 @@ function buildMenu(): void {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1200,
+    width: 1320,
     height: 800,
     minWidth: 720,
     minHeight: 480,

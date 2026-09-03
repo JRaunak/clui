@@ -101,7 +101,7 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
         className={
           isUser
             ? 'max-w-[80%] self-start rounded-lg rounded-tl-sm bg-user px-3.5 py-2.5'
-            : 'flex flex-col gap-2 border-l border-border/70 pl-3.5'
+            : 'flex flex-col gap-2'
         }
       >
         {message.thinking && <ThinkingBlock text={message.thinking} />}
