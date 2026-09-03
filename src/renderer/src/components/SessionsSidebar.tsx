@@ -10,7 +10,8 @@ import {
   IconClose,
   IconDownload,
   IconMore,
-  IconGitFork
+  IconGitFork,
+  IconPlus
 } from './Icon'
 import { TypingDots } from './TypingDots'
 import { Toast } from './Toast'
@@ -89,6 +90,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   const resumeSession = useSession((s) => s.resumeSession)
   const closeSession = useSession((s) => s.closeSession)
   const forkSession = useSession((s) => s.forkSession)
+  const startSession = useSession((s) => s.startSession)
   const setNotice = useSession((s) => s.setNotice)
   // The on-disk session list is store-owned so a store-side trigger (a `/rename` turn)
   // can refresh the same copy this renders; see refreshSessions in the store.
@@ -433,22 +435,41 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
           const groupLive = g.sessions.filter((s) => s.live).length
           return (
             <div key={g.cwd} className="mb-1.5">
-              <button
-                className="group/hdr flex w-full items-center gap-1.5 truncate rounded px-1 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
-                title={g.cwd}
-                onClick={() => toggleGroup(g.cwd)}
-              >
-                <IconChevron
-                  className={`h-3 w-3 shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
-                />
-                <span className="truncate">{g.label}</span>
-                {groupLive > 0 && (
-                  /* Full opacity: bg-ok/70 was 2.89:1 in light (below the 3:1
-                     non-text floor); the live-here dot must clear it. */
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" title={`${groupLive} live here`} />
-                )}
-                <span className="ml-auto pl-1 tabular-nums text-dim">{g.sessions.length}</span>
-              </button>
+              <div className="group/hdr flex w-full items-center gap-1.5 rounded px-1" title={g.cwd}>
+                {/* Toggle takes flex-1 so the label truncates; the "+" is a sibling,
+                    never nested (button-in-button is invalid). */}
+                <button
+                  className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
+                  onClick={() => toggleGroup(g.cwd)}
+                >
+                  <IconChevron
+                    className={`h-3 w-3 shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                  />
+                  <span className="truncate">{g.label}</span>
+                  {groupLive > 0 && (
+                    /* Full opacity: bg-ok/70 was 2.89:1 in light (below the 3:1
+                       non-text floor); the live-here dot must clear it. */
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" title={`${groupLive} live here`} />
+                  )}
+                </button>
+                {/* A fixed slot reserved on every header so the count stays put when the
+                    "+" fades in. Only for a live cwd (can't spawn into a gone folder). */}
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center">
+                  {g.exists && (
+                    <button
+                      className="flex h-6 w-6 items-center justify-center rounded text-dim opacity-0 transition-opacity hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent group-hover/hdr:opacity-100 group-focus-within/hdr:opacity-100"
+                      aria-label={`New session in ${g.label}`}
+                      title="New session here"
+                      onClick={() => void startSession(g.cwd)}
+                    >
+                      <IconPlus className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <span className="shrink-0 text-[11px] font-semibold tabular-nums text-dim">
+                  {g.sessions.length}
+                </span>
+              </div>
               {!isCollapsed && (
                 <div className="mt-0.5 flex flex-col gap-0.5">
                   {g.sessions.map((s) => (
