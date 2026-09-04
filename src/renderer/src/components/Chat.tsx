@@ -26,7 +26,7 @@ import { IconChevron, IconClose, IconEdit, IconCheck } from './Icon'
  * Resize: Virtuoso auto-remeasures (ResizeObserver); we re-pin to bottom on resize only
  * if the user was at bottom. Theme switch is inert (colors-only, no remount).
  */
-export function Chat(): JSX.Element {
+export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => void }): JSX.Element {
   const messages = useActive((s) => s?.messages ?? EMPTY_MESSAGES)
   const busy = useActive((s) => s?.busy ?? false)
   const resumed = useActive((s) => s?.resumed ?? false)
@@ -133,7 +133,10 @@ export function Chat(): JSX.Element {
   // Empty / welcome state: render directly, skip Virtuoso.
   if (messages.length === 0 && !busy) {
     return (
-      <div className="flex flex-1 flex-col overflow-y-auto px-7 py-6">
+      <div
+        className="flex flex-1 flex-col overflow-y-auto px-7 py-6"
+        style={{ paddingBottom: 'calc(var(--dock-h, 0px) + 1.5rem)' }}
+      >
         <div className="m-auto flex max-w-sm flex-col items-center gap-2 text-center">
           <span className="h-2 w-2 rounded-full bg-accent/70" aria-hidden="true" />
           <p className="font-serif text-lg italic text-dim">
@@ -154,7 +157,13 @@ export function Chat(): JSX.Element {
       <Virtuoso
         ref={virtuosoRef}
         key={activeHandleId ?? 'none'}
-        className="h-full transcript-fade"
+        className="h-full [scrollbar-gutter:stable]"
+        // Report the reserved gutter width so the composer dock can pad to match this column.
+        scrollerRef={(el) => {
+          const node = el as HTMLElement | null
+          if (node && onScrollbarWidth)
+            requestAnimationFrame(() => onScrollbarWidth(node.offsetWidth - node.clientWidth))
+        }}
         data={messages}
         computeItemKey={(_i, m) => m.id}
         itemContent={(index, m) => (
@@ -247,7 +256,12 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
     }
   }, [context])
   return (
-    <div ref={rootRef} className="mx-auto max-w-5xl px-7 pb-6">
+    // Bottom clearance = the floating composer stack's height, so the tail scrolls clear of it.
+    <div
+      ref={rootRef}
+      className="mx-auto max-w-5xl px-7"
+      style={{ paddingBottom: 'calc(var(--dock-h, 0px) + 1.5rem)' }}
+    >
       {busy && <WorkingStatus taskMerged={taskMerged} />}
       {/* Queued messages live at the TAIL, below the response: renderer-held drafts, not committed
           transcript, so they stay editable and cancelable before reaching the CLI. */}
@@ -399,7 +413,8 @@ function JumpToLatest({
       type="button"
       onClick={onClick}
       aria-label={label + taskLabel}
-      className={`absolute bottom-4 right-5 z-20 flex h-11 items-center justify-center rounded-full border border-border bg-bg-raised text-dim shadow-md transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+      style={{ bottom: 'calc(1rem + var(--dock-h, 0px))' }}
+      className={`absolute right-5 z-20 flex h-11 items-center justify-center rounded-full border border-border bg-bg-raised text-dim shadow-md transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
         taskCount ? 'gap-1.5 px-3' : 'w-11'
       }`}
     >

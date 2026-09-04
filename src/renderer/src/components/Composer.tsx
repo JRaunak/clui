@@ -207,9 +207,9 @@ export function Composer(): JSX.Element {
   }))
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-7 pb-4">
+    <div className="mx-auto w-full max-w-5xl px-7">
       <div
-        className={`relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 shadow-md transition-colors ${
+        className={`dock-fade-both relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 transition-colors ${
           dragOver
             ? 'border-accent'
             : busy

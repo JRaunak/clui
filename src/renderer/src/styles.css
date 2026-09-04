@@ -325,10 +325,18 @@
   transition: width 220ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-/* Fades the transcript bottom so content dissolves instead of hard-clipping above the composer. */
-.transcript-fade {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
+/* bg-colored box-shadow so transcript content dissolves under a dock card's rounded edge
+   instead of hard-clipping; only the outward-facing edges glow. */
+.dock-fade-top {
+  box-shadow: 0 -6px 8px 2px var(--color-bg);
+}
+.dock-fade-bottom {
+  box-shadow: 0 6px 8px 2px var(--color-bg);
+}
+.dock-fade-both {
+  box-shadow:
+    0 -6px 8px 2px var(--color-bg),
+    0 6px 8px 2px var(--color-bg);
 }
 
 @keyframes dock-pulse {

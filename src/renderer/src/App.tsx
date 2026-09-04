@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { useActive, useSession, loadPersistedCosts, EMPTY_PENDING } from './store'
 import { Chat } from './components/Chat'
 import { Composer } from './components/Composer'
@@ -38,6 +38,8 @@ export function App(): JSX.Element {
   const [showSettings, setShowSettings] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
   const [showNamedSession, setShowNamedSession] = useState(false)
+  const [dockH, setDockH] = useState(0)
+  const [sbW, setSbW] = useState(0)
   const globalSearchOpen = useSession((s) => s.globalSearchOpen)
   const permissionPending = useActive((s) => (s?.pendingPermissions ?? EMPTY_PENDING).length > 0)
 
@@ -52,6 +54,8 @@ export function App(): JSX.Element {
   const lastBgFocusRef = useRef<HTMLElement | null>(null)
   // Holds the previous overlay state so the restore below skips the initial mount.
   const wasOverlayOpenRef = useRef(false)
+  // Measured so --dock-h can give the transcript bottom clearance and lift the bottom-right pills.
+  const dockRef = useRef<HTMLDivElement>(null)
   const anyOverlayOpen =
     showSettings ||
     showCustomizations ||
@@ -59,6 +63,23 @@ export function App(): JSX.Element {
     showNamedSession ||
     globalSearchOpen ||
     permissionPending
+
+  // Track the floating dock's height (composer grows, ChangedFiles toggles). rAF-coalesced
+  // to dodge the ResizeObserver-loop warning; re-armed when the transcript view mounts.
+  useEffect(() => {
+    const el = dockRef.current
+    if (!el) return
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => setDockH(el.offsetHeight))
+    })
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      cancelAnimationFrame(raf)
+    }
+  }, [cwd, viewingSubagent])
 
   useEffect(() => {
     const onFocusIn = (e: FocusEvent): void => {
@@ -311,9 +332,24 @@ export function App(): JSX.Element {
           <SubagentView />
         ) : cwd ? (
           <>
-            <Chat />
-            <ChangedFiles />
-            <Composer />
+            {/* The composer stack floats over the transcript so content scrolls under its
+                rounded top; --dock-h publishes its height to the transcript and pills below. */}
+            <div
+              className="relative mb-2 flex min-h-0 flex-1 flex-col"
+              style={{ '--dock-h': `${dockH}px`, '--sb-w': `${sbW}px` } as CSSProperties}
+            >
+              <Chat onScrollbarWidth={setSbW} />
+              {/* The transcript reserves a stable scrollbar gutter; the dock pads its right by the
+                  same width so the composer column lines up with the message column. */}
+              <div
+                ref={dockRef}
+                className="absolute inset-x-0 bottom-0"
+                style={{ paddingRight: 'var(--sb-w, 0px)' }}
+              >
+                <ChangedFiles />
+                <Composer />
+              </div>
+            </div>
             {/* Bottom-left workspace/session info. Same h-8 as the sidebar footer
                 so their divider lines align across the two columns. */}
             <div className="flex h-8 items-center gap-3 border-t border-border px-4 text-[12px] text-dim">

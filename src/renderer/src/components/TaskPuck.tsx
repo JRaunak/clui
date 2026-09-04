@@ -236,9 +236,13 @@ export function TaskPuck({
   }
 
   return (
-    // The anchor stays at the puck's position (bottom-4 right-5) so the panel can float
-    // above it via bottom-full even while the puck itself is hidden (pinned + scrolled up).
-    <div ref={wrapRef} className="absolute bottom-4 right-5 z-20">
+    // The anchor holds the puck's position so the panel can float above it via bottom-full
+    // even while the puck itself is hidden (pinned + scrolled up). Lifts above the composer dock.
+    <div
+      ref={wrapRef}
+      className="absolute right-5 z-20"
+      style={{ bottom: 'calc(1rem + var(--dock-h, 0px))' }}
+    >
       {mounted && (
         <div
           role="region"
