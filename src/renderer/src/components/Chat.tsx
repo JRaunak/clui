@@ -63,9 +63,8 @@ export function Chat(): JSX.Element {
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const behavior: 'smooth' | 'auto' = reduce ? 'auto' : 'smooth'
 
-  // Pin to bottom on new streamed CONTENT only when already at bottom (followOutput
-  // fires on item-count change; intra-message token growth is handled by Virtuoso's
-  // own bottom-stick, also gated by atBottom).
+  // Pin to bottom on new content only when already at bottom; intra-message token growth is
+  // handled by Virtuoso's own bottom-stick.
   const followOutput = useCallback(
     (isAtBottom: boolean): 'smooth' | 'auto' | false => (isAtBottom ? behavior : false),
     [behavior]
@@ -91,16 +90,13 @@ export function Chat(): JSX.Element {
     prevLen.current = messages.length
   }, [messages, behavior])
 
-  // Re-pin to bottom after a reflow IF the user was already there (else leave a scrolled-up
-  // user where they are). Covers window resize AND the Virtuoso Footer growing: the tail
-  // that holds WorkingStatus + queued drafts. followOutput only re-pins on item-count
-  // change, so a Footer-height change (Claude starts thinking, a message is queued) would
-  // otherwise leave that new tail a hair below the fold, under the composer.
+  // Re-pin to bottom after a reflow only if the user was already there. followOutput re-pins
+  // on item-count change but not on Footer growth (WorkingStatus, a queued draft), which
+  // would otherwise leave the new tail below the fold.
   const repinIfAtBottom = useCallback(() => {
     if (atBottomRef.current) {
-      // scrollTo the true bottom rather than the last item's edge: the Footer and its bottom
-      // padding sit below the last item, so scrollToIndex('LAST') would leave a few px of
-      // footer under the fold. A max scrollTop clamps to the real bottom, footer included.
+      // scrollTo true bottom, not the last item's edge: the Footer sits below it, so
+      // scrollToIndex('LAST') would leave footer under the fold.
       virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: 'auto' })
     }
   }, [])
@@ -116,10 +112,8 @@ export function Chat(): JSX.Element {
     setHasNew(false)
   }, [behavior])
 
-  // Consume a scroll-to-message request (from ⌘F find or a ⌘⇧F global hit). Map
-  // the messageId → index (works because the transcript is uncapped, so every message
-  // is in the list) and scroll to it centered, then flash-highlight the card. Keyed on
-  // nonce so repeated jumps to the same id re-fire. Does NOT touch atBottom/follow.
+  // Consume a scroll-to-message request (⌘F / ⌘⇧F): scroll to it centered and flash the card.
+  // Keyed on nonce so repeated jumps to the same id re-fire; does NOT touch atBottom/follow.
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!scrollTarget) return
@@ -128,8 +122,7 @@ export function Chat(): JSX.Element {
     virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center', behavior })
     setFlashId(scrollTarget.messageId)
     if (flashTimer.current) clearTimeout(flashTimer.current)
-    // Flash duration; the highlight is opacity/color only (reduced-motion-safe: a
-    // static tint that fades via a CSS transition the global reduce rule flattens).
+    // Flash duration; the highlight is opacity/color only, so reduced-motion flattens it safely.
     flashTimer.current = setTimeout(() => setFlashId(null), 1600)
     return () => {
       if (flashTimer.current) clearTimeout(flashTimer.current)
@@ -161,15 +154,12 @@ export function Chat(): JSX.Element {
       <Virtuoso
         ref={virtuosoRef}
         key={activeHandleId ?? 'none'}
-        className="h-full"
+        className="h-full transcript-fade"
         data={messages}
         computeItemKey={(_i, m) => m.id}
         itemContent={(index, m) => (
-          // Horizontal padding lives on the ITEM, never on the Virtuoso scroller:
-          // padding on the scroll container makes its scrollWidth exceed clientWidth
-          // by that padding (a react-virtuoso width-math quirk) → a spurious 28px
-          // horizontal scrollbar that clips right-aligned card content. Keep the
-          // scroller padding-free; the Footer + empty state carry their own px-7.
+          // H-padding on the ITEM, never the Virtuoso scroller: scroller padding inflates
+          // scrollWidth past clientWidth (a react-virtuoso quirk) → a spurious h-scrollbar that clips cards.
           <div className="mx-auto max-w-5xl px-7 pb-6 [&:first-child]:pt-6">
             {resumed && historyCount > 0 && index === historyCount && (
               <div className="mb-6 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-faint">
@@ -234,15 +224,13 @@ interface FooterContext {
 function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
   const busy = useActive((s) => s?.busy ?? false)
   const lastError = useActive((s) => s?.lastError ?? null)
-  // Merge the verb away while the puck is present: the puck's activeForm line already
-  // narrates the work, so the whimsical verb would be a competing status. Gated on the
-  // SAME condition the puck uses (non-empty task list), so they stay in lockstep.
+  // Merge the verb away while the puck shows: it already narrates the work, so the verb would
+  // compete. Gated on the same condition as the puck, so they stay in lockstep.
   const tasks = useActive((s) => s?.tasks ?? EMPTY_TASKS)
   const taskMerged = useTaskUiActive(tasks, busy)
-  // The Footer grows when WorkingStatus mounts or a queued draft appears; neither is a
-  // list item, so Virtuoso's followOutput never re-pins for them. Observe our own height and
-  // ask Chat to re-stick to the bottom (a no-op unless the user was already there). rAF
-  // coalesces bursts and sidesteps the ResizeObserver-loop warning.
+  // The Footer grows for non-list-items (WorkingStatus, a queued draft) that followOutput
+  // won't re-pin for, so observe our height and ask Chat to re-stick. rAF sidesteps the
+  // ResizeObserver-loop warning.
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = rootRef.current
@@ -261,9 +249,8 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
   return (
     <div ref={rootRef} className="mx-auto max-w-5xl px-7 pb-6">
       {busy && <WorkingStatus taskMerged={taskMerged} />}
-      {/* Queued messages live at the very TAIL, below the streaming response: they aren't
-          committed transcript yet, just renderer-held drafts pending until their turn starts,
-          so they stay editable and cancelable here before anything reaches the CLI. */}
+      {/* Queued messages live at the TAIL, below the response: renderer-held drafts, not committed
+          transcript, so they stay editable and cancelable before reaching the CLI. */}
       <QueuedMessages />
       <CompactSuggestion />
       {lastError && (
@@ -394,9 +381,8 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
   )
 }
 
-/** Accent stays scarce here: only the focus ring and the single "new" dot use it. 44px
- *  target. Reduced-motion is honored by the caller's `behavior`. When tasks are active
- *  the pill widens to absorb the progress count (the puck is hidden while scrolled up). */
+/** Accent stays scarce: only the focus ring and the "new" dot use it. When tasks are active
+ *  the pill widens to absorb the progress count. */
 function JumpToLatest({
   hasNew,
   onClick,

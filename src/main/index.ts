@@ -176,8 +176,7 @@ function createWindow(): void {
     show: false,
     title: 'Clui',
     backgroundColor: THEME_BG[resolveTheme()],
-    // Hide the native title bar so the sidebar extends to the window top; the traffic
-    // lights overlay the sidebar's top-left band. y centers the 12px dots in the 44px band.
+    // Hide the native title bar so the sidebar reaches the window top; the lights overlay its band.
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 19, y: 16 },
     webPreferences: {
@@ -190,8 +189,7 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
-  // macOS hides the traffic lights in fullscreen; push the state so the renderer shifts its
-  // title-bar controls to the edge.
+  // macOS hides the traffic lights in fullscreen; push the state so the renderer shifts its controls.
   const pushFullscreen = (): void => {
     const wc = mainWindow?.webContents
     if (wc && !wc.isDestroyed()) wc.send(IpcChannels.fullscreenChanged, mainWindow?.isFullScreen() ?? false)

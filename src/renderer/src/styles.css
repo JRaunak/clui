@@ -304,9 +304,8 @@
   }
 }
 
-/* Sidebar focus-mode swap: the width snaps (the transform/opacity-only invariant rules
-   out animating width), and only the incoming content fades in. Enter-only, opacity-only;
-   the reduced-motion block below neutralizes it to instant. */
+/* Opacity-only: the transform/opacity-only motion rule forbids animating the width, so it
+   snaps and only the incoming content fades. Reduced-motion below kills it. */
 @keyframes sidebar-fade {
   from {
     opacity: 0;
@@ -320,11 +319,16 @@
   animation: sidebar-fade 180ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 
-/* Scoped exception to the transform/opacity-only motion rule: a push-model rail reflows the
-   centered chat instead of floating over it, so it can't animate as a pure transform. Width
-   only (44px and 288px both fixed) interpolates cleanly; reduced-motion below kills it. */
+/* Exception to the transform/opacity-only motion rule: the push rail reflows the chat, so it
+   can't be a pure transform. Reduced-motion below kills it. */
 .sidebar-anim {
   transition: width 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Fades the transcript bottom so content dissolves instead of hard-clipping above the composer. */
+.transcript-fade {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
 }
 
 @keyframes dock-pulse {
@@ -556,9 +560,8 @@ body {
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
-/* Hide the scrollbar (still scrolls). Must be unlayered, not a Tailwind @utility: the global
-   `*` scrollbar rule above is unlayered, and unlayered wins over @layer utilities regardless
-   of specificity, so a layered utility would lose. */
+/* Must be unlayered (not an @utility): the global unlayered `*` scrollbar rule beats any
+   layered utility regardless of specificity. */
 .scrollbar-none {
   scrollbar-width: none;
 }

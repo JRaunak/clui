@@ -30,8 +30,7 @@ export function App(): JSX.Element {
   const viewingSubagent = useSession((s) => s.viewingSubagent)
   const dismissNotice = useSession((s) => s.dismissNotice)
   const [cliInfo, setCliInfo] = useState<CliInfo | null>(null)
-  // First-run intro flag. `null` = not yet loaded (don't flash the intro before we
-  // know); once loaded it's true/false. Persisted in settings via `updateSettings`.
+  // First-run intro flag; `null` until loaded, so the intro doesn't flash before we know.
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -42,21 +41,14 @@ export function App(): JSX.Element {
   const globalSearchOpen = useSession((s) => s.globalSearchOpen)
   const permissionPending = useActive((s) => (s?.pendingPermissions ?? EMPTY_PENDING).length > 0)
 
-  // An open modal must contain focus and hide the rest of the app from assistive
-  // tech, or Tab walks the ring out of the dialog into the scrimmed content behind
-  // it (WCAG 2.4.3 / 2.1.2). We toggle native `inert` on the two background regions
-  // rather than hand-rolling a Tab cycle: `inert` gives focus-containment + subtree
-  // aria-hidden + pointer-inertness in one property. The overlays render as siblings
-  // of these regions (below), so inerting both leaves only the open dialog reachable.
+  // Native `inert` on the background regions contains focus and hides them from AT while a
+  // dialog is open (WCAG 2.4.3 / 2.1.2), in one property instead of a hand-rolled Tab cycle.
   const asideRef = useRef<HTMLElement>(null)
   const mainRef = useRef<HTMLElement>(null)
-  // The sidebar toggle is anchored by the traffic lights (outside <aside> so it holds a
-  // fixed spot in both states), so it needs inerting alongside aside/main under a modal.
+  // Toggle lives outside <aside>, so it needs inerting alongside aside/main under a modal.
   const titleToggleRef = useRef<HTMLButtonElement>(null)
-  // Where focus sat in the background before a dialog opened, so we can return it on
-  // close. Tracked live (any focusin outside the overlay host) rather than captured in
-  // an effect, because a child's open-focus (search input) runs before App's effect and
-  // would otherwise be what we captured.
+  // Background focus before a dialog opened, to restore on close. Tracked live via focusin,
+  // not an effect: a child's open-focus runs before App's effect and would be captured instead.
   const lastBgFocusRef = useRef<HTMLElement | null>(null)
   // Holds the previous overlay state so the restore below skips the initial mount.
   const wasOverlayOpenRef = useRef(false)
@@ -77,16 +69,13 @@ export function App(): JSX.Element {
     return () => document.removeEventListener('focusin', onFocusIn)
   }, [])
 
-  // Toggle inert with the overlay state. On close, clear inert FIRST (a .focus() on a
-  // still-inert node is a silent no-op), then restore focus to the trigger, falling
-  // back through composer → new-session button → body if the trigger is gone (e.g. a
-  // deleted session row). useLayoutEffect so the DOM is inert before the browser paints.
+  // On close, clear inert FIRST (.focus() on an inert node is a no-op), then restore focus to
+  // the trigger, falling back to composer/new-session if it's gone. Layout effect: inert before paint.
   useLayoutEffect(() => {
     if (asideRef.current) asideRef.current.inert = anyOverlayOpen
     if (mainRef.current) mainRef.current.inert = anyOverlayOpen
     if (titleToggleRef.current) titleToggleRef.current.inert = anyOverlayOpen
-    // Only on a real close (was-open → now-closed), NOT on mount: a programmatic .focus()
-    // on launch paints the keyboard focus-visible ring with no key pressed.
+    // Only on a real close, not mount: a launch-time .focus() paints the focus-visible ring unprompted.
     if (!anyOverlayOpen && wasOverlayOpenRef.current) {
       const prev = lastBgFocusRef.current
       const fallback =
@@ -104,9 +93,8 @@ export function App(): JSX.Element {
     void window.clui.listModels()
     // Load persisted per-session costs so resumed sessions show accrued cost.
     void loadPersistedCosts()
-    // Re-assert the theme (preload set it pre-paint) and install the OS-change
-    // listener for 'system'. Reads the persisted preference from settings. Also read
-    // the onboarded flag here (same call) so the first-run intro shows only once.
+    // Re-assert the theme and install the 'system' OS-change listener; read onboarded in the
+    // same call so the first-run intro shows only once.
     void window.clui.getSettings().then(({ values }) => {
       applyTheme(values.theme)
       setOnboarded(values.onboarded)
@@ -130,11 +118,8 @@ export function App(): JSX.Element {
     void window.clui.updateSettings({ onboarded: true })
   }, [])
 
-  // Opening ANY session (pick / resume-from-disk / activate) completes first-run,
-  // keyed on `cwd` so every entry path counts, not just "Pick a workspace". Without
-  // this, resuming a disk session on first run left onboarded=false, so CLOSING it
-  // bounced the user back to the intro card (reported bug). Runs once (guarded on the
-  // loaded false state); persists so it never reshows.
+  // Opening ANY session completes first-run, keyed on `cwd` so every entry path counts:
+  // otherwise resuming a disk session left onboarded=false and closing it bounced back to the intro.
   useEffect(() => {
     if (cwd && onboarded === false) {
       setOnboarded(true)
@@ -147,11 +132,8 @@ export function App(): JSX.Element {
     void window.clui.getCliInfo().then(setCliInfo)
   }, [])
 
-  // Electron footgun guard: a file dropped ANYWHERE outside the composer would make
-  // the webview navigate to the dropped file:// URL and white-screen the app. Cancel
-  // the default at the window level for any drop the composer didn't already handle
-  // (the composer's own handlers preventDefault first, so this only swallows stray
-  // drops on the sidebar/chat/etc.). Passive:false so preventDefault takes effect.
+  // A file dropped outside the composer would navigate the webview to its file:// URL and
+  // white-screen the app; cancel any drop the composer didn't handle. passive:false to preventDefault.
   useEffect(() => {
     const cancel = (e: DragEvent): void => {
       if (e.defaultPrevented) return // composer already handled + previewed it
@@ -166,14 +148,12 @@ export function App(): JSX.Element {
   }, [])
 
   const pickAndStart = useCallback(async (): Promise<void> => {
-    // The picker opens at the configured default workspace, if any. First-run
-    // completion is handled by the cwd-keyed effect below (covers every entry path).
+    // First-run completion is handled by the cwd-keyed effect above, not here.
     const dir = await window.clui.pickWorkspace()
     if (dir) await startSession(dir)
   }, [startSession])
 
-  // Close FIRST (clears inert, restores focus) so the OS folder picker isn't stacked
-  // behind a still-open Clui dialog, then pick + spawn.
+  // Close FIRST so the OS folder picker isn't stacked behind a still-open Clui dialog.
   const startNamedSession = useCallback(
     async (name: string): Promise<void> => {
       setShowNamedSession(false)
@@ -189,8 +169,8 @@ export function App(): JSX.Element {
   const openPalette = useCallback(() => setShowPalette(true), [])
   const openNamedSession = useCallback(() => setShowNamedSession(true), [])
 
-  // The sidebar's chrome remounts across a toggle, so if focus sat inside it, move it to the
-  // persistent title-bar toggle rather than let it fall to <body>. Focus outside is left alone.
+  // Sidebar chrome remounts on toggle; if focus sat inside it, move it to the persistent
+  // title-bar toggle rather than let it fall to <body>.
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => {
       const next = !prev
@@ -210,9 +190,7 @@ export function App(): JSX.Element {
 
   return (
     <div className="relative flex h-screen overflow-hidden">
-      {/* One node, class-swapped by mode. Splitting collapsed/expanded into two keyed
-          <aside> branches remounts SessionsSidebar and blanks the list until the next
-          disk scan. */}
+      {/* One class-swapped node: two keyed branches would remount SessionsSidebar and blank the list. */}
       <aside
         key="sidebar"
         ref={asideRef}
@@ -221,9 +199,8 @@ export function App(): JSX.Element {
           sidebarCollapsed ? 'w-11 items-center gap-2.5 bg-bg' : 'w-72 gap-3 bg-bg-sidebar'
         }`}
       >
-        {/* Top band under the OS title bar (titleBarStyle:hiddenInset). Its drag region starts
-            at the wordmark, past the toggle, so the toggle stays clickable (a drag region
-            swallows clicks on anything over it). */}
+        {/* Top band under the OS title bar. Drag region starts past the toggle, so the toggle
+            stays clickable (drag regions swallow clicks). */}
         <div className={`flex h-11 shrink-0 items-center ${isFullscreen ? 'justify-center' : ''}`}>
           {!sidebarCollapsed && (
             <div className={`flex h-full items-center [-webkit-app-region:drag] ${isFullscreen ? '' : 'ml-[124px] flex-1'}`}>
@@ -236,8 +213,7 @@ export function App(): JSX.Element {
             </div>
           )}
         </div>
-        {/* Keyed by mode so the incoming controls remount and fade in. The list below
-            is deliberately unkeyed, so it stays mounted across a toggle. */}
+        {/* Keyed by mode so incoming controls remount and fade in; the list below stays unkeyed. */}
         <div
           key={sidebarCollapsed ? 'rail-chrome' : 'expanded-chrome'}
           className={`sidebar-fade flex shrink-0 flex-col ${
@@ -263,9 +239,7 @@ export function App(): JSX.Element {
           )}
         </div>
 
-        {/* Never key this: an unmount here drops SessionsSidebar's scanned list. Collapsed has
-            no divider (the rail is one bg-bg surface); the scroller's own pt-2.5 supplies the
-            top inset. */}
+        {/* Never key this: an unmount drops SessionsSidebar's scanned list. */}
         <div
           className={`flex min-h-0 flex-1 flex-col ${
             sidebarCollapsed ? 'w-full items-center' : 'border-t border-border pl-3 pt-3'
@@ -275,8 +249,8 @@ export function App(): JSX.Element {
         </div>
 
         {sidebarCollapsed ? (
-          // Gear in the footer (matches expanded), always h-8 so list height is steady across
-          // states; border-t only with a session, to continue main's info-bar line.
+          // Always h-8 so list height stays steady; border-t only with a session, to line up
+          // with main's info bar.
           <div
             className={`flex h-8 w-full shrink-0 items-center justify-center ${cwd ? 'border-t border-border' : ''}`}
           >
@@ -312,17 +286,14 @@ export function App(): JSX.Element {
       </aside>
 
       <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* No in-app top bar: the sidebar's drag band spans the window top with the OS
-            traffic lights over its left, and Settings lives in the sidebar. */}
-        {/* Collapsed only: spacer that pushes the wrapper's border-l divider below the title
-            band. Its drag starts at x=124 (ml-20 past main's 44px left edge) so the toggle's
-            pixels stay undraggable, else a drag region there eats the toggle click. */}
+        {/* No in-app top bar: the sidebar's drag band spans the window top; Settings lives in the sidebar. */}
+        {/* Collapsed-only spacer pushing the border-l divider below the title band. Drag starts
+            past the toggle so its pixels stay clickable. */}
         {sidebarCollapsed && (
           <div className="ml-20 h-11 shrink-0 [-webkit-app-region:drag]" aria-hidden="true" />
         )}
-        {/* No divider when collapsed: the rail is painted bg-bg (main's surface), so a
-            border-l would draw a line through one uniform surface. Expanded, it separates
-            the bg-bg-sidebar rail from bg-bg main. */}
+        {/* No divider when collapsed: the rail is bg-bg like main, so border-l would draw
+            through one uniform surface. */}
         <div
           className={`flex min-h-0 flex-1 flex-col ${sidebarCollapsed ? '' : 'border-l border-border'}`}
         >
@@ -366,10 +337,8 @@ export function App(): JSX.Element {
               <WorkflowTray />
             </div>
           </>
-        ) : // Onboarding takes over the empty pane when the CLI is unhealthy OR the
-        // user hasn't completed first-run. Wait for `onboarded` to load (null) before
-        // deciding, so the intro never flashes then vanishes. When healthy + onboarded,
-        // Onboarding returns null → fall through to the normal Welcome pane.
+        ) : // Onboarding takes the empty pane when the CLI is unhealthy or first-run isn't done.
+        // Wait for `onboarded` to load (null) so the intro never flashes; healthy+onboarded returns null.
         onboarded !== null && (cliHealth(cliInfo) !== 'ok' || !onboarded) ? (
           <Onboarding
             cliInfo={cliInfo}
@@ -405,8 +374,7 @@ export function App(): JSX.Element {
         </div>
       </main>
 
-      {/* Positioned to sit on drag-free pixels: a no-drag button nested in a drag band doesn't
-          reliably carve back out here, so the bands stop short of the toggle. */}
+      {/* Sits on drag-free pixels: a no-drag button nested in a drag band doesn't reliably carve back out. */}
       <button
         ref={titleToggleRef}
         data-sidebar-collapse
@@ -420,11 +388,8 @@ export function App(): JSX.Element {
         <IconSidebar className="h-4 w-4" />
       </button>
 
-      {/* Overlays mount OUTSIDE <aside>/<main> (both siblings here) so those regions
-          can be inerted wholesale while a dialog is open (see the inert effect above).
-          Each scrim is `fixed inset-0` (viewport-anchored), so it also covers the
-          sidebar, which a `<main>`-scoped `absolute inset-0` never did. `data-overlay-host`
-          marks this subtree so the focus tracker ignores focus moves inside a dialog. */}
+      {/* Overlays mount outside <aside>/<main> so those regions can be inerted wholesale (see the
+          inert effect above). `data-overlay-host` marks this subtree so the focus tracker ignores it. */}
       <div data-overlay-host>
         <PermissionDialog />
         <GlobalSearch />
