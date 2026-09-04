@@ -308,10 +308,12 @@ export function App(): JSX.Element {
 
       <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {/* No in-app top bar: the sidebar's drag band spans the window top; Settings lives in the sidebar. */}
-        {/* Collapsed-only spacer pushing the border-l divider below the title band. Drag starts
-            past the toggle so its pixels stay clickable. */}
-        {sidebarCollapsed && (
+        {/* Title-height band at the top of both collapse states so the transcript never shifts when the
+            sidebar toggles. Collapsed hosts the window-drag region; expanded drags from the sidebar. */}
+        {sidebarCollapsed ? (
           <div className="ml-20 h-11 shrink-0 [-webkit-app-region:drag]" aria-hidden="true" />
+        ) : (
+          <div className="h-11 shrink-0" aria-hidden="true" />
         )}
         {/* No divider when collapsed: the rail is bg-bg like main, so border-l would draw
             through one uniform surface. */}
