@@ -34,6 +34,7 @@ export function App(): JSX.Element {
   // know); once loaded it's true/false. Persisted in settings via `updateSettings`.
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [showCustomizations, setShowCustomizations] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
@@ -111,6 +112,11 @@ export function App(): JSX.Element {
       setOnboarded(values.onboarded)
       setSidebarCollapsed(values.sidebarCollapsed)
     })
+  }, [])
+
+  useEffect(() => {
+    void window.clui.getFullscreen().then(setIsFullscreen)
+    return window.clui.onFullscreenChanged(setIsFullscreen)
   }, [])
 
   // Refresh CLI info when Settings closes (path may have changed).
@@ -216,11 +222,11 @@ export function App(): JSX.Element {
         }`}
       >
         {/* Top band under the OS title bar (titleBarStyle:hiddenInset). Its drag region starts
-            at the wordmark (ml-[124px]), so the leftmost 124px (lights + toggle) stays
-            clickable; a drag region swallows clicks on anything over it. */}
-        <div className="flex h-11 shrink-0 items-center">
+            at the wordmark, past the toggle, so the toggle stays clickable (a drag region
+            swallows clicks on anything over it). */}
+        <div className={`flex h-11 shrink-0 items-center ${isFullscreen ? 'justify-center' : ''}`}>
           {!sidebarCollapsed && (
-            <div className="ml-[124px] flex h-full flex-1 items-center [-webkit-app-region:drag]">
+            <div className={`flex h-full items-center [-webkit-app-region:drag] ${isFullscreen ? '' : 'ml-[124px] flex-1'}`}>
               <span className="flex items-baseline gap-2">
                 <span className="font-serif text-2xl font-semibold tracking-tight text-content">
                   Clui
@@ -399,14 +405,12 @@ export function App(): JSX.Element {
         </div>
       </main>
 
-      {/* Sidebar toggle at a fixed window position in both states, beside the traffic lights.
-          no-drag on the button alone isn't enough: a drag band folded after it re-covers the
-          pixels, so the bands themselves stop short of x=124 (expanded aside ml-[124px],
-          collapsed spacer ml-20). */}
+      {/* Positioned to sit on drag-free pixels: a no-drag button nested in a drag band doesn't
+          reliably carve back out here, so the bands stop short of the toggle. */}
       <button
         ref={titleToggleRef}
         data-sidebar-collapse
-        className="absolute left-[84px] top-2 z-20 flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [-webkit-app-region:no-drag]"
+        className={`absolute ${isFullscreen ? 'left-2' : 'left-[84px]'} top-2 z-20 flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [-webkit-app-region:no-drag]`}
         onClick={toggleSidebar}
         aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         aria-expanded={!sidebarCollapsed}

@@ -190,6 +190,15 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
+  // macOS hides the traffic lights in fullscreen; push the state so the renderer shifts its
+  // title-bar controls to the edge.
+  const pushFullscreen = (): void => {
+    const wc = mainWindow?.webContents
+    if (wc && !wc.isDestroyed()) wc.send(IpcChannels.fullscreenChanged, mainWindow?.isFullScreen() ?? false)
+  }
+  mainWindow.on('enter-full-screen', pushFullscreen)
+  mainWindow.on('leave-full-screen', pushFullscreen)
+
   // Defense-in-depth against navigation footguns: never let the webview leave the
   // app document. A file dropped outside the composer (or a stray link) must not
   // navigate the window to a file://…/local URL and white-screen the app. The
@@ -249,6 +258,8 @@ function registerIpc(): void {
     const { cliPath } = await getSettings()
     return detectCli(cliPath || null)
   })
+
+  ipcMain.handle(IpcChannels.getFullscreen, () => mainWindow?.isFullScreen() ?? false)
 
   ipcMain.handle(IpcChannels.startSession, async (_e, opts: StartSessionOptions) => {
     const settings = await getSettings()

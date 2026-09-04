@@ -19,6 +19,7 @@ import type { CluiSettings, EffortChoice, ModelChoice, SettingsKey } from '../sh
 const api: CluiApi = {
   pickWorkspace: () => ipcRenderer.invoke(IpcChannels.pickWorkspace),
   getCliInfo: () => ipcRenderer.invoke(IpcChannels.getCliInfo),
+  getFullscreen: () => ipcRenderer.invoke(IpcChannels.getFullscreen),
   startSession: (opts: StartSessionOptions) =>
     ipcRenderer.invoke(IpcChannels.startSession, opts),
   sendMessage: (handleId: string, text: string, attachments?: WireAttachment[]) =>
@@ -97,6 +98,11 @@ const api: CluiApi = {
     const listener = (_e: unknown, action: MenuAction): void => cb(action)
     ipcRenderer.on(IpcChannels.menuAction, listener)
     return () => ipcRenderer.removeListener(IpcChannels.menuAction, listener)
+  },
+  onFullscreenChanged: (cb: (isFullscreen: boolean) => void) => {
+    const listener = (_e: unknown, isFullscreen: boolean): void => cb(isFullscreen)
+    ipcRenderer.on(IpcChannels.fullscreenChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.fullscreenChanged, listener)
   }
 }
 

@@ -116,6 +116,8 @@ export interface CluiApi {
   pickWorkspace: () => Promise<string | null>
   /** Detect / report the claude CLI binary. */
   getCliInfo: () => Promise<CliInfo>
+  /** True in macOS fullscreen, where the OS hides the traffic lights. */
+  getFullscreen: () => Promise<boolean>
   /** Start a session; returns a local handle. */
   startSession: (opts: StartSessionOptions) => Promise<StartSessionResult>
   /**
@@ -242,6 +244,8 @@ export interface CluiApi {
    * Returns an unsubscribe fn.
    */
   onMenuAction: (cb: (action: MenuAction) => void) => () => void
+  /** Subscribe to fullscreen enter/leave. Returns an unsubscribe fn. */
+  onFullscreenChanged: (cb: (isFullscreen: boolean) => void) => () => void
 }
 
 /** Actions emitted by the native application menu. */
@@ -260,6 +264,7 @@ export type MenuAction =
 export const IpcChannels = {
   pickWorkspace: 'clui:pickWorkspace',
   getCliInfo: 'clui:getCliInfo',
+  getFullscreen: 'clui:getFullscreen',
   startSession: 'clui:startSession',
   sendMessage: 'clui:sendMessage',
   interrupt: 'clui:interrupt',
@@ -308,5 +313,6 @@ export const IpcChannels = {
   /** main → renderer push channel */
   sessionEvent: 'clui:sessionEvent',
   /** main → renderer push channel for native application-menu actions */
-  menuAction: 'clui:menuAction'
+  menuAction: 'clui:menuAction',
+  fullscreenChanged: 'clui:fullscreenChanged'
 } as const
