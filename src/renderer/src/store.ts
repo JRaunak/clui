@@ -182,6 +182,9 @@ export interface PerSessionState {
   handleId: string
   /** CLI-assigned session id, captured from the init event (null until then). */
   sessionId: string | null
+  /** Title assigned at spawn (`-n`: a branch auto-name or an explicit named session), so the
+   *  sidebar shows it before the jsonl exists on disk. null → derive from messages/on-disk. */
+  title: string | null
   cwd: string
   /** The model the CLI actually reports for this session (from the init event). */
   model: string | null
@@ -699,7 +702,10 @@ async function beginSession(
   const now = Date.now()
   insertSlice(set, get().applyEvent, {
     handleId,
-    sessionId: opts.resumeSessionId ?? null,
+    // A fork gets a NEW id from the CLI, so don't seed the source's id: that would make the
+    // fork masquerade as the source's on-disk row until session-init reconciles. Resume keeps it.
+    sessionId: opts.fork ? null : (opts.resumeSessionId ?? null),
+    title: opts.name ?? null,
     cwd: opts.cwd,
     model: null,
     permissionMode: null,
@@ -913,7 +919,25 @@ export const useSession = create<SessionStore>((set, get) => ({
   // duplicate); works on live AND dormant sessions (both just need the id + cwd). Unlike
   // resume, we NEVER short-circuit to an existing live session; the point is a new branch.
   forkSession: async (cwd, sourceSessionId, mode) => {
-    await beginSession(get, set, { cwd, resumeSessionId: sourceSessionId, fork: true, permissionMode: mode })
+    // Name the branch after exactly what the sidebar shows for the source (not a re-derived
+    // title), so it reads as "Branch-" + what the user sees; deduped within the workspace.
+    const { sessionGroups, sessions } = get()
+    const liveSlice = Object.values(sessions).find((s) => s.sessionId === sourceSessionId)
+    const shown = (
+      sessionGroups.flatMap((g) => g.sessions).find((s) => s.id === sourceSessionId)?.title ??
+      liveSlice?.title ??
+      liveSlice?.messages.find((m) => m.role === 'user')?.text.trim()
+    )?.trim()
+    let name: string | undefined
+    if (shown) {
+      const taken = new Set<string>()
+      for (const s of sessionGroups.find((g) => g.cwd === cwd)?.sessions ?? []) taken.add(s.title)
+      for (const s of Object.values(sessions)) if (s.cwd === cwd && s.title) taken.add(s.title)
+      const fit = (x: string): string => (x.length > 80 ? x.slice(0, 79) + '…' : x)
+      name = fit(`Branch-${shown}`)
+      for (let i = 2; taken.has(name); i++) name = fit(`Branch-${shown} ${i}`)
+    }
+    await beginSession(get, set, { cwd, resumeSessionId: sourceSessionId, fork: true, permissionMode: mode, name })
   },
 
   activateSession: (handleId) => {

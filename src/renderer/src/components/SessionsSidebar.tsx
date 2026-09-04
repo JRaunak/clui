@@ -298,7 +298,9 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
       const firstUser = s.messages.find((m) => m.role === 'user')?.text.trim()
       ensureGroup(s.cwd).push({
         id: s.sessionId,
-        title: firstUser ? firstUser.slice(0, 80) : 'Untitled',
+        // A spawn-time title (branch auto-name / named session) shows immediately, before the
+        // jsonl lands; otherwise fall back to the first user message.
+        title: s.title ?? (firstUser ? firstUser.slice(0, 80) : 'Untitled'),
         renamed: false,
         cwd: s.cwd,
         projectSlug: null,
