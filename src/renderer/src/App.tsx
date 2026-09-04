@@ -249,24 +249,10 @@ export function App(): JSX.Element {
               >
                 <IconPlus className="h-4 w-4" />
               </button>
-              <button
-                className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
-                onClick={() => setShowSettings(true)}
-                aria-label="Settings"
-                title="Settings"
-              >
-                <IconSettings className="h-4 w-4" />
-              </button>
             </>
           ) : (
             <>
               <SplitNewSession onNew={pickAndStart} onNewNamed={openNamedSession} />
-              {/* A visible Settings door: onboarding needs a new user to find it to set
-                  the CLI path. ⌘, / native menu / ⌘K also open it. */}
-              <Button variant="outline" size="md" onClick={() => setShowSettings(true)} className="w-full">
-                <IconSettings className="h-4 w-4" />
-                Settings
-              </Button>
             </>
           )}
         </div>
@@ -276,26 +262,45 @@ export function App(): JSX.Element {
             top inset. */}
         <div
           className={`flex min-h-0 flex-1 flex-col ${
-            sidebarCollapsed ? 'w-full items-center' : 'border-t border-border pt-3'
+            sidebarCollapsed ? 'w-full items-center' : 'border-t border-border pl-3 pt-3'
           }`}
         >
           <SessionsSidebar collapsed={sidebarCollapsed} />
         </div>
 
         {sidebarCollapsed ? (
-          // Footer text ("claude X.Y") clips at rail width, so the rail keeps only a bordered
-          // h-8 spacer to align its bottom divider with main's info bar. That bar exists only
-          // with a session open, so on the welcome screen (no cwd) the divider is dropped.
-          cwd ? <div className="h-8 w-full shrink-0 border-t border-border" /> : null
+          // Gear in the footer (matches expanded), always h-8 so list height is steady across
+          // states; border-t only with a session, to continue main's info-bar line.
+          <div
+            className={`flex h-8 w-full shrink-0 items-center justify-center ${cwd ? 'border-t border-border' : ''}`}
+          >
+            <button
+              className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+              onClick={() => setShowSettings(true)}
+              aria-label="Settings"
+              title="Settings ⌘,"
+            >
+              <IconSettings className="h-4 w-4" />
+            </button>
+          </div>
         ) : (
-          <div className="flex h-8 shrink-0 items-center justify-center gap-1.5 border-t border-border bg-bg-sidebar text-[12px] text-dim">
+          // Gear is absolute so it doesn't pull the centered CLI status off-center.
+          <div className="relative flex h-8 shrink-0 items-center justify-center border-t border-border bg-bg-sidebar px-3 text-[12px] text-dim">
             {cliInfo?.path ? (
               <span className="truncate font-mono" title={cliInfo.path}>
                 claude {cliInfo.version ?? ''}
               </span>
             ) : (
-              <span className="text-err">claude CLI not found</span>
+              <span className="truncate text-err">claude CLI not found</span>
             )}
+            <button
+              className="absolute right-1.5 flex h-7 w-7 items-center justify-center rounded-md text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
+              onClick={() => setShowSettings(true)}
+              aria-label="Settings"
+              title="Settings ⌘,"
+            >
+              <IconSettings className="h-4 w-4" />
+            </button>
           </div>
         )}
       </aside>
