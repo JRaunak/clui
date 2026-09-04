@@ -147,6 +147,7 @@ export const FALLBACK_MODEL_IDS: string[] = [
   'claude-opus-4-6',
   'claude-sonnet-5',
   'claude-sonnet-4-6',
+  'claude-fable-5-1',
   'claude-fable-5',
   'claude-haiku-4-5'
 ]
