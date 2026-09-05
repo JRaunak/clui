@@ -154,8 +154,8 @@ export const FALLBACK_MODEL_IDS: string[] = [
 
 // A model id is never shortened for use: only the full Bedrock profile id, a suffix-free
 // id, or a short alias ('haiku') is a valid `--model` value. Stripping the prefix off a
-// date-suffixed profile yields 'claude-haiku-4-5', which the API rejects; that shortening
-// once made half the picker unselectable. `labelFor` parses the full id for display.
+// date-suffixed profile yields 'claude-haiku-4-5', which the API rejects. `labelFor`
+// parses the full id for display.
 
 /**
  * Parse family + numeric version + 1M flag out of a model id, across every provider's id
@@ -312,8 +312,15 @@ export function supportsUltracode(id: string): boolean {
  *  Bedrock inference-profile prefix, so the CLI's raw report `claude-sonnet-5`
  *  matches a picker id `us.anthropic.claude-sonnet-5`. */
 export function sameModel(a: string, b: string): boolean {
+  if (a === b) return true // exact match: the only reliable test for custom/unknown ids
   const pa = parseModelId(a)
   const pb = parseModelId(b)
+  // Equivalence (prefix-agnostic) only when BOTH ids were positively recognized with a
+  // version. Two unrecognized ids both parse to unknown/0, so without this they'd wrongly
+  // compare equal and reconcile one to the other.
+  if (pa.family === 'unknown' || pb.family === 'unknown' || !pa.versioned || !pb.versioned) {
+    return false
+  }
   return pa.family === pb.family && pa.version === pb.version && pa.is1m === pb.is1m
 }
 

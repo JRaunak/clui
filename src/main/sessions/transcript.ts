@@ -11,11 +11,11 @@
 import { createReadStream } from 'node:fs'
 import { readdir, stat, readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { claudeHome } from '../lib/claude-home'
 import type { HistoryMessage, HistoryToolCall, TranscriptResult } from '../../shared/sessions'
 
-const projectsRoot = (): string => join(homedir(), '.claude', 'projects')
+const projectsRoot = (): string => join(claudeHome(), 'projects')
 
 /**
  * OOM safety ceiling, NOT a render cap. The transcript is VIRTUALIZED
@@ -77,7 +77,10 @@ function isCommandPlumbing(text: string): boolean {
  * render as a raw-XML "You" bubble. Returns sender + body (from-name wins over from).
  */
 function parseCrossSessionMessage(text: string): { from: string; body: string } | null {
-  const m = /<cross-session-message\b([^>]*)>\n?([\s\S]*?)\n?<\/cross-session-message>/.exec(text)
+  // Anchored to the WHOLE trimmed message: a genuine peer record's text IS exactly the
+  // wrapper, whereas a real user quoting `<cross-session-message …>…</…>` inside a longer
+  // sentence has surrounding prose and must keep its full text + own authorship.
+  const m = /^<cross-session-message\b([^>]*)>\n?([\s\S]*?)\n?<\/cross-session-message>$/.exec(text.trim())
   if (!m) return null
   const attrs = m[1]
   const name = /\bfrom-name="([^"]+)"/.exec(attrs) ?? /\bfrom="([^"]+)"/.exec(attrs)
@@ -247,17 +250,27 @@ function findAgentFileByToolUseId(toolUseId: string): Promise<string | null> {
   return cachedFind(`tool:${toolUseId}`, () => walk(root, 0))
 }
 
-/** tool_result content can be a string or blocks; normalize to text. */
+/** A single recovered tool result is bounded so one pathological multi-MB output can't
+ *  blow up peak memory when the whole transcript is parsed. */
+const MAX_RESULT_CHARS = 100_000
+
+function truncateResult(s: string): string {
+  return s.length > MAX_RESULT_CHARS ? s.slice(0, MAX_RESULT_CHARS) + '\n…[truncated]' : s
+}
+
+/** tool_result content can be a string or blocks; normalize to text (bounded). */
 function resultText(content: unknown): string {
-  if (typeof content === 'string') return content
+  if (typeof content === 'string') return truncateResult(content)
   if (Array.isArray(content)) {
-    return content
-      .map((b) => (b && typeof b === 'object' && 'text' in b ? String((b as { text: unknown }).text) : ''))
-      .join('')
+    return truncateResult(
+      content
+        .map((b) => (b && typeof b === 'object' && 'text' in b ? String((b as { text: unknown }).text) : ''))
+        .join('')
+    )
   }
   if (content == null) return ''
   try {
-    return JSON.stringify(content)
+    return truncateResult(JSON.stringify(content))
   } catch {
     return ''
   }
@@ -349,7 +362,12 @@ async function parseTranscriptFile(
       if (!trimmed) continue
       let entry: RawEntry
       try {
-        entry = JSON.parse(trimmed)
+        const parsed = JSON.parse(trimmed)
+        // A valid-JSON line can be a scalar/array/null; only a plain object has the fields
+        // we read, so skip anything else instead of throwing on `entry.isSidechain` and
+        // discarding the whole transcript.
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+        entry = parsed as RawEntry
       } catch {
         continue
       }
@@ -364,8 +382,8 @@ async function parseTranscriptFile(
       // `local_command` carrying <local-command-stdout>…</local-command-stdout>
       // (e.g. the /usage report), NOT as an assistant message. Surface it as an
       // assistant bubble so resumed history shows the command's result instead of
-      // dropping it (the "commands don't work on resume" symptom). Live turns get
-      // this via the assistant snapshot; this is the resume-only path.
+      // dropping it. Live turns get this via the assistant snapshot; this is the
+      // resume-only path.
       if (entry.type === 'system' && entry.subtype === 'local_command') {
         const out = stripCommandStdout(entry.content)
         if (out) {
@@ -397,6 +415,7 @@ async function parseTranscriptFile(
 
       if (isToolResultOnly) {
         for (const b of blocks) {
+          if (!b || typeof b !== 'object') continue
           if (b.type === 'tool_result' && b.tool_use_id) {
             const call = toolCallsById.get(b.tool_use_id)
             if (call) {
@@ -416,6 +435,7 @@ async function parseTranscriptFile(
         tools: []
       }
       for (const b of blocks) {
+        if (!b || typeof b !== 'object') continue // a null/scalar block must not throw
         switch (b.type) {
           case 'text':
             if (typeof b.text === 'string') {

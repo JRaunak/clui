@@ -1,37 +1,31 @@
-/**
- * The foreground "working" indicator: 3 bouncing dots + a whimsical randomized
- * verb (Claude Code flavor, e.g. "Tomfoolering…") + an elapsed timer.
- *
- * It lives at the TAIL of the chat transcript (where the next output appears):
- * CLI-parity, and where the user's reading attention is. It is the SINGLE animated
- * element of a foreground turn, so the aggregate subagent header renders static.
- * Absent during background work (the turn has ended → composer is freed).
- *
- * The verb rotates every few seconds so a long turn never reads as frozen. When the
- * task puck is present (`taskMerged`), the verb is DROPPED (dots + timer only): the
- * puck's in_progress activeForm already narrates the work, so the whimsical verb would
- * be a second, competing status line.
- */
-import { useEffect, useRef, useState } from 'react'
+/** The foreground "working" indicator: 3 bouncing dots + a whimsical randomized verb + an elapsed timer.
+ *  Lives at the tail of the chat transcript where the next output appears. The single animated element of a
+ *  foreground turn. Absent during background work.
+ *  The verb rotates every few seconds so a long turn never reads as frozen. When the task puck is present,
+ *  the verb is dropped (dots + timer only): the puck's in_progress activeForm already narrates the work. */
+import { useEffect, useState } from 'react'
+import { useActive } from '../store'
 import { TypingDots } from './TypingDots'
 import { randomWorkingVerb } from '../lib/workingVerbs'
 
 export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }): JSX.Element {
-  const [elapsed, setElapsed] = useState(0)
+  // Elapsed derives from the turn's start timestamp in the slice, not component mount, so switching sessions
+  // or entering a detail view doesn't reset a live turn's timer, and each queued turn restarts it.
+  const startMs = useActive((s) => s?.turnStartMs ?? null)
+  const [elapsed, setElapsed] = useState(() => (startMs ? Math.floor((Date.now() - startMs) / 1000) : 0))
   const [verb, setVerb] = useState(randomWorkingVerb)
-  const start = useRef(Date.now())
   useEffect(() => {
-    start.current = Date.now()
-    setElapsed(0)
+    const base = startMs ?? Date.now()
+    setElapsed(Math.floor((Date.now() - base) / 1000))
     setVerb(randomWorkingVerb())
-    const tick = setInterval(() => setElapsed(Math.floor((Date.now() - start.current) / 1000)), 1000)
-    // Rotate the verb periodically (offset from the 1s tick so they don't align).
+    const tick = setInterval(() => setElapsed(Math.floor((Date.now() - base) / 1000)), 1000)
+    // Rotate the verb periodically, offset from the 1s tick so they don't align.
     const rotate = setInterval(() => setVerb(randomWorkingVerb()), 4200)
     return () => {
       clearInterval(tick)
       clearInterval(rotate)
     }
-  }, [])
+  }, [startMs])
   return (
     <span className="flex items-center gap-2 text-[13px]">
       <TypingDots className="text-ok" />

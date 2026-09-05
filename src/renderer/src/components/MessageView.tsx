@@ -30,24 +30,24 @@ function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element
   )
 }
 
-/** >this many TOTAL tools in a message → aggregate header + demote per-card dots to
- *  a static running-dot. NOTE: gated on total count, not *concurrent-running* count.
- *  Verified against the CLI that headless stream-json serializes subagent/tool
- *  calls (peak concurrent = 1), so a "running > N" gate would never fire; a message
- *  with many tool calls is exactly when the compact tally + one static header help. */
+/** >this many total tools in a message triggers aggregate header + demote per-card dots to
+ *  a static running-dot. Gated on total count, not concurrent-running count. Verified against
+ *  the CLI that headless stream-json serializes subagent/tool calls (peak concurrent = 1), so
+ *  a "running > N" gate would never fire; a message with many tool calls is exactly when the
+ *  compact tally + one static header help. */
 const AGGREGATE_ABOVE = 5
-/** ≥this many total tools → collapse completed into the header count (show only
+/** ≥this many total tools triggers collapse completed into the header count (show only
  *  running + failed; failed pinned). */
 const COLLAPSE_AT = 16
 
-/** The composer inserts an agent mention as the literal token `@"name (agent)"`, the
- *  quoted form the CLI needs to delegate the turn. Display-only: `message.text` keeps
- *  the literal token; the chip is styled by typeface + wash + `@` sigil, not hue, so it
- *  can't collide with the scarce accent or the state-carrying status tones. Non-greedy
- *  up to the closing quote so agent names containing spaces still resolve. */
+/** The composer inserts an agent mention as the literal token @"name (agent)", the quoted
+ *  form the CLI needs to delegate the turn. Display-only: message.text keeps the literal
+ *  token; the chip is styled by typeface + wash + @ sigil, not hue, so it can't collide
+ *  with the scarce accent or the state-carrying status tones. Non-greedy up to the closing
+ *  quote so agent names containing spaces still resolve. */
 const AGENT_MENTION = /@"([^"]+?) \(agent\)"/g
 
-/** Returns string runs interleaved with chip elements; the parent's `whitespace-pre-wrap`
+/** Returns string runs interleaved with chip elements; the parent's whitespace-pre-wrap
  *  still governs the string runs, so newlines/spacing are preserved. */
 function renderUserText(text: string): (string | JSX.Element)[] {
   AGENT_MENTION.lastIndex = 0
@@ -76,7 +76,7 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
   if (message.role === 'peer' && message.peer) return <PeerMessageView message={message} peer={message.peer} />
   const isUser = message.role === 'user'
   // An assistant turn whose only content is entering plan mode renders as a bare full-width
-  // marker, not an empty "Claude" bubble (the card is dropped for a divider, nothing else left).
+  // marker, not an empty "Claude" bubble.
   if (
     !isUser &&
     !message.text &&
@@ -123,8 +123,8 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
             )}
           </>
         ) : message.blocks.length > 0 ? (
-          // Live path: render text + tools in true stream order (intro text → tool
-          // cards → closing text), coalescing consecutive tool blocks into one group.
+          // Live path: render text + tools in true stream order (intro text, tool cards,
+          // closing text), coalescing consecutive tool blocks into one group.
           <OrderedBlocks blocks={message.blocks} tools={message.tools} />
         ) : (
           // Fallback (rebuilt-from-disk): text, a plan-mode marker if it was entered, then tools.
@@ -139,11 +139,12 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
   )
 }
 
-/** Task-family tool calls (TaskCreate/TaskUpdate/…, plus legacy TodoWrite) are surfaced
- *  by the task puck, so their inline cards are noise here (the TUI hides them too). Bare
- *  `Task` is excluded: it's the subagent tool, not the todo list. */
+/** The checklist tools (surfaced by the task puck, so their inline cards are noise here).
+ *  Enumerated explicitly rather than startsWith('Task'), which also swallowed TaskOutput
+ *  and TaskStop (task execution/stop results the user still needs to see). */
+const CHECKLIST_TOOLS = new Set(['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TodoWrite'])
 function isTaskListTool(name: string): boolean {
-  return (name.startsWith('Task') && name !== 'Task') || name === 'TodoWrite'
+  return CHECKLIST_TOOLS.has(name)
 }
 
 /** Entering plan mode (EnterPlanMode, empty input) is a state transition, not a tool result
@@ -172,15 +173,15 @@ function PlanModeDivider(): JSX.Element {
 const PEER_COLLAPSE_OVER = 72
 
 /**
- * An inbound cross-session PEER message. Info-blue (never terracotta), with identity on the
- * glyph + `@` sigil + serif name + verb, not hue alone. `pending` is the anonymous
- * placeholder that backfills in place when the peer-origin result lands. Collapsible via
- * ToolGroup's local-state pattern; Virtuoso remeasures on the height change.
+ * An inbound cross-session peer message. Info-blue (never terracotta), with identity on the
+ * glyph + @ sigil + serif name + verb, not hue alone. Pending is the anonymous placeholder
+ * that backfills in place when the peer-origin result lands. Collapsible via ToolGroup's
+ * local-state pattern; Virtuoso remeasures on the height change.
  */
 function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMessage }): JSX.Element {
   const long = message.text.includes('\n') || message.text.length > PEER_COLLAPSE_OVER
   const [open, setOpen] = useState(!long)
-  // Crossfade the resolved header ONLY on the live pending→resolved flip (same mounted
+  // Crossfade the resolved header only on the live pending-to-resolved flip (same mounted
   // item), not on a fresh mount of an already-resolved block (resume / scroll re-entry),
   // where prevPending starts false.
   const [justResolved, setJustResolved] = useState(false)
@@ -224,7 +225,7 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
   const head = justResolved ? 'peer-head-in' : ''
   const glyph = <IconMessage className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
   const name = <span className="shrink-0 font-serif text-[13px] font-semibold text-info">@{peer.from}</span>
-  // Full-strength info (not reduced opacity) for the contrast margin lux verified.
+  // Full-strength info (not reduced opacity) for the contrast margin verified.
   const verb = <span className="shrink-0 text-[11px] uppercase tracking-[0.12em] text-info">messaged</span>
 
   return (
@@ -265,8 +266,8 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
   )
 }
 
-/** Each maximal run of consecutive tool blocks becomes one ToolGroup, so aggregation
- *  still applies to a fan-out while the true text/tool interleaving is preserved. */
+/** Each maximal run of consecutive tool blocks becomes one ToolGroup, so aggregation still
+ *  applies to a fan-out while the true text/tool interleaving is preserved. */
 function OrderedBlocks({
   blocks,
   tools
@@ -312,7 +313,7 @@ function OrderedBlocks({
 }
 
 /**
- * Aggregation is gated on TOTAL tool count, not concurrent-running: the CLI serializes
+ * Aggregation is gated on total tool count, not concurrent-running: the CLI serializes
  * subagent calls in headless mode, so a concurrent-running gate would never fire. The
  * thresholds are AGGREGATE_ABOVE and COLLAPSE_AT; the static header (no spinner) leaves
  * the chat footer owning the single foreground animation.
@@ -356,7 +357,7 @@ export function ToolGroup({ tools }: { tools: ToolCall[] }): JSX.Element | null 
         {collapse && (
           <IconChevron className={`h-3.5 w-3.5 text-faint transition-transform ${expanded ? 'rotate-90' : ''}`} />
         )}
-        {/* STATIC dot: the chat footer is the single animated element per turn. */}
+        {/* Static dot: the chat footer is the single animated element per turn. */}
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden="true" />
         <span className="text-xs font-semibold text-content">Tasks</span>
         <span className="ml-auto flex items-center gap-2 font-mono text-[11px]">
@@ -405,15 +406,14 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
   const sendToBackground = useSession((s) => s.backgroundTask)
   const summary = summarizeInput(tool.input)
   const running = tool.result === undefined
-  // Task (renamed → Agent in CLI 2.1.63; Task kept as alias) both mean "subagent";
-  // show a friendly label + the subagent_type chip when present.
+  // Task (renamed to Agent in CLI 2.1.63; Task kept as alias) both mean "subagent"; show
+  // a friendly label + the subagent_type chip when present.
   const isSubagent = tool.name === 'Task' || tool.name === 'Agent'
   const subType = subagentType(tool.input)
-  // A backgrounded tool returns its result AT LAUNCH while the real work continues
-  // asynchronously (tracked in the tray), so its terminal state reads "launched", not
-  // "done". Two cases: Bash `run_in_background`, AND the dynamic `Workflow` tool (it
-  // returns immediately, then the workflow runs via task_progress; showing "done" the
-  // instant it launches was the reported bug).
+  // A backgrounded tool returns its result at launch while the real work continues
+  // asynchronously (tracked in the tray), so its terminal state reads "launched", not "done".
+  // Two cases: Bash run_in_background, and the dynamic Workflow tool (it returns immediately,
+  // then the workflow runs via task_progress).
   const isBackgrounded =
     tool.name === 'Workflow' ||
     Boolean(tool.sentToBackground) ||
@@ -428,11 +428,11 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
         tool.isError ? 'border-err/60' : 'border-border'
       }`}
     >
-      {/* Head row. For a SUBAGENT the card is the actual content, so clicking it
-          opens the maximized transcript view (the inline JSON expand is near-useless
-          for a subagent: its input is a huge prompt, its result one blob). A PLAIN
-          TOOL keeps the lightweight inline expand (input/output is the right detail;
-          a full-screen takeover for a one-line Bash result would be overkill). */}
+      {/* Head row. For a subagent the card is the actual content, so clicking it opens the
+          maximized transcript view (the inline JSON expand is near-useless for a subagent:
+          its input is a huge prompt, its result one blob). A plain tool keeps the lightweight
+          inline expand (input/output is the right detail; a full-screen takeover for a one-line
+          Bash result would be overkill). */}
       <div className="flex w-full items-center">
       <button
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-[14px]"
@@ -451,12 +451,11 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
         )}
         <span className="ml-auto flex items-center gap-1.5 text-[11px]">
           {running && isBackgrounded ? (
-            // A backgrounded tool (Workflow / run_in_background Bash) returns its result
-            // almost immediately, then the real work continues in the tray. In the brief
-            // gap before its result lands, the in-flight state is "launching…", NOT
-            // "running" (+ no elapsed timer, which wrongly implies you're waiting on THIS
-            // call). Info-blue matches the terminal "launched" state so it doesn't flip
-            // color. Fixes the reported "running…"→"launched" flash.
+            // A backgrounded tool (Workflow / run_in_background Bash) returns its result almost
+            // immediately, then the real work continues in the tray. In the brief gap before its
+            // result lands, the in-flight state is "launching…", not "running" (+ no elapsed timer,
+            // which wrongly implies you're waiting on this call). Info-blue matches the terminal
+            // "launched" state so it doesn't flip color.
             <>
               {showDots ? (
                 <TypingDots className="scale-[0.7] text-info" />
@@ -467,23 +466,23 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
             </>
           ) : running ? (
             <>
-              {/* Per-card dots animate ONLY in the baseline (few tools); when the
-                  aggregate header is shown (showDots=false) the dot goes static so
-                  the chat footer is the single moving element. Timer always shown. */}
+              {/* Per-card dots animate only in the baseline (few tools); when the aggregate
+                  header is shown (showDots=false) the dot goes static so the chat footer is
+                  the single moving element. Timer always shown. */}
               {showDots ? (
                 <TypingDots className="scale-[0.7] text-dim" />
               ) : (
                 <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden="true" />
               )}
               <span className="text-dim">running</span>
-              {/* Elapsed timer: the load-bearing "not frozen" signal for long
-                  tool/subagent calls that emit nothing until they finish. */}
+              {/* Elapsed timer: the load-bearing "not frozen" signal for long tool/subagent
+                  calls that emit nothing until they finish. */}
               {tool.startMs !== undefined && <RunningTimer startMs={tool.startMs} />}
             </>
           ) : isBackgrounded && !tool.isError ? (
-            // A run_in_background tool returns its result at LAUNCH (the task keeps
-            // running in the bg tray). "done" would wrongly imply the WORK finished,
-            // so label it "launched" and point at the tray with an info-blue dot.
+            // A run_in_background tool returns its result at launch (the task keeps running in
+            // the bg tray). "done" would wrongly imply the work finished, so label it "launched"
+            // and point at the tray with an info-blue dot.
             <>
               <span className="h-1.5 w-1.5 rounded-full bg-info" aria-hidden="true" />
               <span className="text-info">launched</span>
@@ -497,11 +496,11 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
             </>
           )}
         </span>
-        {/* subagent: a hint that the card opens the transcript (→). */}
+        {/* Subagent: a hint that the card opens the transcript (arrow). */}
         {isSubagent && <span className="ml-2 shrink-0 font-mono text-[11px] text-faint">→</span>}
       </button>
-      {/* Sibling of the head button, not nested: button-in-button is invalid. Persistent,
-          not hover-only, so it stays discoverable. */}
+      {/* Sibling of the head button, not nested: button-in-button is invalid. Persistent, not
+          hover-only, so it stays discoverable. */}
       {canSendToBackground && (
         <button
           type="button"
@@ -530,12 +529,12 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
   )
 }
 
-function summarizeInput(input: unknown): string {
+export function summarizeInput(input: unknown): string {
   if (input && typeof input === 'object') {
     const o = input as Record<string, unknown>
-    // Task (subagent) calls carry a short human description: surface it so the
-    // card reads "Task  research palette UX" rather than a bare "Task" (Labor
-    // Illusion: showing WHAT is running raises perceived progress + patience).
+    // Task (subagent) calls carry a short human description: surface it so the card reads
+    // "Task  research palette UX" rather than a bare "Task" (showing what is running raises
+    // perceived progress + patience).
     if (typeof o.description === 'string') return o.description
     if (typeof o.command === 'string') return o.command
     if (typeof o.file_path === 'string') return o.file_path

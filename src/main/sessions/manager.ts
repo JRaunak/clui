@@ -33,6 +33,9 @@ export class SessionManager {
   private readonly taskTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** Last emitted task snapshot per handle (serialized), to skip no-op re-emits. */
   private readonly lastTaskSnapshot = new Map<string, string>()
+  /** Monotonic per-handle read sequence: an in-flight read that finishes after a newer
+   *  one started is dropped, so a slow stale snapshot can't overwrite the newer state. */
+  private readonly taskReadSeq = new Map<string, number>()
 
   constructor(private readonly sink: EventSink) {}
 
@@ -45,14 +48,22 @@ export class SessionManager {
     })
     session.on('exit', () => {
       this.sessions.delete(handleId)
-      const t = this.taskTimers.get(handleId)
-      if (t) clearTimeout(t)
-      this.taskTimers.delete(handleId)
-      this.lastTaskSnapshot.delete(handleId)
+      this.cleanupHandle(handleId)
     })
     this.sessions.set(handleId, session)
     session.start()
     return handleId
+  }
+
+  /** Drop all per-handle bookkeeping. Called from BOTH natural exit and explicit stop
+   *  (an explicit stop suppresses the exit event, so without this its timers/snapshots
+   *  would leak). */
+  private cleanupHandle(handleId: string): void {
+    const t = this.taskTimers.get(handleId)
+    if (t) clearTimeout(t)
+    this.taskTimers.delete(handleId)
+    this.lastTaskSnapshot.delete(handleId)
+    this.taskReadSeq.delete(handleId)
   }
 
   /** Trailing-debounced re-read of the session's on-disk task list, emitting a
@@ -66,19 +77,28 @@ export class SessionManager {
         this.taskTimers.delete(handleId)
         const sessionId = session.getSessionId()
         if (!sessionId) return
-        void readTasks(sessionId).then((tasks) => {
-          if (!this.sessions.has(handleId)) return // session closed while reading
-          const snapshot = JSON.stringify(tasks)
-          if (snapshot === this.lastTaskSnapshot.get(handleId)) return
-          this.lastTaskSnapshot.set(handleId, snapshot)
-          this.sink(handleId, { type: 'task-list', tasks })
-        })
+        const seq = (this.taskReadSeq.get(handleId) ?? 0) + 1
+        this.taskReadSeq.set(handleId, seq)
+        void readTasks(sessionId)
+          .then((tasks) => {
+            if (!this.sessions.has(handleId)) return // session closed while reading
+            if (this.taskReadSeq.get(handleId) !== seq) return // a newer read superseded this
+            const snapshot = JSON.stringify(tasks)
+            if (snapshot === this.lastTaskSnapshot.get(handleId)) return
+            this.lastTaskSnapshot.set(handleId, snapshot)
+            this.sink(handleId, { type: 'task-list', tasks })
+          })
+          .catch(() => {}) // a transient unreadable task file must not reject unhandled
       }, TASK_READ_DEBOUNCE_MS)
     )
   }
 
   send(handleId: string, text: string, attachments?: WireAttachment[]): void {
-    this.sessions.get(handleId)?.send(text, attachments)
+    const s = this.sessions.get(handleId)
+    // Throw (rather than silently no-op) so a send to a stopped/evicted session rejects
+    // through IPC and the renderer can roll back its optimistic busy state.
+    if (!s) throw new Error('This session is no longer running.')
+    s.send(text, attachments)
   }
 
   interrupt(handleId: string): void {
@@ -93,20 +113,20 @@ export class SessionManager {
     return this.sessions.get(handleId)?.backgroundTask(toolUseId) ?? Promise.resolve(false)
   }
 
-  setPermissionMode(handleId: string, mode: string): void {
-    this.sessions.get(handleId)?.setPermissionMode(mode)
+  setPermissionMode(handleId: string, mode: string): Promise<boolean> {
+    return this.sessions.get(handleId)?.setPermissionMode(mode) ?? Promise.resolve(false)
   }
 
-  setModel(handleId: string, model: string): void {
-    this.sessions.get(handleId)?.setModel(model)
+  setModel(handleId: string, model: string): Promise<boolean> {
+    return this.sessions.get(handleId)?.setModel(model) ?? Promise.resolve(false)
   }
 
   setEffort(handleId: string, effort: string): Promise<void> {
     return this.sessions.get(handleId)?.setEffort(effort) ?? Promise.resolve()
   }
 
-  setUltracode(handleId: string, on: boolean): Promise<void> {
-    return this.sessions.get(handleId)?.setUltracode(on) ?? Promise.resolve()
+  setUltracode(handleId: string, on: boolean): Promise<boolean> {
+    return this.sessions.get(handleId)?.setUltracode(on) ?? Promise.resolve(false)
   }
 
   respondPermission(handleId: string, verdict: PermissionVerdict): void {
@@ -130,12 +150,16 @@ export class SessionManager {
     if (s) {
       s.stop()
       this.sessions.delete(handleId)
+      this.cleanupHandle(handleId)
     }
   }
 
   /** Kill everything (called on app quit / window close). */
   stopAll(): void {
-    for (const s of this.sessions.values()) s.stop()
+    for (const handleId of [...this.sessions.keys()]) {
+      this.sessions.get(handleId)?.stop()
+      this.cleanupHandle(handleId)
+    }
     this.sessions.clear()
   }
 }

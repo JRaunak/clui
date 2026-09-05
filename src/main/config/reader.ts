@@ -9,7 +9,8 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import matter from 'gray-matter'
+import { load as yamlLoad } from 'js-yaml'
+import { claudeHome } from '../lib/claude-home'
 import type {
   AgentInfo,
   ConfigBundle,
@@ -19,7 +20,7 @@ import type {
   SkillInfo
 } from '../../shared/config'
 
-const userClaude = (): string => join(homedir(), '.claude')
+const userClaude = (): string => claudeHome()
 
 async function safeReadJson(path: string): Promise<Record<string, unknown> | null> {
   try {
@@ -38,17 +39,40 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-/** Parse a markdown file's YAML frontmatter, tolerating errors. */
-async function readFrontmatter(
-  path: string
-): Promise<{ data: Record<string, unknown>; body: string } | null> {
+/** Cap the bytes read for metadata: frontmatter is tiny, and a project's files are
+ *  untrusted, so a multi-MB agent file shouldn't be slurped to scan a name. */
+const MAX_METADATA_BYTES = 256 * 1024
+
+/**
+ * Parse a markdown file's YAML frontmatter, data-only. Project `.claude/` is
+ * untrusted, so this must never execute file content: a fenced language other than
+ * YAML (`---js`, `---javascript`, …) is REJECTED rather than handed to an engine that
+ * could `eval` it, and the YAML itself is loaded with js-yaml's safe default schema
+ * (no `!!js/function`). Missing/oversized/malformed frontmatter → null (skipped).
+ */
+async function readFrontmatter(path: string): Promise<{ data: Record<string, unknown> } | null> {
+  let raw: string
   try {
-    const raw = await readFile(path, 'utf8')
-    const parsed = matter(raw)
-    return { data: parsed.data as Record<string, unknown>, body: parsed.content }
+    raw = await readFile(path, 'utf8')
   } catch {
     return null
   }
+  if (raw.length > MAX_METADATA_BYTES) return null
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw
+  const m = /^---([^\n]*)\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)
+  // No frontmatter, or empty/odd frontmatter: list with filename defaults. Only a
+  // non-YAML fence or malformed YAML is skipped.
+  if (!m) return { data: {} }
+  const lang = m[1].trim().toLowerCase()
+  if (lang && lang !== 'yaml' && lang !== 'yml') return null
+  let data: unknown
+  try {
+    data = yamlLoad(m[2])
+  } catch {
+    return null
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { data: {} }
+  return { data: data as Record<string, unknown> }
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)

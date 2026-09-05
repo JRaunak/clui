@@ -11,8 +11,8 @@
  * takes one itself.
  */
 import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { claudeHome } from '../lib/claude-home'
 
 /**
  * The subset of the CLI's settings Clui reads. Every field is optional and
@@ -38,7 +38,7 @@ interface RawCliSettings {
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
 
-const cliSettingsPath = (): string => join(homedir(), '.claude', 'settings.json')
+const cliSettingsPath = (): string => join(claudeHome(), 'settings.json')
 
 export async function readCliSettings(): Promise<CliSettings> {
   try {

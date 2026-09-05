@@ -1,30 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage } from '../store'
+import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
 import { MessageView } from './MessageView'
 import { WorkingStatus } from './WorkingStatus'
 import { CompactSuggestion } from './CompactSuggestion'
 import { FindBar } from './FindBar'
 import { TaskPuck, useTaskUiActive } from './TaskPuck'
-import { IconChevron, IconClose, IconEdit, IconCheck } from './Icon'
+import { IconChevron, IconClose, IconEdit, IconCheck, IconFile } from './Icon'
 
 /**
- * Virtualized transcript. react-virtuoso renders only the visible
- * window, so the FULL transcript loads while staying fast on thousands of messages.
+ * Virtualized transcript. react-virtuoso renders only the visible window, so the full
+ * transcript loads while staying fast on thousands of messages.
  * Scroll behaviors:
- *  - Auto-scroll to bottom on new streamed tokens, BUT only when the user is already
- *    at the bottom (followOutput gated on isAtBottom), so it never yanks a user who
- *    scrolled up to read history mid-stream.
+ *  - Auto-scroll to bottom on new streamed tokens, but only when the user is already at
+ *    the bottom (followOutput gated on isAtBottom), so it never yanks a user who scrolled
+ *    up to read history mid-stream.
  *  - Sending a new message jumps to bottom (reveal your message + the reply).
- *  - Switching/resuming a session resets to the bottom (key={activeHandleId} remount +
- *    initialTopMostItemIndex at the last message).
+ *  - Switching/resuming a session resets to the bottom (key remount + initialTopMostItemIndex).
  *  - The "resumed here" divider renders inside the row at index === historyCount.
- *  - The working indicator / compact suggestion / error live at the transcript TAIL
- *    (scrolling with content) → Virtuoso Footer.
- *  - A "jump to latest" pill appears when scrolled up, with a "new messages" dot if a
- *    turn arrived while away.
- * Resize: Virtuoso auto-remeasures (ResizeObserver); we re-pin to bottom on resize only
- * if the user was at bottom. Theme switch is inert (colors-only, no remount).
+ *  - The working indicator / compact suggestion / error live at the transcript tail (Virtuoso Footer).
+ *  - A "jump to latest" pill appears when scrolled up, with a "new messages" dot if a turn arrived.
+ * Resize: Virtuoso auto-remeasures; we re-pin to bottom on resize only if the user was at bottom.
  */
 export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => void }): JSX.Element {
   const messages = useActive((s) => s?.messages ?? EMPTY_MESSAGES)
@@ -34,8 +30,8 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const activeHandleId = useActive((s) => s?.handleId ?? null)
   const tasks = useActive((s) => s?.tasks ?? EMPTY_TASKS)
 
-  // Task puck: local UI state (open/pinned), reset when the session switches. The
-  // gate hides it when idle+all-done (after a linger) or when the list empties.
+  // Task puck: local UI state (open/pinned), reset when the session switches. The gate
+  // hides it when idle+all-done (after a linger) or when the list empties.
   const [taskOpen, setTaskOpen] = useState(false)
   const [taskPinned, setTaskPinned] = useState(false)
   const taskUiActive = useTaskUiActive(tasks, busy)
@@ -49,15 +45,15 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const [flashId, setFlashId] = useState<string | null>(null)
 
   const virtuosoRef = useRef<VirtuosoHandle>(null)
-  // atBottom lives in a ref (read by streaming/resize logic without re-subscribing) AND
+  // atBottom lives in a ref (read by streaming/resize logic without re-subscribing) and
   // state (drives the jump-to-latest pill's visibility).
   const atBottomRef = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
   const [hasNew, setHasNew] = useState(false)
   const prevLen = useRef(messages.length)
 
-  // Virtuoso animates scroll in JS, so the global `scroll-behavior:auto !important`
-  // reduced-motion CSS rule does NOT cover it, so resolve the behavior explicitly.
+  // Virtuoso animates scroll in JS, so the global scroll-behavior:auto reduced-motion CSS
+  // rule does not cover it; resolve the behavior explicitly.
   const reduce =
     typeof window !== 'undefined' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -73,12 +69,11 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const onAtBottom = useCallback((b: boolean) => {
     atBottomRef.current = b
     setAtBottom(b)
-    if (b) setHasNew(false) // caught up → clear the "new messages" mark
+    if (b) setHasNew(false) // caught up, so clear the "new messages" mark
   }, [])
 
-  // A new message arrived. If it's the USER's own send, force-jump to bottom (reveal
-  // it). If a turn arrived while the user was scrolled up, flag "new messages" instead
-  // of yanking them down.
+  // A new message arrived. If it's the user's own send, force-jump to bottom (reveal it).
+  // If a turn arrived while the user was scrolled up, flag "new messages" instead of yanking.
   useEffect(() => {
     const grew = messages.length > prevLen.current
     const last = messages[messages.length - 1]
@@ -91,12 +86,12 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   }, [messages, behavior])
 
   // Re-pin to bottom after a reflow only if the user was already there. followOutput re-pins
-  // on item-count change but not on Footer growth (WorkingStatus, a queued draft), which
-  // would otherwise leave the new tail below the fold.
+  // on item-count change but not on Footer growth (WorkingStatus, a queued draft), which would
+  // otherwise leave the new tail below the fold.
   const repinIfAtBottom = useCallback(() => {
     if (atBottomRef.current) {
       // scrollTo true bottom, not the last item's edge: the Footer sits below it, so
-      // scrollToIndex('LAST') would leave footer under the fold.
+      // scrollToIndex('LAST') would leave the footer under the fold.
       virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: 'auto' })
     }
   }, [])
@@ -104,7 +99,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
     window.addEventListener('resize', repinIfAtBottom)
     return () => window.removeEventListener('resize', repinIfAtBottom)
   }, [repinIfAtBottom])
-  // Memoized so the Footer's resize effect (keyed on context) isn't rebuilt on every render.
+  // Memoized so the Footer's resize effect isn't rebuilt on every render.
   const footerContext = useMemo(() => ({ repin: repinIfAtBottom }), [repinIfAtBottom])
 
   const jumpToLatest = useCallback(() => {
@@ -112,8 +107,8 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
     setHasNew(false)
   }, [behavior])
 
-  // Consume a scroll-to-message request (⌘F / ⌘⇧F): scroll to it centered and flash the card.
-  // Keyed on nonce so repeated jumps to the same id re-fire; does NOT touch atBottom/follow.
+  // Consume a scroll-to-message request: scroll to it centered and flash the card. Keyed on
+  // nonce so repeated jumps to the same id re-fire; does not touch atBottom/follow.
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!scrollTarget) return
@@ -129,8 +124,6 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollTarget?.nonce])
-
-  // Empty / welcome state: render directly, skip Virtuoso.
   if (messages.length === 0 && !busy) {
     return (
       <div
@@ -167,8 +160,8 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         data={messages}
         computeItemKey={(_i, m) => m.id}
         itemContent={(index, m) => (
-          // H-padding on the ITEM, never the Virtuoso scroller: scroller padding inflates
-          // scrollWidth past clientWidth (a react-virtuoso quirk) → a spurious h-scrollbar that clips cards.
+          // H-padding on the item, never the Virtuoso scroller: scroller padding inflates
+          // scrollWidth past clientWidth (a react-virtuoso quirk), producing a spurious h-scrollbar.
           <div className="mx-auto max-w-5xl px-7 pb-6 [&:first-child]:pt-6">
             {resumed && historyCount > 0 && index === historyCount && (
               <div className="mb-6 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-faint">
@@ -177,8 +170,8 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
                 <span className="h-px flex-1 bg-border" />
               </div>
             )}
-            {/* Flash-highlight the jumped-to message (search hit). A tinted ring that
-                fades out; color-only so reduced-motion loses nothing. */}
+            {/* Flash-highlight the jumped-to message. A tinted ring that fades out; color-only
+                so reduced-motion loses nothing. */}
             <div
               className={
                 flashId === m.id
@@ -198,10 +191,9 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         initialTopMostItemIndex={Math.max(0, messages.length - 1)}
         increaseViewportBy={{ top: 600, bottom: 600 }}
       />
-      {/* Puck (at bottom) and JumpToLatest (scrolled up) are mutually exclusive. When
-          scrolled up with active tasks, JumpToLatest absorbs the count into its label,
-          UNLESS the panel is pinned-open (then it keeps rendering above and JumpToLatest
-          would double the affordance, so suppress it). */}
+      {/* Puck (at bottom) and JumpToLatest (scrolled up) are mutually exclusive. When scrolled
+          up with active tasks, JumpToLatest absorbs the count into its label, unless the panel
+          is pinned-open (then it keeps rendering above and JumpToLatest would double the affordance). */}
       {taskUiActive && (
         <TaskPuck
           tasks={tasks}
@@ -237,9 +229,8 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
   // compete. Gated on the same condition as the puck, so they stay in lockstep.
   const tasks = useActive((s) => s?.tasks ?? EMPTY_TASKS)
   const taskMerged = useTaskUiActive(tasks, busy)
-  // The Footer grows for non-list-items (WorkingStatus, a queued draft) that followOutput
-  // won't re-pin for, so observe our height and ask Chat to re-stick. rAF sidesteps the
-  // ResizeObserver-loop warning.
+  // The Footer grows for non-list-items (WorkingStatus, a queued draft) that followOutput won't
+  // re-pin for, so observe our height and ask Chat to re-stick. rAF sidesteps the ResizeObserver-loop warning.
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = rootRef.current
@@ -263,7 +254,7 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
       style={{ paddingBottom: 'calc(var(--dock-h, 0px) + 1.5rem)' }}
     >
       {busy && <WorkingStatus taskMerged={taskMerged} />}
-      {/* Queued messages live at the TAIL, below the response: renderer-held drafts, not committed
+      {/* Queued messages live at the tail, below the response: renderer-held drafts, not committed
           transcript, so they stay editable and cancelable before reaching the CLI. */}
       <QueuedMessages />
       <CompactSuggestion />
@@ -275,8 +266,6 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
     </div>
   )
 }
-
-/** They dispatch FIFO at turn boundaries. */
 function QueuedMessages(): JSX.Element | null {
   const queued = useActive((s) => s?.queuedMessages ?? EMPTY_QUEUED)
   if (queued.length === 0) return null
@@ -323,6 +312,11 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
   if (editing) {
     return (
       <div className="rounded-lg border border-info/50 bg-user px-3 py-2" role="listitem">
+        {q.attachments && q.attachments.length > 0 && (
+          <div className="mb-1.5">
+            <QueuedAttachments atts={q.attachments} />
+          </div>
+        )}
         <textarea
           ref={taRef}
           value={draft}
@@ -363,16 +357,21 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
 
   return (
     <div
-      /* Dashed info-tinted border distinguishes a still-queued message (editable,
-         not committed history) from a sent user bubble, which is solid. */
+      /* Dashed info-tinted border distinguishes a still-queued message (editable, not committed
+         history) from a sent user bubble, which is solid. */
       className="group flex max-w-[80%] items-start gap-2 self-start rounded-lg rounded-tl-sm border border-dashed border-info/40 bg-user px-3.5 py-2.5"
       role="listitem"
     >
-      <span className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-relaxed text-content">
-        {q.text}
-      </span>
-      {/* Shown at opacity-70 at rest, not hover-only: hover-only edit/cancel is
-          undiscoverable, so a user may not realize a queued message is still editable. */}
+      {/* Attachment-only queued turns have no text; render their thumbnails/chips so the row
+          is identifiable and cancelable, not an empty bubble. */}
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        {q.attachments && q.attachments.length > 0 && <QueuedAttachments atts={q.attachments} />}
+        {q.text && (
+          <span className="whitespace-pre-wrap text-sm leading-relaxed text-content">{q.text}</span>
+        )}
+      </div>
+      {/* Shown at opacity-70 at rest, not hover-only: hover-only edit/cancel is undiscoverable,
+          so a user may not realize a queued message is still editable. */}
       <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
         <button
           className="rounded p-1 text-faint hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -391,6 +390,35 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
           <IconClose className="h-3.5 w-3.5" />
         </button>
       </div>
+    </div>
+  )
+}
+
+/** Thumbnails/chips for a queued message's attachments, sharing the wire payload's display
+ *  metadata so a queued turn shows the same content it will send. */
+function QueuedAttachments({ atts }: { atts: SendAttachment[] }): JSX.Element {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {atts.map((a, i) => {
+        const d = a.display
+        return d.kind === 'image' ? (
+          <img
+            key={i}
+            src={d.previewUrl}
+            alt={d.name || 'attached image'}
+            className="h-9 w-9 rounded bg-tool object-cover"
+          />
+        ) : (
+          <span
+            key={i}
+            className="flex items-center gap-1 rounded border border-border bg-bg-raised px-1.5 py-0.5 font-mono text-[10px] text-dim"
+            title={d.name}
+          >
+            <IconFile className="h-3 w-3 shrink-0" />
+            <span className="max-w-[120px] truncate">{d.name}</span>
+          </span>
+        )
+      })}
     </div>
   )
 }

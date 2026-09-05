@@ -51,10 +51,13 @@ async function gitLsFiles(cwd: string): Promise<WorkspaceFiles | null> {
   try {
     const { stdout } = await execFileP(
       'git',
-      ['-C', cwd, 'ls-files', '--cached', '--others', '--exclude-standard'],
+      ['-C', cwd, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
       { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }
     )
-    const all = stdout.split('\n').filter(Boolean)
+    // `-z` emits NUL-delimited, UNQUOTED paths, so a filename with a space, quote, or
+    // non-ASCII byte comes through verbatim instead of git's C-quoted spelling (which the
+    // picker would insert as an unresolvable path). Dedupe tracked/unmerged repeats.
+    const all = [...new Set(stdout.split('\0').filter(Boolean))]
     return { files: all.slice(0, CAP), truncated: all.length > CAP }
   } catch {
     // Not a git repo, git missing, or timed out → caller falls back to a walk.

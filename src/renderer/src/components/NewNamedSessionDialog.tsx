@@ -1,8 +1,4 @@
-/**
- * Collects a name for a new session, then hands it to `App.startNamedSession` (pick +
- * spawn with `-n`). Autofocuses the input, so it skips `useDialogFocus` (which exists
- * for dialogs that must NOT preselect a control).
- */
+/** Collects a name for a new session. Autofocuses the input, so it skips `useDialogFocus`. */
 import { useRef, useState } from 'react'
 import { useEscape } from '../lib/useEscape'
 import { useClickOutside } from '../lib/useClickOutside'
@@ -20,8 +16,7 @@ export function NewNamedSessionDialog({
   const panelRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Esc / outside-click both cancel (focus restores to the trigger via App's inert
-  // effect). Enter confirms.
+  // Esc / outside-click both cancel. Enter confirms.
   useEscape(true, onClose)
   useClickOutside(panelRef, true, onClose)
 
@@ -41,6 +36,8 @@ export function NewNamedSessionDialog({
           <input
             ref={inputRef}
             autoFocus
+            aria-label="Session name"
+            aria-describedby="named-session-hint"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
@@ -53,7 +50,7 @@ export function NewNamedSessionDialog({
             className="h-11 rounded-md border border-border bg-bg px-3 text-sm text-content outline-none focus:border-accent placeholder:text-faint"
             spellCheck={false}
           />
-          <p className="text-[12px] text-faint">
+          <p id="named-session-hint" className="text-[12px] text-faint">
             Used as the session title from the first turn. Leave blank for an unnamed session.
           </p>
         </div>

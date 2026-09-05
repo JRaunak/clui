@@ -10,11 +10,11 @@ export interface DropdownOption<T extends string> {
   /** Optional one-line description shown under the label in the open menu only
    *  (the collapsed trigger stays compact). */
   description?: string
-  /** Optional leading glyph for this option (e.g. a per-mode permission icon). */
+  /** Optional leading glyph for this option. */
   icon?: React.ReactNode
-  /** Marks a full-access / destructive option. In the `pill` variant its whole row
-     renders in `err` with its own darker hover fill. Scoped per-option so the shared
-     Settings/GlobalSearch dropdowns are unaffected. */
+  /** Marks a full-access / destructive option. In the pill variant its whole row renders
+     in err with its own darker hover fill. Scoped per-option so the shared Settings/GlobalSearch
+     dropdowns are unaffected. */
   tone?: 'danger'
 }
 
@@ -30,33 +30,51 @@ export function Dropdown<T extends string>({
   align = 'left',
   direction = 'down',
   variant = 'default',
-  icon
+  icon,
+  ariaLabel
 }: {
   value: T
   options: DropdownOption<T>[]
   onChange: (v: T) => void
   title?: string
+  /** Accessible name for the trigger (its visible label is a value, not the field name),
+   *  so the control isn't announced as just its current choice. */
+  ariaLabel?: string
   className?: string
-  /** Extra classes for the open menu panel (e.g. a wider `w-64` when options
-   *  carry descriptions so they don't wrap to 3 lines). */
+  /** Extra classes for the open menu panel (e.g. a wider w-64 when options carry
+   *  descriptions so they don't wrap to 3 lines). */
   menuClassName?: string
   align?: 'left' | 'right'
   /** Open the menu upward (for bottom-docked controls). */
   direction?: 'up' | 'down'
-  /** `pill` = the composer's borderless recessed-well trigger + a radius-xl
-   *  borderless card. `default` = the bordered chip used in Settings/GlobalSearch. */
+  /** pill = the composer's borderless recessed-well trigger + a radius-xl borderless card.
+   *  default = the bordered chip used in Settings/GlobalSearch. */
   variant?: 'default' | 'pill'
   /** Optional leading icon. */
   icon?: React.ReactNode
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
+  // Outside-click closes but leaves focus on whatever was clicked (don't yank it back).
   const dismiss = useCallback(() => setOpen(false), [])
   useClickOutside(ref, open, dismiss)
-  // Esc closes the open menu via the shared escape-stack, so a dropdown opened
-  // inside a modal closes the dropdown first, not the modal.
-  useEscape(open, dismiss)
+  // Esc closes the open menu via the shared escape-stack (a dropdown inside a modal closes
+  // the dropdown first) and restores focus to the trigger, since the focused option unmounts
+  // with the menu and would otherwise drop focus to <body>.
+  useEscape(
+    open,
+    useCallback(() => {
+      setOpen(false)
+      triggerRef.current?.focus()
+    }, [])
+  )
+  const select = (v: T): void => {
+    onChange(v)
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
 
   const current = options.find((o) => o.value === value)
   const isPill = variant === 'pill'
@@ -64,7 +82,11 @@ export function Dropdown<T extends string>({
   return (
     <div ref={ref} className={`relative ${className ?? ''}`} title={title}>
       <button
+        ref={triggerRef}
         type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className={
           isPill
             ? `group flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs transition-colors ${
@@ -76,8 +98,8 @@ export function Dropdown<T extends string>({
       >
         <span className="flex min-w-0 items-center gap-1.5">
           {icon}
-          {/* Pill trigger keeps the label NEUTRAL (dim→content) so the per-mode color
-              lives only on the icon; the bordered variant tints the label per-option. */}
+          {/* Pill trigger keeps the label neutral (dim to content) so the per-mode color lives
+              only on the icon; the bordered variant tints the label per-option. */}
           <span
             className={`whitespace-nowrap font-medium ${
               isPill
@@ -112,10 +134,10 @@ export function Dropdown<T extends string>({
           {options.map((o) => {
             const selected = o.value === value
             const danger = o.tone === 'danger'
-            // Selection reads as a trailing ✓ glyph in accent (accent-as-glyph clears the
-            // 3:1 non-text floor where accent-as-text on the hover fill would fail, and
-            // keeps the scarce accent off the title). Danger rows go fully err with their
-            // own darker hover fill; other rows keep a neutral title + faint description.
+            // Selection reads as a trailing checkmark glyph in accent (accent-as-glyph clears
+            // the 3:1 non-text floor where accent-as-text on the hover fill would fail, and keeps
+            // the scarce accent off the title). Danger rows go fully err with their own darker
+            // hover fill; other rows keep a neutral title + faint description.
             return (
               <button
                 key={o.value}
@@ -124,10 +146,7 @@ export function Dropdown<T extends string>({
                 className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors ${
                   danger ? 'text-err hover:bg-control-danger-hover' : 'hover:bg-row-hover'
                 }`}
-                onClick={() => {
-                  onChange(o.value)
-                  setOpen(false)
-                }}
+                onClick={() => select(o.value)}
               >
                 {o.icon && <span className="shrink-0">{o.icon}</span>}
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -162,12 +181,12 @@ export function Dropdown<T extends string>({
         >
           {options.map((o) => {
             const selected = o.value === value
-            // Left-aligned list (correct for scannable menus w/ multi-line descriptions).
-            // NO leading tick-gutter (was lopsided dead space) and NO trailing tick (the
-            // trigger chip still shows the current choice while the menu is open, so an
-            // in-menu tick is redundant). Selection = a full-row highlight + a 2px accent
-            // left-edge bar, Clui's active-item idiom (the active-session rail), absolutely
-            // positioned so it adds ZERO horizontal shift; aria-current carries it for AT.
+            // Left-aligned list (correct for scannable menus w/ multi-line descriptions). No
+            // leading tick-gutter (was lopsided dead space) and no trailing tick (the trigger
+            // chip still shows the current choice while the menu is open, so an in-menu tick is
+            // redundant). Selection = a full-row highlight + a 2px accent left-edge bar, Clui's
+            // active-item idiom (the active-session rail), absolutely positioned so it adds zero
+            // horizontal shift; aria-current carries it for AT.
             return (
               <button
                 key={o.value}
@@ -176,10 +195,7 @@ export function Dropdown<T extends string>({
                 className={`relative flex w-full items-start gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
                   selected ? 'bg-user' : 'hover:bg-user'
                 } ${o.color ?? 'text-content'}`}
-                onClick={() => {
-                  onChange(o.value)
-                  setOpen(false)
-                }}
+                onClick={() => select(o.value)}
               >
                 {selected && (
                   <span

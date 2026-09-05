@@ -6,7 +6,7 @@ import {
   type DragEvent,
   type ChangeEvent
 } from 'react'
-import { useActive, useSession, type SendAttachment } from '../store'
+import { useActive, useSession, EMPTY_ATTACHMENTS, type SendAttachment } from '../store'
 import { useComposerAutocomplete } from './ComposerAutocomplete'
 import { ModelEffortPicker } from './ModelEffortPicker'
 import { UltracodeToggle } from './UltracodeToggle'
@@ -36,19 +36,27 @@ import {
 import type { PermissionModeChoice } from '../../../shared/ipc'
 
 /**
- * Message textarea on top, a control row below: model/effort + permission chips
- * on the left, context gauge + send/stop on the right. The dock edge pulses while
- * a turn streams (the verb+timer itself lives in the chat footer, see WorkingStatus).
+ * Message textarea on top, a control row below: model/effort + permission chips on the left,
+ * context gauge + send/stop on the right. The dock edge pulses while a turn streams (the
+ * verb+timer itself lives in the chat footer, see WorkingStatus).
  */
 export function Composer(): JSX.Element {
-  const [text, setText] = useState('')
+  // Draft (text + attachments) lives in the session slice, not local state, so it survives
+  // switching sessions and the Composer unmounting for a detail view. Caret and drag-highlight
+  // stay local: they're ephemeral per-mount UI, not per-session content.
+  const handleId = useActive((s) => s?.handleId ?? null)
+  const text = useActive((s) => s?.draftText ?? '')
+  const attachments = useActive((s) => s?.draftAttachments ?? EMPTY_ATTACHMENTS)
+  const setDraftText = useSession((s) => s.setDraftText)
+  const addDraftAttachments = useSession((s) => s.addDraftAttachments)
+  const removeDraftAttachment = useSession((s) => s.removeDraftAttachment)
+  const clearDraft = useSession((s) => s.clearDraft)
   const [caret, setCaret] = useState(0)
-  const [attachments, setAttachments] = useState<ProcessedAttachment[]>([])
   const [dragOver, setDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  // Depth counter so nested dragenter/dragleave (over child elements) don't flicker
-  // the drop highlight; only the outermost enter/leave toggles it.
+  // Depth counter so nested dragenter/dragleave (over child elements) don't flicker the
+  // drop highlight; only the outermost enter/leave toggles it.
   const dragDepth = useRef(0)
   const busy = useActive((s) => s?.busy ?? false)
   const hasSession = useActive((s) => !!s)
@@ -67,31 +75,33 @@ export function Composer(): JSX.Element {
   const setNotice = useSession((s) => s.setNotice)
 
   // Drop/paste/pick routing:
-  //  - IMAGES inline as thumbnails (the model can't `@`-read pixels; it needs the block).
-  //  - EVERY OTHER FILE becomes an `@path` TOKEN in the composer (relative if under the
-  //    workspace cwd, else absolute). The CLI expands `@` and the model Reads it ON
-  //    DEMAND (verified: @relative, @absolute both resolve). This is token-cheap (a
-  //    pointer, not the re-billed contents), handles files we can't inline (.xlsx/.zip),
-  //    reflects live edits, and works in- or out-of-cwd.
-  //  - A file with NO resolvable path (a pasted screenshot Blob) can't be referenced by
-  //    path → fall back to inlining its bytes (image/pdf/text) so paste still works.
+  //  - Images inline as thumbnails (the model can't @-read pixels; it needs the block).
+  //  - Every other file becomes an @path token in the composer (relative if under the workspace
+  //    cwd, else absolute). The CLI expands @ and the model Reads it on demand. This is token-cheap
+  //    (a pointer, not the re-billed contents), handles files we can't inline, reflects live edits,
+  //    and works in- or out-of-cwd.
+  //  - A file with no resolvable path (a pasted screenshot Blob) can't be referenced by path, so
+  //    fall back to inlining its bytes so paste still works.
   const addFiles = async (files: File[]): Promise<void> => {
-    if (files.length === 0) return
+    if (files.length === 0 || !handleId) return
+    // Bind to the handle the drop started on, so a conversion that finishes after the user
+    // switched sessions lands in this session's draft, not whichever is active then.
+    const h = handleId
     const inlineFallback: File[] = []
     const tokens: string[] = []
     for (const file of files) {
       if (file.type.startsWith('image/')) {
-        inlineFallback.push(file) // images always inline
+        inlineFallback.push(file)
         continue
       }
       const abs = window.clui.getPathForFile(file)
       if (abs) tokens.push('@' + toWorkspaceRef(abs, cwd))
-      else inlineFallback.push(file) // no path (e.g. pasted Blob) → inline the bytes
+      else inlineFallback.push(file)
     }
     if (tokens.length) insertAtCaret(tokens.join(' ') + ' ')
     if (inlineFallback.length) {
       const { attachments: added, errors } = await processDroppedFiles(inlineFallback)
-      if (added.length) setAttachments((prev) => [...prev, ...added])
+      if (added.length) addDraftAttachments(h, added)
       if (errors.length) setNotice(errors.join(' '))
     }
   }
@@ -104,12 +114,12 @@ export function Composer(): JSX.Element {
   }
 
   const removeAttachment = (id: string): void => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id))
+    if (handleId) removeDraftAttachment(handleId, id)
   }
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>): void => {
-    // Only intercept when the clipboard carries FILES (e.g. a screenshot / a file copied
-    // in Finder). A normal text/rich-text paste has no files → let it proceed untouched.
+    // Only intercept when the clipboard carries files (e.g. a screenshot / a file copied in
+    // Finder). A normal text/rich-text paste has no files, so let it proceed untouched.
     const files = Array.from(e.clipboardData.files)
     if (files.length === 0) return
     e.preventDefault()
@@ -143,13 +153,13 @@ export function Composer(): JSX.Element {
   const onPickFiles = (e: ChangeEvent<HTMLInputElement>): void => {
     const files = e.target.files ? Array.from(e.target.files) : []
     void addFiles(files)
-    e.target.value = '' // allow re-picking the same file
+    e.target.value = ''
   }
 
-  // Apply an autocomplete pick: set text + restore the caret to just after the
-  // inserted token (async so React commits the value before we move the caret).
+  // Apply an autocomplete pick: set text + restore the caret to just after the inserted
+  // token (async so React commits the value before we move the caret).
   const applyPick = (nextText: string, nextCaret: number): void => {
-    setText(nextText)
+    if (handleId) setDraftText(handleId, nextText)
     setCaret(nextCaret)
     requestAnimationFrame(() => {
       const ta = textareaRef.current
@@ -164,7 +174,7 @@ export function Composer(): JSX.Element {
 
   const submit = async (): Promise<void> => {
     const t = text.trim()
-    if (!t && attachments.length === 0) return
+    if ((!t && attachments.length === 0) || !handleId) return
     const send: SendAttachment[] = attachments.map((a) => ({
       wire: toWireAttachment(a),
       display:
@@ -174,9 +184,9 @@ export function Composer(): JSX.Element {
             ? { kind: 'document', name: a.name, bytes: a.bytes }
             : { kind: 'text', name: a.name, bytes: a.bytes, lines: a.lines }
     }))
-    setText('')
+    // Clear only THIS session's draft, the one the send consumed.
+    clearDraft(handleId)
     setCaret(0)
-    setAttachments([])
     await sendMessage(t, send.length ? send : undefined)
   }
 
@@ -201,8 +211,8 @@ export function Composer(): JSX.Element {
     color: PERMISSION_MODE_COLORS[m],
     description: PERMISSION_MODE_DESCRIPTIONS[m],
     icon: <PermissionIcon mode={m} className="h-4 w-4" />,
-    // Autonomous (bypassPermissions) is the full-access danger tier: the whole row
-    // goes err, not a new hue (terracotta stays scarce).
+    // Autonomous (bypassPermissions) is the full-access danger tier: the whole row goes err,
+    // not a new hue (terracotta stays scarce).
     tone: m === 'bypassPermissions' ? ('danger' as const) : undefined
   }))
 
@@ -248,7 +258,7 @@ export function Composer(): JSX.Element {
             placeholder="Message Claude…  (Enter to send, Shift+Enter for newline · / for commands, @ for files, paste or drop images)"
             value={text}
             onChange={(e) => {
-              setText(e.target.value)
+              if (handleId) setDraftText(handleId, e.target.value)
               setCaret(e.target.selectionStart ?? e.target.value.length)
             }}
             onKeyDown={onKeyDown}
@@ -259,10 +269,9 @@ export function Composer(): JSX.Element {
           />
         </div>
         <div className="flex items-center">
-          {/* Attach-file button (keyboard/a11y affordance for paste + drop). No `accept`
-              filter: the picker routes every file the same way the drop handler does.
-              Images go inline; everything else (incl. .docx/.xlsx) becomes an @path token
-              the model Reads on demand. A curated allowlist only drifted out of parity. */}
+          {/* Attach-file button (keyboard/a11y affordance for paste + drop). No accept filter:
+              the picker routes every file the same way the drop handler does. Images go inline;
+              everything else becomes an @path token the model Reads on demand. */}
           <input
             ref={fileInputRef}
             type="file"
@@ -282,9 +291,9 @@ export function Composer(): JSX.Element {
           >
             <IconPlus className="h-4 w-4" />
           </button>
-          {/* Attach is a message-content action; the config pills to its right are one
-              group. Proximity marks the boundary (ml-3 here vs the tight gap-1.5 inside
-              the group); the borderless-well pills need no divider rule between them. */}
+          {/* Attach is a message-content action; the config pills to its right are one group.
+              Proximity marks the boundary (ml-3 here vs the tight gap-1.5 inside the group);
+              the borderless-well pills need no divider rule between them. */}
           <div className="ml-3 flex items-center gap-1.5">
             <ModelEffortPicker />
           <Dropdown<PermissionModeChoice>
@@ -300,22 +309,21 @@ export function Composer(): JSX.Element {
             <UltracodeToggle />
           </div>
 
-          {/* pr-[3px] equalizes the send button's corner inset: it's 26px centered in the
-              32px row, so it already floats 3px above the shell's bottom padding; matching
-              that on the right seats it the same distance from both walls. */}
+          {/* pr-[3px] equalizes the send button's corner inset: it's 26px centered in the 32px
+              row, so it already floats 3px above the shell's bottom padding; matching that on
+              the right seats it the same distance from both walls. */}
           <div className="ml-auto flex items-center gap-4 pr-[3px]">
-            {/* The verb+timer lives in the chat footer (WorkingStatus) for CLI-parity,
-                so the transcript tail is the single foreground activity signal. Here the
-                dock keeps only the context gauge + Stop; the dock-edge pulse is ambient. */}
+            {/* The verb+timer lives in the chat footer (WorkingStatus) for CLI-parity, so the
+                transcript tail is the single foreground activity signal. Here the dock keeps
+                only the context gauge + Stop; the dock-edge pulse is ambient. */}
             <ContextRing
               percent={contextPercent}
               usedTokens={contextTokens}
               contextWindow={contextWindow}
             />
-            {/* Send/stop morph in place: a 26px disc, enough below the 30px gauge beside
-                it that the two circles don't read as equal siblings (a solid fill outweighs
-                a thin ring at equal size). Fill + glyph shape carry the state (arrow↔stop),
-                never color alone. */}
+            {/* Send/stop morph in place: a 26px disc, enough below the 30px gauge beside it that
+                the two circles don't read as equal siblings (a solid fill outweighs a thin ring
+                at equal size). Fill + glyph shape carry the state, never color alone. */}
             {busy ? (
               <button
                 className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-err text-on-err transition-transform active:scale-95"
@@ -341,25 +349,24 @@ export function Composer(): JSX.Element {
   )
 }
 
-/** Turn a dropped file's absolute path into the reference the CLI expands after `@`:
- *  a workspace-RELATIVE path when the file is under `cwd` (matches the @-picker + is the
- *  token-cheap common case), else the ABSOLUTE path (out-of-cwd, the CLI/Read still
- *  resolves it). Pure string math (no node `path` in the renderer); POSIX separators. */
+/** Turn a dropped file's absolute path into the reference the CLI expands after @:
+ *  a workspace-relative path when the file is under cwd (matches the @-picker + is the
+ *  token-cheap common case), else the absolute path (out-of-cwd, the CLI/Read still resolves it).
+ *  Pure string math (no node path in the renderer); POSIX separators. */
 function toWorkspaceRef(abs: string, cwd: string | null): string {
   if (cwd) {
     const base = cwd.endsWith('/') ? cwd : cwd + '/'
-    if (abs === cwd) return abs // a directory dropped onto itself; just reference it
+    if (abs === cwd) return abs
     if (abs.startsWith(base)) return abs.slice(base.length)
   }
   return abs
 }
 
-/** Per-mode glyph so the mode is legible by SHAPE, not color alone (two modes share
- *  green; WCAG 1.4.1, never state-by-color-alone). Each metaphor: gear=inherit config,
- *  no-entry=deny-by-default, hand=asks-you, sparkles=classifier-decides, pencil=auto-edits,
- *  checklist=plan, slashed-shield=danger/unguarded. The color class carries the risk tier
- *  for the collapsed chip; in the open menu the icon inherits the option row's color via
- *  currentColor. */
+/** Per-mode glyph so the mode is legible by shape, not color alone (two modes share green).
+ *  Each metaphor: gear=inherit config, no-entry=deny-by-default, hand=asks-you, sparkles=
+ *  classifier-decides, pencil=auto-edits, checklist=plan, slashed-shield=danger/unguarded.
+ *  The color class carries the risk tier for the collapsed chip; in the open menu the icon
+ *  inherits the option row's color via currentColor. */
 const PERMISSION_MODE_ICONS: Record<
   PermissionModeChoice,
   (p: { className?: string }) => JSX.Element
@@ -384,8 +391,8 @@ function PermissionIcon({
   return <Glyph className={`${className} shrink-0 ${PERMISSION_MODE_COLORS[mode]}`} />
 }
 
-/** A thumbnail chip for one staged attachment: image preview + filename + remove ✕.
- *  Neutral surfaces (accent-scarcity); the ✕ is a ≥24px keyboard-reachable target. */
+/** A thumbnail chip for one staged attachment: image preview + filename + remove button.
+ *  Neutral surfaces (accent-scarcity); the button is a ≥24px keyboard-reachable target. */
 function AttachmentPill({
   att,
   onRemove

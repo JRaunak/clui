@@ -133,14 +133,15 @@ export interface CluiApi {
   stopTask: (handleId: string, taskId: string) => Promise<boolean>
   /** Move a running foreground tool to the background (keeps running in the tray). */
   backgroundTask: (handleId: string, toolUseId: string) => Promise<boolean>
-  /** Change a running session's permission mode mid-session (per-session only). */
-  setPermissionMode: (handleId: string, mode: PermissionModeChoice) => Promise<void>
-  /** Change a running session's model live (per-session only). */
-  setModel: (handleId: string, model: ModelChoice) => Promise<void>
+  /** Change a running session's permission mode mid-session. Resolves false if the CLI
+   *  rejected the change, so the renderer can revert its optimistic UI. */
+  setPermissionMode: (handleId: string, mode: PermissionModeChoice) => Promise<boolean>
+  /** Change a running session's model live. False = rejected (renderer reverts). */
+  setModel: (handleId: string, model: ModelChoice) => Promise<boolean>
   /** Change a running session's effort (respawns via --resume; per-session only). */
   setEffort: (handleId: string, effort: EffortChoice) => Promise<void>
-  /** Toggle ultracode (xhigh + workflow orchestration) live for a session. */
-  setUltracode: (handleId: string, on: boolean) => Promise<void>
+  /** Toggle ultracode (xhigh + workflow orchestration) live. False = rejected (renderer reverts). */
+  setUltracode: (handleId: string, on: boolean) => Promise<boolean>
   /** Stop and clean up a session's process. */
   stopSession: (handleId: string) => Promise<void>
   /** Answer a pending interactive permission request. */

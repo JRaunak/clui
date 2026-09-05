@@ -21,13 +21,8 @@ import { applyTheme } from '../lib/theme'
 import { useEscape } from '../lib/useEscape'
 import { useDialogFocus } from '../lib/useDialogFocus'
 
-/**
- * What to tell the user when the model list is the bundled fallback rather than a live one.
- *
- * Only Bedrock can be queried for a list. On every other provider the CLI reads its own
- * built-in catalog, so a missing `aws` is normal for those users, and naming it would send
- * them after a tool they have no reason to install.
- */
+/** What to tell the user when the model list is the bundled fallback. Only Bedrock can be queried
+ *  for a list; on other providers the CLI reads its own built-in catalog, so a missing `aws` is normal. */
 const FALLBACK_NOTES: Record<NonNullable<ModelListResult['reason']>, string> = {
   'no-cli':
     "Showing Clui's built-in model list. A live list needs the aws CLI on Clui's PATH, which only applies if you use Bedrock.",
@@ -44,21 +39,15 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [modelList, setModelList] = useState<ModelListResult>({ ids: [], live: true })
-  // Per-key provenance from the main process ('override' | 'cli' | 'default'), plus the
-  // keys staged for reset. Both drive the reset control; the modal commits on Save, so a
-  // reset is staged (not written) until then, and re-picking a value un-stages it.
+  // Per-key provenance from the main process, plus the keys staged for reset. Both drive the reset control;
+  // the modal commits on Save, so a reset is staged until then, and re-picking a value un-stages it.
   const [sources, setSources] = useState<Record<SettingsKey, SettingsSource> | null>(null)
   const [cleared, setCleared] = useState<SettingsKey[]>([])
-  // The theme is applied LIVE on change for instant feedback, but only persisted
-  // on Save. `persistedTheme` tracks the last-persisted value so closing without
-  // saving can revert the live preview; `previewedTheme` is null UNTIL the user
-  // actually changes the dropdown, so the unmount revert only fires when there's a
-  // real preview to undo. This guards two cases where reverting would be WRONG:
-  //   (1) StrictMode's simulated mount→unmount→remount (dev) fires the cleanup
-  //       BEFORE the async getSettings() resolves, when persistedTheme still holds
-  //       its default, and reverting there flipped a light app to dark (the reported bug);
-  //   (2) a fast open→close before load (prod), the same stale baseline.
-  // No preview made → nothing to revert → the theme the preload set stays put.
+  // The theme is applied live on change for instant feedback, but only persisted on Save.
+  // `persistedTheme` tracks the last-persisted value so closing without saving can revert the live preview;
+  // `previewedTheme` is null until the user changes the dropdown, so the unmount revert only fires when
+  // there's a real preview to undo. Avoids reverting when StrictMode's simulated mount/unmount fires cleanup
+  // before the async getSettings() resolves.
   const persistedTheme = useRef<CluiSettings['theme'] | null>(null)
   const previewedTheme = useRef<CluiSettings['theme'] | null>(null)
 
@@ -72,8 +61,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
     window.clui.listModels().then(setModelList)
   }, [])
 
-  // On unmount, revert an unsaved live theme preview, but ONLY if one was made and
-  // we know the persisted baseline (see refs above).
+  // On unmount, revert an unsaved live theme preview, but only if one was made and we know the persisted baseline.
   useEffect(() => {
     return () => {
       if (previewedTheme.current !== null && persistedTheme.current !== null) {
@@ -82,8 +70,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
     }
   }, [])
 
-  // Esc closes the modal (via the escape-stack, so an open dropdown inside closes
-  // first). The component only mounts while open, so it's always the active layer.
+  // Esc closes the modal (via the escape-stack, so an open dropdown inside closes first).
   useEscape(true, onClose)
 
   const checkCli = async (path: string): Promise<void> => {
@@ -95,34 +82,30 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
 
   const set = <K extends keyof CluiSettings>(key: K, value: CluiSettings[K]): void => {
     setSettings((s) => (s ? { ...s, [key]: value } : s))
-    // Editing a field un-stages its pending reset, else Save would clear the key the
-    // user just chose a value for.
+    // Editing a field un-stages its pending reset.
     setCleared((c) => (c.includes(key) ? c.filter((k) => k !== key) : c))
     setSaveError(null)
   }
 
-  /** Stage a reset: the key is cleared on Save, so the field goes back to inherited. */
+  /** Stage a reset: the key is cleared on Save. */
   const reset = (key: SettingsKey): void => {
     setCleared((c) => (c.includes(key) ? c : [...c, key]))
     setSaveError(null)
   }
 
-  /** True while this field holds a user override that Save would keep. */
+  /** True while this field holds a user override. */
   const isOverridden = (key: SettingsKey): boolean =>
     sources?.[key] === 'override' && !cleared.includes(key)
 
-  // Save COMMITS + DISMISSES (dialog contract: the primary action of a modal both
-  // applies and closes; the dismissal IS the confirmation, so no separate "Saved"
-  // toast). But close ONLY on success: if the write fails we keep the modal open and
-  // surface the error, so a failure can't masquerade as a save.
+  // Save commits + dismisses (dialog contract: the primary action of a modal both applies and closes).
+  // But close only on success: if the write fails we keep the modal open and surface the error.
   const save = async (): Promise<void> => {
     if (!settings || saving) return
     setSaving(true)
     setSaveError(null)
     try {
       await window.clui.updateSettings(settings, cleared)
-      // The live-applied theme is now persisted, so mark it so the unmount revert is a
-      // no-op (we're about to close; the previewed theme must STICK, not revert).
+      // The live-applied theme is now persisted, so mark it so the unmount revert is a no-op.
       persistedTheme.current = settings.theme
       previewedTheme.current = null
       onClose()
@@ -160,11 +143,11 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
         >
           <Dropdown<CluiSettings['theme']>
             value={settings.theme}
+            ariaLabel="Theme"
             options={THEME_CHOICES.map((t) => ({ value: t, label: THEME_LABELS[t] }))}
             onChange={(t) => {
               set('theme', t)
-              // Apply immediately for instant feedback; persisted only on Save.
-              // Mark that a live preview now exists so close-without-save reverts it.
+              // Apply immediately for instant feedback; persisted only on Save. Mark that a live preview exists so close-without-save reverts it.
               previewedTheme.current = t
               applyTheme(t)
             }}
@@ -178,6 +161,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
         >
           <div className="flex gap-2">
             <input
+              aria-label="Claude CLI path"
               className="flex-1 rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
               placeholder="(auto-detect)"
               value={settings.cliPath}
@@ -191,9 +175,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
               Check
             </button>
           </div>
-          {/* Version + path are machine values → mono (matching the footer, the
-              onboarding "Connected to claude …" line, and the CLI-broken screen,
-              which all render the identical tokens in mono). */}
+          {/* Version + path are machine values, rendered in mono. */}
           <div className="mt-1 text-[12px]">
             {checking ? (
               <span className="text-dim">checking…</span>
@@ -214,6 +196,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
           onReset={isOverridden('editorCommand') ? () => reset('editorCommand') : undefined}
         >
           <input
+            aria-label="Editor command"
             className="w-full rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
             value={settings.editorCommand}
             onChange={(e) => set('editorCommand', e.target.value)}
@@ -229,6 +212,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
         >
           <Dropdown<CluiSettings['permissionMode']>
             value={settings.permissionMode}
+            ariaLabel="Permission mode"
             options={PERMISSION_MODES.map((m) => ({
               value: m,
               label: PERMISSION_MODE_LABELS[m],
@@ -246,8 +230,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
             sources?.model === 'cli' ? ' Currently inheriting from ~/.claude/settings.json.' : ''
           }`}
           onReset={isOverridden('model') ? () => reset('model') : undefined}
-          // Amber = degraded but usable: they still have a working list, just possibly
-          // an incomplete one. Glyph + text carry it so it isn't status-by-colour.
+          // Amber = degraded but usable: they still have a working list, just possibly incomplete.
           note={
             !modelList.live && (
               <p className="flex items-start gap-1.5 text-[12px] text-warn" role="status">
@@ -259,6 +242,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
         >
           <Dropdown<CluiSettings['model']>
             value={settings.model}
+            ariaLabel="Default model for new sessions"
             options={modelList.ids.map((id) => ({ value: id, label: deriveModelInfo(id).label }))}
             onChange={(m) => set('model', m)}
           />
@@ -273,6 +257,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
         >
           <Dropdown<CluiSettings['effort']>
             value={settings.effort}
+            ariaLabel="Default reasoning effort for new sessions"
             options={EFFORT_CHOICES.map((e) => ({ value: e, label: EFFORT_LABELS[e] }))}
             onChange={(e) => set('effort', e)}
           />
@@ -285,6 +270,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
         >
           <div className="flex gap-2">
             <input
+              aria-label="Default workspace"
               className="flex-1 rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
               placeholder="(none)"
               value={settings.defaultWorkspace}
@@ -301,9 +287,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
       </div>
 
       <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-3">
-        {/* On failure only: keep the modal open + explain (SC 4.1.3 status message,
-            polite so it doesn't steal focus). Success needs no message — the modal
-            closes, which IS the confirmation. */}
+        {/* On failure only: keep the modal open + explain. Success needs no message; the modal closes. */}
         {saveError && (
           <span className="mr-auto text-xs text-err" role="alert" aria-live="assertive">
             {saveError}

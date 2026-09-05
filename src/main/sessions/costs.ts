@@ -9,8 +9,9 @@
  * Map shape: { "<cli-session-id>": <cumulative-usd> }.
  */
 import { app } from 'electron'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { atomicWriteFile } from '../lib/atomic'
 
 const costsPath = (): string => join(app.getPath('userData'), 'session-costs.json')
 
@@ -32,8 +33,7 @@ export async function readCosts(): Promise<Record<string, number>> {
 }
 
 async function writeCosts(map: Record<string, number>): Promise<void> {
-  await mkdir(app.getPath('userData'), { recursive: true })
-  await writeFile(costsPath(), JSON.stringify(map, null, 2), 'utf8')
+  await atomicWriteFile(costsPath(), JSON.stringify(map, null, 2))
 }
 
 // Serialize read-modify-write mutations. Background sessions can finish turns in the same

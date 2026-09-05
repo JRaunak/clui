@@ -1,20 +1,7 @@
-/**
- * AskUserQuestion picker: the model asking the USER a structured question (not a
- * permission decision). The CLI surfaces it as a `can_use_tool` request with
- * `requires_user_interaction: true` (fires even in bypassPermissions), so it's
- * routed here instead of the Allow/Deny dialog.
- *
- * Mirrors the CLI's own UX (verified live for every path):
- *  - Multiple questions with a header tab-bar; Tab/←/→ cycle between them.
- *  - Each question: numbered options + a "Type something" free-text option.
- *  - Footer: Cancel + Submit; Submit enables only when EVERY question is answered
- *    (a chosen option, or non-empty free text).
- *  - "Chat about this": denies the question so you can free-type a reply instead.
- *
- * Answer wire-format (verified): allow + updatedInput = { questions:<original>,
- * answers:{ [questionText]: label | freeText | label[] } }. "Chat about this" =
- * deny + message. Cancel = allow + empty answers (neutral skip).
- */
+/** AskUserQuestion picker: the model asking the user a structured question. The CLI fires
+ *  it as `can_use_tool` with `requires_user_interaction: true` (fires even in bypassPermissions).
+ *  Multiple questions, numbered options + free-text, Submit enables only when every question
+ *  is answered. Wire format: allow + updatedInput = { questions, answers }. */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSession, type PendingPermission } from '../store'
 import { useEscape } from '../lib/useEscape'
@@ -38,11 +25,36 @@ interface Question {
 
 const FREE_TEXT = ' free-text' // sentinel selection meaning "use the typed value"
 
+/** Validate one option: a non-null object with a string label. Non-string label/description/preview
+ *  would crash the dialog when reaching `o.preview` reads and React children. */
+function parseOption(o: unknown): QOption | null {
+  if (!o || typeof o !== 'object') return null
+  const r = o as Record<string, unknown>
+  if (typeof r.label !== 'string') return null
+  return {
+    label: r.label,
+    description: typeof r.description === 'string' ? r.description : undefined,
+    preview: typeof r.preview === 'string' ? r.preview : undefined
+  }
+}
+
 function parseQuestions(input: unknown): Question[] {
   if (input && typeof input === 'object' && Array.isArray((input as { questions?: unknown }).questions)) {
-    return ((input as { questions: unknown[] }).questions as Question[]).filter(
-      (q) => q && typeof q.question === 'string' && Array.isArray(q.options)
-    )
+    return ((input as { questions: unknown[] }).questions as unknown[])
+      .map((q): Question | null => {
+        if (!q || typeof q !== 'object') return null
+        const r = q as Record<string, unknown>
+        if (typeof r.question !== 'string' || !Array.isArray(r.options)) return null
+        const options = (r.options as unknown[]).map(parseOption).filter((o): o is QOption => o !== null)
+        if (options.length === 0) return null
+        return {
+          question: r.question,
+          header: typeof r.header === 'string' ? r.header : undefined,
+          options,
+          multiSelect: r.multiSelect === true
+        }
+      })
+      .filter((q): q is Question => q !== null)
   }
   return []
 }
@@ -51,14 +63,12 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
   const respond = useSession((s) => s.respondPermission)
   const questions = parseQuestions(request.input)
   const [tab, setTab] = useState(0) // active question index (== questions.length → Submit tab)
-  // Per-question chosen option labels (or the FREE_TEXT sentinel).
+  // Per-question chosen option labels or the FREE_TEXT sentinel.
   const [picked, setPicked] = useState<Record<number, string[]>>({})
   const [freeText, setFreeText] = useState<Record<number, string>>({})
-  // Optional per-question note, folded into that question's answer value on submit.
-  // Never gates submit (allAnswered ignores it); it's additive context, not an answer.
+  // Optional per-question note, folded into the answer on submit. Never gates submit.
   const [note, setNote] = useState<Record<number, string>>({})
-  // Which option's preview fills the side pane. Hover-driven (null = not hovering);
-  // resolved below to hovered → selected → first, so the pane is never empty.
+  // Which option's preview fills the side pane. Resolved to hovered → selected → first.
   const [hovered, setHovered] = useState<number | null>(null)
   const freeRef = useRef<HTMLInputElement>(null)
 
@@ -76,7 +86,18 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     setPicked((prev) => {
       const cur = prev[qi] ?? []
       if (multi) {
-        return { ...prev, [qi]: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label] }
+        // Custom text is EXCLUSIVE in multi-select: picking "Something else" clears the
+        // normal picks, and picking a normal option clears the custom sentinel. If both
+        // stay selected, submit sends ONLY the free text, silently dropping the
+        // visibly-selected option.
+        if (label === FREE_TEXT) {
+          return { ...prev, [qi]: cur.includes(FREE_TEXT) ? cur.filter((l) => l !== FREE_TEXT) : [FREE_TEXT] }
+        }
+        const normal = cur.filter((l) => l !== FREE_TEXT)
+        return {
+          ...prev,
+          [qi]: normal.includes(label) ? normal.filter((l) => l !== label) : [...normal, label]
+        }
       }
       return { ...prev, [qi]: [label] }
     })
@@ -88,14 +109,13 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     const answers: Record<string, string | string[]> = {}
     questions.forEach((q, qi) => {
       const p = picked[qi] ?? []
-      // The note folds into the answer value: it's the only channel the model receives
-      // (the `annotations` key is accepted but dropped from the model's view, verified live).
+      // The note folds into the answer value: the only channel the model receives.
       const n = note[qi]?.trim()
       const withNote = (v: string): string => (n ? `${v} (note: ${n})` : v)
       if (p.includes(FREE_TEXT)) {
         answers[q.question] = withNote(freeText[qi].trim())
       } else if (q.multiSelect) {
-        // Array answer: carry the note as a trailing element so each pick stays clean.
+        // Carry the note as a trailing element so each pick stays clean.
         answers[q.question] = n ? [...p, `(note: ${n})`] : p
       } else {
         answers[q.question] = withNote(p[0])
@@ -104,8 +124,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: { questions, answers } })
   }
 
-  // "Chat about this": deny the structured question so the user can free-type a
-  // reply instead (verified: the model acknowledges and stops).
+  // "Chat about this": deny the structured question so the user can free-type a reply.
   const chatInstead = (): void => {
     void respond({
       requestId: request.requestId,
@@ -114,35 +133,41 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     })
   }
 
-  // Cancel: neutral skip (allow + empty answers). Distinct from "chat": no message
-  // to the model, just "no answer".
+  // Cancel: neutral skip (allow + empty answers). Distinct from "chat": no message to the model.
   const cancel = useCallback((): void => {
     void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: { questions, answers: {} } })
   }, [respond, request.requestId, questions])
 
   useEscape(true, cancel)
 
-  // Switching questions clears the hovered option so a stale hover-index from the
-  // previous tab can't drive the new question's preview pane.
+  // Switching questions clears the hovered option so stale hover-index can't drive the new preview.
   useEffect(() => setHovered(null), [tab])
 
-  // Tab / arrows cycle between question tabs. Ignore when focus is in the free-text
-  // input so typing/Tab there behaves normally. Enter submits when every question is
-  // answered, but not while an option BUTTON has focus (Enter there toggles it, so
-  // submitting too would be a surprise double-action).
+  const tablistRef = useRef<HTMLDivElement>(null)
+
+  // Tab stays native so options, free text, and footer are reachable in DOM order. Enter submits
+  // when every question is answered, but not while an option button or free-text input has focus.
   const onKeyDown = (e: React.KeyboardEvent): void => {
     const tag = (e.target as HTMLElement).tagName
-    if (tag === 'INPUT' && e.key !== 'Escape') return
-    if (e.key === 'Tab' || e.key === 'ArrowRight') {
-      e.preventDefault()
-      setTab((t) => (t + 1) % questions.length)
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      setTab((t) => (t - 1 + questions.length) % questions.length)
-    } else if (e.key === 'Enter' && tag !== 'BUTTON' && allAnswered) {
+    if (tag === 'INPUT' || tag === 'BUTTON') return
+    if (e.key === 'Enter' && allAnswered) {
       e.preventDefault()
       submit()
     }
+  }
+
+  // W3C tabs pattern: Left/Right move both selected tab and DOM focus; roving tabindex keeps the tablist a single Tab stop.
+  const onTablistKeyDown = (e: React.KeyboardEvent): void => {
+    const last = questions.length - 1
+    let next = tab
+    if (e.key === 'ArrowRight') next = tab === last ? 0 : tab + 1
+    else if (e.key === 'ArrowLeft') next = tab === 0 ? last : tab - 1
+    else if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = last
+    else return
+    e.preventDefault()
+    setTab(next)
+    tablistRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
   }
 
   if (questions.length === 0) {
@@ -157,16 +182,14 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
 
   const q = questions[Math.min(tab, questions.length - 1)]
   const qi = Math.min(tab, questions.length - 1)
-  // The tab-bar only earns its space when there's more than one question to move
-  // between; a single-question dialog is just its options + the footer.
+  // Tab-bar only shows when there's more than one question.
   const showTabs = questions.length > 1
 
-  // Pane follows hovered → selected → first option, so it's never empty. No previews
-  // keeps the compact single-column layout (Shell not widened, no pane).
+  // Pane follows hovered → selected → first option, so it's never empty. No previews keeps compact layout.
   const hasPreviews = q.options.some((o) => !!o.preview)
   const selectedIdx = q.options.findIndex((o) => (picked[qi] ?? []).includes(o.label))
   const activeIdx = hovered ?? (selectedIdx >= 0 ? selectedIdx : 0)
-  // Guard: preview is model output, coerce a non-string to '' so the pane never shows `[object Object]`.
+  // Coerce non-string preview to '' so the pane never shows `[object Object]`.
   const rawPreview = q.options[activeIdx]?.preview
   const activePreview = typeof rawPreview === 'string' ? rawPreview : ''
 
@@ -178,6 +201,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
           index={oi + 1}
           label={opt.label}
           description={opt.description}
+          multi={Boolean(q.multiSelect)}
           selected={(picked[qi] ?? []).includes(opt.label)}
           onClick={() => choose(qi, opt.label, Boolean(q.multiSelect))}
           onHover={hasPreviews ? () => setHovered(oi) : undefined}
@@ -202,6 +226,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
         <OptionRow
           index={q.options.length + 1}
           label="Something else…"
+          multi={Boolean(q.multiSelect)}
           selected={false}
           onClick={() => choose(qi, FREE_TEXT, false)}
           onHover={hasPreviews ? () => setHovered(null) : undefined}
@@ -216,8 +241,10 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
           single-select control. */}
       {showTabs && (
         <div
+          ref={tablistRef}
           role="tablist"
           aria-label="Questions"
+          onKeyDown={onTablistKeyDown}
           className="flex items-stretch gap-1 overflow-x-auto border-b border-border px-4"
         >
           {questions.map((qq, i) => (
@@ -234,7 +261,8 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
               }`}
             >
               {qq.header || `Q${i + 1}`}
-              {isAnswered(i) && <IconCheck className="h-3 w-3 text-ok" aria-label="answered" />}
+              {/* title (not aria-label): Svg renders it as a real <title> so "answered" reaches AT. */}
+              {isAnswered(i) && <IconCheck className="h-3 w-3 text-ok" title="answered" />}
             </button>
           ))}
         </div>
@@ -245,11 +273,23 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
         {q.multiSelect && <div className="text-[11px] text-faint">Select all that apply</div>}
         {hasPreviews ? (
           <div className="flex items-start gap-4">
-            <div className="flex w-[300px] shrink-0 flex-col gap-1.5">{optionList}</div>
+            <div
+              role={q.multiSelect ? 'group' : 'radiogroup'}
+              aria-label={q.question}
+              className="flex w-[300px] shrink-0 flex-col gap-1.5"
+            >
+              {optionList}
+            </div>
             <PreviewPane text={activePreview} />
           </div>
         ) : (
-          <div className="flex flex-col gap-1.5">{optionList}</div>
+          <div
+            role={q.multiSelect ? 'group' : 'radiogroup'}
+            aria-label={q.question}
+            className="flex flex-col gap-1.5"
+          >
+            {optionList}
+          </div>
         )}
         {hasPreviews && (
           <label className="mt-1 flex flex-col gap-1.5">
@@ -273,6 +313,7 @@ function OptionRow({
   index,
   label,
   description,
+  multi,
   selected,
   onClick,
   onHover
@@ -280,14 +321,17 @@ function OptionRow({
   index: number
   label: string
   description?: string
+  // multi-select → checkbox semantics, single → radio; the pressed state reaches AT.
+  multi: boolean
   selected: boolean
   onClick: () => void
-  // When previews exist, hovering/focusing a row drives the side pane. Keyboard
-  // focus counts too (onFocus), so tabbing through options updates the preview.
+  // When previews exist, hovering/focusing a row drives the side pane. onFocus so tabbing updates the preview.
   onHover?: () => void
 }): JSX.Element {
   return (
     <button
+      role={multi ? 'checkbox' : 'radio'}
+      aria-checked={selected}
       onClick={onClick}
       onMouseEnter={onHover}
       onFocus={onHover}
@@ -305,10 +349,7 @@ function OptionRow({
   )
 }
 
-/**
- * Preview side-panel: reuses the existing surface styling so it doesn't read as a
- * separate widget.
- */
+/** Preview side-panel. Reuses the existing surface styling so it doesn't read as a separate widget. */
 function PreviewPane({ text }: { text: string }): JSX.Element {
   return (
     <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-tool">
@@ -320,8 +361,7 @@ function PreviewPane({ text }: { text: string }): JSX.Element {
           {text}
         </pre>
       ) : (
-        // This option carries no preview (e.g. a plain option in a mixed set). Say so
-        // rather than showing an empty box that reads as broken.
+        // This option carries no preview; say so rather than showing an empty box.
         <div className="px-3 py-2.5 text-xs text-faint">No preview for this option.</div>
       )}
     </div>
@@ -359,9 +399,7 @@ function Footer({
 function Shell({
   children,
   onKeyDown,
-  // Widen only when the active question has option previews (side-panel layout);
-  // otherwise the compact single-column dialog is unchanged. Clamps against the
-  // 720px min window width, so the two-column split always has room.
+  // Widen only when the active question has previews. Clamps against 720px min window width.
   wide = false
 }: {
   children: React.ReactNode

@@ -10,13 +10,24 @@
  */
 import { app } from 'electron'
 import { createReadStream, existsSync } from 'node:fs'
-import { readdir, stat, rm, readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readdir, stat, rm, readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
-import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
+import { atomicWriteFile } from '../lib/atomic'
+import { claudeHome } from '../lib/claude-home'
 import type { ProjectGroup, SessionSummary } from '../../shared/sessions'
 
-const projectsRoot = (): string => join(homedir(), '.claude', 'projects')
+const projectsRoot = (): string => join(claudeHome(), 'projects')
+
+/**
+ * A slug or session id is a single path component we build filesystem paths from and
+ * hand to a recursive `rm`. Anything that could escape its directory (`.`/`..`,
+ * separators, a NUL) is rejected, so a crafted or malformed `.jsonl` filename (e.g.
+ * `...jsonl` → id `..`) can neither be listed as a session nor delete outside its dir.
+ */
+function isSafeComponent(s: string): boolean {
+  return !!s && s !== '.' && s !== '..' && !s.includes('/') && !s.includes('\\') && !s.includes('\0')
+}
 
 const sidecarPath = (): string => join(app.getPath('userData'), 'session-names.json')
 
@@ -32,20 +43,26 @@ interface ScanResult {
   messageCount: number
 }
 
-/** Read the sidecar rename map (id → display name). Missing/corrupt → empty. */
+/** Read the sidecar rename map (id → display name). Missing/corrupt → empty. Values are
+ *  validated as strings: a hand-edited non-string name would otherwise reach `titleFrom`'s
+ *  `raw.replace` and throw, aborting the whole listing. */
 async function readSidecar(): Promise<Record<string, string>> {
   try {
     const raw = await readFile(sidecarPath(), 'utf8')
     const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {}
+    if (!parsed || typeof parsed !== 'object') return {}
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === 'string') out[k] = v
+    }
+    return out
   } catch {
     return {}
   }
 }
 
 async function writeSidecar(map: Record<string, string>): Promise<void> {
-  await mkdir(app.getPath('userData'), { recursive: true })
-  await writeFile(sidecarPath(), JSON.stringify(map, null, 2), 'utf8')
+  await atomicWriteFile(sidecarPath(), JSON.stringify(map, null, 2))
 }
 
 // Serialize rename-sidecar read-modify-writes so a rename and a delete (or two renames)
@@ -59,8 +76,9 @@ function serializeSidecar(mutate: () => Promise<void>): Promise<void> {
 
 /**
  * Stream a session's jsonl and pull out summary fields without loading it all
- * into memory (some sessions are multi-MB). Only the first few fields of each
- * line are inspected; we stop scanning message content once we have a title.
+ * into memory (some sessions are multi-MB). Only a handful of fields per line are
+ * inspected, but the whole file is read: a title (customTitle/aiTitle) can appear on
+ * the last record, and the message count needs every line.
  */
 async function scanSession(filePath: string): Promise<ScanResult> {
   const res: ScanResult = {
@@ -85,7 +103,11 @@ async function scanSession(filePath: string): Promise<ScanResult> {
       if (!trimmed) continue
       let o: Record<string, unknown>
       try {
-        o = JSON.parse(trimmed)
+        const parsed = JSON.parse(trimmed)
+        // A valid-JSON line can still be a scalar/array/null (e.g. a bare `null`); only
+        // a plain object has the fields we read, so skip anything else.
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+        o = parsed as Record<string, unknown>
       } catch {
         continue
       }
@@ -184,8 +206,9 @@ export async function listSessions(): Promise<ProjectGroup[]> {
       continue
     }
     for (const file of files) {
-      const filePath = join(dir, file)
       const id = file.slice(0, -'.jsonl'.length)
+      if (!isSafeComponent(id)) continue
+      const filePath = join(dir, file)
       let st: Awaited<ReturnType<typeof stat>>
       try {
         st = await stat(filePath)
@@ -193,7 +216,14 @@ export async function listSessions(): Promise<ProjectGroup[]> {
         continue
       }
       if (st.size === 0) continue
-      const scan = await scanSession(filePath)
+      // Isolate the scan per file: a single unreadable/malformed session must not reject
+      // the entire listing and blank the sidebar.
+      let scan: ScanResult
+      try {
+        scan = await scanSession(filePath)
+      } catch {
+        continue
+      }
       summaries.push({
         id,
         title: titleFrom(scan, sidecar[id], id),
@@ -247,10 +277,22 @@ function slugToPathGuess(slug: string): string {
 
 /** Delete a session: its `.jsonl` plus any sibling per-session directory. */
 export async function deleteSession(projectSlug: string, id: string): Promise<void> {
+  // Hard boundary: both args cross IPC untrusted. Reject anything that could escape
+  // the projects dir before any `rm` runs (a recursive delete on a traversed path
+  // would take out unrelated data).
+  if (!isSafeComponent(projectSlug) || !isSafeComponent(id)) {
+    throw new Error('invalid session identifier')
+  }
   const dir = join(projectsRoot(), projectSlug)
-  await rm(join(dir, `${id}.jsonl`), { force: true })
+  const jsonlPath = join(dir, `${id}.jsonl`)
+  const sideDir = join(dir, id)
+  const dirPrefix = resolve(dir) + sep
+  if (!resolve(jsonlPath).startsWith(dirPrefix) || !resolve(sideDir).startsWith(dirPrefix)) {
+    throw new Error('refusing to delete outside the session directory')
+  }
+  await rm(jsonlPath, { force: true })
   // The CLI also creates a sibling dir named <id> for subagent transcripts, etc.
-  await rm(join(dir, id), { recursive: true, force: true })
+  await rm(sideDir, { recursive: true, force: true })
   // Drop any sidecar rename.
   await serializeSidecar(async () => {
     const map = await readSidecar()

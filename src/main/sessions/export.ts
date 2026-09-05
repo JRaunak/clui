@@ -46,7 +46,9 @@ function toolSummary(t: HistoryToolCall): string {
 }
 
 function renderMessage(m: HistoryMessage): string {
-  const heading = m.role === 'user' ? '## You' : '## Claude'
+  // A recovered peer message is a `role:'user'` record on disk but was NOT authored by
+  // the user, so label it by its sender rather than "You".
+  const heading = m.peer ? `## ${m.peer.from}` : m.role === 'user' ? '## You' : '## Claude'
   const parts: string[] = [heading]
 
   // Attachment placeholders (never inline base64, which keeps the .md small + readable).

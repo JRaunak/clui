@@ -1,18 +1,11 @@
 /**
- * Background-task indicator for the bottom info bar (the active session's ambient
- * status strip). A backgrounded task keeps running after the turn's `result` fires,
- * so this is deliberately NOT in the composer (which is reserved for the
- * foreground turn's verb+timer footer). Blue (--color-info) reads as "ambient /
- * informational, no action needed", distinct from the amber foreground running.
+ * Background-task indicator for the bottom info bar. A backgrounded task keeps running
+ * after the turn's `result` fires, so this is deliberately NOT in the composer, which is
+ * reserved for the foreground turn's verb+timer footer. Blue reads as "ambient /
+ * informational, no action needed", distinct from amber foreground running.
  *
- * Clicking the chip opens a popover listing each task with its own elapsed timer
- * and a ✕ to stop it (tool-mediated TaskStop: costs a turn, shows a "stopping…"
- * state until the killed event lands).
- *
- * This tray also holds backgrounded SUBAGENTS (taskType 'local_agent'), not just
- * bg bash shells; the CLI announces both here. A subagent row additionally opens its
- * forwarded transcript (SubagentView, keyed by the row's toolUseId = the parent
- * tool_use id), matching the inline Agent card's "→" open-transcript affordance.
+ * This tray holds backgrounded subagents (taskType 'local_agent') and bg bash shells.
+ * A subagent row opens its forwarded transcript, keyed by toolUseId (the parent tool_use id).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -48,34 +41,60 @@ export function BackgroundTasks(): JSX.Element | null {
 
   const list = Object.values(tasks).sort((a, b) => a.startMs - b.startMs)
   const running = list.filter((t) => t.status === 'running')
-  // Work the user's own turn started, split by kind. Anything a SUBAGENT started (a shell
-  // it ran, or an agent it spawned) is not a peer of these: it nests under that agent, so
-  // the tray shows who owns it. Only one level of indent, because the popover is 420px
-  // wide and a deeper chain still reads as "owned by the agent above" without marching right.
+  // Work the user's own turn started, split by kind. Anything a subagent started (a shell
+  // it ran, or an agent it spawned) nests under that agent. Only one level of indent,
+  // because the popover is 420px wide and deeper chains would march right past the edge.
   const ownerOf = (t: BackgroundTask): string | null =>
     subagentOwnerOfTask(t.toolUseId, subMsgs, subChildren)
-  const agents = list.filter((t) => t.taskType === 'local_agent' && !ownerOf(t))
-  const shells = list.filter((t) => t.taskType !== 'local_agent' && !ownerOf(t))
+  const byToolUseId = new Map(list.filter((t) => t.toolUseId).map((t) => [t.toolUseId as string, t]))
+  // The owning TASK (if the owner is itself a tray task); undefined when the owner is a
+  // foreground agent (not trayed) → this task is an orphan and becomes its own root.
+  const ownerTask = (t: BackgroundTask): BackgroundTask | undefined => {
+    const o = ownerOf(t)
+    return o ? byToolUseId.get(o) : undefined
+  }
+  // Walk up to the topmost ancestor that IS a tray task, with a cycle guard. Every task
+  // resolves to a root, so none is dropped; deeper levels flatten under that root to keep
+  // the single indent the 420px popover was designed for.
+  const rootOf = (t: BackgroundTask): BackgroundTask => {
+    let cur = t
+    const chain = [t]
+    const seen = new Set<string>([t.taskId])
+    for (;;) {
+      const parent = ownerTask(cur)
+      if (!parent) return cur
+      // Cycle: pick a deterministic representative (lowest taskId in the chain) so every
+      // node in the cycle resolves to the same root; otherwise a 2-cycle leaves neither
+      // node a root and both vanish.
+      if (seen.has(parent.taskId)) return chain.reduce((a, b) => (a.taskId <= b.taskId ? a : b))
+      seen.add(parent.taskId)
+      chain.push(parent)
+      cur = parent
+    }
+  }
+  const isRoot = (t: BackgroundTask): boolean => rootOf(t).taskId === t.taskId
+  const agents = list.filter((t) => t.taskType === 'local_agent' && isRoot(t))
+  const shells = list.filter((t) => t.taskType !== 'local_agent' && isRoot(t))
   const childrenOf = (agent: BackgroundTask): BackgroundTask[] =>
-    agent.toolUseId ? list.filter((t) => ownerOf(t) === agent.toolUseId) : []
+    list.filter((t) => t.taskId !== agent.taskId && rootOf(t).taskId === agent.taskId)
   // Only a subagent has a transcript to open; a bg shell has none.
   const openTranscript = (t: BackgroundTask): (() => void) | undefined =>
     t.taskType === 'local_agent' && t.toolUseId
       ? () => {
           setOpen(false)
           viewSubagent(t.toolUseId as string)
-          // Opening a completed subagent = "seen" → stop lingering it.
+          // Opening a completed subagent = "seen", so stop lingering it.
           if (t.status !== 'running') clearCompleted('subagent')
         }
       : undefined
-  // Lingering = terminal subagent rows kept clickable post-completion (see store).
+  // Lingering = terminal subagent rows kept clickable post-completion.
   const lingering = list.filter((t) => t.taskType === 'local_agent' && t.status !== 'running')
 
   const dismiss = useCallback(() => setOpen(false), [])
   useClickOutside(ref, open, dismiss)
   // Esc returns focus to the trigger, since the focused row unmounts with the popover
-  // and focus would otherwise fall to <body>. An OUTSIDE CLICK deliberately doesn't:
-  // it would steal focus from whatever the user just clicked.
+  // and focus would otherwise fall to <body>. An outside click deliberately doesn't,
+  // as it would steal focus from whatever the user just clicked.
   useEscape(
     open,
     useCallback(() => {
@@ -84,10 +103,9 @@ export function BackgroundTasks(): JSX.Element | null {
     }, [])
   )
 
-  // LINGER grace timer: arm a ~15s one-shot to clear lingering completed subagents when
-  // nothing is running. Timer in a ref (StrictMode-safe; the deferred-timer pattern used
-  // elsewhere). A new running task re-arms on the next change. Opening the tray also
-  // clears them (below), counting as "seen".
+  // Linger grace timer: arm a ~15s one-shot to clear lingering completed subagents when
+  // nothing is running. Timer in a ref (StrictMode-safe). A new running task re-arms on
+  // the next change. Opening the tray also clears them, counting as "seen".
   useEffect(() => {
     if (lingering.length > 0 && running.length === 0) {
       if (timerRef.current) clearTimeout(timerRef.current)
@@ -100,8 +118,6 @@ export function BackgroundTasks(): JSX.Element | null {
       }
     }
   }, [lingering.length, running.length, clearCompleted])
-
-  // Nothing to show once there are no tasks at all (running or recently-terminal).
   if (list.length === 0) return null
 
   return (
@@ -135,9 +151,9 @@ export function BackgroundTasks(): JSX.Element | null {
             </span>
           </div>
           <div className="max-h-[40vh] overflow-y-auto py-1">
-            {/* Each header depends only on its OWN section. Don't also condition it on the
-                other kind: bash rows are deleted on terminal (see the store), so the last
-                shell finishing drops both headers and shifts every surviving row up ~26px. */}
+            {/* Each header depends only on its own section. Don't also condition it on the
+                other kind: bash rows are deleted on terminal, so the last shell finishing
+                would drop both headers and shift every surviving row up ~26px. */}
             {agents.length > 0 && (
               <>
                 <SectionLabel>Agents</SectionLabel>
@@ -149,12 +165,12 @@ export function BackgroundTasks(): JSX.Element | null {
                       onOpen={openTranscript(t)}
                     />
                     {/* Indentation is the only visual carrier of ownership and AT can't see it,
-                        so the group names its owner too (WCAG 1.3.1). Without it a screen reader
-                        hears a subagent's shell as a peer of the user's own tasks. */}
+                        so the group names its owner too. Without it a screen reader hears a
+                        subagent's shell as a peer of the user's own tasks. */}
                     {childrenOf(t).length > 0 && (
                       <div role="group" aria-label={`Started by ${t.description}`}>
                         {/* A child agent keeps its open-transcript affordance; a child shell
-                            has none, so `openTranscript` returns undefined for it. */}
+                            has none, so openTranscript returns undefined. */}
                         {childrenOf(t).map((child) => (
                           <Row
                             key={child.taskId}
@@ -207,9 +223,9 @@ function Row({
 }: {
   task: BackgroundTask
   onStop: () => void
-  /** Present only for a backgrounded SUBAGENT row; opens its transcript. */
+  /** Present only for a backgrounded subagent row; opens its transcript. */
   onOpen?: () => void
-  /** Work a subagent started (a shell it ran, or an agent it spawned): indented under it. */
+  /** Work a subagent started (a shell or an agent): indented under it. */
   nested?: boolean
   /** The owning subagent's description, for a nested row's accessible names. */
   ownerDesc?: string
@@ -217,15 +233,15 @@ function Row({
   const running = task.status === 'running'
   const isSubagent = task.taskType === 'local_agent'
 
-  // Fixed width: the dot is 6px and the terminal icons 14px, so an auto-width slot shifts
-  // every label 8px the moment a task finishes.
+  // Fixed width: the dot is 6px and the terminal icons 14px, so an auto-width slot would
+  // shift every label 8px the moment a task finishes.
   const statusDot = (
     <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden="true">
       {running ? (
         <span className="h-1.5 w-1.5 rounded-full bg-info" />
       ) : task.status === 'failed' ? (
-        // `killed` was a requested stop, so only a real failure takes the err tone. The
-        // trailing word states it too, so this isn't colour alone. The word stays `faint`:
+        // Killed was a requested stop, so only a real failure takes the err tone. The
+        // trailing word states it too, so this isn't colour alone. The word stays faint:
         // err is 4.34:1 on the hover surface, which fails 4.5:1 as 11px text, while the
         // glyph only needs 3:1.
         <IconClose className="h-3.5 w-3.5 text-err" />
@@ -238,8 +254,8 @@ function Row({
   )
 
   // A subagent keeps its "Agent" label even when nested: it's the only at-rest cue separating
-  // a nested AGENT (clickable, has a transcript) from a nested SHELL, since the `→` is one
-  // 11px glyph and hover shows nothing until hovered. Nested spends `faint` rather than the
+  // a nested agent (clickable, has a transcript) from a nested shell, since the arrow is one
+  // 11px glyph and hover shows nothing until hovered. Nested spends faint rather than the
   // accent so a parent/child pair doesn't spend the scarce accent twice.
   const typeLabel = isSubagent && (
     <span
@@ -254,9 +270,8 @@ function Row({
       <span className="min-w-0 flex-1 truncate font-mono text-xs text-content" title={task.description}>
         {task.description}
       </span>
-      {/* Open-transcript affordance, mirroring the inline Agent card's "→". Inside the button
-          so clicking the glyph opens too, with pr-1.5 to clear the inset focus ring, which
-          otherwise cuts through it at the flex-1 edge. */}
+      {/* Open-transcript affordance, mirroring the inline Agent card's arrow. Inside the button
+          so clicking the glyph opens too, with pr-1.5 to clear the inset focus ring. */}
       {onOpen && <span className="shrink-0 pr-1.5 font-mono text-[11px] text-faint">→</span>}
     </>
   )
@@ -271,8 +286,8 @@ function Row({
         <span className="text-[11px] text-faint">stopping…</span>
       ) : (
         <button
-          // h-6 w-6 is the house pattern for a row's icon button (see the sidebar's close);
-          // the 14px glyph alone is an 18px target, under the 24px floor.
+          // h-6 w-6 is the house pattern for a row's icon button; the 14px glyph alone is an
+          // 18px target, under the 24px floor.
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint opacity-0 transition-opacity hover:text-err focus-visible:opacity-100 focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-accent group-hover:opacity-100"
           onClick={onStop}
           title="Stop this task"
@@ -289,11 +304,11 @@ function Row({
   )
 
   // min-h-10 holds the row at its running height: the trailing slot swaps a 24px stop button
-  // for an ~17px status word, which otherwise shrinks the row 6px the moment a task finishes.
+  // for an ~17px status word, which would otherwise shrink the row 6px when a task finishes.
   const rowCls = `group flex min-h-10 items-center gap-2.5 py-1 pr-3 ${nested ? 'pl-6' : 'pl-3'}`
-  // A subagent row opens its transcript; a bg-shell row has none. The BUTTON is the label
-  // region, not the whole row: a row-level button would nest the stop ✕ inside it, which is
-  // invalid HTML and AT may never expose the inner control. The ring is inset because the
+  // A subagent row opens its transcript; a bg-shell row has none. The button is the label
+  // region, not the whole row: a row-level button would nest the stop button inside it, which
+  // is invalid HTML and AT may never expose the inner control. The ring is inset because the
   // global one's outline-offset sits outside the element, where the popover clips it.
   if (onOpen) {
     return (

@@ -23,13 +23,13 @@
  *   cold scan never blocks the event loop or piles up behind fast keystrokes.
  */
 import { readdir, stat } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { join, basename } from 'node:path'
 import { setImmediate as yieldToLoop } from 'node:timers/promises'
 import { readTranscriptAtPath } from './transcript'
+import { claudeHome } from '../lib/claude-home'
 import type { SearchHit, SearchResults, SnippetRange } from '../../shared/sessions'
 
-const projectsRoot = (): string => join(homedir(), '.claude', 'projects')
+const projectsRoot = (): string => join(claudeHome(), 'projects')
 
 /** Minimum query length for a content scan (shorter → tooShort, no disk work). */
 const MIN_QUERY = 2
@@ -37,8 +37,12 @@ const MIN_QUERY = 2
 const MAX_HITS_PER_SESSION = 5
 /** Chars of context around a match in the snippet. */
 const SNIPPET_RADIUS = 60
-/** Warm-cache ceiling (distinct session files). LRU-evicted to bound main-process memory. */
-const CACHE_MAX = 40
+/** Warm-cache budget. Bounded by BYTES (not a fixed entry count) so a corpus of many
+ *  small sessions all fit: a fixed entry cap thrashes on a corpus larger than the cap
+ *  scanned newest-first, evicting entries the very next scan needs. A generous entry
+ *  cap still guards against pathologically many tiny files. */
+const CACHE_MAX_BYTES = 64 * 1024 * 1024
+const CACHE_MAX_ENTRIES = 2000
 
 /** Tool-input keys worth searching (human-meaningful; excludes huge/noisy blobs). */
 const SEARCHABLE_INPUT_KEYS = ['file_path', 'command', 'pattern', 'query', 'url', 'prompt', 'description']
@@ -48,6 +52,9 @@ const SEARCHABLE_INPUT_KEYS = ['file_path', 'command', 'pattern', 'query', 'url'
 interface SearchableMessage {
   id: string
   role: 'user' | 'assistant'
+  /** True for a recovered peer message (a `role:'user'` record NOT authored by the user);
+   *  excluded from the "You only" facet. */
+  peer: boolean
   text: string
 }
 
@@ -55,20 +62,30 @@ interface CacheEntry {
   mtimeMs: number
   size: number
   records: SearchableMessage[]
+  /** Approximate bytes of `records` (sum of searchable text), for the byte budget. */
+  bytes: number
 }
 
 /** Module-level warm cache, LRU by insertion order (Map preserves it). */
 const cache = new Map<string /* filePath */, CacheEntry>()
+let cacheBytes = 0
 
-/** Monotonic query token: the renderer sends increasing ids; a scan bails early
- *  when a newer query has started, and stale results are dropped renderer-side. */
-let latestQueryId = 0
+/** In-flight parses keyed by filePath, so a warmup pass and a concurrent query don't both
+ *  parse the same file. */
+const inFlight = new Map<string, Promise<SearchableMessage[]>>()
+
+/** Main-owned monotonic cancellation token. Bumped when a real search starts; a running
+ *  scan or warmup bails when it changes. Main-owned (not the renderer's queryId) so a
+ *  recreated window restarting its own counter at 0 can't strand main's cancellation
+ *  against a stale high-water mark. */
+let latestSearchSeq = 0
 
 /** Build the searchable text for one parsed message: its text, plus each tool's
  *  name and curated input values. Tool OUTPUTS deliberately excluded (bulk/noise). */
 function toSearchable(m: {
   id: string
   role: 'user' | 'assistant'
+  peer?: { from: string }
   text: string
   tools: { name: string; input: unknown }[]
 }): SearchableMessage {
@@ -84,7 +101,7 @@ function toSearchable(m: {
       }
     }
   }
-  return { id: m.id, role: m.role, text: parts.join('\n') }
+  return { id: m.id, role: m.role, peer: !!m.peer, text: parts.join('\n') }
 }
 
 /** Get searchable records for a file, from cache if the file is unchanged. */
@@ -96,16 +113,33 @@ async function getRecords(filePath: string, mtimeMs: number, size: number): Prom
     cache.set(filePath, cached)
     return cached.records
   }
-  const parsed = await readTranscriptAtPath(filePath)
-  const records = parsed.messages.map(toSearchable).filter((r) => r.text.length > 0)
-  cache.set(filePath, { mtimeMs, size, records })
-  // LRU eviction (oldest first).
-  while (cache.size > CACHE_MAX) {
-    const oldest = cache.keys().next().value
-    if (oldest === undefined) break
-    cache.delete(oldest)
+  // Dedupe concurrent parses of the same file (a warmup pass + a live query).
+  const pending = inFlight.get(filePath)
+  if (pending) return pending
+  const task = (async () => {
+    const parsed = await readTranscriptAtPath(filePath)
+    const records = parsed.messages.map(toSearchable).filter((r) => r.text.length > 0)
+    const bytes = records.reduce((n, r) => n + r.text.length, 0)
+    const prev = cache.get(filePath)
+    if (prev) cacheBytes -= prev.bytes
+    cache.set(filePath, { mtimeMs, size, records, bytes })
+    cacheBytes += bytes
+    // Evict oldest until under BOTH the byte budget and the entry cap. Never evict the
+    // entry just inserted (guard on key) so a single oversized file can't evict itself.
+    while (cache.size > 1 && (cacheBytes > CACHE_MAX_BYTES || cache.size > CACHE_MAX_ENTRIES)) {
+      const oldest = cache.keys().next().value
+      if (oldest === undefined || oldest === filePath) break
+      cacheBytes -= cache.get(oldest)?.bytes ?? 0
+      cache.delete(oldest)
+    }
+    return records
+  })()
+  inFlight.set(filePath, task)
+  try {
+    return await task
+  } finally {
+    inFlight.delete(filePath)
   }
-  return records
 }
 
 /**
@@ -117,9 +151,12 @@ async function getRecords(filePath: string, mtimeMs: number, size: number): Prom
  * search superseded it. Best-effort: swallows per-file errors.
  */
 export async function warmSearchCache(): Promise<void> {
+  const seq = latestSearchSeq
   const files = await enumerateSessionFiles()
   let n = 0
   for (const f of files) {
+    // A real search started → it owns the cache + the event loop now; stop warming.
+    if (seq !== latestSearchSeq) return
     if (++n % 4 === 0) await yieldToLoop()
     try {
       await getRecords(f.filePath, f.mtimeMs, f.size)
@@ -224,7 +261,7 @@ export async function searchSessions(
   titleFor: (sessionId: string) => { title: string; cwd: string },
   opts: { scopeSlug?: string; userOnly?: boolean } = {}
 ): Promise<SearchResults> {
-  latestQueryId = Math.max(latestQueryId, queryId)
+  const seq = ++latestSearchSeq
   const q = query.trim()
   if (q.length < MIN_QUERY) return { sessions: [], tooShort: true }
   const qLower = q.toLowerCase()
@@ -234,8 +271,8 @@ export async function searchSessions(
   let processed = 0
 
   for (const f of files) {
-    // Latest-query-wins: a newer query started → abandon this (now-stale) scan.
-    if (queryId !== latestQueryId) return { sessions: [], tooShort: false }
+    // Latest-search-wins: a newer search bumped the main-owned token → abandon this scan.
+    if (seq !== latestSearchSeq) return { sessions: [], tooShort: false }
     // Yield to the event loop periodically so a cold scan never blocks streaming.
     if (++processed % 4 === 0) await yieldToLoop()
 

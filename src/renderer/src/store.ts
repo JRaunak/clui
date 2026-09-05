@@ -21,6 +21,7 @@ import type { ProjectGroup } from '../../shared/sessions'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
+import type { ProcessedAttachment } from './lib/images'
 
 /** A tool-permission request awaiting the user's decision. */
 export interface PendingPermission {
@@ -223,10 +224,23 @@ export interface PerSessionState {
   historyCount: number
   /** True while a turn is streaming. */
   busy: boolean
+  /** A foreground turn was interrupted (Stop) and we're awaiting its terminal result: that
+   *  result is swallowed (cost only) but still marks the FIFO turn boundary. Distinct from
+   *  idle so a new prompt QUEUES rather than dispatching a second concurrent turn whose busy
+   *  the late result would clear and whose bubble late text would attach to. */
+  interrupting: boolean
+  /** Wall-clock ms when the current foreground turn started, null when idle. Drives the
+   *  WorkingStatus timer from the clock so it survives session-switch / detail remounts and
+   *  resets per queued turn. */
+  turnStartMs: number | null
   messages: ChatMessage[]
   /** Messages composed while a turn was running: held renderer-side (editable/cancelable),
    *  rendered at the transcript tail, dispatched FIFO at the next turn boundary. */
   queuedMessages: QueuedMessage[]
+  /** Composer draft for THIS session: text + staged attachments held in the slice, so it
+   *  survives switching sessions and the Composer unmounting for a detail view. */
+  draftText: string
+  draftAttachments: ProcessedAttachment[]
   pendingPermissions: PendingPermission[]
   /** Files written/edited this session, most-recent first. */
   changedFiles: string[]
@@ -358,6 +372,15 @@ interface SessionStore {
   editQueuedMessage: (id: string, text: string) => void
   /** Remove a still-queued message (never dispatched). */
   cancelQueuedMessage: (id: string) => void
+  /** Set a session's composer draft text (per-handle so it survives switches). */
+  setDraftText: (handleId: string, text: string) => void
+  /** Append staged attachments to a session's draft, bound to the handle the conversion
+   *  started for so a late async result can't land in another session's draft. */
+  addDraftAttachments: (handleId: string, atts: ProcessedAttachment[]) => void
+  /** Remove one staged draft attachment by id. */
+  removeDraftAttachment: (handleId: string, id: string) => void
+  /** Clear a session's draft (text + attachments) once a successful send has consumed it. */
+  clearDraft: (handleId: string) => void
   interrupt: () => Promise<void>
   /** Stop a running background task (tool-mediated TaskStop; costs a turn). */
   stopBackgroundTask: (handleId: string, taskId: string) => Promise<void>
@@ -452,6 +475,8 @@ export const EMPTY_NESTED_SUBAGENTS: NestedSubagent[] = []
 export const EMPTY_SLASH_COMMANDS: SlashCommandInfo[] = []
 /** Stable empty ref for the live task list (zustand-v5 selector safety). */
 export const EMPTY_TASKS: SessionTask[] = []
+/** Stable empty ref for a session's staged draft attachments (zustand-v5 selector safety). */
+export const EMPTY_ATTACHMENTS: ProcessedAttachment[] = []
 
 /** Read shares the file_path key but writes nothing, so changed-files gates on the tool
  *  name, not the key's presence. */
@@ -467,6 +492,26 @@ let subscribed = false
  * `session-init` is ever dropped (closes the pre-handleId race).
  */
 const earlyBuffer = new Map<string, DomainEvent[]>()
+/** Max events buffered for one not-yet-inserted handle, so a start that never completes
+ *  can't grow without bound. */
+const EARLY_BUFFER_CAP = 500
+/** Handles whose slice was deleted (closed/evicted/failed). Their late stream events are
+ *  discarded rather than buffered forever waiting for an insertSlice that will never come.
+ *  Handle ids are fresh uuids, never reused, so this only grows on churn;
+ *  bounded below. */
+const retiredHandles = new Set<string>()
+const RETIRED_CAP = 1000
+
+/** Tombstone a deleted handle: drop any buffered events for it and remember it as retired
+ *  so future late events are discarded. */
+function retireHandle(handleId: string): void {
+  earlyBuffer.delete(handleId)
+  retiredHandles.add(handleId)
+  if (retiredHandles.size > RETIRED_CAP) {
+    const oldest = retiredHandles.values().next().value
+    if (oldest !== undefined) retiredHandles.delete(oldest)
+  }
+}
 
 /**
  * Accrued cost (USD) per CLI sessionId, remembered across close→resume within an
@@ -587,7 +632,11 @@ function insertSlice(
 ): void {
   set((s) => ({
     sessions: { ...s.sessions, [slice.handleId]: slice },
-    activeHandleId: slice.handleId
+    activeHandleId: slice.handleId,
+    // A new/resumed session becomes active, so any open detail view (scoped to the
+    // previously-active session's tool ids) must close.
+    viewingSubagent: null,
+    subagentTrail: []
   }))
   const buffered = earlyBuffer.get(slice.handleId)
   if (buffered) {
@@ -725,8 +774,12 @@ async function beginSession(
     resumed: Boolean(opts.resumeSessionId),
     historyCount: history.length,
     busy: false,
+    interrupting: false,
+    turnStartMs: null,
     messages: history,
     queuedMessages: EMPTY_QUEUED,
+    draftText: '',
+    draftAttachments: EMPTY_ATTACHMENTS,
     pendingPermissions: [],
     changedFiles: [],
     backgroundTasks: {},
@@ -742,10 +795,31 @@ async function beginSession(
   })
 }
 
+/** In-flight resume ids: a reservation so two concurrent resumes of the SAME durable
+ *  session can't both spawn a second writer for one conversation. */
+const resumingIds = new Set<string>()
+/** Monotonic session-list refresh token: a slow scan that finishes after a newer one
+ *  started is dropped, so it can't overwrite fresher rename/delete state. */
+let refreshGen = 0
+
+/** A session is doing live work (not evictable) if a turn is streaming, a message is
+ *  queued, a permission is pending, or a background task / workflow is still running.
+ *  `!busy` alone reads a session with a running background agent as idle. */
+function hasLiveWork(s: PerSessionState): boolean {
+  return (
+    s.busy ||
+    s.queuedMessages.length > 0 ||
+    s.pendingPermissions.length > 0 ||
+    Object.values(s.backgroundTasks).some((t) => t.status === 'running') ||
+    Object.values(s.workflows).some((w) => w.endedStatus === null)
+  )
+}
+
 /**
  * Enforce the live-process cap before opening a new session. Evicts the
- * least-recently-active session that is neither busy nor active; if none is
- * evictable (all busy), leaves the count over-cap and surfaces a notice.
+ * least-recently-active session with NO live work; if none is evictable, leaves the
+ * count over-cap and surfaces a notice. Exited slices hold no process, so they don't
+ * count toward the cap.
  */
 function evictIfOverCap(
   get: () => SessionStore,
@@ -753,23 +827,24 @@ function evictIfOverCap(
   newCwd: string
 ): void {
   const { sessions, activeHandleId } = get()
-  const live = Object.values(sessions)
+  const live = Object.values(sessions).filter((s) => !s.exited)
   if (live.length < LIVE_SESSION_CAP) return
 
   const candidates = live
-    .filter((s) => !s.busy && s.handleId !== activeHandleId)
+    .filter((s) => s.handleId !== activeHandleId && !hasLiveWork(s))
     .sort((a, b) => a.lastActivityMs - b.lastActivityMs)
   const victim = candidates[0]
 
   if (!victim) {
     set(() => ({
-      notice: `${live.length} live sessions are all busy — finish or close some to free memory.`
+      notice: `${live.length} live sessions are all working — finish or close some to free memory.`
     }))
     return
   }
 
   const label = victim.messages.find((m) => m.role === 'user')?.text.slice(0, 40) || 'a session'
   void window.clui.stopSession(victim.handleId)
+  retireHandle(victim.handleId)
   set((s) => {
     const next = { ...s.sessions }
     delete next[victim.handleId]
@@ -812,12 +887,29 @@ async function dispatchTurn(
     return patchSlice(s, handleId, {
       messages: [...slice.messages, userMsg],
       busy: true,
+      interrupting: false,
+      turnStartMs: now,
       lastError: null,
       lastActivityMs: now
     })
   })
   const wire = attachments && attachments.length ? attachments.map((a) => a.wire) : undefined
-  await window.clui.sendMessage(handleId, text, wire)
+  try {
+    await window.clui.sendMessage(handleId, text, wire)
+  } catch {
+    // The send never reached a live process (dead handle, child write failure). Roll back
+    // busy so the composer isn't stuck in a permanent Stop with no running turn, and
+    // surface it. The optimistic bubble stays visible, so the text isn't lost.
+    set((s) => {
+      if (!s.sessions[handleId]) return {}
+      return patchSlice(s, handleId, {
+        busy: false,
+        interrupting: false,
+        turnStartMs: null,
+        lastError: 'Message not delivered — the session may have stopped. Resume it and try again.'
+      })
+    })
+  }
 }
 
 /** Find or create the current (last) assistant message to append streamed content. */
@@ -895,9 +987,18 @@ export const useSession = create<SessionStore>((set, get) => ({
   refreshSessions: async () => {
     // TODO: CommandPalette still fetches listSessions() independently; fold it onto this
     // store copy so its list can't drift from the sidebar's.
+    const gen = ++refreshGen
     set(() => ({ sessionsLoading: true }))
-    const groups = await window.clui.listSessions()
-    set(() => ({ sessionGroups: groups, sessionsLoading: false }))
+    try {
+      const groups = await window.clui.listSessions()
+      // A newer refresh started while this scan ran → it owns the result; dropping this
+      // stale one stops an older scan from overwriting fresher rename/delete state.
+      if (gen !== refreshGen) return
+      set(() => ({ sessionGroups: groups, sessionsLoading: false }))
+    } catch {
+      if (gen !== refreshGen) return
+      set(() => ({ sessionsLoading: false, notice: 'Could not refresh the session list.' }))
+    }
   },
 
   startSession: async (cwd, mode, opts) => {
@@ -905,13 +1006,35 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
 
   resumeSession: async (cwd, resumeSessionId, mode) => {
-    // If this session is already live, just view it; never respawn.
-    const existing = Object.values(get().sessions).find((s) => s.sessionId === resumeSessionId)
-    if (existing) {
-      get().activateSession(existing.handleId)
+    const slices = Object.values(get().sessions)
+    // Only a CONFIRMED-LIVE (non-exited) slice can be re-viewed without respawning; an
+    // exited slice's process is gone, so activating it would strand sends on a dead
+    // handle.
+    const live = slices.find((s) => !s.exited && s.sessionId === resumeSessionId)
+    if (live) {
+      get().activateSession(live.handleId)
       return
     }
-    await beginSession(get, set, { cwd, resumeSessionId, permissionMode: mode })
+    // Two concurrent resumes of the same durable id would both miss the (not-yet-inserted)
+    // slice and spawn two writers for one conversation, so reserve the id.
+    if (resumingIds.has(resumeSessionId)) return
+    resumingIds.add(resumeSessionId)
+    // Drop a retired slice for this id so the fresh session replaces it instead of leaving
+    // a dead handle the sidebar could still offer.
+    const dead = slices.find((s) => s.exited && s.sessionId === resumeSessionId)
+    if (dead) {
+      retireHandle(dead.handleId)
+      set((s) => {
+        const next = { ...s.sessions }
+        delete next[dead.handleId]
+        return { sessions: next }
+      })
+    }
+    try {
+      await beginSession(get, set, { cwd, resumeSessionId, permissionMode: mode })
+    } finally {
+      resumingIds.delete(resumeSessionId)
+    }
   },
 
   // Fork a session: branch it to a NEW live session carrying the full context,
@@ -933,9 +1056,20 @@ export const useSession = create<SessionStore>((set, get) => ({
       const taken = new Set<string>()
       for (const s of sessionGroups.find((g) => g.cwd === cwd)?.sessions ?? []) taken.add(s.title)
       for (const s of Object.values(sessions)) if (s.cwd === cwd && s.title) taken.add(s.title)
-      const fit = (x: string): string => (x.length > 80 ? x.slice(0, 79) + '…' : x)
-      name = fit(`Branch-${shown}`)
-      for (let i = 2; taken.has(name); i++) name = fit(`Branch-${shown} ${i}`)
+      // Reserve room for the prefix AND the numeric suffix, then truncate only the
+      // source-title portion, then append the suffix after. Truncating the whole
+      // `Branch-<title> <i>` candidate drops the suffix for a long title, so every
+      // iteration produces the same taken name and the loop spins forever.
+      const LIMIT = 80
+      const PREFIX = 'Branch-'
+      const build = (i: number): string => {
+        const suffix = i > 1 ? ` ${i}` : ''
+        const room = LIMIT - PREFIX.length - suffix.length
+        const base = shown.length > room ? shown.slice(0, room - 1) + '…' : shown
+        return `${PREFIX}${base}${suffix}`
+      }
+      name = build(1)
+      for (let i = 2; taken.has(name) && i < 10000; i++) name = build(i)
     }
     await beginSession(get, set, { cwd, resumeSessionId: sourceSessionId, fork: true, permissionMode: mode, name })
   },
@@ -976,7 +1110,14 @@ export const useSession = create<SessionStore>((set, get) => ({
       }
       const next = { ...s.sessions }
       delete next[handleId]
-      return { sessions: next, activeHandleId: active }
+      retireHandle(handleId)
+      return {
+        sessions: next,
+        activeHandleId: active,
+        // If the active session changed, its detail view (scoped to the closed session's
+        // tool ids) must reset.
+        ...(active !== s.activeHandleId ? { viewingSubagent: null, subagentTrail: [] } : {})
+      }
     })
   },
 
@@ -1006,6 +1147,11 @@ export const useSession = create<SessionStore>((set, get) => ({
     // CLI applies the change live but does not re-emit a session-init event, so
     // we update the reported mode ourselves. 'inherit' has no mid-session
     // "unset", so the main process maps it to 'default'; mirror that here.
+    const prev = {
+      modeChoice: active.modeChoice,
+      modelMode: active.modelMode,
+      permissionMode: active.permissionMode
+    }
     set((s) =>
       patchSlice(s, active.handleId, {
         modeChoice: mode,
@@ -1014,7 +1160,15 @@ export const useSession = create<SessionStore>((set, get) => ({
         permissionMode: mode === 'inherit' ? 'default' : mode
       })
     )
-    await window.clui.setPermissionMode(active.handleId, mode)
+    // Revert the optimistic chip if the CLI rejected the change: the UI must
+    // not claim a mode the session isn't actually in.
+    const ok = await window.clui.setPermissionMode(active.handleId, mode)
+    if (!ok) {
+      set((s) => ({
+        ...patchSlice(s, active.handleId, prev),
+        notice: 'Could not change permission mode.'
+      }))
+    }
   },
 
   setModel: async (model) => {
@@ -1038,6 +1192,13 @@ export const useSession = create<SessionStore>((set, get) => ({
       active.contextTokens != null
         ? Math.min(100, Math.round((active.contextTokens / nextWindow) * 100))
         : active.contextPercent
+    const prev = {
+      modelChoice: active.modelChoice,
+      effortChoice: active.effortChoice,
+      ultracode: active.ultracode,
+      contextWindow: active.contextWindow,
+      contextPercent: active.contextPercent
+    }
     set((s) =>
       patchSlice(s, active.handleId, {
         modelChoice: model,
@@ -1052,7 +1213,19 @@ export const useSession = create<SessionStore>((set, get) => ({
     // Remember the switch per-session so it survives a resume (the CLI reverts to
     // the settings.json default on --resume). Keyed by the CLI sessionId.
     if (active.sessionId) rememberModelPrefs(active.sessionId, { model, effort: nextEffort, ultracode: nextUltra })
-    await window.clui.setModel(active.handleId, model)
+    // If the CLI rejected the model change, revert the picker + remembered prefs rather
+    // than leave the UI (and a future resume) claiming a model that never applied.
+    const ok = await window.clui.setModel(active.handleId, model)
+    if (!ok) {
+      set((s) => ({ ...patchSlice(s, active.handleId, prev), notice: 'Could not switch model.' }))
+      if (active.sessionId)
+        rememberModelPrefs(active.sessionId, {
+          model: prev.modelChoice,
+          effort: prev.effortChoice,
+          ultracode: prev.ultracode
+        })
+      return
+    }
     if (nextEffort !== prevEffort) await window.clui.setEffort(active.handleId, nextEffort)
     if (ultraChanged) await window.clui.setUltracode(active.handleId, nextUltra)
   },
@@ -1074,20 +1247,32 @@ export const useSession = create<SessionStore>((set, get) => ({
     // on regardless of effortLevel; the picker DISPLAYS xhigh (derived) + disables while
     // on, and RESTORES the user's real effort when turned off. Mutating stored effort
     // would silently lose their prior choice on toggle-off.
+    const prevUltra = active.ultracode
     set((s) => patchSlice(s, active.handleId, { ultracode: on }))
     if (active.sessionId) rememberModelPrefs(active.sessionId, { ultracode: on })
-    await window.clui.setUltracode(active.handleId, on)
+    const ok = await window.clui.setUltracode(active.handleId, on)
+    if (!ok) {
+      set((s) => ({ ...patchSlice(s, active.handleId, { ultracode: prevUltra }), notice: 'Could not toggle ultracode.' }))
+      if (active.sessionId) rememberModelPrefs(active.sessionId, { ultracode: prevUltra })
+    }
   },
 
   sendMessage: async (text, attachments) => {
     const active = activeSlice(get())
     // A turn is valid with text OR at least one attachment (an attachments-only turn is fine).
     if (!active || (!text.trim() && !(attachments && attachments.length))) return
-    // Composed while a turn is running → HOLD it renderer-side (editable/cancelable,
-    // rendered at the tail) instead of dispatching now. It's sent FIFO at the next turn
-    // boundary (see the `result` handler). We do NOT dispatch to the CLI here: dispatching
-    // immediately would make it uneditable AND splice it mid-transcript (the ordering bug).
-    if (active.busy) {
+    // The process is gone; a send would silently no-op in main while the UI spun busy.
+    // Tell the user to resume instead.
+    if (active.exited) {
+      set(() => ({ notice: 'This session has stopped. Resume it from the sidebar to continue.' }))
+      return
+    }
+    // Composed while a turn is running (or interrupting, or with messages already queued) →
+    // HOLD it renderer-side (editable/cancelable, rendered at the tail) instead of dispatching
+    // now. It's sent FIFO at the next turn boundary (see the `result` handler). Queuing while
+    // `interrupting` or with a non-empty queue keeps strict FIFO: a post-Stop prompt must not
+    // jump ahead of the interrupted turn's boundary or of earlier queued prompts.
+    if (active.busy || active.interrupting || active.queuedMessages.length > 0) {
       const qm: QueuedMessage = { id: `q-${Date.now()}`, text, attachments }
       set((s) =>
         patchSlice(s, active.handleId, {
@@ -1114,14 +1299,58 @@ export const useSession = create<SessionStore>((set, get) => ({
         queuedMessages: active.queuedMessages.filter((q) => q.id !== id)
       })
     }),
+  setDraftText: (handleId, text) => set((s) => patchSlice(s, handleId, { draftText: text })),
+  addDraftAttachments: (handleId, atts) =>
+    set((s) => {
+      const cur = s.sessions[handleId]
+      if (!cur || atts.length === 0) return {}
+      return patchSlice(s, handleId, { draftAttachments: [...cur.draftAttachments, ...atts] })
+    }),
+  removeDraftAttachment: (handleId, id) =>
+    set((s) => {
+      const cur = s.sessions[handleId]
+      if (!cur) return {}
+      return patchSlice(s, handleId, {
+        draftAttachments: cur.draftAttachments.filter((a) => a.id !== id)
+      })
+    }),
+  clearDraft: (handleId) =>
+    set((s) => {
+      const cur = s.sessions[handleId]
+      if (!cur) return {}
+      return patchSlice(s, handleId, { draftText: '', draftAttachments: EMPTY_ATTACHMENTS })
+    }),
 
   interrupt: async () => {
     const active = activeSlice(get())
     if (!active) return
-    // Optimistically clear busy so Stop is responsive. The CLI's `result` event
-    // (which also clears it) may lag or, if the interrupt races the turn's end,
-    // never arrive with new content, so don't leave the composer stuck on "Stop".
-    set((s) => patchSlice(s, active.handleId, { busy: false }))
+    // Stop raced the turn's end (result already cleared busy): nothing outstanding to abandon,
+    // just forward the interrupt (harmless no-op in main) so we never mark a phantom boundary.
+    if (!active.busy) {
+      await window.clui.interrupt(active.handleId)
+      return
+    }
+    // A turn still buffered pre-init emits NO result (main drops pendingSends on interrupt),
+    // so waiting for one would strand the composer. Clear locally and release the oldest queued
+    // message (the FIFO boundary passed) so the session isn't bricked.
+    if (active.model === null) {
+      const [next, ...rest] = active.queuedMessages
+      set((s) =>
+        patchSlice(s, active.handleId, {
+          busy: false,
+          interrupting: false,
+          turnStartMs: null,
+          ...(next ? { queuedMessages: rest } : {})
+        })
+      )
+      await window.clui.interrupt(active.handleId)
+      if (next) void dispatchTurn(set, active.handleId, next.text, next.attachments)
+      return
+    }
+    // A running turn will emit a terminal `result`. Mark `interrupting` (distinct from idle)
+    // so a new prompt queues instead of dispatching a second concurrent turn; the late result
+    // is recognized as THIS turn's boundary and swallowed, not the new turn's.
+    set((s) => patchSlice(s, active.handleId, { busy: false, interrupting: true, turnStartMs: null }))
     await window.clui.interrupt(active.handleId)
   },
 
@@ -1144,7 +1373,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     // drifts across CLI versions.
     const ok = await window.clui.stopTask(handleId, taskId)
     if (!ok) {
-      set((s) => patchSlice(s, handleId, { busy: true }))
+      set((s) => patchSlice(s, handleId, { busy: true, turnStartMs: Date.now() }))
       await window.clui.sendMessage(
         handleId,
         `Stop the background task with id ${taskId} now using the TaskStop tool. Do not do anything else.`
@@ -1178,21 +1407,26 @@ export const useSession = create<SessionStore>((set, get) => ({
     set((s) => {
       const active = activeSlice(s)
       if (!active) return {}
+      // NEVER dispose the record a detail view is currently showing, or the open view falls
+      // back to an empty generic pane. A subagent is viewed by its toolUseId (the
+      // PTU), a workflow by its taskId, so both are matched against `viewingSubagent`.
+      const viewing = s.viewingSubagent
       const patch: Partial<PerSessionState> = {}
-      // Drop lingering terminal SUBAGENTS (keep running ones + any bash).
+      // Drop lingering terminal SUBAGENTS (keep running ones, any bash, and the viewed one).
       if (kind !== 'workflow') {
         const nextTasks: Record<string, BackgroundTask> = {}
         for (const [id, t] of Object.entries(active.backgroundTasks)) {
-          const lingeringSubagent = t.taskType === 'local_agent' && t.status !== 'running'
+          const lingeringSubagent =
+            t.taskType === 'local_agent' && t.status !== 'running' && t.toolUseId !== viewing
           if (!lingeringSubagent) nextTasks[id] = t
         }
         patch.backgroundTasks = nextTasks
       }
-      // Drop ENDED workflows (keep running ones, endedStatus === null).
+      // Drop ENDED workflows (keep running ones, endedStatus === null, and the viewed one).
       if (kind !== 'subagent') {
         const nextWf: Record<string, WorkflowState> = {}
         for (const [id, w] of Object.entries(active.workflows)) {
-          if (w.endedStatus === null) nextWf[id] = w
+          if (w.endedStatus === null || id === viewing) nextWf[id] = w
         }
         patch.workflows = nextWf
       }
@@ -1202,14 +1436,18 @@ export const useSession = create<SessionStore>((set, get) => ({
   pruneChangedFiles: async (handleId) => {
     const slice = get().sessions[handleId]
     if (!slice || slice.changedFiles.length === 0) return
-    const existing = await window.clui.filterExistingFiles(slice.changedFiles)
+    const snapshot = slice.changedFiles
+    const existing = new Set(await window.clui.filterExistingFiles(snapshot))
     // No change → don't touch state (avoid a needless re-render).
-    if (existing.length === slice.changedFiles.length) return
-    const keep = new Set(existing)
+    if (existing.size === snapshot.length) return
+    // Remove ONLY snapshot paths proven missing. A path added during the async check
+    // wasn't tested, so filtering the current list by the snapshot's keep-set would drop
+    // it even though it exists.
+    const missing = new Set(snapshot.filter((f) => !existing.has(f)))
     set((s) => {
       const cur = s.sessions[handleId]
       if (!cur) return {}
-      return patchSlice(s, handleId, { changedFiles: cur.changedFiles.filter((f) => keep.has(f)) })
+      return patchSlice(s, handleId, { changedFiles: cur.changedFiles.filter((f) => !missing.has(f)) })
     })
   },
 
@@ -1239,11 +1477,16 @@ export const useSession = create<SessionStore>((set, get) => ({
     const rescanSessions = { needed: false }
     set((state) => {
       const slice = state.sessions[handleId]
-      // Slice not created yet: buffer until insertSlice flushes it (race guard).
+      // Slice not created yet: buffer until insertSlice flushes it (race guard). But a
+      // RETIRED handle's slice will never be (re)inserted, so discard its late events
+      // instead of buffering them forever; a pending start's buffer is capped.
       if (!slice) {
+        if (retiredHandles.has(handleId)) return {}
         const buf = earlyBuffer.get(handleId) ?? []
-        buf.push(e)
-        earlyBuffer.set(handleId, buf)
+        if (buf.length < EARLY_BUFFER_CAP) {
+          buf.push(e)
+          earlyBuffer.set(handleId, buf)
+        }
         return {}
       }
 
@@ -1340,16 +1583,11 @@ export const useSession = create<SessionStore>((set, get) => ({
         case 'tool-use-stop': {
           const m = currentAssistant(messages)
           const t = m.tools.find((t) => t.id === e.id)
-          if (t) {
-            t.input = e.input
-            if (WRITE_TOOLS.has(t.name)) {
-              const inp = e.input as { file_path?: unknown; notebook_path?: unknown }
-              const fp = typeof inp?.file_path === 'string' ? inp.file_path : inp?.notebook_path
-              if (typeof fp === 'string' && fp) {
-                patch.changedFiles = [fp, ...slice.changedFiles.filter((f) => f !== fp)]
-              }
-            }
-          }
+          // Record the input only. The changed-file is published on the tool's SUCCESSFUL
+          // RESULT (below), not here at propose-time: a denied/failed edit must not appear
+          // as a changed file, and existence-pruning can't retract one to a file that
+          // already existed.
+          if (t) t.input = e.input
           break
         }
         case 'tool-result': {
@@ -1358,6 +1596,14 @@ export const useSession = create<SessionStore>((set, get) => ({
             if (t) {
               t.result = e.content
               t.isError = e.isError
+              // A write/edit that actually SUCCEEDED is a real changed file.
+              if (!e.isError && WRITE_TOOLS.has(t.name)) {
+                const inp = t.input as { file_path?: unknown; notebook_path?: unknown }
+                const fp = typeof inp?.file_path === 'string' ? inp.file_path : inp?.notebook_path
+                if (typeof fp === 'string' && fp) {
+                  patch.changedFiles = [fp, ...slice.changedFiles.filter((f) => f !== fp)]
+                }
+              }
               break
             }
           }
@@ -1534,8 +1780,8 @@ export const useSession = create<SessionStore>((set, get) => ({
           // status==='running', stops listing it) but KEEP the entry so the imminent
           // bg-task-notification can still read its description for the toast. It's
           // removed on that notification (or by bg-tasks-changed dropping it from the
-          // running snapshot). This ordering-independence fixes a missed completion
-          // toast when task_updated(terminal) arrived before task_notification.
+          // running snapshot). Keeping it makes the completion toast fire regardless of
+          // whether task_updated(terminal) or task_notification arrives first.
           const prev = slice.backgroundTasks[e.taskId]
           if (prev && e.status && e.status !== 'running') {
             patch.backgroundTasks = {
@@ -1547,10 +1793,10 @@ export const useSession = create<SessionStore>((set, get) => ({
         }
         case 'bg-task-notification': {
           // Terminal notification → toast + drop the task, but ONLY for a task we were
-          // actually tracking. Two layers guard the reported "Background task finished:
-          // Background task" phantom: the mapper only emits this for genuine local_bash
+          // actually tracking. Two layers guard against a phantom "Background task finished:
+          // Background task" toast: the mapper only emits this for genuine local_bash
           // tasks, AND here we refuse to announce a task that was never in the tray
-          // (no `prev` → nothing to report). Because bg-task-updated now MARKS terminal
+          // (no `prev` → nothing to report). Since bg-task-updated MARKS terminal
           // instead of deleting, `prev` is still present here regardless of event
           // ordering, so the real completion toast is never missed.
           const prev = slice.backgroundTasks[e.taskId]
@@ -1634,7 +1880,13 @@ export const useSession = create<SessionStore>((set, get) => ({
           // turn ending, so it must not clear `busy`, release the queue, or trigger the
           // /rename rescan. Only a genuine user turn-end does those.
           if (!e.fromTaskNotification && !e.fromPeer) {
+            // While `interrupting`, this is the interrupted turn's terminal result: it's the
+            // only foreground turn outstanding (new prompts queue), so it can't be another
+            // turn's. Swallow it (cost still accrues below) but treat it as the FIFO boundary.
+            const wasInterrupting = slice.interrupting
             patch.busy = false
+            patch.interrupting = false
+            patch.turnStartMs = null
             patch.lastActivityMs = Date.now()
             // A real turn boundary: if the user queued message(s) during this turn, release
             // the OLDEST now (FIFO). Dequeue it here and dispatch it after this set commits
@@ -1646,9 +1898,12 @@ export const useSession = create<SessionStore>((set, get) => ({
               release.queued = { handleId, msg: next }
             }
             // Matched at the command boundary (leading token only), so a mid-sentence
-            // "/rename" or another command never triggers the re-scan.
-            const lastUser = slice.messages.findLast((m) => m.role === 'user')
-            if (lastUser && /^\/rename(\s|$)/.test(lastUser.text.trim())) rescanSessions.needed = true
+            // "/rename" or another command never triggers the re-scan. Skip when the turn was
+            // interrupted: a stopped `/rename` didn't complete, so there's nothing to re-scan.
+            if (!wasInterrupting) {
+              const lastUser = slice.messages.findLast((m) => m.role === 'user')
+              if (lastUser && /^\/rename(\s|$)/.test(lastUser.text.trim())) rescanSessions.needed = true
+            }
           }
           // The CLI's `total_cost_usd` is PER-INVOCATION (not cumulative across a
           // --resume, and it resets on an effort-respawn), so ACCUMULATE it rather
@@ -1688,6 +1943,8 @@ export const useSession = create<SessionStore>((set, get) => ({
           // A real exit (effort respawns are swallowed in the main process and
           // never reach here). Mark the session no-longer-live but keep its slice.
           patch.busy = false
+          patch.interrupting = false
+          patch.turnStartMs = null
           patch.exited = true
           break
       }
@@ -1696,13 +1953,14 @@ export const useSession = create<SessionStore>((set, get) => ({
       // failed launch: ENOENT (bad CLI path) or a missing workspace folder. The
       // process never came up (model stays null until session-init), so there's no
       // live session to keep; drop the slice entirely instead of leaving a zombie
-      // "exited" session that lingers in the store, mis-counts as live, and (the
-      // reported bug) gets picked as the fallback when another session closes,
-      // resurfacing its stale error. The transcript (if any) is untouched on disk,
+      // "exited" session that lingers in the store, mis-counts as live, and gets
+      // picked as the fallback when another session closes, resurfacing its stale
+      // error. The transcript (if any) is untouched on disk,
       // so it stays resumable from the sidebar once the folder is back.
       if (e.type === 'process-exit' && slice.model === null) {
         const next = { ...state.sessions }
         delete next[handleId]
+        retireHandle(handleId)
         const active =
           state.activeHandleId === handleId
             ? (Object.values(next)
@@ -1711,7 +1969,11 @@ export const useSession = create<SessionStore>((set, get) => ({
             : state.activeHandleId
         // Preserve any notice the preceding error event set (don't clear it just
         // because the slice is being dropped, since that notice IS the explanation).
-        return { sessions: next, activeHandleId: active }
+        return {
+          sessions: next,
+          activeHandleId: active,
+          ...(active !== state.activeHandleId ? { viewingSubagent: null, subagentTrail: [] } : {})
+        }
       }
 
       if (touchesMessages(e.type)) patch.messages = messages

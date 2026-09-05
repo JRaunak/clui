@@ -183,7 +183,9 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false // preload uses Node built-ins via the bridge; keep isolation on
+      // Sandbox the renderer: the preload only uses electron (ipcRenderer/contextBridge/
+      // webUtils), no Node built-ins, so it runs fine sandboxed.
+      sandbox: true
     }
   })
 
@@ -240,7 +242,23 @@ function registerIpc(): void {
   })
   sessionManager = manager
 
-  ipcMain.handle(IpcChannels.pickWorkspace, async () => {
+  // Reject IPC that doesn't come from the top frame of a real app window: an injected
+  // sub-frame or webview must not reach the privileged bridge. Defense in depth
+  // alongside the CSP + navigation guards; the legit renderer is always the top frame.
+  const fromTrustedFrame = (e: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean =>
+    !e.senderFrame?.parent && BrowserWindow.fromWebContents(e.sender) !== null
+  const handle = (
+    channel: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors ipcMain.handle's own arg typing
+    fn: (e: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown
+  ): void => {
+    ipcMain.handle(channel, (e, ...args) => {
+      if (!fromTrustedFrame(e)) throw new Error('ipc: untrusted sender')
+      return fn(e, ...args)
+    })
+  }
+
+  handle(IpcChannels.pickWorkspace, async () => {
     if (!mainWindow) return null
     const { defaultWorkspace } = await getSettings()
     const res = await dialog.showOpenDialog(mainWindow, {
@@ -252,14 +270,14 @@ function registerIpc(): void {
     return res.filePaths[0]
   })
 
-  ipcMain.handle(IpcChannels.getCliInfo, async () => {
+  handle(IpcChannels.getCliInfo, async () => {
     const { cliPath } = await getSettings()
     return detectCli(cliPath || null)
   })
 
-  ipcMain.handle(IpcChannels.getFullscreen, () => mainWindow?.isFullScreen() ?? false)
+  handle(IpcChannels.getFullscreen, () => mainWindow?.isFullScreen() ?? false)
 
-  ipcMain.handle(IpcChannels.startSession, async (_e, opts: StartSessionOptions) => {
+  handle(IpcChannels.startSession, async (_e, opts: StartSessionOptions) => {
     const settings = await getSettings()
     const info = await detectCli(settings.cliPath || null)
     if (!info.path) throw new Error('claude CLI not found — set its path in Settings')
@@ -296,41 +314,44 @@ function registerIpc(): void {
     }
   )
 
-  ipcMain.handle(IpcChannels.interrupt, async (_e, handleId: string) => {
+  handle(IpcChannels.interrupt, async (_e, handleId: string) => {
     manager.interrupt(handleId)
   })
 
-  ipcMain.handle(IpcChannels.stopTask, async (_e, handleId: string, taskId: string) => {
+  handle(IpcChannels.stopTask, async (_e, handleId: string, taskId: string) => {
     return manager.stopTask(handleId, taskId)
   })
 
-  ipcMain.handle(IpcChannels.backgroundTask, async (_e, handleId: string, toolUseId: string) => {
+  handle(IpcChannels.backgroundTask, async (_e, handleId: string, toolUseId: string) => {
     return manager.backgroundTask(handleId, toolUseId)
   })
 
   ipcMain.handle(
     IpcChannels.setPermissionMode,
     async (_e, handleId: string, mode: PermissionModeChoice) => {
-      // 'inherit' has no CLI equivalent mid-session (there's no "unset"); map it
-      // to 'default' so switching back to an asking mode still works. This still
-      // never writes any settings file; it's a live control message only.
-      manager.setPermissionMode(handleId, mode === 'inherit' ? 'default' : mode)
+      // 'inherit' has no CLI "unset" mid-session, so resolve it to the user's ACTUAL
+      // configured default (permissions.defaultMode) rather than hardcoding 'default'
+      // (Interactive): otherwise picking "System Default" would silently force Interactive
+      // for a user whose default is Plan/Accept-Edits/Autonomous. Falls back to 'default'
+      // when unset (the CLI's own default). Still a live control message only.
+      const resolved = mode === 'inherit' ? ((await readCliSettings()).defaultMode ?? 'default') : mode
+      return manager.setPermissionMode(handleId, resolved)
     }
   )
 
-  ipcMain.handle(IpcChannels.setModel, async (_e, handleId: string, model: ModelChoice) => {
+  handle(IpcChannels.setModel, async (_e, handleId: string, model: ModelChoice) => {
     // model is the raw --model value; pass it straight through.
-    if (model) manager.setModel(handleId, model)
+    return model ? manager.setModel(handleId, model) : false
   })
 
-  ipcMain.handle(IpcChannels.setEffort, async (_e, handleId: string, effort: EffortChoice) => {
+  handle(IpcChannels.setEffort, async (_e, handleId: string, effort: EffortChoice) => {
     await manager.setEffort(handleId, effort)
   })
-  ipcMain.handle(IpcChannels.setUltracode, async (_e, handleId: string, on: boolean) => {
-    await manager.setUltracode(handleId, on)
+  handle(IpcChannels.setUltracode, async (_e, handleId: string, on: boolean) => {
+    return manager.setUltracode(handleId, on)
   })
 
-  ipcMain.handle(IpcChannels.stopSession, async (_e, handleId: string) => {
+  handle(IpcChannels.stopSession, async (_e, handleId: string) => {
     manager.stop(handleId)
   })
 
@@ -341,23 +362,23 @@ function registerIpc(): void {
     }
   )
 
-  ipcMain.handle(IpcChannels.listSessions, async () => listSessions())
+  handle(IpcChannels.listSessions, async () => listSessions())
 
-  ipcMain.handle(IpcChannels.deleteSession, async (_e, projectSlug: string, id: string) => {
+  handle(IpcChannels.deleteSession, async (_e, projectSlug: string, id: string) => {
     await deleteSession(projectSlug, id)
   })
 
-  ipcMain.handle(IpcChannels.renameSession, async (_e, id: string, name: string) => {
+  handle(IpcChannels.renameSession, async (_e, id: string, name: string) => {
     await renameSession(id, name)
   })
 
-  ipcMain.handle(IpcChannels.readTranscript, async (_e, sessionId: string) =>
+  handle(IpcChannels.readTranscript, async (_e, sessionId: string) =>
     readTranscript(sessionId)
   )
-  ipcMain.handle(IpcChannels.readAgentTranscript, async (_e, agentId: string) =>
+  handle(IpcChannels.readAgentTranscript, async (_e, agentId: string) =>
     readAgentTranscript(agentId)
   )
-  ipcMain.handle(IpcChannels.readAgentTranscriptByToolUseId, async (_e, toolUseId: string) =>
+  handle(IpcChannels.readAgentTranscriptByToolUseId, async (_e, toolUseId: string) =>
     readAgentTranscriptByToolUseId(toolUseId)
   )
 
@@ -388,7 +409,7 @@ function registerIpc(): void {
     }
   )
   // Workspaces for the search scope dropdown (slug + label + count), from listSessions.
-  ipcMain.handle(IpcChannels.listWorkspaces, async () => {
+  handle(IpcChannels.listWorkspaces, async () => {
     const groups = await listSessions()
     // Each ProjectGroup is one workspace (cwd). Derive the slug from the first session.
     return groups
@@ -400,7 +421,7 @@ function registerIpc(): void {
       }))
       .filter((w) => w.slug)
   })
-  ipcMain.handle(IpcChannels.warmSearchCache, async () => {
+  handle(IpcChannels.warmSearchCache, async () => {
     void getSearchMeta(Date.now()) // warm the title map too (fire-and-forget)
     await warmSearchCache()
   })
@@ -408,7 +429,7 @@ function registerIpc(): void {
   // Export a session to Markdown. Reads the jsonl directly (no resume/spawn, so it works
   // on dormant sessions), then a native Save dialog lets the USER choose the location
   // (Clui never silently writes a file). Returns the saved path, or null if cancelled.
-  ipcMain.handle(IpcChannels.exportSession, async (_e, sessionId: string) => {
+  handle(IpcChannels.exportSession, async (_e, sessionId: string) => {
     if (!mainWindow) return null
     const meta = await getSearchMeta(Date.now())
     const info = meta.get(sessionId) ?? { title: sessionId.slice(0, 8), cwd: '' }
@@ -427,43 +448,43 @@ function registerIpc(): void {
     return res.filePath
   })
 
-  ipcMain.handle(IpcChannels.getSessionCosts, async () => readCosts())
-  ipcMain.handle(IpcChannels.setSessionCost, async (_e, sessionId: string, usd: number) => {
+  handle(IpcChannels.getSessionCosts, async () => readCosts())
+  handle(IpcChannels.setSessionCost, async (_e, sessionId: string, usd: number) => {
     await setCost(sessionId, usd)
   })
-  ipcMain.handle(IpcChannels.deleteSessionCost, async (_e, sessionId: string) => {
+  handle(IpcChannels.deleteSessionCost, async (_e, sessionId: string) => {
     await deleteCost(sessionId)
   })
-  ipcMain.handle(IpcChannels.getSessionModels, async () => readSessionModels())
+  handle(IpcChannels.getSessionModels, async () => readSessionModels())
   ipcMain.handle(
     IpcChannels.setSessionModel,
     async (_e, sessionId: string, prefs: { model?: string; effort?: string }) => {
       await setSessionModel(sessionId, prefs)
     }
   )
-  ipcMain.handle(IpcChannels.deleteSessionModel, async (_e, sessionId: string) => {
+  handle(IpcChannels.deleteSessionModel, async (_e, sessionId: string) => {
     await deleteSessionModel(sessionId)
   })
 
-  ipcMain.handle(IpcChannels.readConfig, async (_e, cwd: string | null) => readConfig(cwd))
+  handle(IpcChannels.readConfig, async (_e, cwd: string | null) => readConfig(cwd))
 
-  ipcMain.handle(IpcChannels.openInEditor, async (_e, filePath: string) => {
+  handle(IpcChannels.openInEditor, async (_e, filePath: string) => {
     const { editorCommand } = await getSettings()
     await openInEditor(editorCommand || 'code', filePath)
   })
 
-  ipcMain.handle(IpcChannels.openDiff, async (_e, left: string, right: string) => {
+  handle(IpcChannels.openDiff, async (_e, left: string, right: string) => {
     const { editorCommand } = await getSettings()
     await openDiff(editorCommand || 'code', left, right)
   })
 
-  ipcMain.handle(IpcChannels.openExternal, async (_e, url: string) => {
+  handle(IpcChannels.openExternal, async (_e, url: string) => {
     // Only allow web links from markdown, never file:// or arbitrary schemes
     // (defense against a malicious link in model output opening a local target).
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)
   })
 
-  ipcMain.handle(IpcChannels.listWorkspaceFiles, async (_e, cwd: string) => {
+  handle(IpcChannels.listWorkspaceFiles, async (_e, cwd: string) => {
     try {
       return await listWorkspaceFiles(cwd)
     } catch {
@@ -471,7 +492,7 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle(IpcChannels.filterExistingFiles, async (_e, paths: string[]) => {
+  handle(IpcChannels.filterExistingFiles, async (_e, paths: string[]) => {
     // Prune paths that no longer exist (deleted this turn, including by the agent
     // via Bash rm, which never surfaces a file_path). Keeps the changed-files list
     // accurate. Best-effort: any stat error → treat as gone.
@@ -484,7 +505,7 @@ function registerIpc(): void {
     })
   })
 
-  ipcMain.handle(IpcChannels.getSettings, async () => getResolvedSettings())
+  handle(IpcChannels.getSettings, async () => getResolvedSettings())
 
   ipcMain.handle(
     IpcChannels.updateSettings,
@@ -492,14 +513,16 @@ function registerIpc(): void {
       updateSettings(patch, clear ?? [])
   )
 
-  ipcMain.handle(IpcChannels.detectCliAt, async (_e, path: string) => detectCli(path || null))
+  handle(IpcChannels.detectCliAt, async (_e, path: string) => detectCli(path || null))
 
-  ipcMain.handle(IpcChannels.listModels, async (_e, refresh?: boolean) => listModels(refresh))
+  handle(IpcChannels.listModels, async (_e, refresh?: boolean) => listModels(refresh))
 
   // Synchronous: the preload calls this before first paint to set <html data-theme>
   // with no flash. Returns the concrete resolved theme ('dark' | 'light').
   ipcMain.on(IpcChannels.getResolvedThemeSync, (e) => {
-    e.returnValue = resolveTheme()
+    // Same trusted-frame gate as the async handlers; an untrusted frame just gets the
+    // default theme rather than a live read.
+    e.returnValue = fromTrustedFrame(e) ? resolveTheme() : 'dark'
   })
 
   // When following the OS theme, repaint the window chrome background on OS change
@@ -510,7 +533,7 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle(IpcChannels.getSystemPermissionMode, async () => {
+  handle(IpcChannels.getSystemPermissionMode, async () => {
     // Read the user's ~/.claude/settings.json fresh (read-only) and report what
     // "System Default" resolves to. Defaults to 'default' if unset/unreadable.
     return (await readCliSettings()).defaultMode ?? 'default'

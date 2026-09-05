@@ -27,6 +27,9 @@ import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
 
+/** Unique marker bracketing the env JSON so shell-rc brace noise can't confuse the parse. */
+const SENTINEL = '__CLUI_ENV_7f3a9c__'
+
 /** Env-key prefixes that carry `claude` auth/provider config, provider-agnostic. */
 const AUTH_PREFIXES = ['ANTHROPIC_', 'AWS_', 'CLAUDE_CODE_', 'GOOGLE_', 'GCLOUD_', 'CLOUD_ML_']
 /**
@@ -40,7 +43,18 @@ const AUTH_EXACT = new Set([
   'AWS_DEFAULT_REGION',
   'AWS_PROFILE',
   'BEDROCK_REGION',
-  'PATH'
+  'PATH',
+  // Proxy + custom-CA vars: a corp machine routes the CLI's HTTPS through these, and a
+  // Finder launch would otherwise drop them (AWS_CA_BUNDLE already rides the AWS_ prefix;
+  // NODE_EXTRA_CA_CERTS / SSL_CERT_FILE / the proxy vars do not).
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE'
 ])
 /**
  * `CLAUDE_CODE_*` keys that are per-session RUNTIME markers, not auth. These must NOT be
@@ -62,6 +76,20 @@ function isAuthKey(key: string): boolean {
 }
 
 /**
+ * Remove Claude runtime/session markers from a fully-merged child environment. The auth
+ * overlay already excludes them, but the child env is built by spreading `process.env`
+ * first, so a Clui launched from INSIDE a Claude Code session would otherwise leak its
+ * own markers into the supposedly-independent child. Apply this to the final env.
+ */
+export function stripRuntimeMarkers(
+  env: Record<string, string | undefined>
+): Record<string, string | undefined> {
+  const out = { ...env }
+  for (const k of RUNTIME_MARKERS) delete out[k]
+  return out
+}
+
+/**
  * The auth-relevant subset of the user's login-shell environment, to merge OVER
  * `process.env` when spawning the CLI. Empty object if the shell can't be read (the
  * CLI then behaves as it does when launched from a terminal without those vars).
@@ -76,14 +104,15 @@ export async function loginShellAuthEnv(): Promise<Record<string, string>> {
     // a raw env dump is fragile; JSON.stringify(process.env) sidesteps both).
     const { stdout } = await execFileP(
       shell,
-      ['-lic', 'node -e "process.stdout.write(JSON.stringify(process.env))"'],
+      ['-lic', `node -e "process.stdout.write('${SENTINEL}'+JSON.stringify(process.env)+'${SENTINEL}')"`],
       { timeout: 5000, encoding: 'utf8', maxBuffer: 1024 * 1024 }
     )
-    // The command output may be preceded by shell rc noise; parse the last JSON object.
-    const start = stdout.indexOf('{')
-    const end = stdout.lastIndexOf('}')
-    if (start < 0 || end <= start) throw new Error('no env json')
-    const full = JSON.parse(stdout.slice(start, end + 1)) as Record<string, string>
+    // rc output can contain braces, so bracket the JSON with a unique sentinel and slice
+    // between the two markers rather than guessing the outermost `{`…`}`.
+    const a = stdout.indexOf(SENTINEL)
+    const b = stdout.indexOf(SENTINEL, a + SENTINEL.length)
+    if (a < 0 || b <= a) throw new Error('no env json')
+    const full = JSON.parse(stdout.slice(a + SENTINEL.length, b)) as Record<string, string>
     const out: Record<string, string> = {}
     for (const [key, val] of Object.entries(full)) {
       if (isAuthKey(key) && typeof val === 'string') out[key] = val

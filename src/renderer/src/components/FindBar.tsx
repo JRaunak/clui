@@ -1,29 +1,32 @@
 /**
- * ⌘F find-in-conversation. A thin bar docked top-right of the transcript (no
- * scrim; the chat scrolls live underneath, since it belongs to the current
- * conversation, unlike the ⌘⇧F global overlay). Operates entirely on the active
- * session's `messages` already in renderer memory: no disk read, no IPC, instant.
+ * ⌘F find-in-conversation. A thin bar docked top-right of the transcript (no scrim; the
+ * chat scrolls live underneath, since it belongs to the current conversation, unlike the
+ * ⌘⇧F global overlay). Operates entirely on the active session's messages already in
+ * renderer memory: no disk read, no IPC, instant.
  *
- * Matches are per-MESSAGE (a message either contains the query or not). Enter / ⇧Enter
+ * Matches are per-message (a message either contains the query or not). Enter / ⇧Enter
  * (and the ⌘G / ⌘⇧G menu fallbacks) step between matching messages; each step requests
- * Chat scroll to + flash that message (requestScrollTo). "N of M" shows the position.
- * Inline term-highlight INSIDE rendered markdown is deferred (v1 flashes the card);
- * this is the settled scope.
+ * Chat scroll to + flash that message. "N of M" shows the position. Inline term-highlight
+ * inside rendered markdown is deferred (v1 flashes the card).
  */
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useActive, useSession, EMPTY_MESSAGES } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { IconSearch, IconClose, IconChevron } from './Icon'
+import { summarizeInput } from './MessageView'
 
-/** The searchable text of a message: its own text + tool names + tool outputs, so
- *  find covers what the user can see in the transcript (mirrors the card content). */
+/** The searchable text of a message: its own text + tool names + the same input summary
+ *  the card shows (command/path/description) + tool outputs, so find covers what the user
+ *  can actually see in the transcript. */
 function messageText(m: {
   text: string
-  tools: { name: string; result?: string }[]
+  tools: { name: string; input?: unknown; result?: string }[]
 }): string {
   const parts = [m.text]
   for (const t of m.tools) {
     if (t.name) parts.push(t.name)
+    const summary = summarizeInput(t.input)
+    if (summary) parts.push(summary)
     if (t.result) parts.push(t.result)
   }
   return parts.join('\n')
@@ -37,7 +40,7 @@ export function FindBar(): JSX.Element | null {
   const [query, setQuery] = useState('')
   // Defer the query that drives filtering + scroll so fast typing over a long conversation
   // doesn't refilter (and jump the transcript) on every keystroke. The input stays bound to
-  // the immediate `query`, so typing stays responsive while matches lag a beat behind.
+  // the immediate query, so typing stays responsive while matches lag a beat behind.
   const deferredQuery = useDeferredValue(query)
   const [current, setCurrent] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -74,11 +77,11 @@ export function FindBar(): JSX.Element | null {
     [matches, requestScrollTo]
   )
 
-  // On a real query change, jump to the LAST match rather than the first: it sits nearest
+  // On a real query change, jump to the last match rather than the first: it sits nearest
   // where the user is already reading (the transcript tail), so a long conversation doesn't
   // scroll all the way up to a top-most hit. Keyed on the deferred query, which changes only
-  // on real input, never on the fresh `messages` array a streamed token produces, so an
-  // active turn can't re-fire this and hijack the scroll.
+  // on real input, never on the fresh messages array a streamed token produces, so an active
+  // turn can't re-fire this and hijack the scroll.
   useEffect(() => {
     if (matches.length > 0) {
       const last = matches.length - 1
@@ -90,8 +93,8 @@ export function FindBar(): JSX.Element | null {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deferredQuery])
 
-  // Keep `current` in range as matches stream in/out mid-turn WITHOUT scrolling, so the
-  // "N of M" count stays honest (M can grow) but the user's position isn't hijacked.
+  // Keep current in range as matches stream in/out mid-turn without scrolling, so the "N of M"
+  // count stays honest (M can grow) but the user's position isn't hijacked.
   useEffect(() => {
     if (current >= matches.length) setCurrent(Math.max(0, matches.length - 1))
   }, [matches.length, current])

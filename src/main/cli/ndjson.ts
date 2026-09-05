@@ -6,12 +6,20 @@
  * or split a single line across chunks. This buffers the remainder between pushes
  * and only emits fully-parsed objects.
  */
+/** Ceiling for a single unterminated line's buffer. A real CLI JSON line is at most a
+ *  few MB (a big tool result); past this it's runaway/garbage, so drop it rather than let
+ *  one newline-less stream grow memory without bound. */
+const MAX_BUFFER_BYTES = 32 * 1024 * 1024
+
 export class NdjsonParser {
   private buffer = ''
 
   /** Malformed lines are skipped: the CLI occasionally interleaves non-JSON. */
   push(chunk: string): unknown[] {
     this.buffer += chunk
+    // No newline in a buffer this large = a runaway partial; discard it (a later newline
+    // resyncs the stream) instead of accumulating unbounded.
+    if (this.buffer.length > MAX_BUFFER_BYTES && !this.buffer.includes('\n')) this.buffer = ''
     const out: unknown[] = []
     let idx: number
     while ((idx = this.buffer.indexOf('\n')) !== -1) {

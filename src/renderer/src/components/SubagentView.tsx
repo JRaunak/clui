@@ -1,19 +1,6 @@
-/**
- * Maximized transcript view. When a subagent's "view transcript" is
- * clicked, this REPLACES the main region (Chat/Composer); the sessions sidebar
- * persists (it's a sibling of <main> in App). Full-width by design (transcripts can
- * be large); ← Chat / Esc / ✕ return to the conversation.
- *
- * DATA: renders `subagentMessages[parentToolUseId]` (the subagent's forwarded
- * text/thinking AND its tool calls, streamed via `forwardSubagentText`) in stream
- * order. The launching Agent tool call (looked up by id) supplies the header: name,
- * subagent_type chip, status, and the prompt/description.
- *
- * SCOPE: subagent transcript only. A dynamic-workflow PHASE TREE slots into the
- * left rail later (its live event shape is not yet verified); this component is
- * deliberately structured so that rail can be added without reworking the
- * transcript pane.
- */
+/** Maximized transcript view. When a subagent's "view transcript" is clicked, this replaces the main region;
+ *  the sessions sidebar persists. Full-width by design. Esc returns to the conversation.
+ *  Renders `subagentMessages[parentToolUseId]` in stream order. The launching Agent tool call supplies the header. */
 import { useEffect, useState } from 'react'
 import {
   useActive,
@@ -47,11 +34,30 @@ function findAgentTool(
 
 /** Stable empty ref for the children map (zustand-v5 selector safety). */
 const EMPTY_CHILDREN_MAP: Record<string, NestedSubagent[]> = {}
+/** Stable empty ref for the subagent-messages map (zustand-v5 selector safety). */
+const EMPTY_SUBAGENT_MSGS_MAP: Record<string, SubagentMessage[]> = {}
 
-/** Resolved header metadata for a subagent at some trail depth. A top-level subagent is
- *  found on its launching Agent tool card (in `messages`, carries running/error state);
- *  a NESTED child has no card; its metadata comes from its parent's `subagentChildren`
- *  entry (found by scanning the map for the matching childToolUseId). */
+function isAgentTool(name: string): boolean {
+  return name === 'Task' || name === 'Agent'
+}
+
+/** The launching Task/Agent tool call for a subagent, found by its tool_use id anywhere in the forwarded streams.
+ *  A nested child has no Agent card in `messages`, but its launcher is a `kind:'tool'` entry in its parent's stream,
+ *  and that entry is what `subagent-tool-result` completes, so its `result` is the child's authoritative terminal evidence. */
+function findLaunchTool(
+  map: Record<string, SubagentMessage[]>,
+  toolUseId: string
+): ToolCall | null {
+  for (const entries of Object.values(map)) {
+    for (const e of entries) {
+      if (e.kind === 'tool' && e.tool.id === toolUseId) return e.tool
+    }
+  }
+  return null
+}
+
+/** Resolved header metadata for a subagent at some trail depth. A top-level subagent is found on its launching
+ *  Agent tool card; a nested child has no card, its metadata comes from its parent's `subagentChildren` entry. */
 function resolveAgentMeta(
   id: string,
   messages: { tools: ToolCall[] }[],
@@ -66,7 +72,7 @@ function resolveAgentMeta(
       tool
     }
   }
-  // Nested child: look it up in whichever parent's children list holds it.
+  // Nested child: look it up in the parent's children list.
   for (const list of Object.values(childrenByParent)) {
     const child = list.find((c) => c.childToolUseId === id)
     if (child) {
@@ -104,11 +110,8 @@ function agentStatus(state: string): { cls: string; label: string } {
   return { cls: 'bg-warn', label: 'running' }
 }
 
-/**
- * The selected workflow-agent's full transcript, read from its on-disk
- * `agent-<agentId>.jsonl` (the live stream carries only progress metadata). Re-fetches
- * while the agent is running so it fills in as the file grows; static once done.
- */
+/** The selected workflow-agent's full transcript, read from its on-disk `agent-<agentId>.jsonl`.
+ *  Re-fetches while the agent is running so it fills in as the file grows; static once done. */
 function WorkflowAgentDetail({ agent }: { agent: WorkflowAgent }): JSX.Element {
   const [msgs, setMsgs] = useState<HistoryMessage[] | null>(null)
   const status = agentStatus(agent.state)
@@ -126,7 +129,7 @@ function WorkflowAgentDetail({ agent }: { agent: WorkflowAgent }): JSX.Element {
       })
     }
     load()
-    // Poll while running so the transcript fills in (the file grows on disk).
+    // Poll while running so the transcript fills in.
     const t = running ? setInterval(load, 2000) : null
     return () => {
       cancelled = true
@@ -161,8 +164,16 @@ function WorkflowAgentDetail({ agent }: { agent: WorkflowAgent }): JSX.Element {
   )
 }
 
-function HistoryBlock({ msg }: { msg: HistoryMessage }): JSX.Element {
+function HistoryBlock({
+  msg,
+  hideAgentTools = false
+}: {
+  msg: HistoryMessage
+  /** Skip Task/Agent tool rows: on a resumed subagent they're surfaced as drill-down cards below the transcript. */
+  hideAgentTools?: boolean
+}): JSX.Element {
   const isUser = msg.role === 'user'
+  const tools = hideAgentTools ? msg.tools.filter((t) => !isAgentTool(t.name)) : msg.tools
   return (
     <div>
       <div className="mb-1.5 font-serif text-[13px] text-dim">
@@ -178,7 +189,7 @@ function HistoryBlock({ msg }: { msg: HistoryMessage }): JSX.Element {
       ) : (
         <Markdown text={msg.text} />
       ))}
-      {msg.tools.map((t) => (
+      {tools.map((t) => (
         <div key={t.id} className="my-1.5 rounded-md border border-border bg-tool px-3 py-1.5 font-mono text-[11.5px]">
           <span className="font-semibold text-accent">{t.name}</span>
           {toolSummary(t.input) && <span className="ml-2 text-dim">{toolSummary(t.input)}</span>}
@@ -198,13 +209,8 @@ function toolSummary(input: unknown): string {
   return ''
 }
 
-/**
- * Maximized dynamic-workflow view: a left phase-tree rail (phases → agents, grouped
- * by phaseIndex, live from `workflow_progress`) + a detail pane for the selected
- * agent. The agent's OWN transcript isn't in the stream (only progress metadata +
- * promptPreview); its full transcript is a deferred disk-fed follow-up, so the
- * detail shows the prompt preview + live status for now.
- */
+/** Maximized dynamic-workflow view: a left phase-tree rail (phases → agents, grouped by phaseIndex, live from
+ *  `workflow_progress`) + a detail pane for the selected agent. The agent's own transcript is read from disk. */
 function WorkflowTreeView({
   workflow,
   onClose
@@ -284,7 +290,7 @@ function WorkflowTreeView({
           )}
         </div>
 
-        {/* Detail pane for the selected agent: its full transcript (read from disk). */}
+        {/* Detail pane for the selected agent: its full transcript. */}
         <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
           {!sel ? (
             <div className="text-sm text-faint">Select an agent to see its transcript.</div>
@@ -297,10 +303,8 @@ function WorkflowTreeView({
   )
 }
 
-/** Nesting: a card for a subagent SPAWNED BY the subagent being viewed. Clicking
- *  drills into its transcript. Mirrors the inline MessageView Agent card idiom (label +
- *  description + subagent_type chip + "→"). Shows a live dot if its transcript has begun
- *  streaming (we have forwarded messages for its tool_use id). */
+/** Nesting: a card for a subagent spawned by the subagent being viewed. Clicking drills into its transcript.
+ *  Shows a live dot if its transcript has begun streaming. */
 function NestedAgentCard({
   child,
   onOpen
@@ -340,10 +344,29 @@ function NestedAgentCard({
   )
 }
 
-/** Render a subagent's forwarded stream in TRUE ORDER: text/thinking runs interleaved
- *  with its tool calls. Each consecutive run of tool entries coalesces into one
- *  ToolGroup, so the main transcript's aggregation and collapse behavior applies
- *  unchanged. Mirrors MessageView's OrderedBlocks. */
+/** The "Spawned N subagents" list of drill-down cards. Fed live children or the ones recovered from a resumed transcript's Task/Agent tool calls. */
+function SpawnedChildren({
+  items,
+  onOpen
+}: {
+  items: NestedSubagent[]
+  onOpen: (childToolUseId: string) => void
+}): JSX.Element | null {
+  if (items.length === 0) return null
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      <div className="font-serif text-[13px] text-dim">
+        Spawned {items.length === 1 ? 'subagent' : `${items.length} subagents`}
+      </div>
+      {items.map((c) => (
+        <NestedAgentCard key={c.childToolUseId} child={c} onOpen={() => onOpen(c.childToolUseId)} />
+      ))}
+    </div>
+  )
+}
+
+/** Render a subagent's forwarded stream in true order: text/thinking runs interleaved with its tool calls.
+ *  Each consecutive run of tool entries coalesces into one ToolGroup. */
 function SubagentStream({ entries }: { entries: SubagentMessage[] }): JSX.Element {
   const out: JSX.Element[] = []
   let i = 0
@@ -368,7 +391,7 @@ function SubagentStream({ entries }: { entries: SubagentMessage[] }): JSX.Elemen
       <div key={`m${i}`}>
         <div className="mb-1.5 flex items-center gap-1.5 font-serif text-[13px] text-dim">
           {e.role === 'user' ? (
-            // The subagent's turn INPUT (prompt), not its own output.
+            // The subagent's turn input (prompt).
             <span className="text-dim">Prompt</span>
           ) : (
             <span className="flex items-center gap-1.5 text-accent">
@@ -407,13 +430,13 @@ export function SubagentView(): JSX.Element | null {
   const children = useActive((s) =>
     parentId ? (s?.subagentChildren[parentId] ?? EMPTY_NESTED_SUBAGENTS) : EMPTY_NESTED_SUBAGENTS
   )
-  // The full children map, letting the breadcrumb label an ancestor that is itself a
-  // nested child (its metadata isn't in `messages`, only in its parent's children list).
+  // The full children map, letting the breadcrumb label an ancestor that is itself a nested child.
   const childrenByParent = useActive((s) => s?.subagentChildren ?? EMPTY_CHILDREN_MAP)
-  // The bg-task handle for a BACKGROUNDED subagent, joined on toolUseId === the PTU being
-  // viewed. Its `status` is the only true lifecycle for one (see the status note below);
-  // null for a foreground subagent, which the tool-card fallback handles. Returns a stored
-  // object or a literal null, both stable refs, so no zustand-v5 selector loop.
+  // Full forwarded-stream map, to find a nested child's launching tool for its terminal status. Foreground `busy` is the fallback liveness.
+  const subMsgsMap = useActive((s) => s?.subagentMessages ?? EMPTY_SUBAGENT_MSGS_MAP)
+  const busy = useActive((s) => s?.busy ?? false)
+  // The bg-task handle for a backgrounded subagent, joined on toolUseId. Its `status` is the only true lifecycle;
+  // null for a foreground subagent. Returns a stored object or literal null, both stable refs.
   const bgTask = useActive((s) =>
     s && parentId
       ? (Object.values(s.backgroundTasks).find(
@@ -422,17 +445,15 @@ export function SubagentView(): JSX.Element | null {
       : null
   )
 
-  // Live forwarded text wins; the on-disk transcript is the fallback when none arrived,
-  // located by tool_use_id via the .meta.json sidecar. Since CLI 2.1.219 `forwardSubagentText`
-  // streams depth-2+ too (verified live on 2.1.220: a 3-level chain where every level's own
-  // text streamed under its tool_use id), so nested children normally take the live path and
-  // this fallback only covers a resumed/dormant session. Keyed by parentId; null = not loaded.
+  // Live forwarded text wins; the on-disk transcript is the fallback when none arrived, located by tool_use_id
+  // via the .meta.json sidecar. `forwardSubagentText` streams depth-2+ too, so nested children normally take
+  // the live path and this fallback only covers a resumed/dormant session. Keyed by parentId; null = not loaded.
   const [diskMsgs, setDiskMsgs] = useState<HistoryMessage[] | null>(null)
   const [diskLoadedFor, setDiskLoadedFor] = useState<string | null>(null)
   const liveCount = parentId ? subMsgs.length : 0
   useEffect(() => {
     if (!parentId) return
-    // Live stream present → no disk read needed (top-level subagent path).
+    // Live stream present: no disk read needed.
     if (liveCount > 0) {
       setDiskMsgs(null)
       setDiskLoadedFor(null)
@@ -450,9 +471,8 @@ export function SubagentView(): JSX.Element | null {
     }
   }, [parentId, liveCount])
 
-  // The subagent's model + effort for the header chip, read from its on-disk transcript (the
-  // live stream carries neither). Separate from the diskMsgs fallback above, which is skipped
-  // on the live path.
+  // The subagent's model + effort for the header chip, read from its on-disk transcript (the live stream carries neither).
+  // Separate from the diskMsgs fallback above, which is skipped on the live path.
   const [agentMeta, setAgentMeta] = useState<{ model?: string; effort?: string | null }>({})
   useEffect(() => {
     setAgentMeta({})
@@ -466,8 +486,7 @@ export function SubagentView(): JSX.Element | null {
         if (r.agentModel) {
           setAgentMeta({ model: r.agentModel, effort: r.agentEffort })
         } else if (tries++ < 12) {
-          // A live subagent's on-disk jsonl lags its stream, so its first assistant record
-          // (which carries the model) can take several seconds to land.
+          // A live subagent's on-disk jsonl lags its stream, so its first assistant record can take several seconds to land.
           timer = setTimeout(load, 1500)
         }
       })
@@ -479,53 +498,73 @@ export function SubagentView(): JSX.Element | null {
     }
   }, [parentId])
 
-  // Esc pops one level (back up the trail), closing the view at the root. LIFO stack.
+  // Esc pops one level, closing the view at the root. LIFO stack.
   useEscape(parentId !== null, popSubagent)
 
   if (!parentId) return null
   // A dynamic workflow gets the phase-tree view; a plain subagent gets the transcript.
   if (workflow) return <WorkflowTreeView workflow={workflow} onClose={close} />
 
-  // Resolve the CURRENT subagent's header metadata. A top-level subagent is found on the
-  // launching Agent tool card (in `messages`); a NESTED child isn't there, so its metadata
-  // lives in its parent's `subagentChildren` entry. Try both.
+  // Resolve the current subagent's header metadata. A top-level subagent is found on the launching Agent tool card;
+  // a nested child isn't there, so its metadata lives in its parent's `subagentChildren` entry.
   const meta = resolveAgentMeta(parentId, messages, childrenByParent)
   const name = meta.name
   const subtype = meta.subtype
   const desc = meta.desc
-  // Humanize the raw model id ("claude-opus-4-8" → "Opus 4.8"); effort falls back to the raw
-  // word if a CLI bump adds a level the labels don't know, so the chip never blanks.
+  // Humanize the raw model id; effort falls back to the raw word if a CLI bump adds a level the labels don't know.
   const modelLabel = agentMeta.model ? deriveModelInfo(agentMeta.model).label : null
   const effortLabel =
     agentMeta.effort && isEffortChoice(agentMeta.effort)
       ? EFFORT_LABELS[agentMeta.effort]
       : (agentMeta.effort ?? null)
-  // Status source, in order of authority:
-  //  1. A BACKGROUNDED subagent's own bg-task lifecycle. Its launching Agent tool returns
-  //     immediately ("Async agent launched successfully"), so the tool's `result` says
-  //     nothing about the agent: reading it reports "done" seconds into a long run.
-  //  2. A FOREGROUND subagent's Agent tool card, which does resolve when the agent finishes.
-  //  3. A NESTED child has no card: a loaded on-disk transcript means finished; else running.
+  // Status source, in order of authority: (1) A backgrounded subagent's own bg-task lifecycle. Its launching Agent tool
+  // returns immediately, so the tool's `result` says nothing about the agent. (2) A foreground subagent's Agent tool card,
+  // which does resolve when the agent finishes. (3) A nested child has no card: a loaded on-disk transcript means finished.
   const childLoadedFromDisk = diskLoadedFor === parentId && (diskMsgs?.length ?? 0) > 0
+  // A nested foreground child takes its lifecycle from its launching tool's result, not "any message arrived".
+  const nestedTool = !bgTask && !meta.tool ? findLaunchTool(subMsgsMap, parentId) : null
   const running = bgTask
     ? bgTask.status === 'running'
     : meta.tool
       ? meta.tool.result === undefined
-      : subMsgs.length === 0 && !childLoadedFromDisk
-  // A KILLED bg subagent was stopped on request, so it reads neutral rather than red
-  // (matching how the bg tray labels its own killed rows).
-  const failed = bgTask ? bgTask.status === 'failed' : (meta.tool?.isError ?? false)
+      : nestedTool
+        ? nestedTool.result === undefined
+        : childLoadedFromDisk
+          ? false
+          : busy
+  // A killed bg subagent was stopped on request, so it reads neutral rather than red.
+  const failed = bgTask
+    ? bgTask.status === 'failed'
+    : meta.tool
+      ? (meta.tool.isError ?? false)
+      : (nestedTool?.isError ?? false)
   const stopped = bgTask?.status === 'killed'
   const terminalLabel = stopped ? 'stopped' : failed ? 'failed' : 'done'
-  // Full class literals: Tailwind scans source text, so an interpolated `bg-${tone}`
-  // would only ever work by accident of another file emitting the same class.
+  // Full class literals: Tailwind scans source text, so an interpolated `bg-${tone}` would only work by accident.
   const terminalDot = stopped ? 'bg-faint' : failed ? 'bg-err' : 'bg-ok'
   const terminalText = stopped ? 'text-faint' : failed ? 'text-err' : 'text-ok'
   const atRoot = subagentTrail.length <= 1
 
+  // Resume seeds `subagentChildren` empty, so a resumed subagent's nested agents would render as inert history rows.
+  // Recover them from the disk transcript's Task/Agent tool calls. Live children win when present.
+  const diskChildren: NestedSubagent[] =
+    diskMsgs && diskLoadedFor === parentId
+      ? diskMsgs.flatMap((m) =>
+          m.tools
+            .filter((t) => isAgentTool(t.name))
+            .map((t) => ({
+              childToolUseId: t.id,
+              name: t.name,
+              description: agentDescription(t.input),
+              subagentType: agentSubtype(t.input) ?? undefined
+            }))
+        )
+      : []
+  const shownChildren = children.length ? children : diskChildren
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Breadcrumb (clickable to jump up); ← back pops one level. */}
+      {/* Breadcrumb (clickable to jump up). Back button pops one level. */}
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-[13px]">
         <button
           className="font-semibold text-accent hover:brightness-110"
@@ -534,7 +573,7 @@ export function SubagentView(): JSX.Element | null {
         >
           {atRoot ? '← Chat' : '← Back'}
         </button>
-        {/* Breadcrumb: Agent › Agent › … (each ancestor clickable to jump up). */}
+        {/* Breadcrumb: Agent › Agent › … (each ancestor clickable). */}
         {subagentTrail.map((id, i) => {
           const m = resolveAgentMeta(id, messages, childrenByParent)
           const isLast = i === subagentTrail.length - 1
@@ -573,9 +612,7 @@ export function SubagentView(): JSX.Element | null {
           {running ? (
             <>
               <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden="true" />
-              {/* A backgrounded subagent reads "launched": we know its Agent tool fired and
-                  it hasn't reported terminal, but nothing here observes it actually working.
-                  A foreground one is genuinely mid-tool-call, so "running" is true there. */}
+              {/* A backgrounded subagent reads "launched": we know its Agent tool fired. A foreground one is mid-tool-call. */}
               <span className="text-warn">{bgTask ? 'launched' : 'running'}</span>
             </>
           ) : (
@@ -594,36 +631,22 @@ export function SubagentView(): JSX.Element | null {
         </button>
       </div>
 
-      {/* Transcript: full width (a workflow phase-tree rail slots left of this later). */}
+      {/* Transcript: full width. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
         {desc && (
           <div className="mb-5 max-w-3xl font-mono text-[12px] leading-relaxed text-faint">
             {desc}
           </div>
         )}
-        {/* A NESTED child has no live stream; render its on-disk transcript
-            (loaded by tool_use_id). Falls through to the live path for top-level. */}
+        {/* A nested child has no live stream; render its on-disk transcript (loaded by tool_use_id). */}
         {subMsgs.length === 0 && diskLoadedFor === parentId && diskMsgs && diskMsgs.length > 0 ? (
           <div className="flex max-w-3xl flex-col gap-4">
             {diskMsgs.map((m) => (
-              <HistoryBlock key={m.id} msg={m} />
+              <HistoryBlock key={m.id} msg={m} hideAgentTools />
             ))}
-            {children.length > 0 && (
-              <div className="mt-2 flex flex-col gap-1.5">
-                <div className="font-serif text-[13px] text-dim">
-                  Spawned {children.length === 1 ? 'subagent' : `${children.length} subagents`}
-                </div>
-                {children.map((c) => (
-                  <NestedAgentCard
-                    key={c.childToolUseId}
-                    child={c}
-                    onOpen={() => pushSubagent(c.childToolUseId)}
-                  />
-                ))}
-              </div>
-            )}
+            <SpawnedChildren items={shownChildren} onOpen={pushSubagent} />
           </div>
-        ) : subMsgs.length === 0 && children.length === 0 ? (
+        ) : subMsgs.length === 0 && shownChildren.length === 0 ? (
           <div className="text-sm text-faint">
             {diskMsgs === null && !running
               ? 'Loading transcript…'
@@ -637,20 +660,7 @@ export function SubagentView(): JSX.Element | null {
             {running && (
               <div className="text-[12px] text-faint">••• streaming from subagent…</div>
             )}
-            {children.length > 0 && (
-              <div className="mt-2 flex flex-col gap-1.5">
-                <div className="font-serif text-[13px] text-dim">
-                  Spawned {children.length === 1 ? 'subagent' : `${children.length} subagents`}
-                </div>
-                {children.map((c) => (
-                  <NestedAgentCard
-                    key={c.childToolUseId}
-                    child={c}
-                    onOpen={() => pushSubagent(c.childToolUseId)}
-                  />
-                ))}
-              </div>
-            )}
+            <SpawnedChildren items={shownChildren} onOpen={pushSubagent} />
           </div>
         )}
       </div>

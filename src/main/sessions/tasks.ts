@@ -6,11 +6,11 @@
  * a malformed file yields an empty/partial list, never a throw.
  */
 import { readdir, readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { claudeHome } from '../lib/claude-home'
 import type { SessionTask } from '../../shared/events'
 
-const tasksRoot = (): string => join(homedir(), '.claude', 'tasks')
+const tasksRoot = (): string => join(claudeHome(), 'tasks')
 
 /** A raw task file (only the fields the checklist reads). */
 interface RawTask {
@@ -49,7 +49,10 @@ export async function readTasks(sessionId: string): Promise<SessionTask[]> {
   for (const name of names) {
     let raw: RawTask
     try {
-      raw = JSON.parse(await readFile(join(dir, name), 'utf8'))
+      const parsed = JSON.parse(await readFile(join(dir, name), 'utf8'))
+      // A valid-JSON but non-object file (e.g. a bare `null`) must not throw on `raw.id`.
+      if (!parsed || typeof parsed !== 'object') continue
+      raw = parsed as RawTask
     } catch {
       continue // partial write / malformed; skip this one, keep the rest
     }

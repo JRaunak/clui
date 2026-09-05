@@ -12,20 +12,40 @@
  * user never picked, silently overriding their CLI config.
  */
 import { app } from 'electron'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   DEFAULT_SETTINGS,
+  THEME_CHOICES,
+  PERMISSION_MODES,
   clampEffort,
   isEffortChoice,
   type CluiSettings,
   type ResolvedSettings,
   type SettingsKey
 } from '../../shared/settings'
+import { atomicWriteFile } from '../lib/atomic'
 import { readCliSettings, type CliSettings } from './cli-settings'
 
 /** Persisted shape: a partial, keys present only where the user overrode a default. */
 type StoredSettings = Partial<CluiSettings>
+
+/** Bumped only when the persisted-file semantics change. Its presence marks a file the
+ *  current code wrote (overrides-only), so the one-time legacy migration never re-runs
+ *  and re-strips a user's explicit picks. */
+const SCHEMA_VERSION = 1
+
+/** Validate a value against its key's allowed domain, not just its primitive type: an
+ *  off-enum `theme`/`permissionMode`/`effort` (hand-edited or from another version) must
+ *  be dropped, not passed through to CLI flags or `THEME_BG[...]`. Model ids stay open
+ *  (any nonempty string; Bedrock ids are provider-defined). */
+function isValidValue(key: SettingsKey, v: unknown): boolean {
+  if (typeof v !== typeof DEFAULT_SETTINGS[key]) return false
+  if (key === 'theme') return (THEME_CHOICES as readonly string[]).includes(v as string)
+  if (key === 'permissionMode') return (PERMISSION_MODES as readonly string[]).includes(v as string)
+  if (key === 'effort') return isEffortChoice(v)
+  return true
+}
 
 /** Last-resolved snapshot. Written on every load/update so the sync read is honest. */
 let cache: ResolvedSettings | null = null
@@ -105,15 +125,16 @@ export function pruneLegacyDefaults(input: StoredSettings): {
   pruned: StoredSettings
   changed: boolean
 } {
-  const pruned: StoredSettings = {}
+  // Start from a full COPY so keys the legacy schema never knew about (e.g.
+  // `sidebarCollapsed`) survive; only DROP the ones that merely echo an old default.
+  // Rebuilding from LEGACY_DEFAULTS' keys instead would erase newer fields.
+  const pruned: StoredSettings = { ...input }
   let changed = false
   for (const key of Object.keys(LEGACY_DEFAULTS) as SettingsKey[]) {
-    if (!(key in input)) continue
-    if (input[key] === LEGACY_DEFAULTS[key]) {
+    if (key in pruned && pruned[key] === LEGACY_DEFAULTS[key]) {
+      delete pruned[key]
       changed = true
-      continue
     }
-    Object.assign(pruned, { [key]: input[key] })
   }
   return { pruned, changed }
 }
@@ -129,15 +150,39 @@ function parseStored(raw: string): StoredSettings {
   const out: StoredSettings = {}
   for (const key of Object.keys(DEFAULT_SETTINGS) as SettingsKey[]) {
     const v = (parsed as Record<string, unknown>)[key]
-    if (v === undefined || typeof v !== typeof DEFAULT_SETTINGS[key]) continue
+    if (v === undefined || !isValidValue(key, v)) continue
     Object.assign(out, { [key]: v })
   }
   return out
 }
 
+/** True if the raw file was already written by the current schema (so the one-time legacy
+ *  migration must not re-run on it). */
+function isStamped(raw: string): boolean {
+  try {
+    const p = JSON.parse(raw) as { schemaVersion?: unknown }
+    return p?.schemaVersion === SCHEMA_VERSION
+  } catch {
+    return false
+  }
+}
+
 async function persist(next: StoredSettings): Promise<void> {
-  await mkdir(app.getPath('userData'), { recursive: true })
-  await writeFile(settingsPath(), JSON.stringify(next, null, 2), 'utf8')
+  // Stamp the schema version + write atomically (temp+rename) so a crash/failed write
+  // can't leave a truncated file that reads as "no settings".
+  await atomicWriteFile(settingsPath(), JSON.stringify({ ...next, schemaVersion: SCHEMA_VERSION }, null, 2))
+}
+
+// Serialize settings writes so two overlapping saves can't race at the file and lose one
+// another's fields.
+let settingsChain: Promise<void> = Promise.resolve()
+function serializeSettings<T>(mutate: () => Promise<T>): Promise<T> {
+  const run = settingsChain.then(mutate, mutate)
+  settingsChain = run.then(
+    () => {},
+    () => {}
+  )
+  return run
 }
 
 /**
@@ -145,22 +190,29 @@ async function persist(next: StoredSettings): Promise<void> {
  * pruned something, so a steady-state launch performs no write.
  */
 async function load(): Promise<ResolvedSettings> {
-  let partial: StoredSettings = {}
+  let raw: string | null = null
   try {
-    partial = parseStored(await readFile(settingsPath(), 'utf8'))
+    raw = await readFile(settingsPath(), 'utf8')
   } catch {
     // No file yet (or unreadable): everything inherits. Do NOT write one here, since an
     // empty override file is the same as no file, and writing on read is a surprise.
-    partial = {}
+    raw = null
   }
-  const { pruned, changed } = pruneLegacyDefaults(partial)
-  if (changed) {
-    // Adopt the pruned set in memory even if the write fails: a failed migration must
-    // not leave `partial` empty, or the next successful write would persist that empty
-    // set and erase the real overrides still sitting on disk. Retried next launch.
-    partial = pruned
-    await persist(partial).catch(() => {})
+  let partial: StoredSettings = raw ? parseStored(raw) : {}
+
+  // One-time legacy migration: the ORIGINAL persistence wrote the whole merged object
+  // (all eight legacy keys), so a key equal to its old default there was never a choice,
+  // so drop it so it starts inheriting. Run this ONLY on an unstamped file that still has
+  // all legacy keys (a genuine whole-object write); an already-overrides-only file is left
+  // alone and merely stamped, so we never re-strip a user's explicit picks.
+  if (raw && !isStamped(raw)) {
+    const isWholeObjectLegacy = (Object.keys(LEGACY_DEFAULTS) as SettingsKey[]).every((k) => k in partial)
+    if (isWholeObjectLegacy) partial = pruneLegacyDefaults(partial).pruned
+    // Stamp (and, if migrated, persist the pruned set) so the inference never repeats.
+    // Best-effort: a failed write is retried next launch; `partial` is already correct.
+    await serializeSettings(() => persist(partial)).catch(() => {})
   }
+
   stored = partial
   cache = resolveInherited(partial, await readCliSettings())
   return cache
@@ -191,7 +243,7 @@ export function getSettingsSync(): CluiSettings {
  * A key is persisted iff its value differs from what the key resolves to with NO
  * override present. So re-picking the inherited value un-overrides the key, which is
  * exactly what a reset does; and a value that merely echoes a default is never frozen
- * into the file (the bug this whole change exists to kill).
+ * into the file.
  *
  * `clear` is a separate channel because a clear CANNOT be expressed as
  * `patch: {key: undefined}`: JSON.stringify would drop the key from disk, but the
@@ -206,6 +258,7 @@ export async function updateSettings(
   await getResolvedSettings()
   const cli = await readCliSettings()
   const next: StoredSettings = { ...stored }
+  const cleared = new Set(clear)
 
   for (const key of clear) delete next[key]
 
@@ -214,8 +267,12 @@ export async function updateSettings(
   // result never depends on how the renderer happened to build the object.
   for (const key of Object.keys(DEFAULT_SETTINGS) as SettingsKey[]) {
     if (!(key in patch)) continue
+    // A key being reset THIS save must not be re-applied from the full-settings patch the
+    // UI submits: the patch still carries the field's old value, and re-adding it would
+    // undo the reset.
+    if (cleared.has(key)) continue
     const v = patch[key]
-    if (v === undefined || typeof v !== typeof DEFAULT_SETTINGS[key]) continue
+    if (v === undefined || !isValidValue(key, v)) continue
     delete next[key]
     // `next` has the key removed, so this is the value the user would see after a
     // reset, including the clamp, since that clamped value is what the picker shows.
@@ -224,8 +281,10 @@ export async function updateSettings(
     Object.assign(next, { [key]: v })
   }
 
+  // Publish in-memory state only AFTER a successful atomic write, serialized against other
+  // saves so a failed/racing write can't leave memory ahead of disk.
+  await serializeSettings(() => persist(next))
   stored = next
   cache = resolveInherited(next, cli)
-  await persist(next)
   return cache
 }

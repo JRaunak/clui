@@ -9,52 +9,62 @@ import { PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS } from '../../../s
 import type { PermissionModeChoice } from '../../../shared/ipc'
 import type { PermissionSuggestion } from '../../../shared/events'
 
-/**
- * Modal shown when Claude requests permission for a gated tool call.
- * Only the oldest pending request of the ACTIVE session is shown; answering it
- * reveals the next. Background sessions accumulate their own requests (badged in
- * the sidebar); this never steals focus to a background session's prompt.
- */
+/** Modal shown when Claude requests permission for a gated tool call. Shows only the
+ *  oldest pending request of the active session; background sessions accumulate their own. */
 export function PermissionDialog(): JSX.Element | null {
   const pending = useActive((s) => s?.pendingPermissions ?? EMPTY_PENDING)
-  const respond = useSession((s) => s.respondPermission)
-  const setPermissionMode = useSession((s) => s.setPermissionMode)
-  // Focus the dialog CONTAINER (not a button) on open: anchors focus + announces the
-  // dialog without pre-selecting Allow/Deny, preserving the deliberate no-autofocus gate.
-  const dialogRef = useDialogFocus<HTMLDivElement>()
-  // Arms the "also switch mode" quick action; plain Allow stays a one-off (see the footer).
-  const [armed, setArmed] = useState(false)
+  const activeHandleId = useSession((s) => s.activeHandleId)
   const current = pending[0]
   if (!current) return null
 
-  // AskUserQuestion is a question needing an answer, not a permission (it
-  // fires can_use_tool with requires_user_interaction even in bypass mode). Route
-  // it to a dedicated picker instead of the wrong Allow/Deny dialog.
+  // Keyed by session handle + request id so a new request mounts clean: no armed quick-action,
+  // prior answers, or focus-on-Allow can survive from the one before it.
+  const key = `${activeHandleId ?? ''}:${current.requestId}`
+
+  // AskUserQuestion fires can_use_tool with requires_user_interaction even in bypass mode.
+  // Route to a dedicated picker, not the Allow/Deny dialog.
   if (current.toolName === 'AskUserQuestion') {
-    return <QuestionDialog request={current} />
+    return <QuestionDialog key={key} request={current} />
   }
 
-  // ExitPlanMode is a decision (approve the plan → start building), not a raw grant, so it
-  // gets a dedicated dialog that renders the plan instead of the Allow/Deny box.
+  // ExitPlanMode is a decision to approve the plan, not a raw grant; renders the plan.
   if (current.toolName === 'ExitPlanMode') {
-    return <PlanDialog request={current} />
+    return <PlanDialog key={key} request={current} />
   }
+
+  return <GenericPermission key={key} request={current} queued={pending.length - 1} />
+}
+
+/** Allow/Deny body for a generic gated tool. Keyed per request so consent state is per-request. */
+function GenericPermission({
+  request,
+  queued
+}: {
+  request: PendingPermission
+  queued: number
+}): JSX.Element {
+  const respond = useSession((s) => s.respondPermission)
+  const setPermissionMode = useSession((s) => s.setPermissionMode)
+  // Focus the container, not a button: announces the dialog without pre-selecting Allow/Deny.
+  const dialogRef = useDialogFocus<HTMLDivElement>()
+  // Arms the "also switch mode" quick action; plain Allow stays a one-off.
+  const [armed, setArmed] = useState(false)
 
   const allow = (): void => {
-    void respond({ requestId: current.requestId, behavior: 'allow', updatedInput: current.input })
+    void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: request.input })
   }
   const deny = (): void => {
     void respond({
-      requestId: current.requestId,
+      requestId: request.requestId,
       behavior: 'deny',
       message: 'The user denied this action.'
     })
   }
-  // The session-scoped mode switch the CLI suggested with this request, if any. setPermissionMode
-  // is per-session, so a project- or user-scoped suggestion would under-apply.
-  const suggestion = pickModeSuggestion(current.permissionSuggestions)
+  // Session-scoped mode switch. setPermissionMode is per-session, so a project- or
+  // user-scoped suggestion would under-apply.
+  const suggestion = pickModeSuggestion(request.permissionSuggestions)
   const allowAndSwitch = (): void => {
-    void respond({ requestId: current.requestId, behavior: 'allow', updatedInput: current.input })
+    void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: request.input })
     if (suggestion) void setPermissionMode(suggestion.mode)
   }
 
@@ -74,25 +84,24 @@ export function PermissionDialog(): JSX.Element | null {
             Permission required
           </div>
           <div id="permission-title" className="mt-1.5 font-serif text-lg font-semibold text-content">
-            Allow <span className="text-accent">{current.displayName || current.toolName}</span>?
+            Allow <span className="text-accent">{request.displayName || request.toolName}</span>?
           </div>
         </div>
 
         <div className="max-h-[45vh] overflow-y-auto px-5 py-4">
-          {current.description && (
-            <p className="mb-3 text-sm text-dim">{current.description}</p>
+          {request.description && (
+            <p className="mb-3 text-sm text-dim">{request.description}</p>
           )}
-          <PermissionInput toolName={current.toolName} input={current.input} />
-          {pending.length > 1 && (
+          <PermissionInput toolName={request.toolName} input={request.input} />
+          {queued > 0 && (
             <div className="mt-3 text-xs text-dim">
-              +{pending.length - 1} more request{pending.length - 1 > 1 ? 's' : ''} queued
+              +{queued} more request{queued > 1 ? 's' : ''} queued
             </div>
           )}
         </div>
 
-        {/* Trust-critical gate: Deny is an equal-size button, not a de-emphasized ghost, and
-            nothing is autofocused, so a reflexive Enter can't grant a write/exec. The quick
-            action only ARMS a broader mode; plain Allow stays a one-off. */}
+        {/* Trust-critical: Deny is equal-size and nothing is autofocused, so a reflexive Enter
+            can't grant a write/exec. Quick action only arms; plain Allow stays a one-off. */}
         <div
           className={`flex items-center gap-3 border-t border-border px-5 py-3 ${
             suggestion ? 'justify-between' : 'justify-end'
@@ -111,7 +120,7 @@ export function PermissionDialog(): JSX.Element | null {
                 className={`mt-px flex h-4 w-4 flex-none items-center justify-center rounded-[4px] border transition-colors duration-150 ${
                   armed
                     ? 'border-warn bg-warn/15 text-warn'
-                    : 'border-border-strong text-transparent group-hover:border-warn'
+                    : 'border-control-edge text-transparent group-hover:border-warn'
                 }`}
               >
                 <IconCheck className="h-3 w-3" />
@@ -131,7 +140,7 @@ export function PermissionDialog(): JSX.Element | null {
               variant="secondary"
               size="md"
               onClick={deny}
-              className="border-border-strong hover:border-err hover:text-err"
+              className="border-control-edge hover:border-err hover:text-err"
             >
               Deny
             </Button>

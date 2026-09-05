@@ -57,7 +57,7 @@ npm run dev
 `npm run dev` launches Clui with hot reload. On first run, make sure the `claude` CLI is authenticated in your terminal; Clui inherits that auth.
 
 > [!NOTE]
-> npm 11 blocks post-install scripts by default, and Electron and esbuild download their binaries in one. The repo commits an allowlist (`allowScripts` in `package.json`) covering both, so `npm install` works as-is. You will see a warning about `fsevents`, which is a macOS file-watcher optional dependency and safe to leave unapproved.
+> Depending on your npm version and policy, npm may gate post-install scripts, and Electron and esbuild download their binaries in one. The repo commits an allowlist (`allowScripts` in `package.json`) covering both, so `npm install` works as-is. You will see a warning about `fsevents`, which is a macOS file-watcher optional dependency and safe to leave unapproved.
 >
 > If the app ever fails to launch with a missing-Electron-binary error, approve and reinstall:
 >
@@ -93,10 +93,10 @@ open release/mac-arm64/Clui.app
 | Command | Description |
 | ------- | ----------- |
 | `npm run dev` | Launch the app with hot reload |
-| `npm run build` | Type-check and build to `out/` |
+| `npm run build` | Bundle to `out/` (does not type-check — run `npm run typecheck` for that) |
 | `npm run typecheck` | Run `tsc -b --noEmit` |
-| `npm run package` | Build an unpackaged `.app` into `release/` |
-| `npm run dist` | Build a distributable |
+| `npm run package` | Build an unsigned arm64 `.app` dir into `release/` |
+| `npm run dist` | Run electron-builder (no DMG target configured yet; a signed installer is the open A10 milestone) |
 
 ## How It Works
 

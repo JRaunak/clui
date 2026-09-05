@@ -27,4 +27,5 @@ id_rsa*
 
 # Local developer notes & app screenshots (not part of the published app)
 .claude/
+.codex/
 design-images/

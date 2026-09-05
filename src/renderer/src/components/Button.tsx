@@ -10,7 +10,7 @@ type Variant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive'
 type Size = 'sm' | 'md' | 'lg' | 'icon'
 
 const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-accent text-on-accent hover:bg-accent-hover active:bg-accent-deep',
+  primary: 'bg-accent text-on-accent hover:bg-accent-hover active:scale-[0.98]',
   secondary: 'bg-bg-raised text-content hover:bg-border border border-border',
   outline: 'border border-border text-content hover:border-accent hover:text-content bg-transparent',
   ghost: 'text-dim hover:text-content hover:bg-bg-raised bg-transparent',
@@ -36,10 +36,9 @@ export function Button({
 } & ButtonHTMLAttributes<HTMLButtonElement>): JSX.Element {
   return (
     <button
-      /* Disabled: don't just fade the fill. A faded terracotta primary still reads
-         as a live (if weak) button, and in dark it's near-indistinguishable from
-         enabled. Override to a NEUTRAL inert surface + dim label in both themes so
-         "disabled" is unambiguous and its label stays legible. */
+      /* Disabled: don't just fade the fill. A faded terracotta primary still reads as a live
+         button, and in dark it's near-indistinguishable from enabled. Override to a neutral
+         inert surface + dim label in both themes so "disabled" is unambiguous and legible. */
       className={`inline-flex cursor-pointer items-center justify-center rounded-md font-semibold transition-[background-color,border-color,color,filter] duration-150 ease-out disabled:cursor-default disabled:border-transparent disabled:bg-bg-raised disabled:text-faint disabled:hover:bg-bg-raised disabled:hover:brightness-100 ${VARIANTS[variant]} ${SIZES[size]} ${className}`}
       {...rest}
     >

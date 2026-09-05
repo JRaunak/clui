@@ -117,13 +117,20 @@ export class EventMapper {
   private toolInputJson = new Map<string, string>()
   /** Model's context window (tokens); learned from the model id / result. */
   private contextWindow = 200_000
-  /** Last emitted percent, to avoid spamming identical context-usage events. */
-  private lastPercent = -1
+  /** Last emitted usage tuple, to skip identical context-usage events. Dedup on the full
+   *  (usedTokens, contextWindow) pair, not just the rounded percent: two different token
+   *  counts can round to the same percent yet be distinct. */
+  private lastUsed = -1
+  private lastWindow = -1
   /** Whether any text_delta streamed since the last message boundary. Slash
    *  commands (/usage, /cost, /context) emit a bare `assistant` snapshot with text
    *  but NO message_start/text_delta, so we detect that (snapshot text + nothing
    *  streamed) and surface the text so it renders instead of being dropped. */
   private streamedTextSinceStart = false
+  /** All assistant text streamed in the CURRENT foreground turn (reset at its result).
+   *  Lets a failing result dedupe by identity: surface the error unless its text was
+   *  already rendered as a bubble. */
+  private turnText = ''
   /** Set when the user pressed Stop. The interrupt makes the CLI end the turn with a
    *  `result{is_error:true}`, which is a user action, not a failure to surface. Consumed
    *  (and cleared) by the next `result` so it suppresses that one turn's error box only. */
@@ -178,9 +185,10 @@ export class EventMapper {
       (usage.cache_read_input_tokens ?? 0) +
       (usage.cache_creation_input_tokens ?? 0)
     if (used <= 0) return []
+    if (used === this.lastUsed && this.contextWindow === this.lastWindow) return []
+    this.lastUsed = used
+    this.lastWindow = this.contextWindow
     const percent = Math.min(100, Math.round((used / this.contextWindow) * 100))
-    if (percent === this.lastPercent) return []
-    this.lastPercent = percent
     return [
       { type: 'context-usage', usedTokens: used, contextWindow: this.contextWindow, usedPercent: percent }
     ]
@@ -188,12 +196,22 @@ export class EventMapper {
 
   map(raw: unknown): DomainEvent[] {
     if (!raw || typeof raw !== 'object') return []
-    const env = raw as RawEnvelope
+    try {
+      return this.mapEnvelope(raw as RawEnvelope)
+    } catch (err) {
+      // Wire data is external and version-drifting: a malformed envelope must not throw
+      // out of the stdout callback and kill the session. Report, skip, keep streaming.
+      console.error('[event-mapper] skipped a malformed envelope:', err)
+      return []
+    }
+  }
+
+  private mapEnvelope(env: RawEnvelope): DomainEvent[] {
     // A forwarded subagent message (carries parent_tool_use_id) must be routed
     // to a subagent card, NOT the main thread, so intercept BEFORE the normal
-    // assistant/user handlers (which would fold its text into the main chat, the
-    // documented interleaving regression). Only assistant/user envelopes forward
-    // this way; other types with the field (if any) fall through unchanged.
+    // assistant/user handlers (which would fold its text into the main chat). Only
+    // assistant/user envelopes forward this way; other types with the field (if any)
+    // fall through unchanged.
     if (env.parent_tool_use_id && (env.type === 'assistant' || env.type === 'user')) {
       return this.mapSubagentMessage(env)
     }
@@ -217,12 +235,14 @@ export class EventMapper {
         // text this turn, surface the snapshot's text so it renders (normal turns
         // already streamed their text, so we skip to avoid duplicating it).
         if (!this.streamedTextSinceStart) {
-          const text = (env.message?.content ?? [])
-            .filter((c) => c.type === 'text' && typeof c.text === 'string')
+          const content = Array.isArray(env.message?.content) ? env.message.content : []
+          const text = content
+            .filter((c) => c && c.type === 'text' && typeof c.text === 'string')
             .map((c) => c.text as string)
             .join('')
           if (text) {
             out.push({ type: 'message-start' }, { type: 'text-delta', text })
+            this.turnText += text
             // Mark as streamed so a repeated snapshot in the same turn doesn't double it.
             this.streamedTextSinceStart = true
           }
@@ -232,17 +252,26 @@ export class EventMapper {
         return out
       }
       case 'result': {
-        // Turn boundary: reset the streamed-text flag so the NEXT turn (which may
-        // be another non-streaming slash command with no message_start) is detected.
-        const hadText = this.streamedTextSinceStart
-        const wasInterrupted = this.interrupted
-        this.streamedTextSinceStart = false
-        this.interrupted = false
         // The result carries the authoritative contextWindow for the model.
         const cw = env.modelUsage ? Object.values(env.modelUsage)[0]?.contextWindow : undefined
+        const windowChanged = typeof cw === 'number' && cw > 0 && cw !== this.contextWindow
         if (typeof cw === 'number' && cw > 0) this.contextWindow = cw
         const fromTaskNotification = env.origin?.kind === 'task-notification'
         const fromPeer = env.origin?.kind === 'peer'
+        // A background-subagent-completion or peer-woken result is NOT the foreground
+        // turn's boundary, so it must not consume the foreground turn's streamed/interrupt
+        // state (else it eats a Stop meant for the foreground turn).
+        const isForeground = !fromTaskNotification && !fromPeer
+        const wasInterrupted = isForeground && this.interrupted
+        // Dedupe the failure by identity: only suppress the error box when the failure
+        // text was ALREADY rendered as an assistant bubble (the API-error-as-text case),
+        // not merely because some progress text streamed first.
+        const alreadyShown = Boolean(env.result) && this.turnText.includes(env.result as string)
+        if (isForeground) {
+          this.streamedTextSinceStart = false
+          this.interrupted = false
+          this.turnText = ''
+        }
         const out: DomainEvent[] = [
           {
             type: 'result',
@@ -268,14 +297,23 @@ export class EventMapper {
             body: env.origin.body
           })
         }
-        // A turn that failed with ONLY a result envelope (no assistant text, nothing on
-        // stderr) otherwise ends looking successful: the store's result case reads
-        // neither is_error nor the result text. Surface it as the in-chat error box.
-        // hadText de-dups the API-error case (243 #22/#23) where the failure already
-        // arrived as an assistant snapshot; the interrupt is the user's own Stop, not a
-        // failure; a bg subagent's or peer's failing result must not red-banner the user.
-        if (env.is_error && !hadText && !wasInterrupted && !fromTaskNotification && !fromPeer) {
+        // Surface a foreground failure as the in-chat error box. `alreadyShown` de-dups the
+        // API-error-as-assistant-text case; a Stop is the user's own action, not a failure;
+        // a bg-subagent or peer result is not the foreground turn.
+        if (env.is_error && isForeground && !wasInterrupted && !alreadyShown) {
           out.push({ type: 'error', message: env.result ?? 'The request failed.', severity: 'error' })
+        }
+        // The authoritative window changed (e.g. a model switch corrected 200K↔1M) but no
+        // usage streamed to re-emit it. Push a corrected usage so the ring rescales instead
+        // of holding the stale denominator until the next turn streams.
+        if (windowChanged && this.lastUsed > 0) {
+          this.lastWindow = this.contextWindow
+          out.push({
+            type: 'context-usage',
+            usedTokens: this.lastUsed,
+            contextWindow: this.contextWindow,
+            usedPercent: Math.min(100, Math.round((this.lastUsed / this.contextWindow) * 100))
+          })
         }
         return out
       }
@@ -314,8 +352,8 @@ export class EventMapper {
         // belongs in the background tray. Subagents (task_type 'local_agent') run in
         // the foreground turn and are ALREADY shown as Agent tool cards; tracking
         // them here too would double-count them AND fire a spurious completion toast
-        // when the subagent finishes (the reported bug). Record the local_bash ids so
-        // the later task events (which lack a reliable task_type) can be gated too.
+        // when the subagent finishes. Record the local_bash ids so the later task
+        // events (which lack a reliable task_type) can be gated too.
         if (env.task_id && env.task_type === 'local_bash') {
           this.bgTaskIds.add(env.task_id)
           return [
@@ -387,6 +425,7 @@ export class EventMapper {
           agentId?: string
         }[] = []
         for (const it of env.workflow_progress) {
+          if (!it || typeof it !== 'object') continue
           if (it.type === 'workflow_phase' && typeof it.index === 'number') {
             phases.push({ index: it.index, title: it.title ?? `Phase ${it.index}` })
           } else if (it.type === 'workflow_agent' && typeof it.index === 'number') {
@@ -442,14 +481,14 @@ export class EventMapper {
       case 'task_notification': {
         // A workflow's terminal notification → workflow-ended (its own path).
         if (env.task_id && this.workflowIds.has(env.task_id)) {
-          if (env.status === 'killed' || env.status === 'completed' || env.status === 'failed') {
+          if (env.status === 'killed' || env.status === 'completed' || env.status === 'failed' || env.status === 'stopped') {
             this.workflowIds.delete(env.task_id)
           }
           return [{ type: 'workflow-ended', taskId: env.task_id, status: env.status }]
         }
         // Release this local_agent's meta on a terminal status (trayed or not) so the map
         // doesn't retain an entry per foreground subagent.
-        if (env.task_id && (env.status === 'killed' || env.status === 'completed' || env.status === 'failed')) {
+        if (env.task_id && (env.status === 'killed' || env.status === 'completed' || env.status === 'failed' || env.status === 'stopped')) {
           this.agentTaskMeta.delete(env.task_id)
         }
         // Only tracked bg tasks (local_bash OR backgrounded subagent) get a completion
@@ -459,7 +498,7 @@ export class EventMapper {
           Boolean(env.task_id) &&
           (this.bgTaskIds.has(env.task_id as string) || this.bgSubagentIds.has(env.task_id as string))
         if (!tracked) return []
-        if (env.status === 'killed' || env.status === 'completed' || env.status === 'failed') {
+        if (env.status === 'killed' || env.status === 'completed' || env.status === 'failed' || env.status === 'stopped') {
           this.bgTaskIds.delete(env.task_id as string)
           this.bgSubagentIds.delete(env.task_id as string)
         }
@@ -478,8 +517,9 @@ export class EventMapper {
         // the imminent task_started can promote them to a tray handle (the snapshot fires
         // BEFORE task_started, verified live). Note the snapshot's task objects carry
         // task_id + task_type but NOT tool_use_id (that comes on task_started).
-        for (const t of env.tasks ?? []) {
-          if (t.task_id && t.task_type === 'local_agent') this.bgAgentTaskIds.add(t.task_id)
+        const tasks = Array.isArray(env.tasks) ? env.tasks : []
+        for (const t of tasks) {
+          if (t && t.task_id && t.task_type === 'local_agent') this.bgAgentTaskIds.add(t.task_id)
         }
         // Snapshot the running list, keeping ids we track in the tray: local_bash bg
         // shells AND backgrounded subagents. The CLI's raw list can also include
@@ -487,8 +527,8 @@ export class EventMapper {
         return [
           {
             type: 'bg-tasks-changed',
-            taskIds: (env.tasks ?? [])
-              .map((t) => t.task_id)
+            taskIds: tasks
+              .map((t) => t?.task_id)
               .filter(
                 (x): x is string =>
                   Boolean(x) &&
@@ -531,6 +571,7 @@ export class EventMapper {
         if (!d) return []
         if (d.type === 'text_delta' && d.text) {
           this.streamedTextSinceStart = true
+          this.turnText += d.text
           return [{ type: 'text-delta', text: d.text }]
         }
         if (d.type === 'thinking_delta' && d.thinking)
@@ -580,6 +621,7 @@ export class EventMapper {
     if (!Array.isArray(content)) return []
     const out: DomainEvent[] = []
     for (const block of content) {
+      if (!block || typeof block !== 'object') continue
       if (block.type === 'text' && typeof block.text === 'string' && block.text) {
         out.push({ type: 'subagent-message', parentToolUseId, role, kind: 'text', text: block.text })
       } else if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
@@ -633,6 +675,7 @@ export class EventMapper {
     if (!Array.isArray(content)) return []
     const out: DomainEvent[] = []
     for (const block of content) {
+      if (!block || typeof block !== 'object') continue
       if (block.type === 'tool_result' && block.tool_use_id) {
         out.push({
           type: 'tool-result',

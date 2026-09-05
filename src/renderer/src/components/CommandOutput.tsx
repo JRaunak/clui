@@ -1,17 +1,15 @@
 /**
- * Clui-native rendering of the CLI's `/usage` (and `/cost`) report.
+ * Clui-native rendering of the CLI's `/usage` and `/cost` reports.
  *
- * WHY THIS EXISTS: the CLI emits that report as PREFORMATTED, column-aligned text
+ * WHY THIS EXISTS: the CLI emits that report as preformatted, column-aligned text
  * (newlines + runs of spaces). Piping it through react-markdown collapses the
- * whitespace into one unreadable run-on line (the reported bug). A raw <pre> looks
- * like terminal spillover, so instead we parse the key/value lines into a
- * Clui-native stat card: labeled rows + a per-model usage table.
+ * whitespace into one unreadable run-on line. A raw <pre> looks like terminal
+ * spillover, so instead we parse the key/value lines into a Clui-native stat card.
  *
- * Parsing is best-effort. `parseUsageReport` returns null if the text doesn't look
- * like the report (the CLI could change its wording on an upgrade); callers fall
- * back to a formatting-preserving <pre> so output is never lost. Worst case it
- * looks plain, never blank or scrambled. This mirrors the transcript reader's
- * defensive, display-only stance.
+ * Parsing is best-effort. parseUsageReport returns null if the text doesn't look like
+ * the report (the CLI could change its wording on an upgrade); callers fall back to a
+ * formatting-preserving <pre> so output is never lost. Worst case it looks plain, never
+ * blank or scrambled.
  */
 
 /** A parsed usage/cost report. Fields are optional; we render whatever we found. */
@@ -30,18 +28,26 @@ export interface UsageReport {
  * the caller can fall back. Tolerant of extra/missing lines and variable spacing.
  */
 export function parseUsageReport(text: string): UsageReport | null {
-  // Cheap gate first: must look like the report, not arbitrary assistant prose.
-  if (!/^\s*Total cost:/m.test(text)) return null
+  // Gate on the whole-document shape, not a "Total cost:" line anywhere: the real report
+  // is what the CLI emits verbatim, so the first non-empty line must be "Total cost:".
+  // Otherwise ordinary prose or an approval plan that merely mentions a cost would be
+  // replaced by a stats card, dropping its surrounding content.
+  const firstNonEmpty = text.split('\n').find((l) => l.trim() !== '')
+  if (!firstNonEmpty || !/^\s*Total cost:/.test(firstNonEmpty)) return null
 
   const report: UsageReport = { models: [] }
   const lines = text.split('\n')
   let inModels = false
+  // A real report is entirely "Label: value" rows / model rows / blanks. A non-blank line
+  // with no colon is free prose, so this isn't a pure report; don't hijack the document.
+  let strayProse = false
 
   for (const line of lines) {
-    // NOTE: value column is aligned to `len(longest label)+1`, so the LONGEST
-    // label (e.g. "Total duration (wall):") gets exactly ONE space before its
-    // value. Don't tighten this to `\s{2,}`: it silently drops that row. `\s+`
-    // matches it; the gate above + the known-key allowlist below keep prose out.
+    if (line.trim() !== '' && !line.includes(':')) strayProse = true
+    // Value column is aligned to len(longest label)+1, so the longest label (e.g.
+    // "Total duration (wall):") gets exactly one space before its value. Don't tighten
+    // this to \s{2,}: it silently drops that row. \s+ matches it; the gate above + the
+    // known-key allowlist below keep prose out.
     const kv = /^\s*([^:]+?):\s+(.+?)\s*$/.exec(line)
     // "Usage by model:" is a section header (value empty); following indented lines
     // are per-model rows until a non-indented / non-model line.
@@ -57,7 +63,7 @@ export function parseUsageReport(text: string): UsageReport | null {
         continue
       }
       if (line.trim() === '') continue
-      inModels = false // fell out of the model block
+      inModels = false
     }
     if (!kv) continue
     const key = kv[1].trim().toLowerCase()
@@ -66,9 +72,12 @@ export function parseUsageReport(text: string): UsageReport | null {
     else if (key === 'total duration (api)') report.apiDuration = val
     else if (key === 'total duration (wall)') report.wallDuration = val
     else if (key === 'total code changes') report.codeChanges = val
-    // A single-line "Usage:" (no per-model breakdown) → treat as one anonymous row.
+    // A single-line "Usage:" (no per-model breakdown) is treated as one anonymous row.
     else if (key === 'usage') report.models.push({ model: '', detail: val })
   }
+
+  // Free prose mixed in is not a pure report; fall back so no document content is lost.
+  if (strayProse) return null
 
   // If we matched the gate but extracted nothing useful, signal "not parseable" so
   // the caller shows the raw text rather than an empty card.
@@ -88,8 +97,8 @@ export function parseUsageReport(text: string): UsageReport | null {
 // /context report: parsed into a native card with a fill gauge + category bars
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A parsed `/context` report. On 2.1.209 the CLI emits GFM markdown: a `**Tokens:**
- *  X / Y (Z%)` line + a "usage by category" table. Fields optional; render what we found. */
+/** A parsed `/context` report. On 2.1.209 the CLI emits GFM markdown: a **Tokens:**
+ *  X / Y (Z%) line + a "usage by category" table. Fields optional; render what we found. */
 export interface ContextReport {
   model?: string
   usedLabel?: string // "16.9k"
@@ -100,8 +109,8 @@ export interface ContextReport {
 
 /**
  * Detect + parse the `/context` report. Gated on the "## Context Usage" heading (stable
- * across the versions verified). Returns null when it doesn't match → the caller falls
- * back to normal markdown, so output is never lost (mirrors parseUsageReport).
+ * across the versions verified). Returns null when it doesn't match, so the caller falls
+ * back to normal markdown and output is never lost.
  */
 export function parseContextReport(text: string): ContextReport | null {
   if (!/^\s*##\s+Context Usage/m.test(text)) return null
@@ -110,7 +119,7 @@ export function parseContextReport(text: string): ContextReport | null {
   const model = /\*\*Model:\*\*\s*(.+?)\s*$/m.exec(text)
   if (model) report.model = model[1].trim()
 
-  // "**Tokens:** 16.9k / 1m (2%)"
+  // **Tokens:** 16.9k / 1m (2%)
   const tok = /\*\*Tokens:\*\*\s*([\d.]+[kmb]?)\s*\/\s*([\d.]+[kmb]?)\s*\((\d+)%\)/i.exec(text)
   if (tok) {
     report.usedLabel = tok[1]
@@ -118,16 +127,16 @@ export function parseContextReport(text: string): ContextReport | null {
     report.percent = Number(tok[3])
   }
 
-  // Category table rows: "| System prompt | 2.1k | 0.2% |". Scan ONLY the "Estimated
+  // Category table rows: "| System prompt | 2.1k | 0.2% |". Scan only the "Estimated
   // usage by category" section (from its heading to the next "### " sibling) so other
-  // token tables ("### Custom Agents", "### Skills") can never leak in as phantom bars.
+  // token tables can never leak in as phantom bars.
   const catSection =
     /###\s+Estimated usage by category([\s\S]*?)(?=\n###\s|$)/i.exec(text)?.[1] ?? text
   const rowRe = /^\|\s*([^|]+?)\s*\|\s*([\d.]+[kmb]?)\s*\|\s*([\d.]+)%\s*\|\s*$/gim
   let m: RegExpExecArray | null
   while ((m = rowRe.exec(catSection)) !== null) {
     const name = m[1].trim()
-    if (/^category$/i.test(name)) continue // header row
+    if (/^category$/i.test(name)) continue
     report.categories.push({ name, tokens: m[2], percent: Number(m[3]) })
   }
 
@@ -144,9 +153,9 @@ function catColor(name: string): string {
 
 export function ContextCard({ report }: { report: ContextReport }): JSX.Element {
   const pct = report.percent ?? 0
-  // The fill gauge tone escalates like the ContextRing: calm → amber near the 80%
-  // warning → red near the ~96.7% auto-compact point (1M) so the card carries the
-  // same meaning as the composer's ring (state by position + tone, not color alone).
+  // The fill gauge tone escalates like the ContextRing: calm, amber near the 80% warning,
+  // red near the ~96.7% auto-compact point, so the card carries the same meaning as the
+  // composer's ring (state by position + tone, not color alone).
   const fillTone = pct >= 90 ? 'bg-err' : pct >= 80 ? 'bg-warn' : 'bg-ok'
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-border bg-tool">

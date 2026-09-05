@@ -27,6 +27,20 @@ const EFFORT_COLORS: Record<EffortChoice, string> = {
 /** Delay before a model row's effort flyout opens on hover (ms). */
 const HOVER_DELAY = 400
 
+/** Keys that commit effort changes. Tab-in or modifier release must not silently change model/effort. */
+const COMMIT_KEYS = new Set([
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  'Enter',
+  ' '
+])
+
 /** Floor for the refresh spinner. A missing `aws` rejects in single-digit ms, which reads
  *  as a flicker rather than a retry; the project bans sub-400ms spinners. */
 const MIN_SPIN = 350
@@ -178,8 +192,8 @@ export function ModelEffortPicker(): JSX.Element {
             </button>
           </div>
           {/* Own line UNDER the header, not in it: the left slot is already spoken for by
-              the ultracode string. Wraps to two lines at w-[180px] — accepted, since
-              shrinking it below the meta size would fail the contrast/size floor. */}
+              the ultracode string. Wraps to two lines at w-[180px]; shrinking it below the
+              meta size would fail the contrast/size floor. */}
           {!live && (
             <div
               className="flex items-start gap-1 px-3 pb-1 text-[11px] text-warn"
@@ -192,7 +206,7 @@ export function ModelEffortPicker(): JSX.Element {
           {models.length === 0 && <div className="px-3 py-2 text-dim">Loading models…</div>}
           {/* Grouped by family (version-desc within each) so 13 near-identically-named
               models aren't a flat interleaved wall. Purely a display transform over the
-              LIVE list — nothing filtered or hardcoded (groupModels buckets unknowns too). */}
+              LIVE list, nothing filtered or hardcoded (groupModels buckets unknowns too). */}
           {groupModels(models).map((group) => (
             <div key={group.family}>
               {/* One subtle section header per family; skip when there's a single group
@@ -231,7 +245,7 @@ export function ModelEffortPicker(): JSX.Element {
                 onMouseEnter={() => effortSelectable && scheduleHover(info.id)}
               >
                 {/* Two click regions (dropdown contract: selecting an item closes the
-                    menu). Clicking the MODEL NAME switches the model AND closes — a
+                    menu). Clicking the MODEL NAME switches the model AND closes, a
                     complete action, no forced effort step. Effort is an OPTIONAL
                     refinement via the ▶ chevron (click to open the flyout, also opens
                     on hover) so it stays reachable by both click + keyboard without
@@ -244,6 +258,9 @@ export function ModelEffortPicker(): JSX.Element {
                       if (info.id !== modelChoice) void setModel(info.id)
                       clearHoverTimer()
                       setOpen(false)
+                      // The clicked row unmounts with the menu; hand focus back to the
+                      // trigger so keyboard order isn't dropped to <body>.
+                      triggerRef.current?.focus()
                     }}
                   >
                     <span className="w-3 shrink-0 text-accent">
@@ -293,6 +310,7 @@ export function ModelEffortPicker(): JSX.Element {
                       if (ultracode) void setUltracode(false)
                       void setEffort(ef)
                       setOpen(false)
+                      triggerRef.current?.focus()
                     }}
                   />
                 )}
@@ -343,9 +361,14 @@ function EffortFlyout({
         max={levels.length - 1}
         step={1}
         value={preview}
+        aria-label={`Reasoning effort for ${info.label}`}
+        aria-valuetext={EFFORT_LABELS[value]}
         onChange={(e) => setPreview(Number(e.target.value))}
-        onMouseUp={() => onPick(levels[preview])}
-        onKeyUp={() => onPick(levels[preview])}
+        onMouseUp={(e) => onPick(levels[Number((e.target as HTMLInputElement).value)])}
+        onKeyUp={(e) => {
+          if (!COMMIT_KEYS.has(e.key)) return
+          onPick(levels[Number((e.target as HTMLInputElement).value)])
+        }}
         className="w-full accent-[var(--color-accent)]"
       />
       <div className="mt-1 flex justify-between text-[11px] text-dim">

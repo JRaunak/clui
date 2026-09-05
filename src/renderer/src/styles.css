@@ -1,10 +1,9 @@
 @import 'tailwindcss';
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Bundled fonts (local — the app phones nothing home; see product constraint).
-   Lora = a soft, calligraphic variable serif (brushed curves, moderate
-   contrast) for the wordmark + headings + speaker labels — warmer and rounder
-   than a high-contrast display serif. IBM Plex Mono = tool output, code, ids.
+   Bundled fonts (local; the app phones nothing home).
+   Lora = soft, calligraphic variable serif for wordmark + headings + speaker labels.
+   IBM Plex Mono = tool output, code, ids.
    ───────────────────────────────────────────────────────────────────────── */
 @font-face {
   font-family: 'Lora';
@@ -42,64 +41,51 @@
   src: url('./assets/fonts/plexmono-600.woff2') format('woff2');
 }
 
-/* Also scan shared modules — some Tailwind class names (e.g. per-mode risk colors
-   in shared/settings.ts) live outside the renderer root and would otherwise be
-   tree-shaken away. */
+/* Scan shared modules so Tailwind class names outside the renderer root aren't tree-shaken away. */
 @source '../../shared';
 
 /* ─────────────────────────────────────────────────────────────────────────
-   LAYER 1 — PRIMITIVES (raw values, no meaning). Rarely change. The semantic
-   layer below aliases these; light mode (see todos/light-mode.md) will re-map
-   the semantic layer, not these.
+   LAYER 1: PRIMITIVES (raw values, no meaning). Rarely change. The semantic
+   layer below aliases these; light mode re-maps the semantic layer, not these.
    ───────────────────────────────────────────────────────────────────────── */
 :root {
-  /* Neutral ink ramp (near-black → light) — kept NEUTRAL by design: the accent
-     works by scarcity (spend boldness in one place), so it must sit against a
-     neutral field to read as the scarce signature note, not compete with a
-     terracotta-tinted background. */
-  --ink-960: #121213; /* deepest — sidebar */
+  /* Neutral ink ramp (near-black → light). Kept neutral by design: the accent works by scarcity. */
+  --ink-960: #121213; /* deepest: sidebar */
   --ink-950: #161617; /* app background */
   --ink-900: #1e1e1f; /* elevated surface (cards, popovers, composer) */
-  --ink-850: #242426; /* raised — chips, hovers */
+  --ink-850: #242426; /* raised: chips, hovers */
   --ink-820: #2c2c2e; /* hairline border */
   --ink-780: #3a3a3d; /* strong border */
   --ink-750: #2d2d30; /* user bubble */
   --ink-tool: #202020; /* tool-call surface */
 
-  /* Paper (text) ramp — neutral. */
+  /* Paper (text) ramp, neutral. */
   --paper-100: #e6e6e6; /* primary content */
   --paper-400: #9a9a9a; /* dim (secondary) */
-  /* faint (tertiary — meta/inactive). Raised #6f6f71→#8f8f92 so it clears WCAG AA
-     4.5:1 as TEXT on every dark surface it lands on (4.80:1 on bg-raised #242426,
-     5.61:1 on bg) while staying a step below `dim`. The old value failed AA on
-     real copy (permission-mode descriptions, empty-state subtitle, palette badges
-     — 3.1–3.6:1); a third text tier is kept, just a legible one. */
-  --paper-500: #8f8f92; /* faint (tertiary — meta/inactive) */
+  /* faint (tertiary). Raised #6f6f71→#8f8f92 so it clears WCAG AA 4.5:1 as text on every dark surface. */
+  --paper-500: #8f8f92; /* faint (tertiary) */
 
-  /* Terracotta — Clui's accent, anchored EXACTLY on the app-icon orange #de7356.
-     The one scarce, saturated focal note against the neutral surfaces. */
+  /* Terracotta, Clui's accent, anchored on the app-icon orange #de7356. The scarce, saturated focal note. */
   --terra-500: #de7356; /* accent */
   --terra-400: #e88b70; /* accent hover */
-  --terra-700: #bd5a3d; /* accent deep — active edge, pressed */
-  --terra-tint: #241c19; /* accent-tinted dark surface — the anchored session */
+  --terra-700: #bd5a3d; /* accent deep: active edge, pressed */
+  --terra-tint: #241c19; /* accent-tinted dark surface: the anchored session */
 
-  /* Status — neutral/conventional (NOT rehued), so terracotta stays the unique
-     accent and these read as recognizable semantic signals. */
+  /* Status: neutral/conventional (not rehued), so terracotta stays the unique accent. */
   --teal-400: #4ec9b0; /* ok / success / live */
   --amber-400: #d9a03a; /* warn */
   --red-400: #f14c4c; /* err / destructive */
   --blue-400: #4a9eff; /* info */
   --orange-400: #ff7b3a; /* effort: X-High (between warn amber and err red) */
 
-  /* Syntax-highlighting palette (highlight.js). DARK values, all verified ≥4.5:1
-     on the code surface --ink-tool (#202020). The light theme re-maps these. */
+  /* Syntax-highlighting palette (highlight.js). Dark values, all verified ≥4.5:1 on --ink-tool (#202020). */
   --syntax-base: #e6e6e6; /* default code text */
-  --syntax-keyword: #de7356; /* keywords, operators — the accent */
+  --syntax-keyword: #de7356; /* keywords, operators: the accent */
   --syntax-string: #4ec9b0; /* strings, regexp */
   --syntax-number: #ff7b3a; /* numbers, literals, booleans */
   --syntax-func: #4a9eff; /* function/class titles */
   --syntax-attr: #d9a03a; /* attributes, properties */
-  --syntax-comment: #9a9a9a; /* comments (dim, not faint — faint fails AA here) */
+  --syntax-comment: #9a9a9a; /* comments (dim, not faint: faint fails AA here) */
 
   /* Radius, shadow, motion primitives */
   --radius-sm: 0.375rem;
@@ -120,9 +106,7 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   LAYER 2 — SEMANTIC (purpose aliases → utilities). Components use THESE
-   (bg-bg, text-dim, border-border, …). Kept the historical --color-* names so
-   existing consumers don't churn; new tokens added for the signature work.
+   LAYER 2: SEMANTIC (purpose aliases → utilities). Components use these (bg-bg, text-dim, border-border).
    ───────────────────────────────────────────────────────────────────────── */
 @theme {
   --color-bg: var(--ink-950);
@@ -131,18 +115,14 @@
   --color-bg-raised: var(--ink-850);
   --color-border: var(--ink-820);
   --color-border-strong: var(--ink-780);
-  /* Recessed-well fill for the composer's borderless config pills. It sits BELOW
-     bg-elev's luminance (not a raised translucent chip) so the saturated effort
-     readout keeps its contrast headroom; a lighter fill fails the err-red gate. */
+  /* Interactive-control boundary: the at-rest edge of a checkbox or secondary button, which must clear the 3:1 non-text gate. */
+  --color-control-edge: #6b6b70;
+  /* Recessed-well fill for the composer's borderless config pills. Sits below bg-elev's luminance so the saturated effort readout keeps its contrast headroom. */
   --color-control: color-mix(in oklab, #000 10%, var(--color-bg-elev));
   --color-control-hover: color-mix(in oklab, #000 30%, var(--color-bg-elev));
-  /* The danger permission row's own hover fill: neutral control-hover would drop
-     err below 4.5:1, so it darkens toward err instead (keeps err at 4.54:1). */
+  /* The danger permission row's hover fill: neutral control-hover would drop err below 4.5:1, so it darkens toward err instead. */
   --color-control-danger-hover: color-mix(in oklab, var(--color-err) 14%, #121213);
-  /* Menu-row hover for the composer cards. In dark it lifts (bg-raised is lighter than
-     the card); in light there's nothing brighter than the near-white card, so it's a
-     soft warm darken — kept well short of bg-raised's heavier tan. Scoped to these cards
-     so the app's other menus keep their standard bg-raised hover. */
+  /* Menu-row hover for the composer cards. In dark it lifts; in light it's a soft warm darken. Scoped to these cards. */
   --color-row-hover: var(--color-bg-raised);
   --color-content: var(--paper-100);
   --color-dim: var(--paper-400);
@@ -151,13 +131,11 @@
   --color-accent-hover: var(--terra-400);
   --color-accent-deep: var(--terra-700);
   --color-accent-surface: var(--terra-tint);
-  /* Paired foregrounds — text sitting ON a colored fill (accent buttons, the
-     warn/err badges). Kept as tokens so light mode can flip them independently
-     (the "every fill gets a provable foreground" rule): in dark, accent/warn are
-     light so their text is near-black; in light they darken so their text is white. */
-  --color-on-accent: #1a1a1a; /* near-black on the terracotta fill (5.55:1) */
+  /* Paired foregrounds: text sitting on a colored fill. Kept as tokens so light mode can flip them independently. */
+  --color-on-accent: #1a1a1a; /* near-black on the terracotta fill */
   --color-on-warn: #1a1a1a; /* near-black on the amber fill */
   --color-on-err: #ffffff; /* white on the red fill */
+  --color-on-info: #1a1a1a; /* near-black on the light info-blue fill */
   --color-user: var(--ink-750);
   --color-tool: var(--ink-tool);
   --color-err: var(--red-400);
@@ -165,11 +143,9 @@
   --color-warn: var(--amber-400);
   --color-info: var(--blue-400);
   --color-effort-xhigh: var(--orange-400);
-  /* Ultracode effort — purple, matching the user's statusline.sh (ultracode = the
-     purple/violet marker). Deliberately NOT the terracotta accent (accent stays
-     scarce) and distinct from info-blue. #a78bfa = 6.9:1 on the dark picker surface. */
+  /* Ultracode effort: purple, matching statusline.sh. Deliberately not the terracotta accent and distinct from info-blue. */
   --color-effort-ultra: #a78bfa;
-  /* Focus ring — the single most impactful a11y token (applied globally below). */
+  /* Focus ring, applied globally below. */
   --color-ring: var(--terra-500);
 
   /* Type families */
@@ -177,8 +153,7 @@
   --font-serif: 'Lora', ui-serif, Georgia, 'Times New Roman', serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* Text scale — ~+10% vs Tailwind defaults, rounded to clean px (text-only;
-     layout/padding unchanged). Every text-* utility uses these. */
+  /* Text scale: ~+10% vs Tailwind defaults, rounded to clean px (text-only; layout/padding unchanged). */
   --text-xs: 0.8125rem; /* 13px */
   --text-xs--line-height: 1.125rem; /* 18px */
   --text-sm: 0.9375rem; /* 15px */
@@ -192,91 +167,71 @@
   --text-2xl: 1.625rem; /* 26px */
   --text-2xl--line-height: 2rem; /* 32px */
 
-  /* Signature motion: a gentle "breathe" for the live-session dot, and a soft
-     dock-edge pulse while a turn streams. Both restrained (skill: excess motion
-     reads as AI-generated) and disabled under prefers-reduced-motion. */
+  /* Signature motion: a gentle "breathe" for the live-session dot, and a soft dock-edge pulse while a turn streams. Both restrained and disabled under prefers-reduced-motion. */
   --animate-breathe: breathe 2.8s var(--ease-out) infinite;
   --animate-dock-pulse: dock-pulse 2s ease-in-out infinite;
-  /* Ultra: a one-shot arm sweep + an infinite "engaged" glow (see keyframes below). */
+  /* Ultra: a one-shot arm sweep + an infinite "engaged" glow. */
   --animate-ultra-ripple: ultra-ripple 620ms linear 1 both;
   --animate-ultra-glow: ultra-glow 2.4s ease-in-out infinite;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   LIGHT THEME — re-maps the SEMANTIC layer only (not the primitives, not the
-   components). Applied via `<html data-theme="light">` (resolved before paint
-   in index.html + theme.ts; 'system' is resolved to a concrete value in JS).
-   `:root[data-theme=…]` out-specifies the `@theme`→`:root` dark defaults above.
-
-   Colors are RE-DERIVED, never inverted — the design skill's rule. Terracotta
-   #d97757 is only ~2.3:1 on white, so accent/ring/status hues are darkened until
-   every text + fill + focus pair clears WCAG AA. Verified with a contrast script
-   (/tmp/contrast.mjs during dev): body/dim/accent ≥4.5:1 on every surface they
-   touch, paired foregrounds ≥4.5:1 on their fills, ring ≥3:1. Warm-paper palette
-   echoes the light app-icon background (#f4f1ea) so the identity carries over.
+   LIGHT THEME: re-maps the semantic layer only. Applied via `<html data-theme="light">`.
+   Colors are re-derived, never inverted. Terracotta #d97757 is only ~2.3:1 on white, so
+   accent/ring/status hues are darkened until every text + fill + focus pair clears WCAG AA.
+   Warm-paper palette echoes the light app-icon background (#f4f1ea).
    ───────────────────────────────────────────────────────────────────────── */
 :root[data-theme='light'] {
-  /* Surfaces — warm off-white canvas; elevation reads BRIGHTER (toward white),
-     sidebar recedes into a deeper cream, hover/chips darken a step. */
+  /* Surfaces: warm off-white canvas; elevation reads brighter, sidebar recedes into a deeper cream, hover/chips darken a step. */
   --color-bg: #f6f3ee;
   --color-bg-elev: #fffdfa;
   --color-bg-sidebar: #efe9e0;
   --color-bg-raised: #e7e0d4;
   --color-border: #e0d8ca;
   --color-border-strong: #cabfac;
-  /* A shallow recess on paper: 3% black gives the pill a visible boundary against the
-     bg-elev composer shell, and hover CANNOT exceed 4%: a darker fill drops the light
-     X-High effort readout (dark-ish text) below 4.5:1 (verified 4% = 4.55, 7% = 4.16). */
+  /* Warm neutral, ~3.8:1 on the light bg-elev. */
+  --color-control-edge: #8a8272;
+  /* A shallow recess on paper: 3% black gives the pill a visible boundary, and hover cannot exceed 4%. */
   --color-control: color-mix(in oklab, #000 3%, var(--color-bg-elev));
   --color-control-hover: color-mix(in oklab, #000 4%, var(--color-bg-elev));
   --color-control-danger-hover: color-mix(in oklab, var(--color-err) 10%, #fffdfa);
   --color-row-hover: color-mix(in oklab, #000 5%, var(--color-bg-elev));
 
-  /* Text — warm near-black ramp (14.7 / 6.6 / 5.0 :1 on the base surface). */
+  /* Text: warm near-black ramp (14.7 / 6.6 / 5.0 :1 on the base surface). */
   --color-content: #22201c;
   --color-dim: #5c554c;
-  /* faint darkened #6f675c→#645d52 so it clears AA as text on the darkest light
-     surface it touches (4.96:1 on bg-raised #e7e0d4, 5.88:1 on bg; the old value
-     was 4.25:1 on raised — a fail), still a step lighter than `dim`. */
+  /* faint darkened #6f675c→#645d52 so it clears AA as text on the darkest light surface (4.96:1 on bg-raised), still a step lighter than `dim`. */
   --color-faint: #645d52;
 
-  /* Accent — #de7356 darkened for AA as text/marks/ring on paper (it's only ~3:1
-     on white at full strength; #a8492a gives 5.2:1). Paired foreground flips to
-     white (5.75:1 on the fill). Tinted surface = warm terracotta paper anchor. */
+  /* Accent: #de7356 darkened for AA as text/marks/ring on paper (#a8492a gives 5.2:1). Paired foreground flips to white. */
   --color-accent: #a8492a;
   --color-accent-hover: #8f3d20;
   --color-accent-deep: #7a3216;
   --color-accent-surface: #f3e4dc;
   --color-on-accent: #ffffff;
 
-  /* Message + tool surfaces — subtle warm cards, text ≥12:1. */
+  /* Message + tool surfaces: subtle warm cards, text ≥12:1. */
   --color-user: #ece4d7;
   --color-tool: #efe9df;
 
-  /* Status — darkened so each clears 4.5:1 on both bg and elevated surfaces.
-     Paired foregrounds flip: warn/err fills are now dark → white text on them. */
+  /* Status: darkened so each clears 4.5:1 on both bg and elevated surfaces. Paired foregrounds flip: warn/err fills are now dark. */
   --color-err: #c02718;
   --color-ok: #0f766e;
-  /* Dark gold at Lab hue 85, dE 34.6 from the accent. The hue distance is the point: an
-     amber merely darkened for AA lands near hue 56, close enough to the accent's 45 that a
-     warn banner reads as terracotta and spends the scarce brand accent on a status. Keep
-     any future value clear of ~45. Worst landing is 4.77:1 on bg-raised; the tinted
-     composites (bg-warn/10 in the notice banner, text-warn on bg-user in the permission
-     dropdown) are the tightest at 4.93 and 4.96, so they gate any change here. */
+  /* Dark gold at Lab hue 85, dE 34.6 from the accent. The hue distance is the point: an amber merely darkened for AA lands
+     near hue 56, close enough to the accent's 45 that a warn banner reads as terracotta. Keep any future value clear of ~45. */
   --color-warn: #7a5c00;
   --color-info: #1d4ed8;
   --color-on-warn: #ffffff;
   --color-on-err: #ffffff;
+  --color-on-info: #ffffff; /* white on the deep light-mode info-blue */
   --color-effort-xhigh: #c2410c;
-  /* Ultracode purple, darkened for AA on the warm-paper surface (#6d28d9 ≈ 6.1:1). */
+  /* Ultracode purple, darkened for AA on the warm-paper surface. */
   --color-effort-ultra: #6d28d9;
 
-  /* Focus ring — MUST be the darkened accent (5.2:1); the dark-mode terracotta
-     would be ~2.3:1 on white and fail the 3:1 non-text-UI floor. */
+  /* Focus ring: must be the darkened accent (5.2:1); the dark-mode terracotta would be ~2.3:1 on white and fail the 3:1 non-text-UI floor. */
   --color-ring: #a8492a;
 
-  /* Syntax palette — LIGHT values, all verified ≥4.5:1 on the light code surface
-     --color-tool (#efe9df). attr uses info (warn is only 4.16:1 there). */
+  /* Syntax palette: light values, all verified ≥4.5:1 on the light code surface --color-tool (#efe9df). attr uses info. */
   --syntax-base: #22201c;
   --syntax-keyword: #a8492a;
   --syntax-string: #0f766e;
@@ -284,16 +239,11 @@
   --syntax-func: #1d4ed8;
   --syntax-attr: #1d4ed8;
   --syntax-comment: #6f675c;
-  /* (Shadows are Tailwind's own black-low-alpha utilities, which already read
-     correctly on paper — the --shadow-* primitives above are unused, so there's
-     nothing theme-specific to re-map here.) */
+  /* Shadows are Tailwind's own black-low-alpha utilities, which already read correctly on paper. */
 }
 
-/* The live-dot "breath" is carried by SCALE ONLY — opacity stays at 1. Dipping
-   opacity (was 0.4) dropped the dot to ~1.8:1 at the trough (below the 3:1 non-text
-   floor), and even a 0.7 floor is 2.89:1 on cream — a live indicator must never fall
-   under the floor mid-cycle. A pure size pulse still reads clearly as "breathing"
-   while the color holds full contrast throughout. */
+/* The live-dot "breath" is carried by scale only; opacity stays at 1. Dipping opacity dropped the dot below the
+   3:1 non-text floor. A pure size pulse still reads clearly as "breathing" while the color holds full contrast. */
 @keyframes breathe {
   0%,
   100% {
@@ -304,8 +254,7 @@
   }
 }
 
-/* Opacity-only: the transform/opacity-only motion rule forbids animating the width, so it
-   snaps and only the incoming content fades. Reduced-motion below kills it. */
+/* Opacity-only: the transform/opacity-only motion rule forbids animating the width, so it snaps and only the incoming content fades. */
 @keyframes sidebar-fade {
   from {
     opacity: 0;
@@ -319,14 +268,12 @@
   animation: sidebar-fade 180ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 
-/* Exception to the transform/opacity-only motion rule: the push rail reflows the chat, so it
-   can't be a pure transform. Reduced-motion below kills it. */
+/* Exception to the transform/opacity-only motion rule: the push rail reflows the chat, so it can't be a pure transform. */
 .sidebar-anim {
   transition: width 220ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-/* bg-colored box-shadow so transcript content dissolves under a dock card's rounded edge
-   instead of hard-clipping; only the outward-facing edges glow. */
+/* bg-colored box-shadow so transcript content dissolves under a dock card's rounded edge instead of hard-clipping. */
 .dock-fade-top {
   box-shadow: 0 -6px 8px 2px var(--color-bg);
 }
@@ -349,11 +296,8 @@
   }
 }
 
-/* Ultra arm flourish — a one-shot RIPPLE_RAMP sweep (the CLI's own ultracode
-   signature: deep-purple #3E1676 → violet #8C50F0) traveling across the "✦ Ultra"
-   label via background-clip:text when the mode is armed. Paint-only (background
-   position) so it never reflows; fires once and settles to the flat purple on-state.
-   Runs <5s and is user-initiated → WCAG 2.2.2 not triggered. */
+/* Ultra arm flourish: a one-shot RIPPLE_RAMP sweep (deep-purple #3E1676 → violet #8C50F0) traveling across the "✦ Ultra"
+   label via background-clip:text when the mode is armed. Paint-only so it never reflows; fires once and settles to flat purple. */
 @keyframes ultra-ripple {
   from {
     background-position: 120% 0;
@@ -363,10 +307,8 @@
   }
 }
 
-/* Ultra "engaged" cue — while an ultracode turn is RUNNING, the leading star's
-   halo breathes. Opacity-floor high (never dips out) and NO transform/scale, so it
-   reads as "energized," not "loading" — distinct from the shrink-and-fade `breathe`.
-   Sits below the dock-pulse + typing dots in the visual hierarchy (a grace note). */
+/* Ultra "engaged" cue: while an ultracode turn is running, the leading star's halo breathes. Opacity-floor high (never dips out)
+   and no transform/scale, so it reads as "energized," not "loading". Sits below the dock-pulse + typing dots. */
 @keyframes ultra-glow {
   0%,
   100% {
@@ -381,14 +323,10 @@
   }
 }
 
-/* Ultra chip helper classes (not expressible as Tailwind utilities: gradient-clipped
-   text + keyframe bindings). See UltracodeToggle.tsx. */
+/* Ultra chip helper classes (not expressible as Tailwind utilities). See UltracodeToggle.tsx. */
 .ultra-arming {
-  /* The RIPPLE_RAMP endpoints from the CLI binary (deep-purple → violet), with a
-     bright band in the middle so contrast only RISES as it sweeps (text never dips
-     below legibility). Clipped to the "✦ Ultra" glyphs; settles off-screen → the
-     element's own token color (set on children) takes back over when .ultra-arming
-     is removed onAnimationEnd. */
+  /* The RIPPLE_RAMP endpoints (deep-purple → violet), with a bright band in the middle so contrast only rises as it sweeps.
+     Clipped to the "✦ Ultra" glyphs; settles off-screen and the element's own token color takes back over when .ultra-arming is removed onAnimationEnd. */
   background-image: linear-gradient(
     100deg,
     #3e1676 0 32%,
@@ -401,10 +339,8 @@
   color: transparent;
   animation: var(--animate-ultra-ripple);
 }
-/* The star carries its OWN copy of the same gradient+clip during arming (background-clip
-   is per-element, so a bare `color: transparent` would make it vanish). Same keyframe +
-   duration → the star and label shimmer in sync, reading as one purple ripple, then both
-   return to their token color when .ultra-arming is removed onAnimationEnd. */
+/* The star carries its own copy of the same gradient+clip during arming (background-clip is per-element).
+   Same keyframe + duration so the star and label shimmer in sync. */
 .ultra-arming .ultra-star {
   background-image: linear-gradient(100deg, #3e1676 0 32%, #d7c4ff 50%, #8c50f0 68% 100%);
   background-size: 240% 100%;
@@ -417,8 +353,7 @@
   animation: var(--animate-ultra-glow);
 }
 
-/* Toast countdown — a hairline that drains full→empty over the undo window, so
-   the auto-dismiss timer is visible (Material snackbar guidance). */
+/* Toast countdown: a hairline that drains full→empty over the undo window, so the auto-dismiss timer is visible. */
 @keyframes toast-drain {
   from {
     width: 100%;
@@ -428,13 +363,9 @@
   }
 }
 
-/* Typing indicator — 3 dots bouncing in sequence (chat-app convention). A
-   learned, honestly-indeterminate "working" signal; replaces the ambiguous
-   single-dot breathe for the assistant-thinking state. */
-/* Bounce via translateY ONLY — no opacity dip. The resting 0.5 opacity dropped the
-   light-theme dots (text-ok #0f766e, 4.95:1 at full on cream) to ~2:1, under the 3:1
-   non-text floor. Full opacity throughout keeps them legible; the vertical wave still
-   reads as "typing" (same transform-not-opacity rule as `breathe`). */
+/* Typing indicator: 3 dots bouncing in sequence (chat-app convention). A learned, honestly-indeterminate "working" signal. */
+/* Bounce via translateY only, no opacity dip. The resting 0.5 opacity dropped the light-theme dots below the 3:1 non-text floor.
+   Full opacity throughout keeps them legible; the vertical wave still reads as "typing". */
 @keyframes typing-bounce {
   0%,
   60%,
@@ -446,12 +377,8 @@
   }
 }
 
-/* Peer placeholder ellipsis. Sibling of TypingDots (same 1.2s / 0.16s stagger) but an
-   opacity fade instead of the translateY bounce, so "…messaging" reads distinct from
-   "Claude thinking". The dots are decorative and aria-hidden and the meaning is the static
-   sentence, so opacity may go fully to 0 (no contrast-floor concern). Three literal glyphs,
-   each on a staggered keyframe; no textContent swap (that would break
-   animate-only-transform/opacity). */
+/* Peer placeholder ellipsis. Sibling of TypingDots (same 1.2s / 0.16s stagger) but an opacity fade instead of the translateY bounce,
+   so "…messaging" reads distinct from "Claude thinking". The dots are decorative and aria-hidden, so opacity may go fully to 0. */
 @keyframes peer-ellipsis {
   0% {
     opacity: 0;
@@ -477,8 +404,7 @@
   animation-delay: 0.32s;
 }
 
-/* Backfill: fade the resolved peer header in over one normal duration (the slot is
-   reserved from the placeholder, so nothing below shifts). */
+/* Backfill: fade the resolved peer header in over one normal duration. The slot is reserved from the placeholder, so nothing below shifts. */
 @keyframes peer-head-in {
   from {
     opacity: 0;
@@ -509,19 +435,13 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Lora is soft/calligraphic by construction (no extra axes needed). Nudge the
-   weight up a touch so the display type has presence without going sharp. */
+/* Lora is soft/calligraphic by construction. Nudge the weight up a touch so the display type has presence without going sharp. */
 .font-serif {
   font-weight: 500;
 }
 
-/* Global keyboard focus ring — keyboard-only (focus-visible), so mouse clicks
-   stay clean. Fixes the app-wide missing-focus a11y gap in one rule. Placed in
-   @layer base so that elements carrying their OWN focus affordance (the
-   composer's focus-within border, a dropdown's border-accent, a session row's
-   ring) can override it with the `focus-visible:outline-none` utility — utilities
-   sit in a later layer and win. Without the layer, this unlayered rule would beat
-   those utilities and stack a second outline inside the element's own border. */
+/* Global keyboard focus ring: keyboard-only (focus-visible), so mouse clicks stay clean. Placed in @layer base so elements
+   carrying their own focus affordance can override it with the `focus-visible:outline-none` utility. */
 @layer base {
   :focus-visible {
     outline: 2px solid var(--color-ring);
@@ -529,11 +449,16 @@ body {
     border-radius: 4px;
   }
 
-  /* Text-entry fields signal focus via the caret and their container's own
-     focus treatment, so they never take the global ring. */
+  /* Text-entry fields signal focus via the caret and their container's own focus treatment, so they never take the global ring. */
   textarea:focus-visible,
   input:focus-visible {
     outline: none;
+  }
+
+  /* Range sliders carry no caret, so the text-field exception above would strand them with no focus signal; keep the ring. */
+  input[type='range']:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
   }
 }
 
@@ -541,9 +466,8 @@ body {
   background: color-mix(in oklab, var(--color-accent) 32%, transparent);
 }
 
-/* Themed scrollbars — the default macOS overlay scrollbar renders as a heavy
-   light bar that clashes with the dark palette (esp. in the sidebar). Replace it
-   with a thin, low-contrast thumb that only asserts itself on hover. */
+/* Themed scrollbars: the default macOS overlay scrollbar renders as a heavy light bar that clashes with the dark palette.
+   Replace it with a thin, low-contrast thumb that only asserts itself on hover. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-border-strong) transparent;
@@ -558,7 +482,7 @@ body {
 ::-webkit-scrollbar-thumb {
   background-color: color-mix(in oklab, var(--color-border-strong) 80%, transparent);
   border-radius: 9999px;
-  /* Inset the thumb so it reads as a slim pill, not a full-width bar. */
+  /* Inset the thumb so it reads as a slim pill. */
   border: 3px solid transparent;
   background-clip: padding-box;
 }
@@ -568,8 +492,7 @@ body {
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
-/* Must be unlayered (not an @utility): the global unlayered `*` scrollbar rule beats any
-   layered utility regardless of specificity. */
+/* Must be unlayered: the global unlayered `*` scrollbar rule beats any layered utility. */
 .scrollbar-none {
   scrollbar-width: none;
 }
@@ -577,7 +500,7 @@ body {
   display: none;
 }
 
-/* Respect reduced-motion: neutralize animation + transitions (quality floor). */
+/* Respect reduced-motion: neutralize animation + transitions. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -588,9 +511,7 @@ body {
     scroll-behavior: auto !important;
   }
 
-  /* Pin the peer ellipsis ON (a resting "..."). Without this the neutralizer above
-     freezes the `both`-filled dots at the 100% frame (opacity:0, invisible), hiding the
-     ellipsis entirely, so this override is load-bearing. */
+  /* Pin the peer ellipsis on (a resting "..."). Without this the neutralizer freezes the `both`-filled dots at the 100% frame (opacity:0). */
   .peer-ellipsis b {
     animation: none !important;
     opacity: 1 !important;
@@ -615,11 +536,8 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Syntax highlighting (highlight.js) — maps hljs token classes to the
-   --syntax-* tokens, which re-derive per theme (see :root + light block).
+   Syntax highlighting (highlight.js): maps hljs token classes to the --syntax-* tokens, which re-derive per theme.
    Every color is contrast-verified ≥4.5:1 on the code surface (--color-tool).
-   Only the token colors are set here; layout (padding, mono, scroll) lives on
-   the CodeBlock component so this stays a pure color theme.
    ───────────────────────────────────────────────────────────────────────── */
 .hljs {
   color: var(--syntax-base);

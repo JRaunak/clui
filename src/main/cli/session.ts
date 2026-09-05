@@ -18,6 +18,7 @@ import type { DomainEvent } from '../../shared/events'
 import type { WireAttachment } from '../../shared/ipc'
 import { NdjsonParser } from './ndjson'
 import { EventMapper } from './event-mapper'
+import { stripRuntimeMarkers } from './shell-env'
 
 /** A queued/outgoing user turn: text plus any inlined attachment content blocks. */
 interface UserTurn {
@@ -67,10 +68,27 @@ export declare interface ClaudeSession {
   on(event: 'exit', listener: (code: number | null) => void): this
 }
 
+/** Result of an awaited control_request: success flag + the response payload (so a
+ *  caller can inspect fields like `background_tasks`' `backgrounded`, not just success). */
+interface ControlResult {
+  ok: boolean
+  payload?: Record<string, unknown>
+}
+
+/** Bounded wait for the initialize handshake ACK. The CLI ACKs `initialize` promptly
+ *  at spawn (it's a handshake, not a model turn), so a stall here means a failed start,
+ *  not slow reasoning, so surface it instead of hanging the UI forever. */
+const INIT_TIMEOUT_MS = 20_000
+
 export class ClaudeSession extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null
-  private readonly parser = new NdjsonParser()
-  private readonly mapper = new EventMapper()
+  // Recreated per child generation (a respawn must not reuse a decoder holding the old
+  // child's half-line or a mapper holding its per-connection state).
+  private parser = new NdjsonParser()
+  private mapper = new EventMapper()
+  /** Monotonic child-generation counter; bumped on every spawn so a retired child's
+   *  late stdout/stderr/close can be ignored. */
+  private generation = 0
   /** CLI-assigned session id, captured from the init event. */
   private sessionId: string | null = null
   private closed = false
@@ -80,18 +98,26 @@ export class ClaudeSession extends EventEmitter {
   private initRequestId: string | null = null
   /** True once the CLI ACKs the initialize handshake. */
   private initAcked = false
+  /** Fires if the initialize ACK never arrives; cleared on ack/close. */
+  private initTimer: ReturnType<typeof setTimeout> | null = null
+  /** True between ending the old child's stdin and the replacement's init ACK, so a
+   *  send in that window is queued (not written to an ended stream). */
+  private reconnecting = false
   /** User messages queued until the handshake completes (gated mode only). */
   private pendingSends: UserTurn[] = []
   /** True while an effort-driven respawn is in progress (suppresses exit event). */
   private respawning = false
+  /** Partial trailing stderr line held until its newline arrives, so classification
+   *  runs per complete line, not per arbitrary transport chunk. */
+  private stderrBuf = ''
   /**
    * In-flight control_requests awaiting their control_response, keyed by request_id
-   * (general control-protocol client). `resolve(true)` on a `success` response,
-   * `resolve(false)` on `error` / no-response timeout, so callers can fall back.
-   * The init handshake stays on its own `initRequestId`/`initAcked` path (it gates
-   * message flushing and predates this map).
+   * (general control-protocol client). Resolves `{ok, payload}` on the response, or
+   * `{ok:false}` on `error` / no-response timeout, so callers can fall back or inspect
+   * the payload. The init handshake stays on its own `initRequestId`/`initAcked` path
+   * (it gates message flushing and predates this map).
    */
-  private pendingControl = new Map<string, { resolve: (ok: boolean) => void; timer: ReturnType<typeof setTimeout> }>()
+  private pendingControl = new Map<string, { resolve: (r: ControlResult) => void; timer: ReturnType<typeof setTimeout> }>()
 
   // Mutable so live changes (set_model) and respawns (effort) can update them.
   private opts: ClaudeSessionOptions
@@ -156,9 +182,20 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private spawnChild(): void {
-    // Reset per-spawn handshake state (a respawn re-runs the initialize dance).
+    // Reset per-spawn handshake state (a respawn re-runs the initialize dance) and give
+    // this generation a fresh decoder + mapper so no half-line or per-connection state
+    // leaks across the reconnect.
+    const gen = ++this.generation
     this.initRequestId = null
     this.initAcked = false
+    this.reconnecting = false
+    this.parser = new NdjsonParser()
+    this.mapper = new EventMapper()
+    this.stderrBuf = ''
+    if (this.initTimer) {
+      clearTimeout(this.initTimer)
+      this.initTimer = null
+    }
 
     // Guard: if the workspace folder no longer exists, spawn() throws a cryptic
     // ENOENT that names the *binary* path (misleading, since it looks like the CLI is
@@ -180,10 +217,22 @@ export class ClaudeSession extends EventEmitter {
 
     const child = spawn(this.opts.cliPath, this.buildArgs(), {
       cwd: this.opts.cwd,
-      env: { ...process.env, ...this.opts.env },
+      // Strip Claude runtime markers from the FINAL merged env: spreading process.env first
+      // would otherwise leak this app's own session markers into the child if Clui was
+      // launched from inside a Claude Code session.
+      env: stripRuntimeMarkers({ ...process.env, ...this.opts.env }),
       stdio: ['pipe', 'pipe', 'pipe']
     })
     this.child = child
+    // fork + name apply only to the initial spawn: a reconnect resumes the (already
+    // forked, already renamed) session, so consume them so a respawn argv can't create
+    // ANOTHER branch or overwrite a since-changed title.
+    if (this.opts.fork || this.opts.name) this.opts = { ...this.opts, fork: false, name: undefined }
+
+    // stdin errors (EPIPE from a crashed child, write-after-end during a reconnect) are
+    // emitted asynchronously; without a listener Node throws them as uncaught. Swallow
+    // them here; the 'close'/'error' handlers own teardown.
+    child.stdin.on('error', () => {})
 
     // Gated mode: the CLI emits NOTHING (not even the init event) until the
     // client sends the `initialize` control_request. Send it immediately on
@@ -198,37 +247,30 @@ export class ClaudeSession extends EventEmitter {
         // live). Without it, only tool_use/tool_result forward as agent_progress.
         request: { subtype: 'initialize', forwardSubagentText: true }
       })
+      this.initTimer = setTimeout(() => {
+        if (this.initAcked || this.closed || gen !== this.generation) return
+        this.emitEvent({
+          type: 'error',
+          message: 'The session did not start (no response from the CLI). Try resuming it again.'
+        })
+        this.teardown(null)
+      }, INIT_TIMEOUT_MS)
     }
 
     child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => this.onStdout(chunk))
+    child.stdout.on('data', (chunk: string) => {
+      if (gen !== this.generation) return // late output from a retired child
+      this.onStdout(chunk)
+    })
 
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => {
-      // CLI writes benign diagnostics to stderr too (e.g. "Warning: Opus 4.8 not
-      // available, using Opus 4.7 for this session"). These are NOT errors: the CLI
-      // already handled the fallback, so styling them as a red error (and, at startup,
-      // also as a top banner) would mislead and duplicate. Only surface a line as an
-      // error if it doesn't self-identify as a warning/info note.
-      const text = chunk.trim()
-      if (!text) return
-      if (/^(warning|warn|note|info)\b[:\s]/i.test(text)) return // benign diagnostic; drop
-      // [claude-code:...] tags are machine diagnostics for SDK consumers, not user errors.
-      if (/^\[claude-code:/i.test(text)) return
-      // An untrusted workspace still runs, so these notices aren't failures. The context
-      // guard keeps a genuine "certificate not trusted" error red.
-      const untrusted =
-        /^Ignoring \d+ permissions?\.(?:allow|deny|ask)\b/i.test(text) ||
-        ((/\bnot (?:been )?trusted\b/i.test(text) || /\bno persisted trust\b/i.test(text)) &&
-          /\b(?:workspace|folder|trust dialog|hasTrustDialogAccepted|frontmatter hooks|plugins?)\b/i.test(text))
-      if (untrusted) {
-        this.emitEvent({ type: 'error', severity: 'info', message: text })
-        return
-      }
-      this.emitEvent({ type: 'error', message: text })
+      if (gen !== this.generation) return
+      this.onStderr(chunk)
     })
 
     child.on('error', (err) => {
+      if (gen !== this.generation) return
       this.emitEvent({ type: 'error', message: `spawn failed: ${err.message}` })
       // A spawn failure (e.g. ENOENT from a wrong CLI path) fires 'error' but NOT
       // 'close', so without this the session would never emit process-exit and
@@ -236,13 +278,12 @@ export class ClaudeSession extends EventEmitter {
       // exit so the manager drops it and the renderer stops counting it as live.
       // Guard against a later 'close' double-firing via `closed`.
       if (this.respawning || this.closed) return
-      this.closed = true
       this.child = null
-      this.emitEvent({ type: 'process-exit', code: null })
-      this.emit('exit', null)
+      this.teardown(null)
     })
 
     child.on('close', (code) => {
+      if (gen !== this.generation && !this.respawning) return
       // A real stop() ran (closed=true): never respawn, even mid-effort-respawn. This
       // guard MUST precede the respawning branch, else a stop()/stopAll() that lands in
       // the window between respawnForEffort's SIGTERM and this 'close' would take the
@@ -257,14 +298,28 @@ export class ClaudeSession extends EventEmitter {
         this.spawnChild()
         return
       }
-      this.closed = true
-      // Flush any trailing buffered line.
-      for (const raw of this.parser.flush()) {
-        for (const ev of this.mapper.map(raw)) this.emitEvent(ev)
-      }
-      this.emitEvent({ type: 'process-exit', code })
-      this.emit('exit', code)
+      this.teardown(code)
     })
+  }
+
+  /**
+   * Terminal teardown for a spawn/init failure or a real process close: flush the
+   * decoder's trailing line, stop the init timer, and emit process-exit exactly once.
+   */
+  private teardown(code: number | null): void {
+    if (this.closed) return
+    this.closed = true
+    if (this.initTimer) {
+      clearTimeout(this.initTimer)
+      this.initTimer = null
+    }
+    if (this.stderrBuf.trim()) this.classifyStderrLine(this.stderrBuf)
+    this.stderrBuf = ''
+    for (const raw of this.parser.flush()) {
+      for (const ev of this.mapper.map(raw)) this.emitEvent(ev)
+    }
+    this.emitEvent({ type: 'process-exit', code })
+    this.emit('exit', code)
   }
 
   private onStdout(chunk: string): void {
@@ -279,6 +334,43 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
+  /** Classify stderr per COMPLETE line (a benign warning and a following fatal can
+   *  arrive in one chunk, and a warning can split across two). Holds the trailing
+   *  partial line until its newline; `flushStderr` drains it on close. */
+  private onStderr(chunk: string): void {
+    this.stderrBuf += chunk
+    let nl: number
+    while ((nl = this.stderrBuf.indexOf('\n')) >= 0) {
+      const line = this.stderrBuf.slice(0, nl)
+      this.stderrBuf = this.stderrBuf.slice(nl + 1)
+      this.classifyStderrLine(line)
+    }
+  }
+
+  private classifyStderrLine(raw: string): void {
+    // CLI writes benign diagnostics to stderr too (e.g. "Warning: Opus 4.8 not
+    // available, using Opus 4.7 for this session"). These are NOT errors: the CLI
+    // already handled the fallback, so styling them as a red error (and, at startup,
+    // also as a top banner) would mislead and duplicate. Only surface a line as an
+    // error if it doesn't self-identify as a warning/info note.
+    const text = raw.trim()
+    if (!text) return
+    if (/^(warning|warn|note|info)\b[:\s]/i.test(text)) return // benign diagnostic; drop
+    // [claude-code:...] tags are machine diagnostics for SDK consumers, not user errors.
+    if (/^\[claude-code:/i.test(text)) return
+    // An untrusted workspace still runs, so these notices aren't failures. The context
+    // guard keeps a genuine "certificate not trusted" error red.
+    const untrusted =
+      /^Ignoring \d+ permissions?\.(?:allow|deny|ask)\b/i.test(text) ||
+      ((/\bnot (?:been )?trusted\b/i.test(text) || /\bno persisted trust\b/i.test(text)) &&
+        /\b(?:workspace|folder|trust dialog|hasTrustDialogAccepted|frontmatter hooks|plugins?)\b/i.test(text))
+    if (untrusted) {
+      this.emitEvent({ type: 'error', severity: 'info', message: text })
+      return
+    }
+    this.emitEvent({ type: 'error', message: text })
+  }
+
   /**
    * Gated-mode handshake driver. The `initialize` request is sent on spawn (see
    * `start`); here we watch for its `control_response` success ACK and, once it
@@ -288,15 +380,26 @@ export class ClaudeSession extends EventEmitter {
     if (!raw || typeof raw !== 'object') return
     const env = raw as {
       type?: string
-      response?: { subtype?: string; request_id?: string; response?: { commands?: unknown } }
+      response?: { subtype?: string; request_id?: string; response?: Record<string, unknown> }
     }
     if (env.type !== 'control_response') return
     const reqId = env.response?.request_id
     const ok = env.response?.subtype === 'success'
 
+    // Init handshake: an explicit error ACK is a failed start, not something to wait out.
+    if (!ok && reqId === this.initRequestId && !this.initAcked) {
+      this.emitEvent({ type: 'error', message: 'The CLI rejected the session handshake.' })
+      this.teardown(null)
+      return
+    }
+
     // Init handshake ACK: flush queued user messages once.
     if (ok && reqId === this.initRequestId && !this.initAcked) {
       this.initAcked = true
+      if (this.initTimer) {
+        clearTimeout(this.initTimer)
+        this.initTimer = null
+      }
       // The initialize response carries the CLI's live slash-command list. Surface
       // it so the composer's `/` menu tracks the real commands (drift-proof) instead of
       // a hardcoded list. Defensive: only emit well-formed {name,description} entries.
@@ -320,34 +423,43 @@ export class ClaudeSession extends EventEmitter {
       return
     }
 
-    // A general awaited control_request: resolve its promise with success/failure.
+    // A general awaited control_request: resolve its promise with success + payload.
     if (reqId && this.pendingControl.has(reqId)) {
       const p = this.pendingControl.get(reqId)!
       this.pendingControl.delete(reqId)
       clearTimeout(p.timer)
-      p.resolve(ok)
+      p.resolve({ ok, payload: env.response?.response })
     }
   }
 
   /**
-   * Send a control_request and await its control_response. Resolves true on a
-   * `success` response, false on `error` or if no response arrives within `timeoutMs`
-   * (so callers can fall back). Fire-and-forget callers can ignore the promise.
+   * Send a control_request and await its control_response, returning the full result
+   * (success flag + response payload). Resolves `{ok:false}` on `error` or if no
+   * response arrives within `timeoutMs` (so callers can fall back).
    * NOTE: only reliable for the CLI's directly-handled ("worker allowlist") subtypes.
    * Callback-gated getters (get_context_usage, etc.) never respond over the wire
-   * and would always time out to false (verified).
+   * and would always time out (verified).
    */
-  private sendControl(subtype: string, extra: Record<string, unknown> = {}, timeoutMs = 5000): Promise<boolean> {
+  private sendControlResult(
+    subtype: string,
+    extra: Record<string, unknown> = {},
+    timeoutMs = 5000
+  ): Promise<ControlResult> {
     const requestId = `ctl-${randomUUID()}`
-    if (!this.child || this.child.stdin.destroyed) return Promise.resolve(false)
-    return new Promise<boolean>((resolve) => {
+    if (!this.child || !this.child.stdin.writable) return Promise.resolve({ ok: false })
+    return new Promise<ControlResult>((resolve) => {
       const timer = setTimeout(() => {
         this.pendingControl.delete(requestId)
-        resolve(false)
+        resolve({ ok: false })
       }, timeoutMs)
       this.pendingControl.set(requestId, { resolve, timer })
       this.writeLine({ type: 'control_request', request_id: requestId, request: { subtype, ...extra } })
     })
+  }
+
+  /** Convenience: awaited control_request resolving true on success. */
+  private async sendControl(subtype: string, extra: Record<string, unknown> = {}, timeoutMs = 5000): Promise<boolean> {
+    return (await this.sendControlResult(subtype, extra, timeoutMs)).ok
   }
 
   private emitEvent(e: DomainEvent): void {
@@ -355,18 +467,24 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private writeLine(obj: unknown): void {
-    if (!this.child || this.child.stdin.destroyed) return
-    this.child.stdin.write(JSON.stringify(obj) + '\n')
+    const child = this.child
+    if (!child || !child.stdin.writable) return
+    try {
+      child.stdin.write(JSON.stringify(obj) + '\n')
+    } catch {
+      // stdin ended/broke between the check and the write; 'error'/'close' own teardown.
+    }
   }
 
   /**
    * Send a user message into the session, optionally with inlined images. In gated
-   * mode, messages sent before the initialize handshake completes are queued and
-   * flushed on ACK.
+   * mode, messages sent before the initialize handshake completes, or while a reconnect
+   * is in flight, are queued and flushed on the (new) ACK, never written to an un-acked
+   * or just-ended stdin.
    */
   send(text: string, attachments?: WireAttachment[]): void {
     const turn: UserTurn = { text, attachments }
-    if (this.opts.gated && !this.initAcked) {
+    if (this.opts.gated && (!this.initAcked || this.reconnecting)) {
       this.pendingSends.push(turn)
       return
     }
@@ -375,7 +493,7 @@ export class ClaudeSession extends EventEmitter {
 
   /**
    * Write a user turn to the CLI stdin as NDJSON. With no attachments, `content` stays
-   * a plain string (the historical shape). With attachments, `content` becomes an
+   * a plain string. With attachments, `content` becomes an
    * Anthropic content-block array (attachment blocks first, then the text block),
    * which the CLI accepts inline in duplex stream-json (all three kinds verified live
    * on 2.1.209). The text block is omitted when empty (an attachments-only turn is
@@ -413,27 +531,26 @@ export class ClaudeSession extends EventEmitter {
    * silently revert to the launch-time mode. The renderer maps 'inherit' → 'default'
    * before calling this (there's no mid-session "unset"), so `mode` is concrete here.
    */
-  setPermissionMode(mode: string): void {
-    this.opts = { ...this.opts, permissionMode: mode }
-    this.writeLine({
-      type: 'control_request',
-      request_id: `sm-${randomUUID()}`,
-      request: { subtype: 'set_permission_mode', mode }
-    })
+  async setPermissionMode(mode: string): Promise<boolean> {
+    if (!this.child) return false
+    // Await the control ACK and commit opts ONLY on success (a rejected change must not
+    // update the launch mode a later respawn would rebuild from). Both set_* subtypes
+    // are verified to emit a success/error control_response.
+    const ok = await this.sendControl('set_permission_mode', { mode })
+    if (ok) this.opts = { ...this.opts, permissionMode: mode }
+    return ok
   }
 
   /**
    * Change the model of THIS running session live via the control protocol
-   * (`set_model`). Verified to work mid-session. Also updates opts so a later
-   * effort-respawn keeps the new model.
+   * (`set_model`). Verified to work mid-session. Commits opts only on the success ACK
+   * so a later effort-respawn rebuilds from the confirmed model.
    */
-  setModel(model: string): void {
-    this.opts = { ...this.opts, model }
-    this.writeLine({
-      type: 'control_request',
-      request_id: `sm-${randomUUID()}`,
-      request: { subtype: 'set_model', model }
-    })
+  async setModel(model: string): Promise<boolean> {
+    if (!this.child) return false
+    const ok = await this.sendControl('set_model', { model })
+    if (ok) this.opts = { ...this.opts, model }
+    return ok
   }
 
   /**
@@ -446,7 +563,7 @@ export class ClaudeSession extends EventEmitter {
    */
   async setEffort(effort: string): Promise<void> {
     if (this.opts.effort === effort) return
-    this.opts = { ...this.opts, effort, resumeSessionId: this.sessionId ?? this.opts.resumeSessionId }
+    this.opts = { ...this.opts, effort }
     if (!this.child) return
     // Live effort change over the control protocol (verified directly-handled);
     // respawn fallback if the control_request errors or times out.
@@ -463,17 +580,28 @@ export class ClaudeSession extends EventEmitter {
    * every effort level (verified), so this is a pure live setting, NO respawn. Persisted
    * into opts so a respawn (e.g. effort fallback) keeps it.
    */
-  async setUltracode(on: boolean): Promise<void> {
-    this.opts = { ...this.opts, ultracode: on, resumeSessionId: this.sessionId ?? this.opts.resumeSessionId }
-    if (!this.child) return
-    await this.sendControl('apply_flag_settings', { settings: { ultracode: on } })
+  async setUltracode(on: boolean): Promise<boolean> {
+    if (!this.child) return false
+    const ok = await this.sendControl('apply_flag_settings', { settings: { ultracode: on } })
+    if (ok) this.opts = { ...this.opts, ultracode: on }
+    return ok
   }
 
-  /** Fallback: respawn with `--effort <effort> --resume <sessionId>` (the pre-control-protocol
-   *  mechanism), used only when the live `apply_flag_settings` path fails. */
+  /** Fallback: respawn with `--effort <effort> --resume <sessionId>`, used only when the
+   *  live `apply_flag_settings` path fails. */
   private respawnForEffort(): void {
     if (!this.child) return
     this.respawning = true
+    this.reconnecting = true
+    this.initAcked = false
+    // Resume the CURRENT confirmed session id (not one snapshotted before init could
+    // arrive), and never re-fork or re-apply the launch `-n` on a reconnect.
+    this.opts = {
+      ...this.opts,
+      resumeSessionId: this.sessionId ?? this.opts.resumeSessionId,
+      fork: false,
+      name: undefined
+    }
     try {
       this.child.stdin.end()
     } catch {
@@ -485,6 +613,12 @@ export class ClaudeSession extends EventEmitter {
 
   /** Interrupt the current turn via the control protocol. */
   interrupt(): void {
+    // A Stop cancels anything not yet delivered, so a later init/reconnect flush can't
+    // send a turn the user already stopped.
+    this.pendingSends = []
+    // Nothing was written to the CLI yet (still initializing / reconnecting): no running
+    // turn to interrupt, and the control channel isn't ready.
+    if (!this.initAcked) return
     // Flag the mapper so the interrupt's is_error result isn't surfaced as an error box.
     this.mapper.markInterrupted()
     this.writeLine({
@@ -501,10 +635,13 @@ export class ClaudeSession extends EventEmitter {
     return this.sendControl('stop_task', { task_id: taskId })
   }
 
-  /** Move a RUNNING foreground tool to the background; it keeps running in the tray.
-   *  Must be sent while the task runs (after task_started), else it returns backgrounded:false. */
-  backgroundTask(toolUseId: string): Promise<boolean> {
-    return this.sendControl('background_tasks', { tool_use_id: toolUseId })
+  /** Move a RUNNING foreground tool to the background; it keeps running in the tray. Must
+   *  be sent while the task runs (after task_started). A `success` envelope can still
+   *  carry `backgrounded:false` (timing/completion race), so require the payload flag
+   *  (not just delivery) before reporting the move succeeded. */
+  async backgroundTask(toolUseId: string): Promise<boolean> {
+    const r = await this.sendControlResult('background_tasks', { tool_use_id: toolUseId })
+    return r.ok && r.payload?.backgrounded === true
   }
 
   /**
@@ -534,9 +671,13 @@ export class ClaudeSession extends EventEmitter {
     // Resolve any awaited control_requests as failed + clear their timers.
     for (const [, p] of this.pendingControl) {
       clearTimeout(p.timer)
-      p.resolve(false)
+      p.resolve({ ok: false })
     }
     this.pendingControl.clear()
+    if (this.initTimer) {
+      clearTimeout(this.initTimer)
+      this.initTimer = null
+    }
     if (!this.child) return
     this.closed = true
     try {

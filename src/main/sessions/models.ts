@@ -12,8 +12,9 @@
  * Map shape: { "<cli-session-id>": { model?: string, effort?: string } }.
  */
 import { app } from 'electron'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { atomicWriteFile } from '../lib/atomic'
 
 export interface SessionModelPrefs {
   model?: string
@@ -47,8 +48,7 @@ export async function readSessionModels(): Promise<Record<string, SessionModelPr
 }
 
 async function writeSessionModels(map: Record<string, SessionModelPrefs>): Promise<void> {
-  await mkdir(app.getPath('userData'), { recursive: true })
-  await writeFile(modelsPath(), JSON.stringify(map, null, 2), 'utf8')
+  await atomicWriteFile(modelsPath(), JSON.stringify(map, null, 2))
 }
 
 // Serialize read-modify-write mutations so two concurrent switches (background sessions

@@ -1,14 +1,13 @@
 /**
  * ⌘K command palette: one door to everything (VS Code / Linear / Raycast style).
  *
- * Sessions are listed first (recency-ordered) so the common path (jump to a
- * session by name) is instant. A leading `>` scopes the query to COMMANDS only
- * (New session, Settings, Customizations, Toggle theme, Close session), matching
- * the VS Code convention, so both live on one key with no second shortcut.
+ * Sessions are listed first (recency-ordered) so the common path (jump to a session
+ * by name) is instant. A leading `>` scopes the query to commands only (New session,
+ * Settings, Customizations, Toggle theme, Close session), matching the VS Code convention,
+ * so both live on one key with no second shortcut.
  *
- * Fuzzy subsequence matching with highlighted characters (lib/fuzzy). Keyboard:
- * ↑/↓ move, Enter runs, Esc closes (via the shared escape-stack so a palette над a
- * modal closes the palette first). Themed for dark + light.
+ * Fuzzy subsequence matching with highlighted characters. Keyboard: ↑/↓ move, Enter runs,
+ * Esc closes (via the shared escape-stack so a palette over a modal closes the palette first).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession, activeSlice } from '../store'
@@ -61,9 +60,9 @@ export function CommandPalette({
     void window.clui.listSessions().then(setDisk)
   }, [])
 
-  // Build the full item set (sessions first, then commands). Recomputed when the
-  // query toggles command-scope or the disk list arrives; live sessions are read
-  // non-reactively at build time (the palette is short-lived).
+  // Build the full item set (sessions first, then commands). Recomputed when the query
+  // toggles command-scope or the disk list arrives; live sessions are read non-reactively
+  // at build time (the palette is short-lived).
   const commandMode = query.startsWith('>')
   const rawQuery = commandMode ? query.slice(1) : query
 
@@ -71,7 +70,7 @@ export function CommandPalette({
     const store = useSession.getState()
     const out: PaletteItem[] = []
 
-    // ── Sessions (skipped in command mode) ──
+    // Sessions (skipped in command mode)
     if (!commandMode) {
       const live = Object.values(store.sessions).filter((s) => !s.exited)
       const liveBySid = new Map<string, (typeof live)[number]>()
@@ -106,10 +105,11 @@ export function CommandPalette({
         out.push({
           key: `live:${s.handleId}`,
           kind: 'session',
-          // "Untitled" (not "New session") so an unnamed session's label can't collide
-          // with the "New session" COMMAND; the palette must never show two identical
-          // labels a fast keyboard user could confuse.
-          label: firstUser ? firstUser.slice(0, 80) : 'Untitled',
+          // Prefer the optimistic displayed title (a freshly named/branched session shows it
+          // in the sidebar before its jsonl exists) so the palette can find it by that name
+          // too. Else the first user message; else "Untitled" (not "New session", so an
+          // unnamed session's label can't collide with the "New session" command).
+          label: s.title ?? (firstUser ? firstUser.slice(0, 80) : 'Untitled'),
           hint: s.cwd.split('/').pop() || s.cwd,
           recency: s.lastActivityMs,
           live: true,
@@ -119,7 +119,7 @@ export function CommandPalette({
       out.sort((a, b) => b.recency - a.recency)
     }
 
-    // ── Commands (always available; the only items in command mode) ──
+    // Commands (always available; the only items in command mode)
     const activeId = store.activeHandleId
     const commands: PaletteItem[] = [
       {
@@ -213,10 +213,10 @@ export function CommandPalette({
     return [...out, ...commands]
   }, [commandMode, disk, onNewSession, onNewNamedSession, onOpenSettings, onOpenCustomizations])
 
-  // Filter + rank by the (scope-stripped) query. Match the LABEL (title) first; its
-  // matched indices drive the highlight. If the label doesn't match, fall back
-  // to the HINT (workspace name) so "scr" still finds sessions in ~/clui-scratch;
-  // a hint-only match scores lower and carries no label highlight.
+  // Filter + rank by the scope-stripped query. Match the label (title) first; its matched
+  // indices drive the highlight. If the label doesn't match, fall back to the hint (workspace
+  // name) so "scr" still finds sessions in ~/clui-scratch; a hint-only match scores lower and
+  // carries no label highlight.
   const filtered = useMemo(() => {
     const scored = items
       .map((it) => {
@@ -260,7 +260,6 @@ export function CommandPalette({
       e.preventDefault()
       runAt(sel)
     }
-    // Esc handled by the escape-stack (useEscape).
   }
 
   // Scroll the selected row into view.
@@ -291,13 +290,24 @@ export function CommandPalette({
             placeholder="Search sessions…  (type > for commands)"
             className="flex-1 bg-transparent text-sm text-content outline-none placeholder:text-faint"
             spellCheck={false}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-controls="palette-listbox"
+            aria-expanded={filtered.length > 0}
+            aria-activedescendant={filtered.length ? `palette-opt-${sel}` : undefined}
           />
           <kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-faint">
             esc
           </kbd>
         </div>
 
-        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1.5">
+        <div
+          ref={listRef}
+          id="palette-listbox"
+          role="listbox"
+          aria-label="Results"
+          className="min-h-0 flex-1 overflow-y-auto py-1.5"
+        >
           {filtered.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-faint">
               No matches for “{rawQuery.trim()}”
@@ -337,19 +347,19 @@ function Row({
   onClick: () => void
 }): JSX.Element {
   const runs = highlightRuns(item.label, matches)
-  // State is conveyed by TEXT + TONE, never a repeated status dot (the sidebar
-  // owns live-monitoring). Live sessions read at full strength; dormant ones dim.
-  // The label tone alone makes the few live sessions "pop" (Von Restorff) with no
-  // colored mark, keeping the accent scarce for the fuzzy-match highlight.
+  // State is conveyed by text + tone, never a repeated status dot (the sidebar owns
+  // live-monitoring). Live sessions read at full strength; dormant ones dim. The label
+  // tone alone makes the few live sessions "pop" with no colored mark, keeping the accent
+  // scarce for the fuzzy-match highlight.
   const isSession = item.kind === 'session'
   const dim = isSession && !item.live
-  // The verb NAMES what Enter will do (Raycast primary-action model): Switch to a
-  // running session (instant) vs Resume a dormant one (spawns a process). That
-  // materially-different consequence is the thing the user must not be surprised by.
-  // Shown only on the focused row, so exactly one verb tracks the cursor.
+  // The verb names what Enter will do: Switch to a running session (instant) vs Resume
+  // a dormant one (spawns a process). That materially-different consequence is the thing
+  // the user must not be surprised by. Shown only on the focused row, so exactly one verb
+  // tracks the cursor.
   const verb = isSession ? (item.live ? 'Switch' : 'Resume') : 'Run'
-  // Full state in the accessible name for EVERY row (the verb only renders when
-  // selected, so SR row-by-row navigation still hears live/dormant + consequence).
+  // Full state in the accessible name for every row (the verb only renders when selected,
+  // so SR row-by-row navigation still hears live/dormant + consequence).
   const aria = isSession
     ? item.live
       ? `${item.label} — live session, switch instantly`
@@ -357,16 +367,21 @@ function Row({
     : `${item.label} — command`
 
   return (
-    <button
+    // role=option in the input's listbox: keyboard focus stays in the combobox and
+    // aria-activedescendant points here, so arrow selection is announced. The aria-label
+    // carries the Switch/Resume/Run consequence for every row.
+    <div
       data-idx={idx}
+      role="option"
+      id={`palette-opt-${idx}`}
+      aria-selected={selected}
       aria-label={aria}
       onMouseMove={onHover}
       onClick={onClick}
-      /* Keyboard-first surface: the selected row needs a perceivable marker; a
-         ~1.08:1 fill alone isn't. Reuse the sidebar's active-item language (a scarce
-         terracotta left-edge bar plus the raised fill) so the eye tracks selection
-         where names are read (the left). */
-      className={`relative flex w-full items-center gap-2.5 px-4 py-2 text-left ${
+      /* Keyboard-first surface: the selected row needs a perceivable marker; a ~1.08:1 fill
+         alone isn't. Reuse the sidebar's active-item language (a scarce terracotta left-edge
+         bar plus the raised fill) so the eye tracks selection where names are read. */
+      className={`relative flex w-full cursor-pointer items-center gap-2.5 px-4 py-2 text-left ${
         selected ? 'bg-bg-raised' : ''
       }`}
     >
@@ -376,8 +391,8 @@ function Row({
           aria-hidden="true"
         />
       )}
-      {/* Neutral, monochrome leading glyph: anchors the row + aligns with command
-          icons; identical for live/dormant (it does NOT encode state). */}
+      {/* Neutral, monochrome leading glyph: anchors the row + aligns with command icons;
+          identical for live/dormant (it does not encode state). */}
       <span className="shrink-0 text-faint">
         {isSession ? <IconMessage className="h-3.5 w-3.5" /> : <CommandIcon label={item.label} />}
       </span>
@@ -396,8 +411,8 @@ function Row({
         // Focused row: the action affordance replaces the hint.
         <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-dim">
           {verb}
-          {/* text-dim (not faint) so the whole affordance clears AA 4.5:1 on the
-              selected row's raised surface in both themes (verified). */}
+          {/* text-dim (not faint) so the whole affordance clears AA 4.5:1 on the selected
+              row's raised surface in both themes. */}
           <kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px] text-dim">
             ↵
           </kbd>
@@ -407,7 +422,7 @@ function Row({
           <span className="shrink-0 truncate font-mono text-[11px] text-faint">{item.hint}</span>
         )
       )}
-    </button>
+    </div>
   )
 }
 
