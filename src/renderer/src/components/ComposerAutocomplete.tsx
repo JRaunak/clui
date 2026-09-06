@@ -8,7 +8,7 @@
  * the composer uses to (a) know if the menu is open (to delegate ↑/↓/Enter/Tab/Esc)
  * and (b) render the popover. Picking replaces the trigger token inline at the caret.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useActive, EMPTY_SLASH_COMMANDS } from '../store'
 import { fuzzyMatch, highlightRuns } from '../lib/fuzzy'
 import { resolveSlashCommands } from '../lib/slashCommands'
@@ -23,6 +23,14 @@ interface Item {
   /** Full literal replacement (incl. trigger char), overriding the default
    *  `trigger.char + value`. Agents need the quoted `@"name (agent)"` form. */
   insert?: string
+}
+
+/** Split a command hint ("desc · [name]") into prose + its argument syntax. `resolveSlashCommands`
+ *  joins them with " · ", so the last such separator marks where the CLI argumentHint begins. */
+function splitArgHint(hint?: string): { desc: string; arg?: string } {
+  if (!hint) return { desc: '' }
+  const i = hint.lastIndexOf(' · ')
+  return i === -1 ? { desc: hint } : { desc: hint.slice(0, i), arg: hint.slice(i + 3) }
 }
 
 /** Score at/above which the query matches a NAME contiguously (substring or better),
@@ -67,6 +75,10 @@ export interface AutocompleteApi {
   render: () => JSX.Element | null
   /** Feed a keydown while open; returns true if it was consumed (composer skips it). */
   onKeyDown: (e: React.KeyboardEvent) => boolean
+  /** Stable id of the listbox, for the textarea's `aria-controls`. */
+  listboxId: string
+  /** Id of the active option, for the textarea's `aria-activedescendant`; undefined when closed. */
+  activeId: string | undefined
 }
 
 export function useComposerAutocomplete(
@@ -79,6 +91,7 @@ export function useComposerAutocomplete(
   const [sel, setSel] = useState(0)
   const loadedForCwd = useRef<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const listboxId = useId()
 
   const trigger = detectTrigger(text, caret)
 
@@ -251,52 +264,70 @@ export function useComposerAutocomplete(
 
   const render = useCallback((): JSX.Element | null => {
     if (!visible) return null
+    const selItem = results[sel]?.it
+    const { desc: selDesc, arg: selArg } = splitArgHint(selItem?.hint)
     return (
-      <div
-        ref={listRef}
-        className="absolute bottom-full left-0 z-50 mb-2 max-h-72 w-[min(460px,90%)] overflow-y-auto rounded-lg border border-border bg-bg-elev py-1 shadow-lg"
-      >
-        <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-faint">
-          {trigger?.char === '@' && <IconSearch className="h-3 w-3" />}
-          {trigger?.char === '/' ? 'Commands & skills' : 'Agents & files'}
-        </div>
-        {results.map((r, i) => {
-          const runs = highlightRuns(r.it.label, r.matches)
-          return (
-            <button
-              key={r.it.kind + ':' + r.it.value}
-              data-idx={i}
-              onMouseMove={() => setSel(i)}
-              onClick={() => pick(i)}
-              className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left ${i === sel ? 'bg-bg-raised' : ''}`}
-            >
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-content">
-                {runs.map((run, j) =>
-                  run.match ? (
-                    <span key={j} className="font-semibold text-accent">
-                      {run.text}
-                    </span>
-                  ) : (
-                    <span key={j}>{run.text}</span>
-                  )
-                )}
-              </span>
-              {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
-                <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 text-[10px] text-faint">
-                  {r.it.kind}
+      <div className="absolute bottom-full left-0 z-50 mb-2 flex w-[min(640px,calc(100%-1.5rem))] flex-col rounded-lg border border-border bg-bg-elev shadow-lg">
+        <div id={listboxId} ref={listRef} className="max-h-72 overflow-y-auto py-1" role="listbox">
+          <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-faint">
+            {trigger?.char === '@' && <IconSearch className="h-3 w-3" />}
+            {trigger?.char === '/' ? 'Commands & skills' : 'Agents & files'}
+          </div>
+          {results.map((r, i) => {
+            const runs = highlightRuns(r.it.label, r.matches)
+            return (
+              <button
+                key={r.it.kind + ':' + r.it.value}
+                id={`${listboxId}-opt-${i}`}
+                data-idx={i}
+                role="option"
+                aria-selected={i === sel}
+                onMouseMove={() => setSel(i)}
+                onClick={() => pick(i)}
+                className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left ${i === sel ? 'bg-bg-raised' : ''}`}
+              >
+                <span className="max-w-[45%] shrink-0 truncate font-mono text-xs text-content">
+                  {runs.map((run, j) =>
+                    run.match ? (
+                      <span key={j} className="font-semibold text-accent">
+                        {run.text}
+                      </span>
+                    ) : (
+                      <span key={j}>{run.text}</span>
+                    )
+                  )}
                 </span>
-              )}
-              {r.it.hint && (
-                <span className="max-w-[55%] shrink-0 truncate text-[11px] text-dim">{r.it.hint}</span>
-              )}
-            </button>
-          )
-        })}
+                {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
+                  <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 text-[10px] text-faint">
+                    {r.it.kind}
+                  </span>
+                )}
+                {r.it.hint && (
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-dim">{r.it.hint}</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+        {selItem && (
+          <div className="border-t border-border px-3 py-2">
+            <div className="flex items-baseline justify-between gap-3">
+              <div className="flex min-w-0 items-baseline gap-2">
+                <span className="truncate font-mono text-xs text-content">{selItem.label}</span>
+                {selArg && <span className="shrink-0 font-mono text-[11px] text-dim">{selArg}</span>}
+              </div>
+              <span className="shrink-0 text-[11px] text-faint">↵ run · ↑↓ move · esc close</span>
+            </div>
+            {selDesc && <p className="mt-1 line-clamp-2 text-[11px] text-dim">{selDesc}</p>}
+          </div>
+        )}
       </div>
     )
-  }, [visible, results, sel, trigger?.char, pick])
+  }, [visible, results, sel, trigger?.char, pick, listboxId])
 
-  return { open: visible, render, onKeyDown }
+  const activeId = visible ? `${listboxId}-opt-${sel}` : undefined
+
+  return { open: visible, render, onKeyDown, listboxId, activeId }
 }
 
 /** Load the workspace's skills (once per cwd) for the `/` menu. */

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { SessionSummary } from '../../../shared/sessions'
-import { useSession, forgetSessionCost } from '../store'
+import { useSession, forgetSessionCost, sessionDisplayTitle } from '../store'
 import {
   IconRefresh,
   IconChevron,
@@ -270,11 +270,10 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     for (const s of live) {
       if (matchedHandles.has(s.handleId)) continue
       if (s.exited) continue
-      const firstUser = s.messages.find((m) => m.role === 'user')?.text.trim()
       ensureGroup(s.cwd).push({
         id: s.sessionId,
         // Spawn-time title shows immediately before the jsonl lands; otherwise fall back to the first user message.
-        title: s.title ?? (firstUser ? firstUser.slice(0, 80) : 'Untitled'),
+        title: sessionDisplayTitle(s),
         renamed: false,
         cwd: s.cwd,
         projectSlug: null,

@@ -28,10 +28,10 @@ export function NewNamedSessionDialog({
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Name this session"
+        aria-label="New named session"
         className="flex w-[min(420px,92%)] flex-col gap-4 rounded-xl border border-border bg-bg-elev p-5 shadow-lg"
       >
-        <h2 className="font-serif text-lg font-semibold text-content">Name this session</h2>
+        <h2 className="font-serif text-lg font-semibold text-content">New named session</h2>
         <div className="flex flex-col gap-1.5">
           <input
             ref={inputRef}
@@ -51,7 +51,7 @@ export function NewNamedSessionDialog({
             spellCheck={false}
           />
           <p id="named-session-hint" className="text-[12px] text-faint">
-            Used as the session title from the first turn. Leave blank for an unnamed session.
+            Becomes the session title from the first turn. Leave blank to start unnamed.
           </p>
         </div>
         <div className="flex items-center justify-end gap-3">
@@ -61,7 +61,7 @@ export function NewNamedSessionDialog({
           {/* Constant label: a blank submit does the same visible thing (open the folder
               picker), so an empty name never reads as an error. */}
           <Button variant="primary" size="md" onClick={confirm}>
-            Choose folder…
+            Pick folder & start
           </Button>
         </div>
       </div>

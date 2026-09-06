@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { useActive, useSession, loadPersistedCosts, EMPTY_PENDING } from './store'
+import { useActive, useSession, loadPersistedCosts, sessionDisplayTitle, EMPTY_PENDING, type NoticeTone } from './store'
 import { Chat } from './components/Chat'
 import { Composer } from './components/Composer'
 import { SessionsSidebar } from './components/SessionsSidebar'
@@ -16,20 +16,37 @@ import { WorkflowTray } from './components/WorkflowTray'
 import { Button } from './components/Button'
 import { SplitNewSession } from './components/SplitNewSession'
 import { Onboarding, cliHealth } from './components/Onboarding'
-import { IconSettings, IconPlus, IconSidebar } from './components/Icon'
+import { IconSettings, IconPlus, IconSidebar, IconCheck, IconWarn, IconNoEntry, IconClose } from './components/Icon'
 import { applyTheme } from './lib/theme'
 import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
 import type { CliInfo } from '../../shared/ipc'
+
+/** Per-tone notice styling. Message text stays text-content in the render, not the tone color:
+ *  content on any 10% tint clears 4.5:1, a colored body would not. */
+const NOTICE_STYLES: Record<
+  NoticeTone,
+  { cls: string; Icon: (p: { className?: string }) => JSX.Element; tint: string }
+> = {
+  success: { cls: 'border-ok/40 bg-ok/10', Icon: IconCheck, tint: 'text-ok' },
+  warn: { cls: 'border-warn/40 bg-warn/10', Icon: IconWarn, tint: 'text-warn' },
+  error: { cls: 'border-err/40 bg-err/10', Icon: IconNoEntry, tint: 'text-err' }
+}
+
+/** Shown on the new-session controls while the CLI can't start a session. */
+const NEW_SESSION_DISABLED_HINT = 'Claude CLI unavailable. Set the path in Settings.'
 
 export function App(): JSX.Element {
   const cwd = useActive((s) => s?.cwd ?? null)
   const sessionId = useActive((s) => s?.sessionId ?? null)
   const costUsd = useActive((s) => s?.costUsd ?? null)
+  const displayTitle = useActive((s) => sessionDisplayTitle(s))
   const startSession = useSession((s) => s.startSession)
   const notice = useSession((s) => s.notice)
   const viewingSubagent = useSession((s) => s.viewingSubagent)
   const dismissNotice = useSession((s) => s.dismissNotice)
   const [cliInfo, setCliInfo] = useState<CliInfo | null>(null)
+  // No workable CLI, so nothing can start; the new-session controls go inert below.
+  const cliUnavailable = cliHealth(cliInfo) !== 'ok'
   // First-run intro flag; `null` until loaded, so the intro doesn't flash before we know.
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -245,17 +262,27 @@ export function App(): JSX.Element {
             <>
               <button
                 data-new-session
-                className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-accent text-on-accent transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
-                onClick={pickAndStart}
+                className={`flex h-[30px] w-[30px] items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar ${
+                  cliUnavailable
+                    ? 'cursor-default bg-bg-raised text-faint'
+                    : 'bg-accent text-on-accent hover:bg-accent-hover'
+                }`}
+                onClick={cliUnavailable ? undefined : pickAndStart}
+                aria-disabled={cliUnavailable || undefined}
                 aria-label="New session"
-                title="New session"
+                title={cliUnavailable ? NEW_SESSION_DISABLED_HINT : 'New session'}
               >
                 <IconPlus className="h-4 w-4" />
               </button>
             </>
           ) : (
             <>
-              <SplitNewSession onNew={pickAndStart} onNewNamed={openNamedSession} />
+              <SplitNewSession
+                onNew={pickAndStart}
+                onNewNamed={openNamedSession}
+                disabled={cliUnavailable}
+                disabledTitle={NEW_SESSION_DISABLED_HINT}
+              />
             </>
           )}
         </div>
@@ -320,14 +347,18 @@ export function App(): JSX.Element {
         <div
           className={`flex min-h-0 flex-1 flex-col ${sidebarCollapsed ? '' : 'border-l border-border'}`}
         >
-        {notice && (
-          <div className="flex items-center gap-2 border-b border-warn/40 bg-warn/10 px-4 py-1.5 text-[12px] text-warn">
-            <span className="flex-1">{notice}</span>
-            <button className="text-warn hover:text-content" onClick={dismissNotice} title="Dismiss">
-              ✕
-            </button>
-          </div>
-        )}
+        {notice && (() => {
+          const { cls, Icon, tint } = NOTICE_STYLES[notice.tone]
+          return (
+            <div className={`flex items-center gap-2 border-b px-4 py-1.5 text-[12px] text-content ${cls}`}>
+              <Icon className={`h-3.5 w-3.5 shrink-0 ${tint}`} />
+              <span className="flex-1">{notice.message}</span>
+              <button className="text-dim hover:text-content" onClick={dismissNotice} aria-label="Dismiss" title="Dismiss">
+                <IconClose className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )
+        })()}
 
         {cwd && viewingSubagent ? (
           // Maximized transcript view takes over the main region (sidebar persists).
@@ -355,13 +386,16 @@ export function App(): JSX.Element {
             {/* Bottom-left workspace/session info. Same h-8 as the sidebar footer
                 so their divider lines align across the two columns. */}
             <div className="flex h-8 items-center gap-3 border-t border-border px-4 text-[12px] text-dim">
-              <span title={cwd ?? ''}>
-                Workspace: <span className="text-dim">{cwd ? basename(cwd) : '—'}</span>
+              <span className="min-w-0 flex-1 truncate text-dim" title={displayTitle}>
+                {displayTitle}
               </span>
-              <span className="text-faint">·</span>
-              <span title={sessionId ?? ''}>
-                Session:{' '}
-                <span className="font-mono text-dim">{sessionId ? sessionId.slice(0, 8) : '—'}</span>
+              <span className="shrink-0 text-faint">·</span>
+              <span className="shrink-0" title={cwd ?? ''}>
+                {cwd ? basename(cwd) : '—'}
+              </span>
+              <span className="shrink-0 text-faint">·</span>
+              <span className="shrink-0 font-mono text-faint" title={sessionId ?? ''}>
+                {sessionId ? sessionId.slice(0, 8) : '—'}
               </span>
               {costUsd !== null && (
                 <>

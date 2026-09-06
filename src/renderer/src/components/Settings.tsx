@@ -138,7 +138,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4">
         <Field
           label="Theme"
-          hint="Light re-derives the palette for readable contrast on white; System follows your OS appearance."
+          hint="System matches your Mac's appearance. Light and Dark override it."
           onReset={isOverridden('theme') ? () => reset('theme') : undefined}
         >
           <Dropdown<CluiSettings['theme']>
@@ -156,7 +156,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
 
         <Field
           label="Claude CLI path"
-          hint="Leave empty to auto-detect. Set explicitly to share Clui with peers whose claude is elsewhere."
+          hint="Leave blank to detect Claude automatically. Set a path only if it lives somewhere unusual."
           onReset={isOverridden('cliPath') ? () => reset('cliPath') : undefined}
         >
           <div className="flex gap-2">

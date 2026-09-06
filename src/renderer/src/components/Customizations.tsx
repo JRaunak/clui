@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useActive } from '../store'
 import { IconClose } from './Icon'
 import { useEscape } from '../lib/useEscape'
@@ -74,7 +74,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
               Configuration
             </div>
             <div className="mt-0.5 text-[12px] text-dim">
-              What applies to this workspace, and where it comes from — read-only.
+              What applies to this workspace, and where it comes from. Read-only.
             </div>
           </div>
           <button
@@ -135,7 +135,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
                       title={a.name}
                       subtitle={a.description}
                       origin={a.origin}
-                      meta={[a.model && `model: ${a.model}`, a.tools && `tools: ${a.tools}`]}
+                      chips={[a.model, ...splitTools(a.tools)]}
                       onOpen={() => void window.clui.openInEditor(a.filePath)}
                     />
                   ))
@@ -153,7 +153,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
                       title={s.name}
                       subtitle={s.description}
                       origin={s.origin}
-                      meta={[s.version && `v${s.version}`]}
+                      chips={[s.version && `v${s.version}`]}
                       onOpen={() => void window.clui.openInEditor(s.filePath)}
                     />
                   ))
@@ -207,20 +207,39 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
   )
 }
 
+/** Split a frontmatter `tools` string ("Read, Grep, Bash") into one label per tool. */
+function splitTools(tools?: string): string[] {
+  return tools ? tools.split(',').map((t) => t.trim()).filter(Boolean) : []
+}
+
 function ItemRow({
   title,
   subtitle,
   origin,
   meta,
+  chips,
   onOpen
 }: {
   title: string
   subtitle?: string
   origin: ConfigOrigin
+  /** Free-form lines rendered as mono code (hooks/MCP). */
   meta?: (string | undefined | false)[]
+  /** Compact chips (agent model + tools, skill version). */
+  chips?: (string | undefined | false)[]
   onOpen?: () => void
 }): JSX.Element {
   const metaItems = (meta ?? []).filter(Boolean) as string[]
+  const chipItems = (chips ?? []).filter(Boolean) as string[]
+  const descRef = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+  // Measure in the clamped state (expanded starts false) to learn if the toggle is needed.
+  useLayoutEffect(() => {
+    const el = descRef.current
+    if (el) setOverflows(el.scrollHeight > el.clientHeight)
+  }, [subtitle])
+
   return (
     <div className="mb-2 rounded-md border border-border bg-bg px-3 py-2.5">
       <div className="flex items-center gap-2">
@@ -236,7 +255,31 @@ function ItemRow({
           </button>
         )}
       </div>
-      {subtitle && <div className="mt-1 text-xs text-dim">{subtitle}</div>}
+      {subtitle && (
+        <>
+          <div ref={descRef} className={`mt-1 text-xs text-dim ${expanded ? '' : 'line-clamp-3'}`}>
+            {subtitle}
+          </div>
+          {overflows && (
+            <button
+              className="mt-0.5 text-[12px] text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              onClick={() => setExpanded((v) => !v)}
+              aria-expanded={expanded}
+            >
+              {expanded ? 'Show less' : 'Show more'}
+            </button>
+          )}
+        </>
+      )}
+      {chipItems.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {chipItems.map((c, i) => (
+            <span key={i} className="rounded bg-bg-raised px-1.5 py-0.5 text-[11px] text-dim">
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
       {metaItems.length > 0 && (
         <div className="mt-1.5 flex flex-col gap-1">
           {metaItems.map((m, i) => (

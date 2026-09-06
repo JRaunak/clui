@@ -16,7 +16,7 @@ import {
 import { useEscape } from '../lib/useEscape'
 import { Markdown } from './Markdown'
 import { ToolGroup } from './MessageView'
-import { IconClose } from './Icon'
+import { IconClose, IconWarn } from './Icon'
 import type { HistoryMessage } from '../../../shared/sessions'
 import type { SubagentMessage } from '../store'
 import { deriveModelInfo, EFFORT_LABELS, isEffortChoice } from '../../../shared/settings'
@@ -240,10 +240,14 @@ function WorkflowTreeView({
           {failed > 0 && (
             <>
               <span className="text-faint">·</span>
-              <span className="rounded bg-err/15 px-1.5 py-0.5 font-semibold text-err">{failed} failed</span>
+              {/* text-err on the plain header strip is 4.66:1; an err/15 tint drops it to 3.93:1. */}
+              <span className="flex items-center gap-1 font-semibold text-err">
+                <IconWarn className="h-3.5 w-3.5" aria-hidden="true" />
+                {failed} failed
+              </span>
             </>
           )}
-          {workflow.endedStatus && <span className="ml-1 text-ok">· ended</span>}
+          {workflow.endedStatus && <span className="ml-1 text-faint">· ended</span>}
         </span>
         <button
           className="ml-1 rounded-md p-1 text-dim hover:bg-bg-raised hover:text-content"
@@ -278,7 +282,8 @@ function WorkflowTreeView({
                       } ${/fail|error/i.test(a.state) ? 'text-content' : ''}`}
                     >
                       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.cls}`} aria-hidden="true" />
-                      <span className="truncate font-mono text-[11.5px]">{a.label}</span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px]">{a.label}</span>
+                      <span className="shrink-0 font-mono text-[11px] text-faint">{st.label}</span>
                     </button>
                   )
                 })}
@@ -292,10 +297,14 @@ function WorkflowTreeView({
 
         {/* Detail pane for the selected agent: its full transcript. */}
         <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-          {!sel ? (
+          {sel ? (
+            <WorkflowAgentDetail key={sel.index} agent={sel} />
+          ) : workflow.agents.length > 0 ? (
             <div className="text-sm text-faint">Select an agent to see its transcript.</div>
           ) : (
-            <WorkflowAgentDetail key={sel.index} agent={sel} />
+            <div className="flex h-full items-center justify-center text-sm text-faint">
+              Starting workflow…
+            </div>
           )}
         </div>
       </div>
@@ -312,9 +321,20 @@ function NestedAgentCard({
   child: NestedSubagent
   onOpen: () => void
 }): JSX.Element {
-  const hasStreamed = useActive(
-    (s) => (s?.subagentMessages[child.childToolUseId]?.length ?? 0) > 0
-  )
+  // Streaming-started is not "done": take the child's real lifecycle from its bg-task handle
+  // (if backgrounded) or its launching tool's result, so a still-running child never reads teal.
+  const status = useActive((s): 'running' | 'done' | 'failed' | 'stopped' => {
+    if (!s) return 'running'
+    const bg = Object.values(s.backgroundTasks).find(
+      (t) => t.taskType === 'local_agent' && t.toolUseId === child.childToolUseId
+    )
+    if (bg) return bg.status === 'killed' ? 'stopped' : bg.status === 'failed' ? 'failed' : bg.status === 'running' ? 'running' : 'done'
+    const tool = findLaunchTool(s.subagentMessages, child.childToolUseId)
+    if (tool) return tool.result === undefined ? 'running' : tool.isError ? 'failed' : 'done'
+    return 'running'
+  })
+  const dot =
+    status === 'done' ? 'bg-ok' : status === 'failed' ? 'bg-err' : status === 'stopped' ? 'bg-faint' : 'bg-info'
   const label = child.name === 'Task' ? 'Agent' : child.name
   return (
     <button
@@ -334,10 +354,8 @@ function NestedAgentCard({
         </span>
       )}
       <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-[11px]">
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${hasStreamed ? 'bg-ok' : 'bg-warn'}`}
-          aria-hidden="true"
-        />
+        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden="true" />
+        <span className="text-faint">{status}</span>
         <span className="text-faint">→</span>
       </span>
     </button>
@@ -577,6 +595,9 @@ export function SubagentView(): JSX.Element | null {
         {subagentTrail.map((id, i) => {
           const m = resolveAgentMeta(id, messages, childrenByParent)
           const isLast = i === subagentTrail.length - 1
+          // Ancestors carry the task name (desc) so a deep trail reads its work, not "Agent · Agent".
+          const crumb = m.desc.trim() || m.subtype || 'Agent'
+          const short = crumb.length > 24 ? `${crumb.slice(0, 23)}…` : crumb
           return (
             <span key={id} className="flex items-center gap-2">
               <span className="text-faint">·</span>
@@ -586,9 +607,9 @@ export function SubagentView(): JSX.Element | null {
                 <button
                   className="font-mono text-dim hover:text-content"
                   onClick={() => gotoSubagentDepth(i)}
-                  title="Jump to this subagent"
+                  title={crumb}
                 >
-                  {m.name}
+                  {short}
                 </button>
               )}
             </span>
@@ -611,9 +632,13 @@ export function SubagentView(): JSX.Element | null {
         <span className="ml-auto flex items-center gap-2 font-mono text-[12px]">
           {running ? (
             <>
-              <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden="true" />
-              {/* A backgrounded subagent reads "launched": we know its Agent tool fired. A foreground one is mid-tool-call. */}
-              <span className="text-warn">{bgTask ? 'launched' : 'running'}</span>
+              {/* A backgrounded subagent reads ambient info-blue "launched" (its Agent tool fired);
+                  a foreground one is mid-tool-call and reads live amber "running". */}
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${bgTask ? 'bg-info' : 'bg-warn'}`}
+                aria-hidden="true"
+              />
+              <span className={bgTask ? 'text-info' : 'text-warn'}>{bgTask ? 'launched' : 'running'}</span>
             </>
           ) : (
             <>

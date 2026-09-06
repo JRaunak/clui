@@ -2,8 +2,14 @@ import { useState } from 'react'
 import { useActive, EMPTY_STRINGS } from '../store'
 import { IconChevron, IconFile } from './Icon'
 
+/** Workspace-relative path; a file outside cwd stays absolute. */
+function toWorkspaceRelative(cwd: string | null, path: string): string {
+  return cwd && path.startsWith(cwd + '/') ? path.slice(cwd.length + 1) : path
+}
+
 export function ChangedFiles(): JSX.Element | null {
   const changedFiles = useActive((s) => s?.changedFiles ?? EMPTY_STRINGS)
+  const cwd = useActive((s) => s?.cwd ?? null)
   const [open, setOpen] = useState(true)
   const [error, setError] = useState<string | null>(null)
   if (changedFiles.length === 0) return null
@@ -35,16 +41,29 @@ export function ChangedFiles(): JSX.Element | null {
         </button>
         {open && (
           <div className="mt-1.5 flex flex-col gap-0.5">
-            {changedFiles.map((f) => (
-              <button
-                key={f}
-                className="flex items-center gap-1.5 truncate rounded px-1 py-0.5 text-left font-mono text-[12px] text-dim transition-colors hover:bg-bg-raised hover:text-accent"
-                onClick={() => void openFile(f)}
-                title={`Open in editor: ${f}`}
-              >
-                <span className="truncate">{f}</span>
-              </button>
-            ))}
+            {changedFiles.map((f) => {
+              const rel = toWorkspaceRelative(cwd, f)
+              const cut = rel.lastIndexOf('/')
+              const dir = cut >= 0 ? rel.slice(0, cut + 1) : ''
+              const base = cut >= 0 ? rel.slice(cut + 1) : rel
+              return (
+                <button
+                  key={f}
+                  className="group flex items-center rounded px-1 py-0.5 text-left font-mono text-[12px] transition-colors hover:bg-bg-raised"
+                  onClick={() => void openFile(f)}
+                  title={`Open in editor: ${f}`}
+                >
+                  {/* Directory truncates from the START (rtl) so the ellipsis eats leftmost
+                      segments, keeping the basename visible. */}
+                  {dir && (
+                    <span className="min-w-0 flex-1 truncate text-left text-faint [direction:rtl] group-hover:text-accent">
+                      {dir}
+                    </span>
+                  )}
+                  <span className="shrink-0 font-medium text-content group-hover:text-accent">{base}</span>
+                </button>
+              )
+            })}
             {error && <div className="mt-1 text-[12px] text-err">{error}</div>}
           </div>
         )}

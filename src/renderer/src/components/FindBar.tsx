@@ -6,8 +6,8 @@
  *
  * Matches are per-message (a message either contains the query or not). Enter / ⇧Enter
  * (and the ⌘G / ⌘⇧G menu fallbacks) step between matching messages; each step requests
- * Chat scroll to + flash that message. "N of M" shows the position. Inline term-highlight
- * inside rendered markdown is deferred (v1 flashes the card).
+ * Chat scroll to that message and marks it as the active match (`onActiveMatch`). "N of M"
+ * shows the position. Inline term-highlight inside rendered markdown is deferred.
  */
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useActive, useSession, EMPTY_MESSAGES } from '../store'
@@ -32,7 +32,7 @@ function messageText(m: {
   return parts.join('\n')
 }
 
-export function FindBar(): JSX.Element | null {
+export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null) => void }): JSX.Element | null {
   const open = useSession((s) => s.findOpen)
   const setFindOpen = useSession((s) => s.setFindOpen)
   const requestScrollTo = useSession((s) => s.requestScrollTo)
@@ -73,8 +73,9 @@ export function FindBar(): JSX.Element | null {
       const n = ((idx % matches.length) + matches.length) % matches.length
       setCurrent(n)
       requestScrollTo(matches[n])
+      onActiveMatch?.(matches[n])
     },
-    [matches, requestScrollTo]
+    [matches, requestScrollTo, onActiveMatch]
   )
 
   // On a real query change, jump to the last match rather than the first: it sits nearest
@@ -87,8 +88,10 @@ export function FindBar(): JSX.Element | null {
       const last = matches.length - 1
       setCurrent(last)
       requestScrollTo(matches[last])
+      onActiveMatch?.(matches[last])
     } else {
       setCurrent(0)
+      onActiveMatch?.(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deferredQuery])
@@ -138,9 +141,14 @@ export function FindBar(): JSX.Element | null {
       />
       <span
         className="min-w-[3.5rem] shrink-0 text-right font-mono text-[11px] tabular-nums text-dim"
-        aria-live="polite"
+        aria-hidden="true"
       >
-        {deferredQuery.trim() ? (count ? `${current + 1} of ${count}` : 'No results') : ''}
+        {deferredQuery.trim() ? (count ? `${current + 1} of ${count}` : 'No matches') : ''}
+      </span>
+      {/* Matches are message-level, so the visible count elides the unit; the announcement
+          carries the honest one for assistive tech. */}
+      <span className="sr-only" role="status" aria-live="polite">
+        {deferredQuery.trim() ? (count ? `Match ${current + 1} of ${count} messages` : 'No matches') : ''}
       </span>
       <div className="flex items-center">
         <button

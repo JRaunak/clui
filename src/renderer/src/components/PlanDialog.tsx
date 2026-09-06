@@ -54,7 +54,7 @@ export function PlanDialog({ request }: { request: PendingPermission }): JSX.Ele
             Plan mode
           </div>
           <div id="plan-title" className="mt-1.5 font-serif text-lg font-semibold text-content">
-            Review the plan
+            {plan ? 'Review the plan' : 'No plan to review'}
           </div>
         </div>
 
@@ -84,11 +84,11 @@ export function PlanDialog({ request }: { request: PendingPermission }): JSX.Ele
         {/* Safe action (Keep planning) is DOM-first and nothing is autofocused; Enter isn't
             bound to the primary, so a reflexive keypress can't start building. */}
         <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
-          <Button variant="secondary" size="md" onClick={keepPlanning}>
+          <Button variant={plan ? 'secondary' : 'primary'} size="md" onClick={keepPlanning}>
             Keep planning
           </Button>
-          <Button variant="primary" size="md" onClick={startBuilding}>
-            Start building
+          <Button variant={plan ? 'primary' : 'secondary'} size="md" onClick={startBuilding}>
+            {plan ? 'Start building' : 'Build without a plan'}
           </Button>
         </div>
       </div>

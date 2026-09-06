@@ -102,13 +102,13 @@ export function Onboarding({
         )}
 
         <div className="mt-6 flex items-center gap-2">
-          <Button variant="primary" size="md" onClick={onRecheck}>
-            <IconRefresh className="h-4 w-4" />
-            Re-check
-          </Button>
-          <Button variant="secondary" size="md" onClick={onOpenSettings}>
+          <Button variant="primary" size="md" onClick={onOpenSettings}>
             <IconSettings className="h-4 w-4" />
             Set path manually
+          </Button>
+          <Button variant="secondary" size="md" onClick={onRecheck}>
+            <IconRefresh className="h-4 w-4" />
+            Re-check
           </Button>
         </div>
       </div>

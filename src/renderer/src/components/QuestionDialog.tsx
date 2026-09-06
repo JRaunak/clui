@@ -2,7 +2,7 @@
  *  it as `can_use_tool` with `requires_user_interaction: true` (fires even in bypassPermissions).
  *  Multiple questions, numbered options + free-text, Submit enables only when every question
  *  is answered. Wire format: allow + updatedInput = { questions, answers }. */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useSession, type PendingPermission } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { useDialogFocus } from '../lib/useDialogFocus'
@@ -68,8 +68,6 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
   const [freeText, setFreeText] = useState<Record<number, string>>({})
   // Optional per-question note, folded into the answer on submit. Never gates submit.
   const [note, setNote] = useState<Record<number, string>>({})
-  // Which option's preview fills the side pane. Resolved to hovered → selected → first.
-  const [hovered, setHovered] = useState<number | null>(null)
   const freeRef = useRef<HTMLInputElement>(null)
 
   const isAnswered = useCallback(
@@ -140,9 +138,6 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
 
   useEscape(true, cancel)
 
-  // Switching questions clears the hovered option so stale hover-index can't drive the new preview.
-  useEffect(() => setHovered(null), [tab])
-
   const tablistRef = useRef<HTMLDivElement>(null)
 
   // Tab stays native so options, free text, and footer are reachable in DOM order. Enter submits
@@ -185,12 +180,12 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
   // Tab-bar only shows when there's more than one question.
   const showTabs = questions.length > 1
 
-  // Pane follows hovered → selected → first option, so it's never empty. No previews keeps compact layout.
+  // Pane follows the selected option (first, for multiSelect); empty until something is picked.
   const hasPreviews = q.options.some((o) => !!o.preview)
   const selectedIdx = q.options.findIndex((o) => (picked[qi] ?? []).includes(o.label))
-  const activeIdx = hovered ?? (selectedIdx >= 0 ? selectedIdx : 0)
+  const selectedOption = selectedIdx >= 0 ? q.options[selectedIdx] : null
   // Coerce non-string preview to '' so the pane never shows `[object Object]`.
-  const rawPreview = q.options[activeIdx]?.preview
+  const rawPreview = selectedOption?.preview
   const activePreview = typeof rawPreview === 'string' ? rawPreview : ''
 
   const optionList = (
@@ -204,7 +199,6 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
           multi={Boolean(q.multiSelect)}
           selected={(picked[qi] ?? []).includes(opt.label)}
           onClick={() => choose(qi, opt.label, Boolean(q.multiSelect))}
-          onHover={hasPreviews ? () => setHovered(oi) : undefined}
         />
       ))}
       {/* Type something: this row itself becomes the text input when chosen. */}
@@ -229,7 +223,6 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
           multi={Boolean(q.multiSelect)}
           selected={false}
           onClick={() => choose(qi, FREE_TEXT, false)}
-          onHover={hasPreviews ? () => setHovered(null) : undefined}
         />
       )}
     </>
@@ -280,7 +273,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
             >
               {optionList}
             </div>
-            <PreviewPane text={activePreview} />
+            <PreviewPane text={activePreview} selectedLabel={selectedOption?.label ?? null} />
           </div>
         ) : (
           <div
@@ -315,8 +308,7 @@ function OptionRow({
   description,
   multi,
   selected,
-  onClick,
-  onHover
+  onClick
 }: {
   index: number
   label: string
@@ -325,16 +317,12 @@ function OptionRow({
   multi: boolean
   selected: boolean
   onClick: () => void
-  // When previews exist, hovering/focusing a row drives the side pane. onFocus so tabbing updates the preview.
-  onHover?: () => void
 }): JSX.Element {
   return (
     <button
       role={multi ? 'checkbox' : 'radio'}
       aria-checked={selected}
       onClick={onClick}
-      onMouseEnter={onHover}
-      onFocus={onHover}
       className={`flex items-start gap-2.5 rounded-md border px-3 py-2 text-left transition-colors ${
         selected ? 'border-accent bg-accent-surface' : 'border-border hover:border-border-strong hover:bg-bg-raised'
       }`}
@@ -349,14 +337,20 @@ function OptionRow({
   )
 }
 
-/** Preview side-panel. Reuses the existing surface styling so it doesn't read as a separate widget. */
-function PreviewPane({ text }: { text: string }): JSX.Element {
+/** Preview side-panel. Reuses the existing surface styling so it doesn't read as a separate widget.
+ *  selectedLabel null means nothing is picked yet. */
+function PreviewPane({ text, selectedLabel }: { text: string; selectedLabel: string | null }): JSX.Element {
   return (
     <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-tool">
-      <div className="border-b border-border/60 px-3 py-1.5">
-        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-faint">Preview</span>
+      <div className="flex min-w-0 items-baseline gap-1.5 border-b border-border/60 px-3 py-1.5">
+        <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.14em] text-faint">Preview</span>
+        {selectedLabel && <span className="min-w-0 truncate text-[11px] text-dim">{selectedLabel}</span>}
       </div>
-      {text ? (
+      {selectedLabel === null ? (
+        <div className="flex flex-1 items-center justify-center px-3 py-2.5 text-center text-sm text-faint">
+          Select an option to preview it.
+        </div>
+      ) : text ? (
         <pre className="max-h-[46vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs text-content">
           {text}
         </pre>

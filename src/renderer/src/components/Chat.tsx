@@ -42,7 +42,15 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const tasksDone = tasks.filter((t) => t.status === 'completed').length
 
   const scrollTarget = useSession((s) => s.scrollTarget)
+  const findOpen = useSession((s) => s.findOpen)
+  // Persistent "you are here" for the current find match (moves on Enter/⇧Enter, cleared
+  // when find closes). Distinct from `flashId`, the transient highlight a global-search jump
+  // leaves when the find bar is closed.
+  const [activeMatchId, setActiveMatchId] = useState<string | null>(null)
   const [flashId, setFlashId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!findOpen) setActiveMatchId(null)
+  }, [findOpen])
 
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   // atBottom lives in a ref (read by streaming/resize logic without re-subscribing) and
@@ -107,17 +115,19 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
     setHasNew(false)
   }, [behavior])
 
-  // Consume a scroll-to-message request: scroll to it centered and flash the card. Keyed on
-  // nonce so repeated jumps to the same id re-fire; does not touch atBottom/follow.
+  // Consume a scroll-to-message request: scroll it to center. Keyed on nonce so repeated jumps
+  // to the same id re-fire; does not touch atBottom/follow. The active find match carries its own
+  // persistent marker (via FindBar), so only a global-search jump (find bar closed) flashes.
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!scrollTarget) return
     const idx = messages.findIndex((m) => m.id === scrollTarget.messageId)
     if (idx < 0) return
     virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center', behavior })
+    if (findOpen) return
     setFlashId(scrollTarget.messageId)
     if (flashTimer.current) clearTimeout(flashTimer.current)
-    // Flash duration; the highlight is opacity/color only, so reduced-motion flattens it safely.
+    // Color-only fade, so reduced-motion flattens it safely.
     flashTimer.current = setTimeout(() => setFlashId(null), 1600)
     return () => {
       if (flashTimer.current) clearTimeout(flashTimer.current)
@@ -130,14 +140,17 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         className="flex flex-1 flex-col overflow-y-auto px-7 py-6"
         style={{ paddingBottom: 'calc(var(--dock-h, 0px) + 1.5rem)' }}
       >
-        <div className="m-auto flex max-w-sm flex-col items-center gap-2 text-center">
+        {/* A failed transcript read collapses to empty history, indistinguishable from a session
+            with nothing saved. So the resumed copy claims context (which the CLI holds) without
+            asserting what was saved. */}
+        <div className="m-auto flex max-w-sm flex-col items-center gap-2 text-center" aria-live="polite">
           <span className="h-2 w-2 rounded-full bg-accent/70" aria-hidden="true" />
           <p className="font-serif text-lg italic text-dim">
             {resumed ? 'Resumed session' : 'A fresh session'}
           </p>
           <p className="text-sm leading-relaxed text-faint">
             {resumed
-              ? 'Continue the conversation below — Claude still has the full context.'
+              ? 'No messages were saved yet. Continue below; the CLI still has its context.'
               : 'Type a message below to begin. Claude runs in this workspace.'}
           </p>
         </div>
@@ -170,13 +183,15 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
                 <span className="h-px flex-1 bg-border" />
               </div>
             )}
-            {/* Flash-highlight the jumped-to message. A tinted ring that fades out; color-only
-                so reduced-motion loses nothing. */}
+            {/* Active find match gets a persistent left-anchor + tint; a global-search jump gets
+                a transient color-only ring (reduced-motion safe). */}
             <div
               className={
-                flashId === m.id
-                  ? 'rounded-lg ring-2 ring-accent/60 transition-shadow duration-700'
-                  : 'rounded-lg ring-0 ring-transparent transition-shadow duration-700'
+                activeMatchId === m.id
+                  ? 'rounded-lg border-l-2 border-accent bg-accent-surface'
+                  : flashId === m.id
+                    ? 'rounded-lg border-l-2 border-transparent ring-2 ring-accent/60 transition-shadow duration-700'
+                    : 'rounded-lg border-l-2 border-transparent ring-0 ring-transparent transition-shadow duration-700'
               }
             >
               <MessageView message={m} />
@@ -212,7 +227,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
           taskCount={taskUiActive ? { done: tasksDone, total: tasks.length } : null}
         />
       )}
-      <FindBar />
+      <FindBar onActiveMatch={setActiveMatchId} />
     </div>
   )
 }

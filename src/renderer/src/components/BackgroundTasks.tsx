@@ -18,7 +18,7 @@ import {
 } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { useClickOutside } from '../lib/useClickOutside'
-import { IconClose, IconCheck } from './Icon'
+import { IconCheck, IconStop, IconWarn, IconNoEntry } from './Icon'
 
 const EMPTY: Record<string, BackgroundTask> = {}
 const EMPTY_SUB_MSGS: Record<string, SubagentMessage[]> = {}
@@ -41,6 +41,9 @@ export function BackgroundTasks(): JSX.Element | null {
 
   const list = Object.values(tasks).sort((a, b) => a.startMs - b.startMs)
   const running = list.filter((t) => t.status === 'running')
+  const stopped = list.filter((t) => t.status === 'killed').length
+  const failed = list.filter((t) => t.status === 'failed').length
+  const done = list.length - running.length - stopped - failed
   // Work the user's own turn started, split by kind. Anything a subagent started (a shell
   // it ran, or an agent it spawned) nests under that agent. Only one level of indent,
   // because the popover is 420px wide and deeper chains would march right past the edge.
@@ -130,8 +133,8 @@ export function BackgroundTasks(): JSX.Element | null {
         aria-expanded={open}
       >
         <span
-          className="h-1.5 w-1.5 rounded-full bg-info"
-          style={running.length > 0 ? { animation: 'var(--animate-breathe)' } : undefined}
+          className={`h-1.5 w-1.5 rounded-full ${failed > 0 ? 'bg-err' : 'bg-info'}`}
+          style={running.length > 0 && failed === 0 ? { animation: 'var(--animate-breathe)' } : undefined}
           aria-hidden="true"
         />
         {running.length > 0
@@ -140,14 +143,21 @@ export function BackgroundTasks(): JSX.Element | null {
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 mb-1.5 w-[min(420px,90vw)] overflow-hidden rounded-lg border border-border bg-bg-elev shadow-lg">
+        <div className="absolute bottom-full right-0 mb-1.5 w-[min(420px,90vw)] overflow-hidden rounded-lg border border-border bg-bg-elev shadow-lg">
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <span className="text-xs font-semibold text-content">Background tasks</span>
-            {/* "done" is omitted when zero: bash rows are deleted on terminal and subagent
-                rows linger only ~15s, so the count is almost always 0. */}
-            <span className="ml-auto font-mono text-[11px] text-faint">
-              {running.length} running
-              {list.length - running.length > 0 ? ` · ${list.length - running.length} done` : ''}
+            {/* Failed sits in its own err-toned segment so an outcome isn't folded into the
+                neutral "done" count. */}
+            <span className="ml-auto flex items-center gap-1 font-mono text-[11px] text-faint">
+              {running.length} running · {done} done
+              {stopped > 0 ? ` · ${stopped} stopped` : ''}
+              {failed > 0 && (
+                <span className="flex items-center gap-1 text-err">
+                  {' · '}
+                  <IconWarn className="h-3 w-3" aria-hidden="true" />
+                  {failed} failed
+                </span>
+              )}
             </span>
           </div>
           <div className="max-h-[40vh] overflow-y-auto py-1">
@@ -244,9 +254,9 @@ function Row({
         // trailing word states it too, so this isn't colour alone. The word stays faint:
         // err is 4.34:1 on the hover surface, which fails 4.5:1 as 11px text, while the
         // glyph only needs 3:1.
-        <IconClose className="h-3.5 w-3.5 text-err" />
+        <IconWarn className="h-3.5 w-3.5 text-err" />
       ) : task.status === 'killed' ? (
-        <IconClose className="h-3.5 w-3.5 text-faint" />
+        <IconNoEntry className="h-3.5 w-3.5 text-faint" />
       ) : (
         <IconCheck className="h-3.5 w-3.5 text-ok" />
       )}
@@ -293,7 +303,7 @@ function Row({
           title="Stop this task"
           aria-label={stopLabel}
         >
-          <IconClose className="h-3.5 w-3.5" />
+          <IconStop className="h-3.5 w-3.5" />
         </button>
       )}
     </>

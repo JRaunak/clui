@@ -292,13 +292,21 @@ export interface PerSessionState {
  */
 const LIVE_SESSION_CAP = 8
 
+/** Tone of the app-level notice banner, driving its color + icon. */
+export type NoticeTone = 'success' | 'warn' | 'error'
+/** The transient app-level notice: a message plus the tone that channels its styling. */
+export interface Notice {
+  message: string
+  tone: NoticeTone
+}
+
 interface SessionStore {
   /** All live sessions, keyed by handleId. */
   sessions: Record<string, PerSessionState>
   /** The session the UI currently views (null = none open → welcome screen). */
   activeHandleId: string | null
   /** Transient app-level notice (e.g. a session was evicted by the cap). */
-  notice: string | null
+  notice: Notice | null
   /**
    * The `parent_tool_use_id` of the subagent/workflow whose transcript is being
    * VIEWED in the maximized transcript view (null = normal chat). Scoped to the
@@ -406,8 +414,9 @@ interface SessionStore {
   dismissCompactSuggestion: () => void
   /** Route one tagged event into its session's slice. */
   applyEvent: (handleId: string, e: DomainEvent) => void
-  /** Set the transient app-level notice (e.g. an attachment rejection). */
-  setNotice: (message: string) => void
+  /** Set the transient app-level notice. Tone defaults to 'warn' so a caller that omits it
+   *  gets the amber banner. */
+  setNotice: (message: string, tone?: NoticeTone) => void
   /** Dismiss the transient app-level notice. */
   dismissNotice: () => void
   /** Open the maximized transcript view for a subagent (by parent_tool_use_id). Resets
@@ -427,6 +436,14 @@ interface SessionStore {
 /** The active session's slice, or null when nothing is open. */
 export function activeSlice(store: SessionStore): PerSessionState | null {
   return store.activeHandleId ? (store.sessions[store.activeHandleId] ?? null) : null
+}
+
+/** The session's shown title: its explicit/branch name, else the first user message
+ *  (truncated), else 'Untitled'. One derivation so the footer and the sidebar row can't drift. */
+export function sessionDisplayTitle(slice: Pick<PerSessionState, 'title' | 'messages'> | null): string {
+  if (!slice) return 'Untitled'
+  const firstUser = slice.messages.find((m) => m.role === 'user')?.text.trim()
+  return slice.title ?? (firstUser ? firstUser.slice(0, 80) : 'Untitled')
 }
 
 /**
@@ -837,7 +854,10 @@ function evictIfOverCap(
 
   if (!victim) {
     set(() => ({
-      notice: `${live.length} live sessions are all working — finish or close some to free memory.`
+      notice: {
+        message: 'All live sessions are working. Finish or close one to free memory.',
+        tone: 'warn'
+      }
     }))
     return
   }
@@ -850,7 +870,10 @@ function evictIfOverCap(
     delete next[victim.handleId]
     return {
       sessions: next,
-      notice: `Closed background session (${label}) to stay under ${LIVE_SESSION_CAP} live sessions in ${basename(newCwd)}.`
+      notice: {
+        message: `Closed background session (${label}) to stay under ${LIVE_SESSION_CAP} live sessions in ${basename(newCwd)}.`,
+        tone: 'warn'
+      }
     }
   })
 }
@@ -997,7 +1020,10 @@ export const useSession = create<SessionStore>((set, get) => ({
       set(() => ({ sessionGroups: groups, sessionsLoading: false }))
     } catch {
       if (gen !== refreshGen) return
-      set(() => ({ sessionsLoading: false, notice: 'Could not refresh the session list.' }))
+      set(() => ({
+        sessionsLoading: false,
+        notice: { message: 'Could not refresh the session list.', tone: 'error' }
+      }))
     }
   },
 
@@ -1166,7 +1192,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (!ok) {
       set((s) => ({
         ...patchSlice(s, active.handleId, prev),
-        notice: 'Could not change permission mode.'
+        notice: { message: 'Could not change permission mode.', tone: 'error' }
       }))
     }
   },
@@ -1217,7 +1243,10 @@ export const useSession = create<SessionStore>((set, get) => ({
     // than leave the UI (and a future resume) claiming a model that never applied.
     const ok = await window.clui.setModel(active.handleId, model)
     if (!ok) {
-      set((s) => ({ ...patchSlice(s, active.handleId, prev), notice: 'Could not switch model.' }))
+      set((s) => ({
+        ...patchSlice(s, active.handleId, prev),
+        notice: { message: 'Could not switch model.', tone: 'error' }
+      }))
       if (active.sessionId)
         rememberModelPrefs(active.sessionId, {
           model: prev.modelChoice,
@@ -1252,7 +1281,10 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (active.sessionId) rememberModelPrefs(active.sessionId, { ultracode: on })
     const ok = await window.clui.setUltracode(active.handleId, on)
     if (!ok) {
-      set((s) => ({ ...patchSlice(s, active.handleId, { ultracode: prevUltra }), notice: 'Could not toggle ultracode.' }))
+      set((s) => ({
+        ...patchSlice(s, active.handleId, { ultracode: prevUltra }),
+        notice: { message: 'Could not toggle ultracode.', tone: 'error' }
+      }))
       if (active.sessionId) rememberModelPrefs(active.sessionId, { ultracode: prevUltra })
     }
   },
@@ -1264,7 +1296,9 @@ export const useSession = create<SessionStore>((set, get) => ({
     // The process is gone; a send would silently no-op in main while the UI spun busy.
     // Tell the user to resume instead.
     if (active.exited) {
-      set(() => ({ notice: 'This session has stopped. Resume it from the sidebar to continue.' }))
+      set(() => ({
+        notice: { message: 'This session has stopped. Resume it from the sidebar to continue.', tone: 'warn' }
+      }))
       return
     }
     // Composed while a turn is running (or interrupting, or with messages already queued) →
@@ -1495,7 +1529,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       const messages = touchesMessages(e.type) ? slice.messages.slice() : slice.messages
       const patch: Partial<PerSessionState> = {}
       // Top-level (store-wide) notice to set, if any; survives a slice drop.
-      let topLevelNotice: string | null = null
+      let topLevelNotice: Notice | null = null
       // Set true to CLEAR the app-level notice (e.g. a fresh session-init resolves the
       // transient "Reconnecting…" notice from an effort/ultracode respawn).
       let clearNotice = false
@@ -1815,7 +1849,12 @@ export const useSession = create<SessionStore>((set, get) => ({
               patch.backgroundTasks = next
             }
             const kind = prev.taskType === 'local_agent' ? 'Background subagent' : 'Background task'
-            topLevelNotice = `${kind} ${e.status === 'killed' ? 'stopped' : 'finished'}: ${prev.description}`
+            // Tone tracks the terminal outcome so a killed or failed task isn't announced as success.
+            const verb = status === 'killed' ? 'stopped' : status === 'failed' ? 'failed' : 'finished'
+            topLevelNotice = {
+              message: `${kind} ${verb}: ${prev.description}`,
+              tone: status === 'killed' ? 'warn' : status === 'failed' ? 'error' : 'success'
+            }
           }
           break
         }
@@ -1926,7 +1965,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           // during an effort respawn) → top notice/toast, NOT the red in-chat error
           // box. It auto-clears on the next session-init after the respawn completes.
           if (e.severity === 'info') {
-            topLevelNotice = e.message
+            topLevelNotice = { message: e.message, tone: 'warn' }
             break
           }
           // A launch that fails before the CLI ever initialized (model===null),
@@ -1936,7 +1975,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           // drop), NOT also as the in-chat error box, which would (a) duplicate the
           // message and (b) vanish with the slice anyway. A mid-session error (model
           // already set) shows in-chat as before.
-          if (slice.model === null) topLevelNotice = e.message
+          if (slice.model === null) topLevelNotice = { message: e.message, tone: 'error' }
           else patch.lastError = e.message
           break
         case 'process-exit':
@@ -1999,7 +2038,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     }
   },
 
-  setNotice: (message) => set(() => ({ notice: message })),
+  setNotice: (message, tone = 'warn') => set(() => ({ notice: { message, tone } })),
   dismissNotice: () => set(() => ({ notice: null })),
   dismissCompactSuggestion: () =>
     set((s) => {

@@ -67,6 +67,8 @@ function GenericPermission({
     void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: request.input })
     if (suggestion) void setPermissionMode(suggestion.mode)
   }
+  // Label tracks the armed effect so the click's consequence is legible before pressing.
+  const allowLabel = !suggestion ? 'Allow' : armed ? `Allow & switch to ${suggestion.label}` : 'Allow once'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -144,8 +146,13 @@ function GenericPermission({
             >
               Deny
             </Button>
-            <Button variant="primary" size="md" onClick={armed && suggestion ? allowAndSwitch : allow}>
-              Allow
+            <Button
+              variant="primary"
+              size="md"
+              className="flex-none whitespace-nowrap"
+              onClick={armed && suggestion ? allowAndSwitch : allow}
+            >
+              {allowLabel}
             </Button>
           </div>
         </div>
@@ -172,9 +179,25 @@ function PermissionInput({
   toolName,
   input
 }: Pick<PendingPermission, 'toolName' | 'input'>): JSX.Element {
-  const highlight = highlightOf(input)
+  const diff = diffOf(toolName, input)
+  const highlight = diff ? null : highlightOf(input)
   return (
     <div className="flex flex-col gap-2">
+      {diff && (
+        <>
+          <div className="rounded-md border border-border bg-bg px-3 py-2">
+            <div className="text-[12px] uppercase tracking-wide text-dim">File</div>
+            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[14px] text-content">
+              {diff.filePath}
+            </pre>
+          </div>
+          {diff.edits.length > 0 ? (
+            <DiffBlock edits={diff.edits} />
+          ) : (
+            <div className="text-xs text-dim">No diff available for this edit.</div>
+          )}
+        </>
+      )}
       {highlight && (
         <div className="rounded-md border border-border bg-bg px-3 py-2">
           <div className="text-[12px] uppercase tracking-wide text-dim">{highlight.label}</div>
@@ -193,15 +216,87 @@ function PermissionInput({
   )
 }
 
+interface DiffEdit {
+  label?: string
+  removed: string | null
+  added: string | null
+}
+
+/** Edit/MultiEdit/Write viewed as a diff: removed = old_string, added = new_string (Write is
+ *  all-added content). Returns null for other tools so they fall to highlightOf. */
+function diffOf(toolName: string, input: unknown): { filePath: string; edits: DiffEdit[] } | null {
+  if (!input || typeof input !== 'object') return null
+  const o = input as Record<string, unknown>
+  if (typeof o.file_path !== 'string') return null
+  if (toolName === 'Write') {
+    return { filePath: o.file_path, edits: typeof o.content === 'string' ? [{ removed: null, added: o.content }] : [] }
+  }
+  if (toolName === 'Edit') {
+    const removed = typeof o.old_string === 'string' ? o.old_string : null
+    const added = typeof o.new_string === 'string' ? o.new_string : null
+    return { filePath: o.file_path, edits: removed !== null || added !== null ? [{ removed, added }] : [] }
+  }
+  if (toolName === 'MultiEdit') {
+    const raw = Array.isArray(o.edits) ? o.edits : []
+    const edits: DiffEdit[] = []
+    raw.forEach((e, i) => {
+      if (!e || typeof e !== 'object') return
+      const r = e as Record<string, unknown>
+      const removed = typeof r.old_string === 'string' ? r.old_string : null
+      const added = typeof r.new_string === 'string' ? r.new_string : null
+      if (removed !== null || added !== null) edits.push({ label: `Edit ${i + 1}`, removed, added })
+    })
+    return { filePath: o.file_path, edits }
+  }
+  return null
+}
+
+function DiffBlock({ edits }: { edits: DiffEdit[] }): JSX.Element {
+  return (
+    <div className="max-h-[32vh] overflow-auto rounded-md border border-border">
+      {edits.map((e, i) => (
+        <div key={i} className={i > 0 ? 'border-t border-border' : ''}>
+          {e.label && (
+            <div className="px-3 py-1 text-[11px] uppercase tracking-wide text-dim">{e.label}</div>
+          )}
+          <DiffLines removed={e.removed} added={e.added} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** +/- gutter glyph and row tint carry the added/removed state, so line text stays text-content
+ *  (state is not conveyed by color alone). */
+function DiffLines({ removed, added }: { removed: string | null; added: string | null }): JSX.Element {
+  const line = (glyph: string, tint: string, glyphColor: string, text: string, key: string): JSX.Element => (
+    <div key={key} className={`flex ${tint}`}>
+      <span className={`w-4 shrink-0 select-none text-center font-mono text-[13px] ${glyphColor}`}>{glyph}</span>
+      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed text-content">
+        {text}
+      </span>
+    </div>
+  )
+  return (
+    <div>
+      {removed !== null &&
+        truncate(removed, 600)
+          .split('\n')
+          .map((l, i) => line('-', 'bg-del-surface', 'text-err', l, `r${i}`))}
+      {added !== null &&
+        truncate(added, 600)
+          .split('\n')
+          .map((l, i) => line('+', 'bg-add-surface', 'text-ok', l, `a${i}`))}
+    </div>
+  )
+}
+
 /** Pick the field a human most needs to see to make the decision. */
 function highlightOf(input: unknown): { label: string; value: string } | null {
   if (input && typeof input === 'object') {
     const o = input as Record<string, unknown>
     if (typeof o.command === 'string') return { label: 'Command', value: o.command }
-    if (typeof o.file_path === 'string') {
-      const extra = typeof o.content === 'string' ? `\n\n${truncate(o.content, 600)}` : ''
-      return { label: 'File', value: o.file_path + extra }
-    }
+    if (typeof o.file_path === 'string') return { label: 'File', value: o.file_path }
     if (typeof o.path === 'string') return { label: 'Path', value: o.path }
     if (typeof o.url === 'string') return { label: 'URL', value: o.url }
   }

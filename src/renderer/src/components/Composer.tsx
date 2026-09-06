@@ -255,7 +255,13 @@ export function Composer(): JSX.Element {
             ref={textareaRef}
             data-composer-input
             className="max-h-48 min-h-[52px] w-full resize-none bg-transparent px-2 pt-1.5 text-sm leading-normal text-content outline-none placeholder:text-dim focus-visible:outline-none"
-            placeholder="Message Claude…  (Enter to send, Shift+Enter for newline · / for commands, @ for files, paste or drop images)"
+            placeholder="Message Claude…"
+            aria-label="Message Claude"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={ac.open}
+            aria-controls={ac.listboxId}
+            aria-activedescendant={ac.activeId}
             value={text}
             onChange={(e) => {
               if (handleId) setDraftText(handleId, e.target.value)
@@ -267,6 +273,12 @@ export function Composer(): JSX.Element {
             onPaste={onPaste}
             rows={2}
           />
+          {/* Stable send-key caption tied to the empty draft, not a placeholder. */}
+          {text.length === 0 && (
+            <span className="pointer-events-none absolute bottom-1 right-2 text-[11px] text-faint">
+              Enter to send · Shift+Enter for newline
+            </span>
+          )}
         </div>
         <div className="flex items-center">
           {/* Attach-file button (keyboard/a11y affordance for paste + drop). No accept filter:

@@ -142,6 +142,9 @@
   --color-ok: var(--teal-400);
   --color-warn: var(--amber-400);
   --color-info: var(--blue-400);
+  /* Edit-diff line tints for the permission preview. Faint enough that text-content stays above 4.5:1 on top. */
+  --color-add-surface: color-mix(in oklab, var(--color-ok) 15%, var(--color-bg));
+  --color-del-surface: color-mix(in oklab, var(--color-err) 15%, var(--color-bg));
   --color-effort-xhigh: var(--orange-400);
   /* Ultracode effort: purple, matching statusline.sh. Deliberately not the terracotta accent and distinct from info-blue. */
   --color-effort-ultra: #a78bfa;
@@ -221,6 +224,8 @@
      near hue 56, close enough to the accent's 45 that a warn banner reads as terracotta. Keep any future value clear of ~45. */
   --color-warn: #7a5c00;
   --color-info: #1d4ed8;
+  --color-add-surface: color-mix(in oklab, var(--color-ok) 12%, var(--color-bg));
+  --color-del-surface: color-mix(in oklab, var(--color-err) 12%, var(--color-bg));
   --color-on-warn: #ffffff;
   --color-on-err: #ffffff;
   --color-on-info: #ffffff; /* white on the deep light-mode info-blue */

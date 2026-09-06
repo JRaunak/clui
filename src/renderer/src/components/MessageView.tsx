@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSession, type ChatMessage, type MessageAttachment, type PeerMessage, type ToolCall } from '../store'
 import { TypingDots } from './TypingDots'
 import { Markdown } from './Markdown'
-import { IconChevron, IconCheck, IconClose, IconFile, IconChecklist, IconMessage, IconSendToTray } from './Icon'
+import { IconChevron, IconCheck, IconClose, IconCopy, IconFile, IconChecklist, IconMessage, IconSendToTray } from './Icon'
 
 /** Non-image attachments render as a file chip matching the composer pill's language. */
 function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element {
@@ -402,9 +402,15 @@ function ThinkingBlock({ text }: { text: string }): JSX.Element {
 
 function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean }): JSX.Element {
   const [open, setOpen] = useState(false)
+  const summary = summarizeInput(tool.input)
+  // The header already shows the input summary, so start Input collapsed when there is one;
+  // with no summary, open it so the expanded card isn't output-only with a hidden input.
+  const [inputOpen, setInputOpen] = useState(() => !summary)
+  const [copied, setCopied] = useState(false)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current) }, [])
   const viewSubagent = useSession((s) => s.viewSubagent)
   const sendToBackground = useSession((s) => s.backgroundTask)
-  const summary = summarizeInput(tool.input)
   const running = tool.result === undefined
   // Task (renamed to Agent in CLI 2.1.63; Task kept as alias) both mean "subagent"; show
   // a friendly label + the subagent_type chip when present.
@@ -422,6 +428,13 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
   // Only a foreground Bash is worth moving: run_in_background / Workflow tools are already
   // tray-bound, and other tools finish too fast to bother.
   const canSendToBackground = running && !isBackgrounded && tool.name === 'Bash'
+  const errLine = tool.isError ? firstLine(tool.result ?? '') : ''
+  const onCopy = (): void => {
+    void navigator.clipboard.writeText(tool.result ?? '')
+    setCopied(true)
+    if (copyTimer.current) clearTimeout(copyTimer.current)
+    copyTimer.current = setTimeout(() => setCopied(false), 1500)
+  }
   return (
     <div
       className={`overflow-hidden rounded-md border bg-tool ${
@@ -437,7 +450,15 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
       <button
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-[14px]"
         onClick={() => (isSubagent ? viewSubagent(tool.id) : setOpen((o) => !o))}
+        aria-expanded={isSubagent ? undefined : open}
       >
+        {/* Subagents navigate (their → sits at the row end); every other tool discloses inline. */}
+        {!isSubagent && (
+          <IconChevron
+            className={`h-3 w-3 shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`}
+            aria-hidden="true"
+          />
+        )}
         <span className="font-mono text-xs font-semibold text-accent">
           {isSubagent ? 'Agent' : tool.name}
         </span>
@@ -513,14 +534,50 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
         </button>
       )}
       </div>
+      {/* Collapsed failure keeps its reason visible: the err dot + label carry the state (err
+          on the tool surface is under 4.5:1, so the reason itself is text-dim, not text-err). */}
+      {tool.isError && !open && (
+        <div
+          className="truncate border-t border-border px-3 py-1.5 font-mono text-[12px] text-dim"
+          title={errLine || undefined}
+        >
+          {errLine || 'View error'}
+        </div>
+      )}
       {open && !isSubagent && (
         <div className="border-t border-border px-3 py-2.5">
-          <pre className="mb-2 whitespace-pre-wrap break-words font-mono text-xs text-dim">
-            {JSON.stringify(tool.input, null, 2)}
-          </pre>
+          <div className="mb-1.5 flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">Output</span>
+            <button
+              type="button"
+              onClick={onCopy}
+              className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint transition-colors hover:text-content focus-visible:text-content focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-accent"
+              aria-label="Copy output"
+            >
+              {copied ? <IconCheck className="h-4 w-4" /> : <IconCopy className="h-4 w-4" />}
+            </button>
+            <span className="sr-only" role="status" aria-live="polite">{copied ? 'Copied' : ''}</span>
+          </div>
           {tool.result !== undefined && (
             <pre className="whitespace-pre-wrap break-words font-mono text-xs text-content">
               {truncate(tool.result, 4000)}
+            </pre>
+          )}
+          <button
+            type="button"
+            onClick={() => setInputOpen((o) => !o)}
+            aria-expanded={inputOpen}
+            className="mt-2.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-faint transition-colors hover:text-dim"
+          >
+            <IconChevron
+              className={`h-3 w-3 transition-transform ${inputOpen ? 'rotate-90' : ''}`}
+              aria-hidden="true"
+            />
+            Input
+          </button>
+          {inputOpen && (
+            <pre className="mt-1.5 whitespace-pre-wrap break-words font-mono text-xs text-dim">
+              {JSON.stringify(tool.input, null, 2)}
             </pre>
           )}
         </div>
@@ -574,4 +631,13 @@ function formatElapsed(ms: number): string {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + `\n… (${s.length - n} more chars)` : s
+}
+
+/** First non-empty line of a tool result, for the collapsed-failure preview. */
+function firstLine(s: string): string {
+  for (const line of s.split('\n')) {
+    const t = line.trim()
+    if (t) return t
+  }
+  return ''
 }
