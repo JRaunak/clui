@@ -258,7 +258,7 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
         </div>
       )}
       {open && (
-        <div className="mb-px mt-2 whitespace-pre-wrap pl-[43px] text-[15px] leading-[1.55] text-content">
+        <div className="mb-px mt-2 whitespace-pre-wrap pl-[43px] text-[15px] leading-[1.55] text-content max-w-[70ch]">
           {message.text}
         </div>
       )}

@@ -11,7 +11,9 @@ import {
   IconDownload,
   IconMore,
   IconGitFork,
-  IconPlus
+  IconPlus,
+  IconHand,
+  IconHalfRing
 } from './Icon'
 import { TypingDots } from './TypingDots'
 import { Toast } from './Toast'
@@ -548,22 +550,25 @@ function SessionRow({
         </button>
       )}
 
-      {/* R6 pending-permission */}
+      {/* Pending-permission badge. Hand glyph + count so it reads apart from the bg badge in grayscale, not by hue alone. */}
       {session.pendingCount > 0 && !editing && (
         <span
-          className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-bold text-on-warn shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-warn)_28%,transparent)]"
+          className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded-full bg-warn px-1 text-[10px] font-bold text-on-warn shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-warn)_28%,transparent)]"
           title={`${session.pendingCount} permission request${session.pendingCount > 1 ? 's' : ''} awaiting your approval`}
         >
+          <IconHand className="h-2.5 w-2.5" aria-hidden="true" />
           {session.pendingCount}
         </span>
       )}
 
-      {/* Background-task badge (blue), only on non-active sessions; the active session shows its bg tasks in the bottom info bar. */}
+      {/* Background-task badge (blue), only on non-active sessions; the active session shows its bg tasks in the bottom info bar.
+          Static half-ring glyph, not rotation: reduced-motion would erase a motion-only cue. */}
       {session.bgCount > 0 && !active && !editing && (
         <span
-          className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-info px-1 text-[10px] font-bold text-on-info shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-info)_28%,transparent)]"
+          className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded-full bg-info px-1 text-[10px] font-bold text-on-info shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-info)_28%,transparent)]"
           title={`${session.bgCount} background task${session.bgCount > 1 ? 's' : ''} running`}
         >
+          <IconHalfRing className="h-2.5 w-2.5" aria-hidden="true" />
           {session.bgCount}
         </span>
       )}
@@ -630,6 +635,8 @@ function SessionMonogram({
   let label = `${session.title} — ${project}`
   if (pending)
     label += ` — ${session.pendingCount} permission request${session.pendingCount > 1 ? 's' : ''} awaiting approval`
+  if (session.bgCount > 0 && !active)
+    label += ` — ${session.bgCount} background task${session.bgCount > 1 ? 's' : ''} running`
 
   const tone = active || session.busy || pending ? 'text-content' : session.live ? 'text-dim' : 'text-faint'
   const fill = active

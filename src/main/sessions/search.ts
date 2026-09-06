@@ -33,8 +33,10 @@ const projectsRoot = (): string => join(claudeHome(), 'projects')
 
 /** Minimum query length for a content scan (shorter → tooShort, no disk work). */
 const MIN_QUERY = 2
-/** Max hit rows returned per session (overflow indicated by totalHits > hits.length). */
-const MAX_HITS_PER_SESSION = 5
+/** Max hit rows returned per session (overflow indicated by totalHits > hits.length).
+ *  Kept low so many conversations stay visible above the fold: global search answers
+ *  "which conversation said X", so breadth beats depth per group. */
+const MAX_HITS_PER_SESSION = 3
 /** Chars of context around a match in the snippet. */
 const SNIPPET_RADIUS = 60
 /** Warm-cache budget. Bounded by BYTES (not a fixed entry count) so a corpus of many

@@ -28,11 +28,13 @@ export function Toast({
     return () => cancelAnimationFrame(id)
   }, [])
 
+  // Top-center, not bottom: the composer dock floats bottom-center and --dock-h isn't in this
+  // sidebar subtree to offset against, so a bottom toast would block the model/mode row.
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-5 z-[60] flex justify-center px-4">
+    <div className="pointer-events-none fixed inset-x-0 top-5 z-[60] flex justify-center px-4">
       <div
-        className={`pointer-events-auto flex w-[min(420px,100%)] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-raised shadow-lg transition-all duration-200 ease-out ${
-          shown ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'
+        className={`pointer-events-auto flex w-[min(420px,100%)] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-raised shadow-lg transition-[transform,opacity] duration-200 ease-out ${
+          shown ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
         }`}
         role="status"
       >
@@ -42,13 +44,13 @@ export function Toast({
             {highlight && <span className="text-dim"> {highlight}</span>}
           </span>
           <button
-            className="shrink-0 rounded px-1 font-semibold text-accent transition-colors hover:text-accent-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="shrink-0 rounded px-1 py-1 font-semibold text-accent transition-colors hover:text-accent-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             onClick={onAction}
           >
             {actionLabel}
           </button>
           <button
-            className="shrink-0 rounded p-0.5 text-dim transition-colors hover:text-content"
+            className="shrink-0 rounded p-1.5 text-dim transition-colors hover:text-content"
             onClick={onDismiss}
             title="Dismiss"
           >

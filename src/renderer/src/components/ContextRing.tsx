@@ -37,7 +37,7 @@ export function ContextRing({
   const tooltip =
     usedTokens && contextWindow
       ? `Context: ${fmtTokens(usedTokens)} / ${fmtTokens(contextWindow)} tokens used (${p}%)` +
-        (compactPct !== null ? ` — auto-compacts near ${compactPct}%` : '')
+        (compactPct !== null ? `; auto-compacts near ${compactPct}%` : '')
       : `Context window: ${p}% used${percent === null ? ' (no turns yet)' : ''}`
 
   return (

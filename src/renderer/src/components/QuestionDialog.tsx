@@ -78,7 +78,8 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     },
     [picked, freeText]
   )
-  const allAnswered = questions.length > 0 && questions.every((_, qi) => isAnswered(qi))
+  const answeredCount = questions.filter((_, qi) => isAnswered(qi)).length
+  const allAnswered = questions.length > 0 && answeredCount === questions.length
 
   const choose = (qi: number, label: string, multi: boolean): void => {
     setPicked((prev) => {
@@ -170,7 +171,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     return (
       <Shell>
         <div className="px-5 py-4 text-sm text-dim">Claude asked a question, but it couldn’t be parsed.</div>
-        <Footer onCancel={cancel} onChat={chatInstead} submitDisabled onSubmit={submit} />
+        <Footer onCancel={cancel} onChat={chatInstead} submitDisabled onSubmit={submit} answeredCount={0} total={0} />
       </Shell>
     )
   }
@@ -297,7 +298,14 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
         )}
       </div>
 
-      <Footer onCancel={cancel} onChat={chatInstead} submitDisabled={!allAnswered} onSubmit={submit} />
+      <Footer
+        onCancel={cancel}
+        onChat={chatInstead}
+        submitDisabled={!allAnswered}
+        onSubmit={submit}
+        answeredCount={answeredCount}
+        total={questions.length}
+      />
     </Shell>
   )
 }
@@ -366,25 +374,37 @@ function Footer({
   onCancel,
   onChat,
   submitDisabled,
-  onSubmit
+  onSubmit,
+  answeredCount,
+  total
 }: {
   onCancel: () => void
   onChat: () => void
   submitDisabled: boolean
   onSubmit: () => void
+  answeredCount: number
+  total: number
 }): JSX.Element {
   return (
     <div className="flex items-center gap-2 border-t border-border px-5 py-3">
       <Button variant="ghost" size="md" onClick={onChat} title="Skip the question and chat freely instead">
         Chat about this
       </Button>
-      <div className="ml-auto flex gap-2">
-        <Button variant="outline" size="md" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button variant="primary" size="md" onClick={onSubmit} disabled={submitDisabled}>
-          Send answer
-        </Button>
+      <div className="ml-auto flex items-center gap-3">
+        {/* Doubles as a submit-scope cue and announces progress so the disabled Submit isn't a dead end for AT. */}
+        {total > 0 && (
+          <span aria-live="polite" className="text-xs text-dim">
+            {answeredCount} of {total} answered
+          </span>
+        )}
+        <div className="flex gap-2">
+          <Button variant="outline" size="md" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="md" onClick={onSubmit} disabled={submitDisabled}>
+            {total > 1 ? 'Send answers' : 'Send answer'}
+          </Button>
+        </div>
       </div>
     </div>
   )
