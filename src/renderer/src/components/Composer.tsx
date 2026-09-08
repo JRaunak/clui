@@ -275,8 +275,10 @@ export function Composer(): JSX.Element {
           />
           {/* Stable send-key caption tied to the empty draft, not a placeholder. */}
           {text.length === 0 && (
-            <span className="pointer-events-none absolute bottom-1 right-2 text-[11px] text-faint">
-              Enter to send · Shift+Enter for newline
+            <span className="pointer-events-none absolute bottom-1 right-2 select-none text-[11px] text-faint">
+              <span className="text-dim">Enter</span> to send
+              <span className="mx-1">·</span>
+              <span className="text-dim">Shift+Enter</span> for a newline
             </span>
           )}
         </div>
@@ -321,10 +323,8 @@ export function Composer(): JSX.Element {
             <UltracodeToggle />
           </div>
 
-          {/* pr-[3px] equalizes the send button's corner inset: it's 26px centered in the 32px
-              row, so it already floats 3px above the shell's bottom padding; matching that on
-              the right seats it the same distance from both walls. */}
-          <div className="ml-auto flex items-center gap-4 pr-[3px]">
+          {/* pr-[2px] seats the send disc as far from the right wall as its float from the bottom. */}
+          <div className="ml-auto flex items-center gap-4 pr-[2px]">
             {/* The verb+timer lives in the chat footer (WorkingStatus) for CLI-parity, so the
                 transcript tail is the single foreground activity signal. Here the dock keeps
                 only the context gauge + Stop; the dock-edge pulse is ambient. */}
@@ -333,12 +333,12 @@ export function Composer(): JSX.Element {
               usedTokens={contextTokens}
               contextWindow={contextWindow}
             />
-            {/* Send/stop morph in place: a 26px disc, enough below the 30px gauge beside it that
+            {/* Send/stop morph in place: a 27px disc, enough below the 30px gauge beside it that
                 the two circles don't read as equal siblings (a solid fill outweighs a thin ring
                 at equal size). Fill + glyph shape carry the state, never color alone. */}
             {busy ? (
               <button
-                className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-err text-on-err transition-transform active:scale-95"
+                className="flex h-[27px] w-[27px] items-center justify-center rounded-full bg-err text-on-err transition-transform active:scale-95"
                 onClick={() => void interrupt()}
                 title="Stop"
               >
@@ -346,7 +346,7 @@ export function Composer(): JSX.Element {
               </button>
             ) : (
               <button
-                className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-accent text-on-accent transition-[background-color,transform] hover:bg-accent-hover active:scale-95 disabled:cursor-default disabled:bg-border disabled:text-faint"
+                className="flex h-[27px] w-[27px] items-center justify-center rounded-full bg-accent text-on-accent transition-[background-color,transform] hover:bg-accent-hover active:scale-95 disabled:cursor-default disabled:bg-border disabled:text-faint"
                 onClick={() => void submit()}
                 disabled={!text.trim() && attachments.length === 0}
                 title="Send"
