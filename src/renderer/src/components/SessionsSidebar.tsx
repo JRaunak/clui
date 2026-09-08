@@ -27,6 +27,9 @@ interface MergedSession {
   id: string | null
   title: string
   renamed: boolean
+  /** Hard title (sidecar rename / on-disk customTitle) re-asserted as `-n` on resume;
+   *  absent for a live-only row or a derived-title session. */
+  hardTitle?: string
   cwd: string
   /** Parent dir under ~/.claude/projects; null when not on disk yet. */
   projectSlug: string | null
@@ -194,7 +197,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
         setNotice(
           `Can't resume: ${s.cwd} no longer exists. The transcript is safe. You can still export or delete it from the row menu.`
         )
-      else if (s.id) void resumeSession(s.cwd, s.id)
+      else if (s.id) void resumeSession(s.cwd, s.id, undefined, s.hardTitle)
     },
     [activateSession, resumeSession, setNotice]
   )
@@ -251,6 +254,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
           id: s.id,
           title: s.title,
           renamed: s.renamed,
+          hardTitle: s.hardTitle,
           cwd: s.cwd,
           projectSlug: s.projectSlug,
           // Order by on-disk createdMs, never the live slice's: resuming mints a fresh slice with createdMs=now.

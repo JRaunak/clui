@@ -224,10 +224,10 @@ export class ClaudeSession extends EventEmitter {
       stdio: ['pipe', 'pipe', 'pipe']
     })
     this.child = child
-    // fork + name apply only to the initial spawn: a reconnect resumes the (already
-    // forked, already renamed) session, so consume them so a respawn argv can't create
-    // ANOTHER branch or overwrite a since-changed title.
-    if (this.opts.fork || this.opts.name) this.opts = { ...this.opts, fork: false, name: undefined }
+    // Consume `fork` on respawn: a reconnect resumes the already-forked session, so
+    // re-passing --fork-session would branch again. Keep `name`: without a re-fork the
+    // same `-n` is idempotent and preserves the customTitle mirror the CLI else re-derives.
+    if (this.opts.fork) this.opts = { ...this.opts, fork: false }
 
     // stdin errors (EPIPE from a crashed child, write-after-end during a reconnect) are
     // emitted asynchronously; without a listener Node throws them as uncaught. Swallow
@@ -594,13 +594,12 @@ export class ClaudeSession extends EventEmitter {
     this.respawning = true
     this.reconnecting = true
     this.initAcked = false
-    // Resume the CURRENT confirmed session id (not one snapshotted before init could
-    // arrive), and never re-fork or re-apply the launch `-n` on a reconnect.
+    // Resume the CURRENT confirmed id (not one snapshotted before init arrived); never
+    // re-fork. Keep `name`: the idempotent `-n` preserves the peer name / mirror.
     this.opts = {
       ...this.opts,
       resumeSessionId: this.sessionId ?? this.opts.resumeSessionId,
-      fork: false,
-      name: undefined
+      fork: false
     }
     try {
       this.child.stdin.end()

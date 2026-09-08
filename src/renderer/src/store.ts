@@ -341,8 +341,9 @@ interface SessionStore {
   /** True while a `refreshSessions()` scan is in flight (drives the sidebar skeleton). */
   sessionsLoading: boolean
   /** Re-scan `~/.claude/projects` and replace `sessionGroups`. Awaitable so a caller can
-   *  sequence work after the list lands (e.g. the delete-commit that hides a row). */
-  refreshSessions: () => Promise<void>
+   *  sequence work after the list lands (e.g. the delete-commit that hides a row).
+   *  `quiet` skips `sessionsLoading` so a mid-session rescan can't flash the skeleton. */
+  refreshSessions: (quiet?: boolean) => Promise<void>
 
   /** Open/close the ⌘F find bar (no-op-open while viewing a subagent transcript). */
   setFindOpen: (open: boolean) => void
@@ -357,8 +358,15 @@ interface SessionStore {
     mode?: PermissionModeChoice,
     opts?: { model?: ModelChoice; effort?: EffortChoice; name?: string }
   ) => Promise<void>
-  /** Resume an on-disk session (loads history) and make it active. */
-  resumeSession: (cwd: string, resumeSessionId: string, mode?: PermissionModeChoice) => Promise<void>
+  /** Resume an on-disk session (loads history) and make it active. `hardTitle` (a sidecar
+   *  rename or on-disk customTitle) is re-asserted as `-n` so the resumed session stays
+   *  peer-discoverable under that name; omit for a derived/aiTitle session. */
+  resumeSession: (
+    cwd: string,
+    resumeSessionId: string,
+    mode?: PermissionModeChoice,
+    hardTitle?: string
+  ) => Promise<void>
   /** Fork a session (live or dormant) → a NEW live branch carrying its context,
    *  original untouched (`--fork-session`). Fork-from-HEAD; never short-circuits to an
    *  existing live session (the point is a new branch). */
@@ -771,6 +779,8 @@ async function beginSession(
     // A fork gets a NEW id from the CLI, so don't seed the source's id: that would make the
     // fork masquerade as the source's on-disk row until session-init reconciles. Resume keeps it.
     sessionId: opts.fork ? null : (opts.resumeSessionId ?? null),
+    // A hard-titled resume passes its name here, so the footer title agrees with the
+    // sidebar (and the re-asserted `-n`) instead of falling back to the first message.
     title: opts.name ?? null,
     cwd: opts.cwd,
     model: null,
@@ -1007,21 +1017,21 @@ export const useSession = create<SessionStore>((set, get) => ({
   sessionGroups: [],
   sessionsLoading: true,
 
-  refreshSessions: async () => {
+  refreshSessions: async (quiet = false) => {
     // TODO: CommandPalette still fetches listSessions() independently; fold it onto this
     // store copy so its list can't drift from the sidebar's.
     const gen = ++refreshGen
-    set(() => ({ sessionsLoading: true }))
+    if (!quiet) set(() => ({ sessionsLoading: true }))
     try {
       const groups = await window.clui.listSessions()
       // A newer refresh started while this scan ran → it owns the result; dropping this
       // stale one stops an older scan from overwriting fresher rename/delete state.
       if (gen !== refreshGen) return
-      set(() => ({ sessionGroups: groups, sessionsLoading: false }))
+      set(() => ({ sessionGroups: groups, ...(quiet ? {} : { sessionsLoading: false }) }))
     } catch {
       if (gen !== refreshGen) return
       set(() => ({
-        sessionsLoading: false,
+        ...(quiet ? {} : { sessionsLoading: false }),
         notice: { message: 'Could not refresh the session list.', tone: 'error' }
       }))
     }
@@ -1031,7 +1041,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     await beginSession(get, set, { cwd, permissionMode: mode, ...opts })
   },
 
-  resumeSession: async (cwd, resumeSessionId, mode) => {
+  resumeSession: async (cwd, resumeSessionId, mode, hardTitle) => {
     const slices = Object.values(get().sessions)
     // Only a CONFIRMED-LIVE (non-exited) slice can be re-viewed without respawning; an
     // exited slice's process is gone, so activating it would strand sends on a dead
@@ -1057,7 +1067,9 @@ export const useSession = create<SessionStore>((set, get) => ({
       })
     }
     try {
-      await beginSession(get, set, { cwd, resumeSessionId, permissionMode: mode })
+      // Only a hard title becomes `-n`; a derived/aiTitle session passes nothing so it
+      // can't clobber the aiTitle the CLI backfills.
+      await beginSession(get, set, { cwd, resumeSessionId, permissionMode: mode, name: hardTitle })
     } finally {
       resumingIds.delete(resumeSessionId)
     }
@@ -1505,9 +1517,9 @@ export const useSession = create<SessionStore>((set, get) => ({
     // Set in the session-init case, acted on post-commit (see there). Holder like `release`.
     const flush: { prefs: { sessionId: string; model: ModelChoice; effort: EffortChoice; ultracode: boolean } | null } =
       { prefs: null }
-    // A `/rename` writes the session's on-disk title but emits no stream event to map, so
-    // nothing else refreshes the sidebar. Detected at the turn boundary below (the CLI has
-    // written the title by then) and acted on post-commit. Holder like `release`.
+    // A title change on disk (a `/rename`, or the CLI's early aiTitle backfill) emits no
+    // stream event to map, so nothing else refreshes the sidebar. Detected at the turn
+    // boundary below and quiet-rescanned post-commit. Holder like `release`.
     const rescanSessions = { needed: false }
     set((state) => {
       const slice = state.sessions[handleId]
@@ -1942,6 +1954,10 @@ export const useSession = create<SessionStore>((set, get) => ({
             if (!wasInterrupting) {
               const lastUser = slice.messages.findLast((m) => m.role === 'user')
               if (lastUser && /^\/rename(\s|$)/.test(lastUser.text.trim())) rescanSessions.needed = true
+              // The CLI backfills an aiTitle (and a resume mirrors customTitle) within the
+              // first turn or two but emits no stream event, so quiet-rescan the list while
+              // the title is still settling; later changes ride the switch/liveIds refresh.
+              if (slice.messages.filter((m) => m.role === 'user').length <= 3) rescanSessions.needed = true
             }
           }
           // The CLI's `total_cost_usd` is PER-INVOCATION (not cumulative across a
@@ -2027,7 +2043,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (release.queued) {
       void dispatchTurn(set, release.queued.handleId, release.queued.msg.text, release.queued.msg.attachments)
     }
-    if (rescanSessions.needed) void get().refreshSessions()
+    if (rescanSessions.needed) void get().refreshSessions(true)
     // Side-effect, so it runs after the reducer commits, not inside the updater.
     if (flush.prefs) {
       rememberModelPrefs(flush.prefs.sessionId, {

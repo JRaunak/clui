@@ -93,7 +93,7 @@ export function CommandPalette({
             live: isLive,
             run: () => {
               if (isLive && lm) store.activateSession(lm.handleId)
-              else store.resumeSession(s.cwd, s.id)
+              else store.resumeSession(s.cwd, s.id, undefined, s.hardTitle)
             }
           })
         }

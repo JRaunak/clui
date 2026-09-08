@@ -102,7 +102,12 @@ export function GlobalSearch(): JSX.Element | null {
       if (live) {
         store.activateSession(live.handleId)
       } else {
-        await store.resumeSession(hit.cwd, hit.sessionId)
+        // SearchHit carries no hard title; recover it from the loaded groups by id so a
+        // search-initiated resume of a hard-titled session stays peer-discoverable too.
+        const hardTitle = store.sessionGroups
+          .flatMap((g) => g.sessions)
+          .find((s) => s.id === hit.sessionId)?.hardTitle
+        await store.resumeSession(hit.cwd, hit.sessionId, undefined, hardTitle)
       }
       requestScrollTo(hit.messageId)
       close()

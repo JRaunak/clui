@@ -228,6 +228,7 @@ export async function listSessions(): Promise<ProjectGroup[]> {
         id,
         title: titleFrom(scan, sidecar[id], id),
         renamed: Boolean(sidecar[id]),
+        hardTitle: sidecar[id] ?? scan.customTitle ?? undefined,
         cwd: scan.cwd ?? slugToPathGuess(slug),
         projectSlug: slug,
         firstTimestamp: scan.firstTimestamp,

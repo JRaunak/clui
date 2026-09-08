@@ -25,14 +25,6 @@ interface Item {
   insert?: string
 }
 
-/** Split a command hint ("desc · [name]") into prose + its argument syntax. `resolveSlashCommands`
- *  joins them with " · ", so the last such separator marks where the CLI argumentHint begins. */
-function splitArgHint(hint?: string): { desc: string; arg?: string } {
-  if (!hint) return { desc: '' }
-  const i = hint.lastIndexOf(' · ')
-  return i === -1 ? { desc: hint } : { desc: hint.slice(0, i), arg: hint.slice(i + 3) }
-}
-
 /** Score at/above which the query matches a NAME contiguously (substring or better),
  *  not just as scattered letters in a path. The floor and the scoring tiers share it. */
 const NAME_TIER = 1000
@@ -264,8 +256,6 @@ export function useComposerAutocomplete(
 
   const render = useCallback((): JSX.Element | null => {
     if (!visible) return null
-    const selItem = results[sel]?.it
-    const { desc: selDesc, arg: selArg } = splitArgHint(selItem?.hint)
     return (
       <div className="absolute bottom-full left-0 z-50 mb-2 flex w-[min(640px,calc(100%-1.5rem))] flex-col rounded-lg border border-border bg-bg-elev shadow-lg">
         <div id={listboxId} ref={listRef} className="max-h-72 overflow-y-auto py-1" role="listbox">
@@ -309,18 +299,6 @@ export function useComposerAutocomplete(
             )
           })}
         </div>
-        {selItem && (
-          <div className="border-t border-border px-3 py-2">
-            <div className="flex items-baseline justify-between gap-3">
-              <div className="flex min-w-0 items-baseline gap-2">
-                <span className="truncate font-mono text-xs text-content">{selItem.label}</span>
-                {selArg && <span className="shrink-0 font-mono text-[11px] text-dim">{selArg}</span>}
-              </div>
-              <span className="shrink-0 text-[11px] text-faint">↵ run · ↑↓ move · esc close</span>
-            </div>
-            {selDesc && <p className="mt-1 line-clamp-2 text-[11px] text-dim">{selDesc}</p>}
-          </div>
-        )}
       </div>
     )
   }, [visible, results, sel, trigger?.char, pick, listboxId])
