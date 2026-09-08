@@ -1,4 +1,5 @@
 import { autoCompactPercent } from '../lib/compaction'
+import { Tooltip } from './Tooltip'
 
 /**
  * C1: Context-window usage as a real gauge (like the CLI statusline's
@@ -41,39 +42,40 @@ export function ContextRing({
       : `Context window: ${p}% used${percent === null ? ' (no turns yet)' : ''}`
 
   return (
-    <div
-      className="relative flex h-[30px] w-[30px] items-center justify-center"
-      title={tooltip}
-      // A gauge is a meter, not a slider (read-only status). aria-valuetext carries the
-      // same human-readable figures as the tooltip so AT speaks tokens, not a bare %.
-      role="meter"
-      aria-label="Context window usage"
-      aria-valuenow={p}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuetext={tooltip}
-    >
-      <svg width={size} height={size} className="-rotate-90" aria-hidden="true">
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--color-border)" strokeWidth={stroke} />
-        <circle
-          cx={cx}
-          cy={cy}
-          r={r}
-          fill="none"
-          stroke={color}
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          strokeDasharray={`${dash} ${circ}`}
-          style={{ transition: 'stroke-dasharray 0.4s var(--ease-out), stroke 0.3s ease' }}
-        />
-      </svg>
-      <span
-        className="absolute font-mono text-[9px] font-medium leading-none tabular-nums"
-        style={{ color }}
+    <Tooltip content={tooltip} placement="top" align="end" describedBy={false}>
+      <div
+        className="relative flex h-[30px] w-[30px] items-center justify-center"
+        // A gauge is a meter, not a slider (read-only status). aria-valuetext carries the
+        // same human-readable figures as the tooltip so AT speaks tokens, not a bare %.
+        role="meter"
+        aria-label="Context window usage"
+        aria-valuenow={p}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuetext={tooltip}
       >
-        {p}
-      </span>
-    </div>
+        <svg width={size} height={size} className="-rotate-90" aria-hidden="true">
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--color-border)" strokeWidth={stroke} />
+          <circle
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="none"
+            stroke={color}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={`${dash} ${circ}`}
+            style={{ transition: 'stroke-dasharray 0.4s var(--ease-out), stroke 0.3s ease' }}
+          />
+        </svg>
+        <span
+          className="absolute font-mono text-[9px] font-medium leading-none tabular-nums"
+          style={{ color }}
+        >
+          {p}
+        </span>
+      </div>
+    </Tooltip>
   )
 }
 
