@@ -68,7 +68,7 @@ export function WorkflowTray(): JSX.Element | null {
 
   return (
     <button
-      className={`flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-[11px] transition-[filter] hover:brightness-125 ${
+      className={`flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-[11px] transition-[filter] hover:brightness-125 ${
         hasRunning ? 'bg-info/15 text-info' : anyFailed ? 'bg-err/10 text-err' : 'text-dim'
       }`}
       onClick={() => {

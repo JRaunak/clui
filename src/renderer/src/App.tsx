@@ -39,7 +39,12 @@ export function App(): JSX.Element {
   const cwd = useActive((s) => s?.cwd ?? null)
   const sessionId = useActive((s) => s?.sessionId ?? null)
   const costUsd = useActive((s) => s?.costUsd ?? null)
-  const displayTitle = useActive((s) => sessionDisplayTitle(s))
+  const sessionGroups = useSession((s) => s.sessionGroups)
+  const sliceTitle = useActive((s) => sessionDisplayTitle(s))
+  // Prefer the on-disk resolved title (sidecar/custom/ai/first-user) so the footer matches the
+  // sidebar row; the live slice's title falls back only before the jsonl lands.
+  const displayTitle =
+    sessionGroups.flatMap((g) => g.sessions).find((s) => s.id === sessionId)?.title ?? sliceTitle
   const startSession = useSession((s) => s.startSession)
   const notice = useSession((s) => s.notice)
   const viewingSubagent = useSession((s) => s.viewingSubagent)
@@ -386,12 +391,8 @@ export function App(): JSX.Element {
             {/* Bottom-left workspace/session info. Same h-8 as the sidebar footer
                 so their divider lines align across the two columns. */}
             <div className="flex h-8 items-center gap-3 border-t border-border px-4 text-[12px] text-dim">
-              <span className="min-w-0 flex-1 truncate text-dim" title={displayTitle}>
+              <span className="min-w-0 truncate text-dim" title={displayTitle}>
                 {displayTitle}
-              </span>
-              <span className="shrink-0 text-faint">·</span>
-              <span className="shrink-0" title={cwd ?? ''}>
-                {cwd ? basename(cwd) : '—'}
               </span>
               <span className="shrink-0 text-faint">·</span>
               <span className="shrink-0 font-mono text-faint" title={sessionId ?? ''}>
@@ -399,14 +400,21 @@ export function App(): JSX.Element {
               </span>
               {costUsd !== null && (
                 <>
-                  <span className="text-faint">·</span>
-                  <span title="Cumulative session cost (from the CLI result event)">
-                    Cost: <span className="font-mono text-dim">{formatCost(costUsd)}</span>
+                  <span className="shrink-0 text-faint">·</span>
+                  <span
+                    className="shrink-0 font-mono text-dim"
+                    title="Cumulative session cost (from the CLI result event)"
+                  >
+                    {formatCost(costUsd)}
                   </span>
                 </>
               )}
+              <span className="flex-1" aria-hidden="true" />
               <BackgroundTasksSlot />
               <WorkflowTray />
+              <span className="max-w-[20ch] shrink-0 truncate text-faint" title={cwd ?? ''}>
+                {cwd ? basename(cwd) : '—'}
+              </span>
             </div>
           </>
         ) : // Onboarding takes the empty pane when the CLI is unhealthy or first-run isn't done.
@@ -509,17 +517,12 @@ function basename(p: string): string {
   return parts[parts.length - 1] || p
 }
 
-/** Renders the background-tasks chip WITH its leading separator, only when the
- *  active session has any background task (so the info bar has no dangling `·`). */
+/** Returns null rather than an empty node so the info bar's flex gap reserves no space
+ *  when the session has no background tasks. */
 function BackgroundTasksSlot(): JSX.Element | null {
   const hasTasks = useActive((s) => Object.keys(s?.backgroundTasks ?? {}).length > 0)
   if (!hasTasks) return null
-  return (
-    <>
-      <span className="text-faint">·</span>
-      <BackgroundTasks />
-    </>
-  )
+  return <BackgroundTasks />
 }
 
 /** e.g. $0.0032, $0.14, $2.10 */
