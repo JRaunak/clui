@@ -14,6 +14,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import {
   IpcChannels,
+  type EffortCaps,
   type PermissionModeChoice,
   type PermissionVerdict,
   type StartSessionOptions,
@@ -537,6 +538,13 @@ function registerIpc(): void {
     // Read the user's ~/.claude/settings.json fresh (read-only) and report what
     // "System Default" resolves to. Defaults to 'default' if unset/unreadable.
     return (await readCliSettings()).defaultMode ?? 'default'
+  })
+
+  handle(IpcChannels.getEffortCaps, async () => {
+    // Both caps were already validated against EFFORT_CHOICES in readCliSettings, so the
+    // stored strings are EffortChoice at runtime; narrow at this boundary.
+    const { maxEffortLevel, modelSettings } = await readCliSettings()
+    return { maxEffortLevel, modelSettings } as EffortCaps
   })
 }
 

@@ -136,6 +136,8 @@ export function App(): JSX.Element {
     void window.clui.listModels()
     // Load persisted per-session costs so resumed sessions show accrued cost.
     void loadPersistedCosts()
+    // Read the CLI effort caps once so the picker/chip are honest from the first session.
+    void useSession.getState().loadEffortCaps()
     // Re-assert the theme and install the 'system' OS-change listener; read onboarded in the
     // same call so the first-run intro shows only once.
     void window.clui.getSettings().then(({ values }) => {

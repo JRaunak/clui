@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useActive, useSession } from '../store'
+import { useActive, useSession, effortCap } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { useClickOutside } from '../lib/useClickOutside'
 import { IconSliders, IconRefresh, IconLock, IconWarn } from './Icon'
@@ -9,6 +9,8 @@ import {
   groupModels,
   supportsUltracodeToggle,
   clampEffort,
+  cappedEffort,
+  capBlocksUltra,
   EFFORT_LABELS,
   type EffortChoice,
   type ModelChoice,
@@ -51,10 +53,19 @@ export function ModelEffortPicker(): JSX.Element {
   const modelChoice = useActive((s) => s?.modelChoice ?? 'claude-opus-4-8[1m]')
   const effortChoice = useActive((s) => s?.effortChoice ?? 'high')
   const ultracode = useActive((s) => s?.ultracode ?? false)
-  // While ultracode is on the CLI forces xhigh regardless of the stored effort, so the
-  // chip DISPLAYS xhigh (without mutating the stored choice, which is restored when ultra
-  // turns off). Effort selection is disabled while ultra is on (it's overridden).
-  const displayEffort = ultracode ? 'xhigh' : effortChoice
+  // Subscribe so a startup / session-start caps load re-renders the chip and flyout.
+  useSession((s) => s.effortCaps)
+
+  // The chip must show the effort that will ACTUALLY run. Ultra forces xhigh (unless a
+  // sub-xhigh CLI cap makes it unreachable, in which case it isn't engaged); the CLI then
+  // floors whatever's intended at `maxEffortLevel`. None of this mutates the stored choice,
+  // which is restored when ultra turns off.
+  const cap = effortCap(modelChoice)
+  const ultraEngaged = ultracode && supportsUltracodeToggle(modelChoice) && !capBlocksUltra(cap)
+  const intended: EffortChoice = ultraEngaged ? 'xhigh' : effortChoice
+  const runningEffort = cappedEffort(modelChoice, intended, cap)
+  const cappedDown = !!cap && runningEffort !== intended
+  const capLabel = cap ? EFFORT_LABELS[clampEffort(modelChoice, cap)] : ''
   const setModel = useSession((s) => s.setModel)
   const setEffort = useSession((s) => s.setEffort)
   const setUltracode = useSession((s) => s.setUltracode)
@@ -154,19 +165,23 @@ export function ModelEffortPicker(): JSX.Element {
       >
         <IconSliders className="h-3.5 w-3.5 shrink-0 text-dim" />
         <span className="font-medium">{curLabel}</span>
-        {/* Effort readout. While Ultra is on it's LOCKED to X-High (Ultra forces it) →
-            show the value in the Ultra purple + a lock glyph, so the chip honestly
-            reflects "you can't change effort here right now" without hiding the value. */}
+        {/* Effort readout. Shows the level that will actually run: Ultra locks it to X-High
+            (Ultra purple), and a CLI `maxEffortLevel` cap floors it lower. A lock glyph marks
+            either lock, so the chip is honest without hiding the value. */}
         <span
           className={`flex items-center gap-1 font-medium ${
-            ultracode ? 'text-effort-ultra' : EFFORT_COLORS[displayEffort]
+            ultraEngaged ? 'text-effort-ultra' : EFFORT_COLORS[runningEffort]
           }`}
           title={
-            ultracode ? 'Ultra runs at X-High — turn off Ultra to change effort' : undefined
+            ultraEngaged
+              ? 'Ultra runs at X-High — turn off Ultra to change effort'
+              : cappedDown
+                ? `Your CLI settings cap effort at ${capLabel}.`
+                : undefined
           }
         >
-          {EFFORT_LABELS[displayEffort]}
-          {ultracode && <IconLock className="h-3 w-3 opacity-80" />}
+          {EFFORT_LABELS[runningEffort]}
+          {(ultraEngaged || cappedDown) && <IconLock className="h-3 w-3 opacity-80" />}
         </span>
         <svg
           viewBox="0 0 12 12"
@@ -313,7 +328,8 @@ export function ModelEffortPicker(): JSX.Element {
                   <EffortFlyout
                     info={info}
                     anchorRef={rowRef}
-                    current={info.id === modelChoice ? effortChoice : clampEffort(info.id, effortChoice)}
+                    cap={effortCap(info.id)}
+                    current={cappedEffort(info.id, effortChoice, effortCap(info.id))}
                     onEnter={clearHoverTimer}
                     onLeave={scheduleHide}
                     onPick={(ef) => {
@@ -342,6 +358,7 @@ export function ModelEffortPicker(): JSX.Element {
 function EffortFlyout({
   info,
   anchorRef,
+  cap,
   current,
   onEnter,
   onLeave,
@@ -349,6 +366,7 @@ function EffortFlyout({
 }: {
   info: ModelInfo
   anchorRef: React.RefObject<HTMLElement>
+  cap?: EffortChoice
   current: EffortChoice
   onEnter: () => void
   onLeave: () => void
@@ -358,6 +376,10 @@ function EffortFlyout({
   const idx = Math.max(0, levels.indexOf(current))
   const [preview, setPreview] = useState(idx)
   const value = levels[preview] ?? levels[idx]
+  // Highest reachable tick under the CLI cap (no cap → the top of this model's range). The
+  // track keeps its full width; ticks past this index are shown unreachable, not removed.
+  const capIdx = cap ? levels.indexOf(clampEffort(info.id, cap)) : levels.length - 1
+  const capLabel = cap ? EFFORT_LABELS[levels[capIdx]] : ''
 
   // Portaled to <body> so vertical scroll on the model list can't clip it (a scroll
   // container's overflow-x computes to auto, hiding this right-side flyout). Positioned
@@ -413,30 +435,44 @@ function EffortFlyout({
         step={1}
         value={preview}
         aria-label={`Reasoning effort for ${info.label}`}
-        aria-valuetext={EFFORT_LABELS[value]}
-        onChange={(e) => setPreview(Number(e.target.value))}
-        onMouseUp={(e) => onPick(levels[Number((e.target as HTMLInputElement).value)])}
+        aria-valuetext={
+          preview === capIdx && cap
+            ? `${EFFORT_LABELS[value]}, capped by your CLI settings.`
+            : EFFORT_LABELS[value]
+        }
+        onChange={(e) => setPreview(Math.min(Number(e.target.value), capIdx))}
+        onMouseUp={(e) =>
+          onPick(levels[Math.min(Number((e.target as HTMLInputElement).value), capIdx)])
+        }
         onKeyUp={(e) => {
           if (!COMMIT_KEYS.has(e.key)) return
-          onPick(levels[Number((e.target as HTMLInputElement).value)])
+          onPick(levels[Math.min(Number((e.target as HTMLInputElement).value), capIdx)])
         }}
         className="w-full accent-[var(--color-accent)]"
       />
-      {/* Underlined tick = the committed level; the colored top-right pill = the inspected one. */}
+      {/* Underlined tick = the committed level; the colored top-right pill = the inspected one.
+          Ticks past the cap are dimmed (unreachable), never struck through. */}
       <div className="mt-1 flex justify-between text-[11px]">
-        {levels.map((lv) => (
+        {levels.map((lv, i) => (
           <span
             key={lv}
             className={
               lv === current
                 ? 'border-b-2 border-content/40 font-medium text-content'
-                : 'text-faint'
+                : i > capIdx
+                  ? 'text-faint opacity-70'
+                  : 'text-faint'
             }
           >
             {EFFORT_LABELS[lv]}
           </span>
         ))}
       </div>
+      {cap && (
+        <div className="mt-1.5 text-[11px] text-dim">
+          Effort is capped at {capLabel} in your CLI settings.
+        </div>
+      )}
     </div>,
     document.body
   )

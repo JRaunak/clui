@@ -78,6 +78,7 @@ const api: CluiApi = {
     ipcRenderer.invoke(IpcChannels.updateSettings, patch, clear),
   detectCliAt: (path: string) => ipcRenderer.invoke(IpcChannels.detectCliAt, path),
   getSystemPermissionMode: () => ipcRenderer.invoke(IpcChannels.getSystemPermissionMode),
+  getEffortCaps: () => ipcRenderer.invoke(IpcChannels.getEffortCaps),
   listModels: (refresh?: boolean) => ipcRenderer.invoke(IpcChannels.listModels, refresh),
   // Electron 33 removed `File.path`; the ONLY way to get a dropped/picked file's absolute
   // path is webUtils.getPathForFile in the (privileged) preload. Returns '' if unavailable

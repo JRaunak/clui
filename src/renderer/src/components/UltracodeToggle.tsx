@@ -7,8 +7,8 @@
  * (shown, aria-disabled, tooltip explains why).
  */
 import { useState } from 'react'
-import { useActive, useSession } from '../store'
-import { supportsUltracodeToggle } from '../../../shared/settings'
+import { useActive, useSession, effortCap } from '../store'
+import { supportsUltracodeToggle, capBlocksUltra, clampEffort, EFFORT_LABELS } from '../../../shared/settings'
 import { Tooltip } from './Tooltip'
 
 export function UltracodeToggle(): JSX.Element | null {
@@ -16,21 +16,30 @@ export function UltracodeToggle(): JSX.Element | null {
   const on = useActive((s) => s?.ultracode ?? false)
   const busy = useActive((s) => s?.busy ?? false)
   const setUltracode = useSession((s) => s.setUltracode)
+  // Subscribe so a startup / session-start caps load re-renders the toggle.
+  useSession((s) => s.effortCaps)
   const [arming, setArming] = useState(false)
 
   if (model === null) return null
 
-  const supported = supportsUltracodeToggle(model)
-  const tipCopy = !supported
+  const cap = effortCap(model)
+  // Ultra forces xhigh, so a sub-xhigh CLI cap blocks it as surely as a model without xhigh.
+  const capBlocked = capBlocksUltra(cap)
+  const ultraEngageable = supportsUltracodeToggle(model) && !capBlocked
+  const capLabel = cap ? EFFORT_LABELS[clampEffort(model, cap)] : ''
+  // Precedence: a model lacking xhigh outranks the cap message (fix the model first).
+  const tipCopy = !supportsUltracodeToggle(model)
     ? "Ultra needs a model with X-High reasoning. The current one doesn't have it."
-    : on
-      ? 'Ultra is on. X-High reasoning and multi-step workflows, this session only.'
-      : 'X-High reasoning and multi-step workflows, for this session.'
+    : capBlocked
+      ? `Ultra needs X-High, but your CLI settings cap effort at ${capLabel}.`
+      : on
+        ? 'Ultra is on. X-High reasoning and multi-step workflows, this session only.'
+        : 'X-High reasoning and multi-step workflows, for this session.'
 
   const engaged = on && busy // a live ultracode turn → the star's halo breathes
 
   const handleClick = (): void => {
-    if (!supported) return
+    if (!ultraEngageable) return
     if (!on) setArming(true) // off→on: play the one-shot ripple
     void setUltracode(!on)
   }
@@ -41,9 +50,9 @@ export function UltracodeToggle(): JSX.Element | null {
         type="button"
         onClick={handleClick}
         aria-pressed={on}
-        aria-disabled={!supported}
+        aria-disabled={!ultraEngageable}
         className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
-          !supported
+          !ultraEngageable
             ? 'cursor-default border-border text-faint opacity-60'
             : on
               ? 'border-effort-ultra/50 bg-effort-ultra/12 text-effort-ultra'
@@ -57,7 +66,7 @@ export function UltracodeToggle(): JSX.Element | null {
           <span
             aria-hidden="true"
             className={`ultra-star text-[11px] leading-none ${
-              supported ? (on ? 'text-effort-ultra' : 'text-dim') : 'text-faint'
+              ultraEngageable ? (on ? 'text-effort-ultra' : 'text-dim') : 'text-faint'
             } ${engaged ? 'ultra-star-glow' : ''}`}
           >
             ✦

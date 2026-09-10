@@ -19,8 +19,8 @@ import { create } from 'zustand'
 import type { DomainEvent, PermissionSuggestion, SessionTask, SlashCommandInfo } from '../../shared/events'
 import type { ProjectGroup } from '../../shared/sessions'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
-import type { PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
-import { clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
+import type { EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
+import { clampEffort, capBlocksUltra, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
 
 /** A tool-permission request awaiting the user's decision. */
@@ -307,6 +307,9 @@ interface SessionStore {
   activeHandleId: string | null
   /** Transient app-level notice (e.g. a session was evicted by the cap). */
   notice: Notice | null
+  /** Effort ceilings from ~/.claude/settings.json (read-only), so the picker/chip show
+   *  the effort that will actually run under a `maxEffortLevel` cap. Read via `effortCap`. */
+  effortCaps: EffortCaps
   /**
    * The `parent_tool_use_id` of the subagent/workflow whose transcript is being
    * VIEWED in the maximized transcript view (null = normal chat). Scoped to the
@@ -344,6 +347,10 @@ interface SessionStore {
    *  sequence work after the list lands (e.g. the delete-commit that hides a row).
    *  `quiet` skips `sessionsLoading` so a mid-session rescan can't flash the skeleton. */
   refreshSessions: (quiet?: boolean) => Promise<void>
+
+  /** Re-read the CLI effort caps from ~/.claude/settings.json into `effortCaps`. Called at
+   *  startup and on each session start, so a settings.json edit is picked up at that boundary. */
+  loadEffortCaps: () => Promise<void>
 
   /** Open/close the ⌘F find bar (no-op-open while viewing a subagent transcript). */
   setFindOpen: (open: boolean) => void
@@ -439,6 +446,17 @@ interface SessionStore {
   gotoSubagentDepth: (depth: number) => void
   /** Close the transcript view entirely, returning to the chat (clears the trail). */
   closeSubagentView: () => void
+}
+
+/**
+ * The effort ceiling the CLI will enforce for a model, or undefined when none is set. A
+ * per-model `modelSettings[id]` cap outranks the top-level one. Reads the current
+ * `effortCaps` snapshot; a component using this in render should also subscribe to
+ * `effortCaps` so a startup / session-start load triggers a re-render.
+ */
+export function effortCap(modelId: ModelChoice): EffortChoice | undefined {
+  const { maxEffortLevel, modelSettings } = useSession.getState().effortCaps
+  return modelSettings?.[modelId]?.maxEffortLevel ?? maxEffortLevel
 }
 
 /** The active session's slice, or null when nothing is open. */
@@ -689,6 +707,8 @@ async function beginSession(
 ): Promise<void> {
   ensureSubscribed(get().applyEvent)
   evictIfOverCap(get, set, opts.cwd)
+  // Refresh the effort caps at each session start so a settings.json edit is reflected.
+  void get().loadEffortCaps()
 
   // Resolve per-session choices: explicit arg, else the global Settings default.
   // These are seeded ONCE here (a brand-new/resumed session); re-activating an
@@ -1009,6 +1029,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   sessions: {},
   activeHandleId: null,
   notice: null,
+  effortCaps: {},
   viewingSubagent: null,
   subagentTrail: [],
   findOpen: false,
@@ -1034,6 +1055,15 @@ export const useSession = create<SessionStore>((set, get) => ({
         ...(quiet ? {} : { sessionsLoading: false }),
         notice: { message: 'Could not refresh the session list.', tone: 'error' }
       }))
+    }
+  },
+
+  loadEffortCaps: async () => {
+    try {
+      const caps = await window.clui.getEffortCaps()
+      set(() => ({ effortCaps: caps }))
+    } catch {
+      // best-effort: absent caps just means the picker shows every level (today's behavior)
     }
   },
 
@@ -1215,10 +1245,12 @@ export const useSession = create<SessionStore>((set, get) => ({
     // If the new model doesn't support the current effort, clamp it down.
     const nextEffort = clampEffort(model, active.effortChoice)
     const prevEffort = active.effortChoice
-    // Ultracode requires an xhigh-capable model, so switching to an incompatible one
-    // (e.g. Haiku) must turn it OFF, else it'd stay on for a model that can't do it
-    // (model switch is live, no respawn, so nothing else would clear it).
-    const nextUltra = active.ultracode && supportsUltracodeToggle(model)
+    // Ultracode requires an xhigh-capable model AND a CLI cap that doesn't sit below xhigh,
+    // so switching to a model that lacks xhigh (e.g. Haiku) or into a sub-xhigh per-model cap
+    // must turn it OFF, else a lit star would run at the capped level (model switch is live,
+    // no respawn, so nothing else would clear it).
+    const nextUltra =
+      active.ultracode && supportsUltracodeToggle(model) && !capBlocksUltra(effortCap(model))
     const ultraChanged = nextUltra !== active.ultracode
     // Switching model can change the context window (1M ↔ 200K). Recompute it now from
     // the new id and rescale the ring % against it, else the ring keeps the old

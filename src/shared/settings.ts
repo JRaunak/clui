@@ -349,6 +349,30 @@ export function clampEffort(model: ModelChoice, effort: EffortChoice): EffortCho
   return allowed[allowed.length - 1]
 }
 
+/** Index of an effort in the canonical low→max order. */
+const idx = (e: EffortChoice): number => EFFORT_CHOICES.indexOf(e)
+
+/** The lower of two effort levels by canonical order. */
+const lowerOf = (a: EffortChoice, b: EffortChoice): EffortChoice => (idx(a) <= idx(b) ? a : b)
+
+/**
+ * The effort that will actually run: the request floored by the CLI's `maxEffortLevel` cap
+ * (when set), then clamped to what the model supports.
+ */
+export function cappedEffort(
+  model: ModelChoice,
+  effort: EffortChoice,
+  maxEffort?: EffortChoice
+): EffortChoice {
+  return clampEffort(model, maxEffort ? lowerOf(effort, maxEffort) : effort)
+}
+
+/** True when a CLI effort cap sits below xhigh, which makes ultracode (xhigh-forced)
+ *  unreachable. No cap → never blocks. */
+export function capBlocksUltra(maxEffort?: EffortChoice): boolean {
+  return !!maxEffort && idx(maxEffort) < idx('xhigh')
+}
+
 export const DEFAULT_SETTINGS: CluiSettings = {
   cliPath: '',
   editorCommand: 'code',

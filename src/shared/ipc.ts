@@ -104,6 +104,17 @@ export interface ModelListResult {
   reason?: 'no-cli' | 'expired-creds' | 'other'
 }
 
+/**
+ * Effort ceilings read from ~/.claude/settings.json. The CLI silently caps reasoning at
+ * these levels, so Clui reads them to keep the picker/chip honest (display + runtime only,
+ * never written). `modelSettings[id]` takes precedence over the top-level `maxEffortLevel`.
+ * Both values are pre-validated against EFFORT_CHOICES by the reader.
+ */
+export interface EffortCaps {
+  maxEffortLevel?: EffortChoice
+  modelSettings?: Record<string, { maxEffortLevel?: EffortChoice }>
+}
+
 /** Detected CLI binary info shown in Settings. */
 export interface CliInfo {
   path: string | null
@@ -228,6 +239,11 @@ export interface CluiApi {
    */
   getSystemPermissionMode: () => Promise<string>
   /**
+   * Read the effort ceilings from ~/.claude/settings.json (top-level + per-model). Used
+   * to keep the effort picker/chip honest about what will actually run. Read-only.
+   */
+  getEffortCaps: () => Promise<EffortCaps>
+  /**
    * List available model ids. `live` is true when these ids came from Bedrock (a
    * successful query, or the cache of one) and false when they're Clui's bundled
    * fallback, with `reason` naming the cause. Only success is cached, so `live` is a
@@ -303,6 +319,7 @@ export const IpcChannels = {
   updateSettings: 'clui:updateSettings',
   detectCliAt: 'clui:detectCliAt',
   getSystemPermissionMode: 'clui:getSystemPermissionMode',
+  getEffortCaps: 'clui:getEffortCaps',
   listModels: 'clui:listModels',
   /**
    * SYNCHRONOUS channel (ipcRenderer.sendSync) used by the preload to resolve the

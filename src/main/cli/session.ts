@@ -75,10 +75,10 @@ interface ControlResult {
   payload?: Record<string, unknown>
 }
 
-/** Bounded wait for the initialize handshake ACK. The CLI ACKs `initialize` promptly
- *  at spawn (it's a handshake, not a model turn), so a stall here means a failed start,
- *  not slow reasoning, so surface it instead of hanging the UI forever. */
-const INIT_TIMEOUT_MS = 20_000
+/** Bounded wait for the initialize ACK. The first launch is cold (Bedrock auth + model-list
+ *  warm-up precede the ACK) and can take tens of seconds; a stall past this is a failed
+ *  start, not slow reasoning. */
+const INIT_TIMEOUT_MS = 60_000
 
 export class ClaudeSession extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null
