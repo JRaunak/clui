@@ -181,8 +181,7 @@ interface DeniedRow {
   count: number
 }
 
-/** Collapse identical tool+target denials so five blocked reads of one path read as one
- *  row with ×5, not five rows. */
+/** Collapse identical tool+target denials into one row with a ×count. */
 function dedupeDenials(denials: PermissionDenial[]): DeniedRow[] {
   const rows: DeniedRow[] = []
   for (const d of denials) {
@@ -194,8 +193,7 @@ function dedupeDenials(denials: PermissionDenial[]): DeniedRow[] {
   return rows
 }
 
-/** Tool calls a permission rule blocked without prompting. Info-blue, not error: enforcement
- *  working as configured is not a fault. Empty is handled by the caller. */
+/** Info-blue, not error: a rule enforcing as configured is not a fault. */
 function BlockedActionsNotice({ denials }: { denials: PermissionDenial[] }): JSX.Element {
   const [open, setOpen] = useState(false)
   const rows = dedupeDenials(denials)
@@ -270,9 +268,8 @@ function UsageRow({ label, value, strong }: { label: string; value: string; stro
   )
 }
 
-/** This turn's cost as a quiet always-on figure; clicking discloses the token/cache/thinking
- *  breakdown. Cache read vs creation is the Bedrock money signal, so cache creation gets its
- *  own row only on turns that actually wrote cache. */
+/** Cache read vs creation is the Bedrock money signal, so cache creation gets its own row
+ *  only when this turn actually wrote cache. */
 function TurnUsageTrailer({ usage }: { usage: TurnUsage }): JSX.Element {
   const [open, setOpen] = useState(false)
   const totalInput = usage.inputTokens + usage.cacheReadInputTokens + usage.cacheCreationInputTokens

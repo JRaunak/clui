@@ -151,6 +151,8 @@ export interface CluiApi {
   setModel: (handleId: string, model: ModelChoice) => Promise<boolean>
   /** Change a running session's effort (respawns via --resume; per-session only). */
   setEffort: (handleId: string, effort: EffortChoice) => Promise<void>
+  /** Push a discovery-name change onto a running session via `/rename` (no-op if not live). */
+  injectRename: (handleId: string, name: string) => Promise<void>
   /** Toggle ultracode (xhigh + workflow orchestration) live. False = rejected (renderer reverts). */
   setUltracode: (handleId: string, on: boolean) => Promise<boolean>
   /** Stop and clean up a session's process. */
@@ -290,6 +292,7 @@ export const IpcChannels = {
   setPermissionMode: 'clui:setPermissionMode',
   setModel: 'clui:setModel',
   setEffort: 'clui:setEffort',
+  injectRename: 'clui:injectRename',
   setUltracode: 'clui:setUltracode',
   stopSession: 'clui:stopSession',
   respondPermission: 'clui:respondPermission',

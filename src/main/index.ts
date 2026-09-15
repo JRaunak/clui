@@ -349,6 +349,9 @@ function registerIpc(): void {
   handle(IpcChannels.setEffort, async (_e, handleId: string, effort: EffortChoice) => {
     await manager.setEffort(handleId, effort)
   })
+  handle(IpcChannels.injectRename, async (_e, handleId: string, name: string) => {
+    manager.injectRename(handleId, name)
+  })
   handle(IpcChannels.setUltracode, async (_e, handleId: string, on: boolean) => {
     return manager.setUltracode(handleId, on)
   })

@@ -35,6 +35,8 @@ const api: CluiApi = {
     ipcRenderer.invoke(IpcChannels.setModel, handleId, model),
   setEffort: (handleId: string, effort: EffortChoice) =>
     ipcRenderer.invoke(IpcChannels.setEffort, handleId, effort),
+  injectRename: (handleId: string, name: string) =>
+    ipcRenderer.invoke(IpcChannels.injectRename, handleId, name),
   setUltracode: (handleId: string, on: boolean) =>
     ipcRenderer.invoke(IpcChannels.setUltracode, handleId, on),
   stopSession: (handleId: string) => ipcRenderer.invoke(IpcChannels.stopSession, handleId),

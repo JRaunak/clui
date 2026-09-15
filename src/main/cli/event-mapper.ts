@@ -78,7 +78,7 @@ interface RawEnvelope {
       canonicalModel?: string
     }
   >
-  /** Tool calls the CLI's permission rules blocked without prompting (empty when none). */
+  /** Tool calls a permission rule blocked without prompting (not the interactive ask). */
   permission_denials?: Array<{ tool_name?: string; tool_input?: unknown }>
   /** Origin of a turn's result. `kind:'task-notification'` = a backgrounded subagent's
    *  completion turn (foreground result has origin null). `kind:'peer'` = a cross-session
@@ -175,6 +175,9 @@ export class EventMapper {
    *  `result{is_error:true}`, which is a user action, not a failure to surface. Consumed
    *  (and cleared) by the next `result` so it suppresses that one turn's error box only. */
   private interrupted = false
+  /** True from a Clui-injected `/rename` until its result. Swallows the whole turn; the
+   *  result's cost is cumulative not new, so mapping it would double-count. */
+  private suppressRenameTurn = false
   /** task_ids that are TRUE background work (Bash run_in_background = 'local_bash').
    *  Only these belong in the bg tray. `task_started` is the only event that carries
    *  a reliable `task_type`, so we record the local_bash ids here and gate the later
@@ -208,6 +211,11 @@ export class EventMapper {
   /** Suppress the next result's is_error box (see the `interrupted` field). */
   markInterrupted(): void {
     this.interrupted = true
+  }
+
+  /** Swallow everything from a Clui-injected `/rename` (see the `suppressRenameTurn` field). */
+  beginRenameSuppression(): void {
+    this.suppressRenameTurn = true
   }
 
   /** Best-effort context window for a model id (fallback when result absent). */
@@ -247,6 +255,11 @@ export class EventMapper {
   }
 
   private mapEnvelope(env: RawEnvelope): DomainEvent[] {
+    // A Clui-injected `/rename` turn (see suppressRenameTurn): swallow through the result.
+    if (this.suppressRenameTurn) {
+      if (env.type === 'result') this.suppressRenameTurn = false
+      return []
+    }
     // A forwarded subagent message (carries parent_tool_use_id) must be routed
     // to a subagent card, NOT the main thread, so intercept BEFORE the normal
     // assistant/user handlers (which would fold its text into the main chat). Only
@@ -327,8 +340,7 @@ export class EventMapper {
             // A peer-woken turn ends with origin.kind='peer'; same guard as above so it
             // doesn't clear the user's busy or run user-turn side effects.
             fromPeer,
-            // Foreground only: a bg/peer result isn't the user's turn boundary, so its
-            // denials don't belong to the user's turn.
+            // Foreground only: a bg/peer result isn't the user's turn, so its denials aren't theirs.
             denials:
               isForeground && env.permission_denials?.length
                 ? env.permission_denials.map((d) => ({ toolName: d.tool_name ?? 'a tool', input: d.tool_input }))

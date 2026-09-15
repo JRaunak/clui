@@ -45,7 +45,7 @@ export interface PermissionSuggestion {
 }
 
 /** A tool call a permission rule denied without prompting. `input` carries the tool's args
- *  (file_path / command / path / url) so the UI can name what was blocked. */
+ *  so the UI can name what was blocked. */
 export interface PermissionDenial {
   toolName: string
   input: unknown
@@ -206,12 +206,9 @@ export type DomainEvent =
        *  `fromTaskNotification`: cost is real but it isn't the user's turn, so it must not
        *  clear `busy` or run turn-end side effects. */
       fromPeer?: boolean
-      /** Tool calls the CLI's permission rules blocked WITHOUT prompting (past-tense
-       *  enforcement, distinct from the interactive permission-request). Absent/empty on the
-       *  common no-deny-rules case. */
+      /** Rule-denied tool calls this turn (past-tense enforcement, not the interactive ask). */
       denials?: PermissionDenial[]
-      /** This turn's usage breakdown (cost, tokens, cache split, thinking). Foreground turns
-       *  only; absent on bg/peer results. */
+      /** This turn's usage breakdown. Foreground turns only; absent on bg/peer results. */
       usage?: TurnUsage
     }
   /** A peer began messaging this session (`command_lifecycle:started`): insert the

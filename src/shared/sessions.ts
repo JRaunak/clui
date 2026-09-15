@@ -14,6 +14,9 @@ export interface SessionSummary {
    *  one. On resume it's re-asserted as the CLI `-n` so the session stays peer-discoverable
    *  under this name. */
   hardTitle?: string
+  /** The CLI's story-summary title, if generated (independent of hardTitle). Lets the
+   *  renderer mirror it onto a live session's discovery name. */
+  aiTitle: string | null
   /** Absolute workspace path (from the jsonl `cwd`), authoritative. */
   cwd: string
   /** Project slug (the parent directory name under ~/.claude/projects). */

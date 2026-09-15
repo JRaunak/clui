@@ -52,12 +52,8 @@ export interface CluiSettings {
    * expanded. Toggled by ⌘B or the header/rail button; persisted like `onboarded`.
    */
   sidebarCollapsed: boolean
-  /**
-   * Offer the CLI task-tracking tools (TaskCreate/Update/List/Get, TodoWrite) to the
-   * model, which feed the task puck. Forwarded as `CLAUDE_CODE_ENABLE_TODO_TOOLS` at
-   * spawn ('1'/'0'); an explicit shell value still wins. Default off: the CLI gates these
-   * off on newer models (Opus 4.8+), so leave it to an explicit opt-in.
-   */
+  /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
+   *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
 }
 

@@ -125,6 +125,11 @@ export class SessionManager {
     return this.sessions.get(handleId)?.setEffort(effort) ?? Promise.resolve()
   }
 
+  /** Push a discovery-name change onto a running session via `/rename` (no-op if not live). */
+  injectRename(handleId: string, name: string): void {
+    this.sessions.get(handleId)?.injectRename(name)
+  }
+
   setUltracode(handleId: string, on: boolean): Promise<boolean> {
     return this.sessions.get(handleId)?.setUltracode(on) ?? Promise.resolve(false)
   }

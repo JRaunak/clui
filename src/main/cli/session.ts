@@ -50,8 +50,7 @@ export interface ClaudeSessionOptions {
   model?: string
   /** Value for `--effort`. Undefined = pass no flag. Live-changeable via apply_flag_settings. */
   effort?: string
-  /** Forward `CLAUDE_CODE_ENABLE_TODO_TOOLS` as '1'/'0' so the task-tracking tools are offered
-   *  (or not) to the model. From the `enableTaskTools` setting; an explicit shell value wins. */
+  /** From the `enableTaskTools` setting; an explicit shell value wins. */
   enableTaskTools?: boolean
   /** Ultracode on (forces xhigh + workflow orchestration). Passed at launch via
    *  `--settings {ultracode:true}` so it survives a resume; toggled live otherwise. */
@@ -223,8 +222,7 @@ export class ClaudeSession extends EventEmitter {
       // Strip Claude runtime markers from the FINAL merged env: spreading process.env first
       // would otherwise leak this app's own session markers into the child if Clui was
       // launched from inside a Claude Code session.
-      // Offer the task-tracking tools (which feed the task puck) per the enableTaskTools
-      // setting; CLI 2.1.268 gates them off on Opus 4.8+ otherwise. A shell value still wins.
+      // process.env after our default so an explicit CLAUDE_CODE_ENABLE_TODO_TOOLS in the shell wins.
       env: stripRuntimeMarkers({
         CLAUDE_CODE_ENABLE_TODO_TOOLS: this.opts.enableTaskTools ? '1' : '0',
         ...process.env,
@@ -528,6 +526,20 @@ export class ClaudeSession extends EventEmitter {
     })
     if (text) content.push({ type: 'text', text })
     this.writeLine({ type: 'user', message: { role: 'user', content } })
+  }
+
+  /**
+   * Push a discovery-name change onto the RUNNING session via the CLI's `/rename`: updates the
+   * peer registry (nameSource:user) and writes customTitle, no respawn. The mapper swallows the
+   * echoed turn. Caller ensures the session is idle so the suppress window can't eat a real turn.
+   */
+  injectRename(name: string): void {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const child = this.child
+    if (!child || !child.stdin.writable || !this.initAcked || this.reconnecting) return
+    this.mapper.beginRenameSuppression()
+    this.writeLine({ type: 'user', message: { role: 'user', content: `/rename ${trimmed}` } })
   }
 
   /**

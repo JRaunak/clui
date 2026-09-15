@@ -197,6 +197,9 @@ export async function listSessions(): Promise<ProjectGroup[]> {
   }
 
   const summaries: SessionSummary[] = []
+  // Once a resume with `-n` has written customTitle to match the sidecar rename, the intent is
+  // fulfilled, so drop the entry.
+  const flushed: string[] = []
   for (const slug of slugs) {
     const dir = join(root, slug)
     let files: string[]
@@ -224,11 +227,13 @@ export async function listSessions(): Promise<ProjectGroup[]> {
       } catch {
         continue
       }
+      if (sidecar[id] && scan.customTitle === sidecar[id]) flushed.push(id)
       summaries.push({
         id,
         title: titleFrom(scan, sidecar[id], id),
         renamed: Boolean(sidecar[id]),
         hardTitle: sidecar[id] ?? scan.customTitle ?? undefined,
+        aiTitle: scan.aiTitle,
         cwd: scan.cwd ?? slugToPathGuess(slug),
         projectSlug: slug,
         firstTimestamp: scan.firstTimestamp,
@@ -244,6 +249,14 @@ export async function listSessions(): Promise<ProjectGroup[]> {
         messageCount: scan.messageCount
       })
     }
+  }
+
+  if (flushed.length) {
+    await serializeSidecar(async () => {
+      const map = await readSidecar()
+      for (const id of flushed) delete map[id]
+      await writeSidecar(map)
+    })
   }
 
   return groupByProject(summaries)

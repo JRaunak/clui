@@ -146,11 +146,10 @@ export interface ChatMessage {
   /** Set on a `role:'peer'` message: the inbound cross-session block's sender + pending
    *  state. Absent on every normal user/assistant message. */
   peer?: PeerMessage
-  /** Rule-denied tool calls from this turn's result, shown as a notice under the assistant
-   *  turn. Absent unless the user has deny rules that fired. */
+  /** Rule-denied tool calls this turn, rendered as a notice under the turn. */
   denials?: PermissionDenial[]
-  /** This turn's usage breakdown (cost, tokens, cache split), shown as a disclosure trailer
-   *  under the assistant turn. Absent on rebuilt-from-disk history (not persisted). */
+  /** This turn's usage breakdown, rendered as a disclosure trailer. Absent on
+   *  rebuilt-from-disk history (not persisted). */
   usage?: TurnUsage
 }
 
@@ -386,6 +385,9 @@ interface SessionStore {
   forkSession: (cwd: string, sourceSessionId: string, mode?: PermissionModeChoice) => Promise<void>
   /** View an already-live session without touching its process (instant switch). */
   activateSession: (handleId: string) => void
+  /** Push a rename onto a LIVE session (updates its discovery name via `/rename`), deferring
+   *  to turn-end if busy. Dormant sessions use `window.clui.renameSession` (the sidecar). */
+  renameLiveSession: (handleId: string, name: string) => void
   /** Stop a live session's process and drop its slice. */
   closeSession: (handleId: string) => Promise<void>
   /** Move the active view to the next (dir=1) / previous (dir=-1) live session,
@@ -572,6 +574,13 @@ function retireHandle(handleId: string): void {
  * for new turns (there's no historical cost on disk to recover).
  */
 const costBySessionId = new Map<string, number>()
+
+/** A rename typed on a LIVE-but-busy session, held until its turn ends so the `/rename`
+ *  suppress window can't swallow a real turn's result. */
+const pendingLiveRename = new Map<string, string>()
+/** handleIds whose CLI story-title has been mirrored onto the discovery name, so the
+ *  once-per-session auto-rename can't re-fire on later rescans. */
+const aiTitleMirrored = new Set<string>()
 
 /**
  * Last-known available model ids (full inference-profile forms). Populated by
@@ -1056,6 +1065,16 @@ export const useSession = create<SessionStore>((set, get) => ({
       // stale one stops an older scan from overwriting fresher rename/delete state.
       if (gen !== refreshGen) return
       set(() => ({ sessionGroups: groups, ...(quiet ? {} : { sessionsLoading: false }) }))
+      // Mirror a live session's CLI story-title onto its discovery name once it generates, so
+      // peers see the sidebar name.
+      for (const [hid, slice] of Object.entries(get().sessions)) {
+        if (slice.exited || slice.busy || !slice.sessionId || aiTitleMirrored.has(hid)) continue
+        const summary = groups.flatMap((g) => g.sessions).find((su) => su.id === slice.sessionId)
+        if (summary && !summary.hardTitle && summary.aiTitle) {
+          aiTitleMirrored.add(hid)
+          void window.clui.injectRename(hid, summary.aiTitle)
+        }
+      }
     } catch {
       if (gen !== refreshGen) return
       set(() => ({
@@ -1159,6 +1178,13 @@ export const useSession = create<SessionStore>((set, get) => ({
       viewingSubagent: null,
       subagentTrail: []
     }))
+  },
+
+  renameLiveSession: (handleId, name) => {
+    const slice = get().sessions[handleId]
+    if (!slice || slice.exited) return
+    if (slice.busy) pendingLiveRename.set(handleId, name)
+    else void window.clui.injectRename(handleId, name)
   },
 
   closeSession: async (handleId) => {
@@ -2014,8 +2040,7 @@ export const useSession = create<SessionStore>((set, get) => ({
               void window.clui.setSessionCost(slice.sessionId, nextCost)
             }
           }
-          // Attach this turn's usage and any rule-denials to its last assistant message so the
-          // trailer and notice render under it.
+          // Result arrives after the assistant text, so hang usage/denials on the last assistant message.
           if (e.usage || e.denials?.length) {
             const idx = messages.findLastIndex((m) => m.role === 'assistant')
             if (idx >= 0) {
@@ -2095,6 +2120,12 @@ export const useSession = create<SessionStore>((set, get) => ({
       void dispatchTurn(set, release.queued.handleId, release.queued.msg.text, release.queued.msg.attachments)
     }
     if (rescanSessions.needed) void get().refreshSessions(true)
+    // A rename that arrived while this session was busy fires now that the turn is idle.
+    const pendingName = pendingLiveRename.get(handleId)
+    if (pendingName && !get().sessions[handleId]?.busy) {
+      pendingLiveRename.delete(handleId)
+      void window.clui.injectRename(handleId, pendingName)
+    }
     // Side-effect, so it runs after the reducer commits, not inside the updater.
     if (flush.prefs) {
       rememberModelPrefs(flush.prefs.sessionId, {

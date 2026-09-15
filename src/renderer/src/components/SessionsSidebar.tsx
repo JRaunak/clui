@@ -483,8 +483,15 @@ function SessionRow({
 
   const commitRename = async (): Promise<void> => {
     setEditing(false)
-    if (session.id && name.trim() && name.trim() !== session.title) {
-      await window.clui.renameSession(session.id, name.trim())
+    const next = name.trim()
+    if (session.id && next && next !== session.title) {
+      if (session.handleId) {
+        // Live: push onto the running process, which writes customTitle. No sidecar needed.
+        useSession.getState().renameLiveSession(session.handleId, next)
+      } else {
+        // Dormant: hold it in the sidecar; it flushes to customTitle on next resume.
+        await window.clui.renameSession(session.id, next)
+      }
       await onChanged()
     } else {
       setName(session.title)
@@ -549,7 +556,6 @@ function SessionRow({
           onClick={onOpen}
           title={`${session.title}${session.live ? '\n(live — click to view, no reload)' : '\n(click to resume)'}`}
         >
-          {session.renamed && <span className="text-accent">✎ </span>}
           {session.title}
         </button>
       )}

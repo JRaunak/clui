@@ -1,5 +1,4 @@
-/** Pick the field a human most needs to see for a tool call. Shared by the permission dialog
- *  (a pending ask) and the blocked-actions notice (a past denial) so both name it the same way. */
+/** Pick the field a human most needs to see for a tool call. */
 export function highlightOf(input: unknown): { label: string; value: string } | null {
   if (input && typeof input === 'object') {
     const o = input as Record<string, unknown>
