@@ -51,6 +51,25 @@ export interface PermissionDenial {
   input: unknown
 }
 
+/** One model's slice of a turn's usage (a turn can span models via subagents/switches). */
+export interface TurnUsageModel {
+  model: string
+  provider?: string
+  costUSD?: number
+}
+
+/** A single turn's usage from the result envelope's `modelUsage`. Per-turn, distinct from the
+ *  cumulative-session context ring and footer cost. */
+export interface TurnUsage {
+  costUSD?: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+  thinkingTokens: number
+  models: TurnUsageModel[]
+}
+
 export type DomainEvent =
   /** Session started; carries the CLI-assigned session id + metadata. */
   | {
@@ -191,6 +210,9 @@ export type DomainEvent =
        *  enforcement, distinct from the interactive permission-request). Absent/empty on the
        *  common no-deny-rules case. */
       denials?: PermissionDenial[]
+      /** This turn's usage breakdown (cost, tokens, cache split, thinking). Foreground turns
+       *  only; absent on bg/peer results. */
+      usage?: TurnUsage
     }
   /** A peer began messaging this session (`command_lifecycle:started`): insert the
    *  anonymous placeholder, backfilled by `peer-message` at the result. */

@@ -5,7 +5,7 @@
  * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
  * drift skips the envelope instead of crashing the app.
  */
-import type { DomainEvent, PermissionSuggestion } from '../../shared/events'
+import type { DomainEvent, PermissionSuggestion, TurnUsage } from '../../shared/events'
 
 // Minimal structural typing of the raw envelopes we care about.
 interface RawEnvelope {
@@ -64,7 +64,20 @@ interface RawEnvelope {
   is_error?: boolean
   result?: string | null
   total_cost_usd?: number
-  modelUsage?: Record<string, { contextWindow?: number }>
+  modelUsage?: Record<
+    string,
+    {
+      contextWindow?: number
+      costUSD?: number
+      inputTokens?: number
+      outputTokens?: number
+      cacheReadInputTokens?: number
+      cacheCreationInputTokens?: number
+      thinkingTokens?: number
+      provider?: string
+      canonicalModel?: string
+    }
+  >
   /** Tool calls the CLI's permission rules blocked without prompting (empty when none). */
   permission_denials?: Array<{ tool_name?: string; tool_input?: unknown }>
   /** Origin of a turn's result. `kind:'task-notification'` = a backgrounded subagent's
@@ -110,6 +123,31 @@ interface RawUsage {
   cache_read_input_tokens?: number
   cache_creation_input_tokens?: number
   output_tokens?: number
+}
+
+/** models[] is kept alongside the summed totals so a multi-model turn can show a per-model
+ *  cost split. */
+function turnUsageFrom(env: RawEnvelope): TurnUsage | undefined {
+  const entries = env.modelUsage ? Object.entries(env.modelUsage) : []
+  if (entries.length === 0) return undefined
+  const usage: TurnUsage = {
+    costUSD: env.total_cost_usd,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+    thinkingTokens: 0,
+    models: []
+  }
+  for (const [id, u] of entries) {
+    usage.inputTokens += u.inputTokens ?? 0
+    usage.outputTokens += u.outputTokens ?? 0
+    usage.cacheReadInputTokens += u.cacheReadInputTokens ?? 0
+    usage.cacheCreationInputTokens += u.cacheCreationInputTokens ?? 0
+    usage.thinkingTokens += u.thinkingTokens ?? 0
+    usage.models.push({ model: u.canonicalModel ?? id, provider: u.provider, costUSD: u.costUSD })
+  }
+  return usage
 }
 
 /** Track in-flight tool_use blocks by their stream index → id, to attach input deltas. */
@@ -294,7 +332,8 @@ export class EventMapper {
             denials:
               isForeground && env.permission_denials?.length
                 ? env.permission_denials.map((d) => ({ toolName: d.tool_name ?? 'a tool', input: d.tool_input }))
-                : undefined
+                : undefined,
+            usage: isForeground ? turnUsageFrom(env) : undefined
           }
         ]
         // Backfill the pending placeholder (or insert a resolved block) with the peer's sender + body.

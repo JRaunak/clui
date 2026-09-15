@@ -4,7 +4,8 @@ import { TypingDots } from './TypingDots'
 import { Markdown } from './Markdown'
 import { IconChevron, IconCheck, IconClose, IconCopy, IconFile, IconChecklist, IconMessage, IconSendToTray, IconShieldOff } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
-import type { PermissionDenial } from '../../../shared/events'
+import { formatCost } from '../lib/formatCost'
+import type { PermissionDenial, TurnUsage } from '../../../shared/events'
 
 /** Non-image attachments render as a file chip matching the composer pill's language. */
 function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element {
@@ -140,6 +141,7 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
       {!isUser && message.denials && message.denials.length > 0 && (
         <BlockedActionsNotice denials={message.denials} />
       )}
+      {!isUser && message.usage && <TurnUsageTrailer usage={message.usage} />}
     </div>
   )
 }
@@ -252,6 +254,59 @@ function BlockedActionsNotice({ denials }: { denials: PermissionDenial[] }): JSX
         </ul>
       )}
     </section>
+  )
+}
+
+function fmtCost(n: number | undefined): string {
+  return typeof n === 'number' ? formatCost(n) : '—'
+}
+
+function UsageRow({ label, value, strong }: { label: string; value: string; strong?: boolean }): JSX.Element {
+  return (
+    <div className="flex items-baseline justify-between gap-6">
+      <dt className="text-faint">{label}</dt>
+      <dd className={`font-mono tabular-nums ${strong ? 'text-content' : 'text-dim'}`}>{value}</dd>
+    </div>
+  )
+}
+
+/** This turn's cost as a quiet always-on figure; clicking discloses the token/cache/thinking
+ *  breakdown. Cache read vs creation is the Bedrock money signal, so cache creation gets its
+ *  own row only on turns that actually wrote cache. */
+function TurnUsageTrailer({ usage }: { usage: TurnUsage }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const totalInput = usage.inputTokens + usage.cacheReadInputTokens + usage.cacheCreationInputTokens
+  const cachedPct = totalInput > 0 ? Math.round((usage.cacheReadInputTokens / totalInput) * 100) : 0
+  const n = (v: number): string => v.toLocaleString('en-US')
+  return (
+    <div className="flex flex-col items-end">
+      <button
+        type="button"
+        className="flex min-h-[24px] items-center gap-1 rounded px-1.5 font-mono text-[10.5px] tabular-nums text-faint transition-colors hover:text-content"
+        aria-expanded={open}
+        aria-label="Turn usage breakdown"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <IconChevron className={`h-3 w-3 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden="true" />
+        {fmtCost(usage.costUSD)}
+      </button>
+      {open && (
+        <dl className="mt-1 flex w-full max-w-xs flex-col gap-1 rounded-md border border-border bg-bg-elev px-3 py-2 text-[12px]">
+          <UsageRow label="Cost" value={fmtCost(usage.costUSD)} strong />
+          <UsageRow label="Tokens" value={`${n(usage.inputTokens)} in · ${n(usage.outputTokens)} out`} />
+          <UsageRow
+            label="Cache read"
+            value={totalInput > 0 ? `${n(usage.cacheReadInputTokens)} · ${cachedPct}% cached` : n(usage.cacheReadInputTokens)}
+          />
+          {usage.cacheCreationInputTokens > 0 && (
+            <UsageRow label="Cache creation" value={n(usage.cacheCreationInputTokens)} />
+          )}
+          {usage.thinkingTokens > 0 && <UsageRow label="Thinking" value={n(usage.thinkingTokens)} />}
+          {usage.models.length > 1 &&
+            usage.models.map((m, i) => <UsageRow key={i} label={m.model} value={fmtCost(m.costUSD)} />)}
+        </dl>
+      )}
+    </div>
   )
 }
 

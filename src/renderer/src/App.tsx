@@ -18,6 +18,7 @@ import { SplitNewSession } from './components/SplitNewSession'
 import { Onboarding, cliHealth } from './components/Onboarding'
 import { IconSettings, IconPlus, IconSidebar, IconCheck, IconWarn, IconNoEntry, IconClose } from './components/Icon'
 import { applyTheme } from './lib/theme'
+import { formatCost } from './lib/formatCost'
 import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
 import type { CliInfo } from '../../shared/ipc'
 
@@ -527,9 +528,4 @@ function BackgroundTasksSlot(): JSX.Element | null {
   return <BackgroundTasks />
 }
 
-/** e.g. $0.0032, $0.14, $2.10 */
-function formatCost(usd: number): string {
-  if (usd > 0 && usd < 0.01) return `$${usd.toFixed(4)}`
-  return `$${usd.toFixed(2)}`
-}
 

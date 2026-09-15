@@ -16,7 +16,7 @@
  * each event into `sessions[handleId]`.
  */
 import { create } from 'zustand'
-import type { DomainEvent, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo } from '../../shared/events'
+import type { DomainEvent, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo, TurnUsage } from '../../shared/events'
 import type { ProjectGroup } from '../../shared/sessions'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
@@ -149,6 +149,9 @@ export interface ChatMessage {
   /** Rule-denied tool calls from this turn's result, shown as a notice under the assistant
    *  turn. Absent unless the user has deny rules that fired. */
   denials?: PermissionDenial[]
+  /** This turn's usage breakdown (cost, tokens, cache split), shown as a disclosure trailer
+   *  under the assistant turn. Absent on rebuilt-from-disk history (not persisted). */
+  usage?: TurnUsage
 }
 
 /**
@@ -2011,11 +2014,17 @@ export const useSession = create<SessionStore>((set, get) => ({
               void window.clui.setSessionCost(slice.sessionId, nextCost)
             }
           }
-          // Attach rule-denied tool calls to this turn's last assistant message so the notice
-          // renders under it. Empty on the common no-deny-rules turn, so most turns skip this.
-          if (e.denials?.length) {
+          // Attach this turn's usage and any rule-denials to its last assistant message so the
+          // trailer and notice render under it.
+          if (e.usage || e.denials?.length) {
             const idx = messages.findLastIndex((m) => m.role === 'assistant')
-            if (idx >= 0) messages[idx] = { ...messages[idx], denials: e.denials }
+            if (idx >= 0) {
+              messages[idx] = {
+                ...messages[idx],
+                ...(e.usage ? { usage: e.usage } : {}),
+                ...(e.denials?.length ? { denials: e.denials } : {})
+              }
+            }
           }
           break
         case 'error':
