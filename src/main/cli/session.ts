@@ -220,7 +220,13 @@ export class ClaudeSession extends EventEmitter {
       // Strip Claude runtime markers from the FINAL merged env: spreading process.env first
       // would otherwise leak this app's own session markers into the child if Clui was
       // launched from inside a Claude Code session.
-      env: stripRuntimeMarkers({ ...process.env, ...this.opts.env }),
+      // CLI 2.1.268 stopped offering the task-tracking tools (which feed the task puck) on
+      // Opus 4.8+ unless this is set. Default it on; an explicit shell value still wins.
+      env: stripRuntimeMarkers({
+        CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+        ...process.env,
+        ...this.opts.env
+      }),
       stdio: ['pipe', 'pipe', 'pipe']
     })
     this.child = child
