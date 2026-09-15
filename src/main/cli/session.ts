@@ -50,6 +50,9 @@ export interface ClaudeSessionOptions {
   model?: string
   /** Value for `--effort`. Undefined = pass no flag. Live-changeable via apply_flag_settings. */
   effort?: string
+  /** Forward `CLAUDE_CODE_ENABLE_TODO_TOOLS` as '1'/'0' so the task-tracking tools are offered
+   *  (or not) to the model. From the `enableTaskTools` setting; an explicit shell value wins. */
+  enableTaskTools?: boolean
   /** Ultracode on (forces xhigh + workflow orchestration). Passed at launch via
    *  `--settings {ultracode:true}` so it survives a resume; toggled live otherwise. */
   ultracode?: boolean
@@ -220,10 +223,10 @@ export class ClaudeSession extends EventEmitter {
       // Strip Claude runtime markers from the FINAL merged env: spreading process.env first
       // would otherwise leak this app's own session markers into the child if Clui was
       // launched from inside a Claude Code session.
-      // CLI 2.1.268 stopped offering the task-tracking tools (which feed the task puck) on
-      // Opus 4.8+ unless this is set. Default it on; an explicit shell value still wins.
+      // Offer the task-tracking tools (which feed the task puck) per the enableTaskTools
+      // setting; CLI 2.1.268 gates them off on Opus 4.8+ otherwise. A shell value still wins.
       env: stripRuntimeMarkers({
-        CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+        CLAUDE_CODE_ENABLE_TODO_TOOLS: this.opts.enableTaskTools ? '1' : '0',
         ...process.env,
         ...this.opts.env
       }),

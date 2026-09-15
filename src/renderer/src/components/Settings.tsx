@@ -16,7 +16,7 @@ import {
 } from '../../../shared/settings'
 import { Dropdown } from './Dropdown'
 import { Button } from './Button'
-import { IconClose, IconWarn } from './Icon'
+import { IconClose, IconWarn, IconCheck } from './Icon'
 import { applyTheme } from '../lib/theme'
 import { useEscape } from '../lib/useEscape'
 import { useDialogFocus } from '../lib/useDialogFocus'
@@ -264,6 +264,34 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
         </Field>
 
         <Field
+          label="Task tracking tools"
+          hint="Lets Claude keep a checklist of its work in the task puck. Opus 4.8 and newer only offer these tools when this is on. Off by default."
+          hintId="task-tools-hint"
+          onReset={isOverridden('enableTaskTools') ? () => reset('enableTaskTools') : undefined}
+        >
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={settings.enableTaskTools}
+            aria-label="Enable task tracking tools for new sessions"
+            aria-describedby="task-tools-hint"
+            onClick={() => set('enableTaskTools', !settings.enableTaskTools)}
+            className="group flex items-center gap-2 rounded-md py-1 pr-1 text-left"
+          >
+            <span
+              className={`flex h-4 w-4 flex-none items-center justify-center rounded-[4px] border transition-colors duration-150 ${
+                settings.enableTaskTools
+                  ? 'border-accent bg-accent/15 text-accent'
+                  : 'border-control-edge text-transparent group-hover:border-border-strong'
+              }`}
+            >
+              <IconCheck className="h-3 w-3" />
+            </span>
+            <span className="text-[13px] text-content">Enable for new sessions</span>
+          </button>
+        </Field>
+
+        <Field
           label="Default workspace"
           hint="Offered when starting a new session."
           onReset={isOverridden('defaultWorkspace') ? () => reset('defaultWorkspace') : undefined}
@@ -326,12 +354,15 @@ function Overlay({ children }: { children: React.ReactNode }): JSX.Element {
 function Field({
   label,
   hint,
+  hintId,
   onReset,
   note,
   children
 }: {
   label: string
   hint?: string
+  /** id for the hint <p>, so a control in `children` can point aria-describedby at it. */
+  hintId?: string
   /** Present only while this field holds an override. Its presence IS the "modified"
    *  marker: a neutral gutter rule fails the 3:1 non-text gate on this surface (the
    *  best neutral is 1.79:1) and the only value that passes is the scarce accent, so
@@ -359,7 +390,11 @@ function Field({
         )}
       </div>
       {children}
-      {hint && <p className="text-[12px] text-dim">{hint}</p>}
+      {hint && (
+        <p id={hintId} className="text-[12px] text-dim">
+          {hint}
+        </p>
+      )}
       {note}
     </div>
   )
