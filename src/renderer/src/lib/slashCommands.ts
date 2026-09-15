@@ -45,7 +45,8 @@ export const HEADLESS_SAFE_COMMANDS: readonly string[] = [
   'mcp', // manage MCP servers (reconnect/enable/disable); no Clui-native equivalent
   'reload-plugins', // reload plugins mid-session; no Clui-native equivalent
   'rename', // set the session's on-disk title; free local command, reflects in the sidebar on send
-  'security-review' // review the branch's pending changes for security issues (prompt command, like code-review)
+  'security-review', // review the branch's pending changes for security issues (prompt command, like code-review)
+  'output-style' // switch Claude's response style (Concise/Explanatory/custom); no Clui-native control, persists project-local not ~/.claude
 ]
 
 /** Bundled fallback descriptions, used only until the live list arrives (pre-handshake)
