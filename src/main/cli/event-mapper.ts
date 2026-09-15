@@ -65,6 +65,8 @@ interface RawEnvelope {
   result?: string | null
   total_cost_usd?: number
   modelUsage?: Record<string, { contextWindow?: number }>
+  /** Tool calls the CLI's permission rules blocked without prompting (empty when none). */
+  permission_denials?: Array<{ tool_name?: string; tool_input?: unknown }>
   /** Origin of a turn's result. `kind:'task-notification'` = a backgrounded subagent's
    *  completion turn (foreground result has origin null). `kind:'peer'` = a cross-session
    *  message woke this session; its sender + body ride here (the only place). Live 2.1.250. */
@@ -286,7 +288,13 @@ export class EventMapper {
             fromTaskNotification,
             // A peer-woken turn ends with origin.kind='peer'; same guard as above so it
             // doesn't clear the user's busy or run user-turn side effects.
-            fromPeer
+            fromPeer,
+            // Foreground only: a bg/peer result isn't the user's turn boundary, so its
+            // denials don't belong to the user's turn.
+            denials:
+              isForeground && env.permission_denials?.length
+                ? env.permission_denials.map((d) => ({ toolName: d.tool_name ?? 'a tool', input: d.tool_input }))
+                : undefined
           }
         ]
         // Backfill the pending placeholder (or insert a resolved block) with the peer's sender + body.

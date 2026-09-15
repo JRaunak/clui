@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useSession, type ChatMessage, type MessageAttachment, type PeerMessage, type ToolCall } from '../store'
 import { TypingDots } from './TypingDots'
 import { Markdown } from './Markdown'
-import { IconChevron, IconCheck, IconClose, IconCopy, IconFile, IconChecklist, IconMessage, IconSendToTray } from './Icon'
+import { IconChevron, IconCheck, IconClose, IconCopy, IconFile, IconChecklist, IconMessage, IconSendToTray, IconShieldOff } from './Icon'
+import { highlightOf } from '../lib/toolHighlight'
+import type { PermissionDenial } from '../../../shared/events'
 
 /** Non-image attachments render as a file chip matching the composer pill's language. */
 function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element {
@@ -135,6 +137,9 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
           </>
         )}
       </div>
+      {!isUser && message.denials && message.denials.length > 0 && (
+        <BlockedActionsNotice denials={message.denials} />
+      )}
     </div>
   )
 }
@@ -165,6 +170,88 @@ function PlanModeDivider(): JSX.Element {
       </span>
       <span className="h-px flex-1 bg-border" aria-hidden="true" />
     </div>
+  )
+}
+
+interface DeniedRow {
+  tool: string
+  target: string
+  count: number
+}
+
+/** Collapse identical tool+target denials so five blocked reads of one path read as one
+ *  row with ×5, not five rows. */
+function dedupeDenials(denials: PermissionDenial[]): DeniedRow[] {
+  const rows: DeniedRow[] = []
+  for (const d of denials) {
+    const target = highlightOf(d.input)?.value ?? ''
+    const row = rows.find((r) => r.tool === d.toolName && r.target === target)
+    if (row) row.count++
+    else rows.push({ tool: d.toolName, target, count: 1 })
+  }
+  return rows
+}
+
+/** Tool calls a permission rule blocked without prompting. Info-blue, not error: enforcement
+ *  working as configured is not a fault. Empty is handled by the caller. */
+function BlockedActionsNotice({ denials }: { denials: PermissionDenial[] }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const rows = dedupeDenials(denials)
+  const first = rows[0]
+  return (
+    <section
+      className="rounded-r-md border-l-2 border-info bg-info/7 py-[9px] pl-[13px] pr-3"
+      aria-label="Blocked actions"
+    >
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 text-left"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <IconChevron
+          className={`h-3.5 w-3.5 shrink-0 text-info transition-transform ${open ? 'rotate-90' : ''}`}
+          aria-hidden="true"
+        />
+        <IconShieldOff className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
+        <span className="shrink-0 text-[13px] font-medium text-info">
+          {denials.length === 1 ? '1 action' : `${denials.length} actions`} blocked by your permission rules
+        </span>
+        {/* Single-denial only: on multi, a one-item preview misdirects to an arbitrary (often
+            benign) entry and hides the rest, so the count alone is the headline. */}
+        {!open && denials.length === 1 && first && (
+          <span className="flex min-w-0 flex-1 items-baseline gap-1 text-[12.5px]">
+            <span className="shrink-0 text-dim">{first.tool}</span>
+            {first.target && (
+              <>
+                <span className="shrink-0 text-faint" aria-hidden="true">
+                  ·
+                </span>
+                <span className="min-w-0 truncate font-mono text-content">{first.target}</span>
+              </>
+            )}
+          </span>
+        )}
+      </button>
+      {open && (
+        <ul className="mt-1.5 flex flex-col gap-1 pl-6">
+          {rows.map((r, i) => (
+            <li key={i} className="flex items-baseline gap-1.5 text-[12.5px]">
+              <span className="shrink-0 font-serif font-medium text-content">{r.tool}</span>
+              {r.target && (
+                <>
+                  <span className="shrink-0 text-faint" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="min-w-0 break-all font-mono text-content">{r.target}</span>
+                </>
+              )}
+              {r.count > 1 && <span className="shrink-0 text-faint">×{r.count}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 

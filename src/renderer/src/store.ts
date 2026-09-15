@@ -16,7 +16,7 @@
  * each event into `sessions[handleId]`.
  */
 import { create } from 'zustand'
-import type { DomainEvent, PermissionSuggestion, SessionTask, SlashCommandInfo } from '../../shared/events'
+import type { DomainEvent, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo } from '../../shared/events'
 import type { ProjectGroup } from '../../shared/sessions'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
@@ -146,6 +146,9 @@ export interface ChatMessage {
   /** Set on a `role:'peer'` message: the inbound cross-session block's sender + pending
    *  state. Absent on every normal user/assistant message. */
   peer?: PeerMessage
+  /** Rule-denied tool calls from this turn's result, shown as a notice under the assistant
+   *  turn. Absent unless the user has deny rules that fired. */
+  denials?: PermissionDenial[]
 }
 
 /**
@@ -1021,7 +1024,8 @@ function touchesMessages(type: DomainEvent['type']): boolean {
     type === 'tool-result' ||
     type === 'peer-pending' ||
     type === 'peer-message' ||
-    type === 'peer-lifecycle-end'
+    type === 'peer-lifecycle-end' ||
+    type === 'result'
   )
 }
 
@@ -2006,6 +2010,12 @@ export const useSession = create<SessionStore>((set, get) => ({
               // Persist to the sidecar so cost survives an app relaunch.
               void window.clui.setSessionCost(slice.sessionId, nextCost)
             }
+          }
+          // Attach rule-denied tool calls to this turn's last assistant message so the notice
+          // renders under it. Empty on the common no-deny-rules turn, so most turns skip this.
+          if (e.denials?.length) {
+            const idx = messages.findLastIndex((m) => m.role === 'assistant')
+            if (idx >= 0) messages[idx] = { ...messages[idx], denials: e.denials }
           }
           break
         case 'error':
