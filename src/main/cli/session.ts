@@ -52,6 +52,8 @@ export interface ClaudeSessionOptions {
   effort?: string
   /** From the `enableTaskTools` setting; an explicit shell value wins. */
   enableTaskTools?: boolean
+  /** Quick chat: pass `--no-session-persistence` so nothing is written to disk. */
+  ephemeral?: boolean
   /** Ultracode on (forces xhigh + workflow orchestration). Passed at launch via
    *  `--settings {ultracode:true}` so it survives a resume; toggled live otherwise. */
   ultracode?: boolean
@@ -76,6 +78,30 @@ interface ControlResult {
   ok: boolean
   payload?: Record<string, unknown>
 }
+
+/**
+ * Tools withheld from a Quick (ephemeral) session via `--disallowedTools`: sub-agent
+ * orchestration, workflows, cron, worktrees, and plan mode. Read/Edit/Write/Bash/WebFetch/
+ * Skill/ToolSearch/NotebookEdit/ReportFindings stay available, so a quick chat can still read
+ * and edit. Task-tracking tools (TaskCreate/…) are governed by enableTaskTools, not this list.
+ * Names verified live on CLI 2.1.274.
+ */
+const EPHEMERAL_DISALLOWED_TOOLS = [
+  'Task',
+  'TaskOutput',
+  'TaskStop',
+  'ListAgents',
+  'SendMessage',
+  'Workflow',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'ScheduleWakeup',
+  'EnterWorktree',
+  'ExitWorktree',
+  'EnterPlanMode',
+  'ExitPlanMode'
+]
 
 /** Bounded wait for the initialize ACK. The first launch is cold (Bedrock auth + model-list
  *  warm-up precede the ACK) and can take tens of seconds; a stall past this is a failed
@@ -168,6 +194,13 @@ export class ClaudeSession extends EventEmitter {
       // Ultracode is a session setting (not --effort). Pass it at launch via --settings
       // inline JSON (verified) so a resume restores it. Clui's own arg, never ~/.claude.
       args.push('--settings', JSON.stringify({ ultracode: true }))
+    }
+    if (this.opts.ephemeral) {
+      // Quick chat: the CLI streams normally but writes no transcript to disk.
+      args.push('--no-session-persistence')
+      // Locked-down tool set for a throwaway session. --disallowedTools is variadic, so a
+      // following flag (--resume) or the end of the bare args terminates the list.
+      args.push('--disallowedTools', ...EPHEMERAL_DISALLOWED_TOOLS)
     }
     if (this.opts.resumeSessionId) {
       args.push('--resume', this.opts.resumeSessionId)

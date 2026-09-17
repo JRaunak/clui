@@ -1,4 +1,6 @@
 import {
+  useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -11,7 +13,7 @@ import { useComposerAutocomplete } from './ComposerAutocomplete'
 import { ModelEffortPicker } from './ModelEffortPicker'
 import { UltracodeToggle } from './UltracodeToggle'
 import { ContextRing } from './ContextRing'
-import { Dropdown } from './Dropdown'
+import { Dropdown, type DropdownOption } from './Dropdown'
 import {
   IconArrowUp,
   IconStop,
@@ -24,7 +26,10 @@ import {
   IconShieldOff,
   IconPlus,
   IconFile,
-  IconClose
+  IconClose,
+  IconFolder,
+  IconFolderOpen,
+  IconGhost
 } from './Icon'
 import { processDroppedFiles, toWireAttachment, type ProcessedAttachment } from '../lib/images'
 import {
@@ -34,6 +39,10 @@ import {
   PERMISSION_MODE_DESCRIPTIONS
 } from '../../../shared/settings'
 import type { PermissionModeChoice } from '../../../shared/ipc'
+
+// Directory-dropdown action sentinels. Real cwds are absolute paths, so these can't collide.
+const DIR_NONE = '__clui_no_dir__'
+const DIR_PICK = '__clui_pick__'
 
 /**
  * Message textarea on top, a control row below: model/effort + permission chips on the left,
@@ -61,6 +70,16 @@ export function Composer(): JSX.Element {
   const busy = useActive((s) => s?.busy ?? false)
   const hasSession = useActive((s) => !!s)
   const cwd = useActive((s) => s?.cwd ?? null)
+  // Editable only before the first turn: after a message is sent, the CLI has fixed the
+  // transcript's folder-slug at process-create, so changing the dir would be a lie (that's a
+  // fork/new session, out of scope). A directoryless session runs in the chat dir.
+  const noMessages = useActive((s) => (s?.messages.length ?? 0) === 0)
+  const chatDir = useSession((s) => s.chatDir)
+  const sessionGroups = useSession((s) => s.sessionGroups)
+  const closeSession = useSession((s) => s.closeSession)
+  const startSession = useSession((s) => s.startSession)
+  const isDirectoryless = !!cwd && cwd === chatDir
+  const ephemeral = useActive((s) => s?.ephemeral ?? false)
   const modeChoice = useActive((s) => s?.modeChoice ?? 'inherit')
   // A mode the model switched into (e.g. plan) shadows the user's pick on the chip only,
   // so the chip reflects the session's actual mode without rewriting their selection.
@@ -171,6 +190,68 @@ export function Composer(): JSX.Element {
   }
 
   const ac = useComposerAutocomplete(text, caret, applyPick)
+
+  // Land focus in the composer when a FRESH session opens (no turn sent yet), so the user's first
+  // keystrokes are the message, never the sidebar rename box. Keyed on handleId only: a session
+  // with history (resume / switch) keeps its own scroll and focus, and sending a message (0 → 1)
+  // doesn't re-grab focus.
+  useEffect(() => {
+    if (handleId && noMessages) textareaRef.current?.focus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleId])
+
+  // Rebind a still-empty session to `dir`, carrying its draft. The CLI fixes the transcript folder
+  // at process-create, so a pre-message dir change must respawn, not set_cwd; the jsonl is lazy, so
+  // nothing is lost. A quick session stays ephemeral across the respawn so its "not saved" contract
+  // isn't silently dropped by picking a folder.
+  const respawnIn = async (dir: string): Promise<void> => {
+    if (!handleId || dir === cwd) return
+    const cur = useSession.getState().sessions[handleId]
+    const draft = cur?.draftText ?? ''
+    const carriedAttachments = cur?.draftAttachments ?? []
+    const wasEphemeral = cur?.ephemeral ?? false
+    await closeSession(handleId)
+    await startSession(dir, undefined, wasEphemeral ? { ephemeral: true } : undefined)
+    const next = useSession.getState().activeHandleId
+    if (!next) return
+    if (draft) setDraftText(next, draft)
+    if (carriedAttachments.length) addDraftAttachments(next, carriedAttachments)
+  }
+
+  const chooseDirectory = async (): Promise<void> => {
+    const dir = await window.clui.pickWorkspace()
+    if (dir) await respawnIn(dir)
+  }
+
+  // The current cwd is forced in first so its ✓ shows even before it has an on-disk row; the rest
+  // are the distinct project cwds the sidebar knows, minus the chat dir (that's "Workbench").
+  const dirOptions = useMemo<DropdownOption<string>[]>(() => {
+    const seen = new Set<string>()
+    const recents: DropdownOption<string>[] = []
+    if (!isDirectoryless && cwd) {
+      seen.add(cwd)
+      recents.push({ value: cwd, label: basename(cwd), description: cwd })
+    }
+    for (const g of sessionGroups) {
+      if (g.cwd === chatDir || seen.has(g.cwd)) continue
+      seen.add(g.cwd)
+      recents.push({ value: g.cwd, label: basename(g.cwd), description: g.cwd })
+    }
+    return [
+      ...recents,
+      { value: DIR_PICK, label: 'Choose a directory…', icon: <IconFolderOpen className="h-4 w-4" /> },
+      { value: DIR_NONE, label: 'Workbench', divider: true }
+    ]
+  }, [sessionGroups, chatDir, cwd, isDirectoryless])
+
+  const onSelectDir = (v: string): void => {
+    if (v === DIR_PICK) {
+      void chooseDirectory()
+      return
+    }
+    const target = v === DIR_NONE ? chatDir : v
+    if (target) void respawnIn(target)
+  }
 
   const submit = async (): Promise<void> => {
     const t = text.trim()
@@ -298,18 +379,52 @@ export function Composer(): JSX.Element {
             <IconPlus className="h-4 w-4" />
           </button>
           <div className="ml-3 flex items-center gap-1.5">
-            <ModelEffortPicker />
-          <Dropdown<PermissionModeChoice>
-            value={displayMode}
-            options={permOptions}
-            onChange={(m) => void setPermissionMode(m)}
-            title="Change permissions"
-            direction="up"
-            variant="pill"
-            menuClassName="w-72"
-            icon={<PermissionIcon mode={displayMode} />}
-          />
-            <UltracodeToggle />
+            {ephemeral ? (
+              <>
+                {/* A quick session trims the control row to its contract: not saved, and (only when
+                    it runs unguarded) a static danger readout. No model/effort/permission/dir here;
+                    the profile is fixed at spawn. */}
+                <span
+                  className="flex h-8 items-center gap-1.5 px-1 text-xs text-dim"
+                  title="Not saved · discarded when you close it"
+                >
+                  <IconGhost className="h-3.5 w-3.5 shrink-0" />
+                  Not saved
+                </span>
+                {modeChoice === 'bypassPermissions' && (
+                  <span
+                    className="flex h-8 items-center gap-1.5 px-1 text-xs text-err"
+                    title="Autonomous · runs tools without asking · change in Settings → Quick sessions"
+                  >
+                    <IconShieldOff className="h-3.5 w-3.5 shrink-0" />
+                    runs without asking
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <ModelEffortPicker />
+                <Dropdown<PermissionModeChoice>
+                  value={displayMode}
+                  options={permOptions}
+                  onChange={(m) => void setPermissionMode(m)}
+                  title="Change permissions"
+                  direction="up"
+                  variant="pill"
+                  menuClassName="w-72"
+                  icon={<PermissionIcon mode={displayMode} />}
+                />
+                <UltracodeToggle />
+                <DirectoryChip
+                  directoryless={isDirectoryless}
+                  editable={noMessages}
+                  cwd={cwd}
+                  value={isDirectoryless ? DIR_NONE : (cwd ?? DIR_NONE)}
+                  options={dirOptions}
+                  onSelect={onSelectDir}
+                />
+              </>
+            )}
           </div>
           <div className="ml-auto flex items-center gap-4 pr-[2px]">
             <ContextRing
@@ -339,6 +454,68 @@ export function Composer(): JSX.Element {
         </div>
       </div>
     </div>
+  )
+}
+
+/** Basename of an absolute path. Pure string math, no node `path` in the renderer. */
+function basename(p: string): string {
+  const parts = p.replace(/\/+$/, '').split('/')
+  return parts[parts.length - 1] || p
+}
+
+/**
+ * The session's working directory, neutral throughout (accent-scarcity: never terracotta), state
+ * legible by glyph AND text. Before the first turn it's a dropdown to bind/rebind/unbind the dir
+ * (recent dirs · choose a folder · "Workbench"); after, the folder is locked at the CLI's
+ * spawn-time slug, so it renders a static bound label or nothing when directoryless.
+ */
+function DirectoryChip({
+  directoryless,
+  editable,
+  cwd,
+  value,
+  options,
+  onSelect
+}: {
+  directoryless: boolean
+  editable: boolean
+  cwd: string | null
+  value: string
+  options: DropdownOption<string>[]
+  onSelect: (v: string) => void
+}): JSX.Element | null {
+  if (!editable) {
+    // Locked + directoryless: nothing to show (a quick session surfaces "Not saved" instead).
+    if (directoryless) return null
+    return (
+      <span
+        className="flex h-8 items-center gap-1.5 px-2.5 text-xs text-dim"
+        title={`${cwd ?? ''}\ndirectory is fixed after the first message`}
+      >
+        <IconFolder className="h-3.5 w-3.5 shrink-0" />
+        <span className="max-w-[16ch] truncate">{basename(cwd ?? '')}</span>
+      </span>
+    )
+  }
+  return (
+    <Dropdown<string>
+      value={value}
+      options={options}
+      onChange={onSelect}
+      ariaLabel="Session directory"
+      title={directoryless ? undefined : (cwd ?? undefined)}
+      direction="up"
+      variant="pill"
+      checkTone="neutral"
+      menuClassName="w-64"
+      icon={
+        directoryless ? (
+          <IconFolderOpen className="h-3.5 w-3.5 shrink-0 text-dim" />
+        ) : (
+          <IconFolder className="h-3.5 w-3.5 shrink-0 text-dim" />
+        )
+      }
+    />
   )
 }
 

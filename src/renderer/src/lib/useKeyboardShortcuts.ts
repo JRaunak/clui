@@ -19,18 +19,27 @@ import { useEffect } from 'react'
 import { useSession } from '../store'
 
 /**
- * @param onNewSession open the workspace picker / start a session (⌘N)
- * @param onNewNamedSession open the name-this-session dialog (⌘⇧N)
+ * @param onNewSession start a directoryless session in the chat dir (⌘N)
+ * @param onNewQuickSession start an ephemeral, not-saved session (⌥⌘N)
+ * @param onNewSessionInDir pick a workspace folder, then start there (⌘⇧N)
  * @param onOpenSettings open the Settings modal (⌘,)
  */
 export function useKeyboardShortcuts(opts: {
   onNewSession: () => void
-  onNewNamedSession: () => void
+  onNewQuickSession: () => void
+  onNewSessionInDir: () => void
   onOpenSettings: () => void
   onOpenPalette: () => void
   onToggleSidebar: () => void
 }): void {
-  const { onNewSession, onNewNamedSession, onOpenSettings, onOpenPalette, onToggleSidebar } = opts
+  const {
+    onNewSession,
+    onNewQuickSession,
+    onNewSessionInDir,
+    onOpenSettings,
+    onOpenPalette,
+    onToggleSidebar
+  } = opts
 
   useEffect(() => {
     // 1. Native-menu actions (⌘N / ⌘W / ⌘,).
@@ -40,8 +49,15 @@ export function useKeyboardShortcuts(opts: {
         case 'new-session':
           onNewSession()
           break
+        // ⌥⌘N arrives as a menu accelerator (owned by main), so it needs no DOM listener here;
+        // a second binding would double-fire against the accelerator.
+        case 'new-quick-session':
+          onNewQuickSession()
+          break
+        // The native menu's 'new-named-session' channel fires on ⌘⇧N; it starts a session in a
+        // picked directory (the channel keeps its old name).
         case 'new-named-session':
-          onNewNamedSession()
+          onNewSessionInDir()
           break
         case 'close-session': {
           const id = store.activeHandleId
@@ -109,5 +125,12 @@ export function useKeyboardShortcuts(opts: {
       off()
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [onNewSession, onNewNamedSession, onOpenSettings, onOpenPalette, onToggleSidebar])
+  }, [
+    onNewSession,
+    onNewQuickSession,
+    onNewSessionInDir,
+    onOpenSettings,
+    onOpenPalette,
+    onToggleSidebar
+  ])
 }

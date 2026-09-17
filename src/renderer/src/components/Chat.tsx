@@ -7,6 +7,17 @@ import { CompactSuggestion } from './CompactSuggestion'
 import { FindBar } from './FindBar'
 import { TaskPuck, useTaskUiActive } from './TaskPuck'
 import { IconChevron, IconClose, IconEdit, IconCheck, IconFile } from './Icon'
+import { deriveModelInfo } from '../../../shared/settings'
+import type { PermissionModeChoice } from '../../../shared/ipc'
+
+/** Quick-session permission phrase, keyed to the four modes Settings scopes quick sessions to.
+ *  Anything else falls back to the System Default phrasing. */
+const QUICK_PERMISSION_PHRASE: Partial<Record<PermissionModeChoice, string>> = {
+  default: 'asks before each action',
+  auto: 'decides per action',
+  bypassPermissions: 'runs without asking',
+  inherit: 'uses your default permissions'
+}
 
 /**
  * Virtualized transcript. react-virtuoso renders only the visible window, so the full
@@ -29,6 +40,13 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const historyCount = useActive((s) => s?.historyCount ?? 0)
   const activeHandleId = useActive((s) => s?.handleId ?? null)
   const tasks = useActive((s) => s?.tasks ?? EMPTY_TASKS)
+  // Empty-state copy varies by session shape: quick (ephemeral), directoryless, or folder-bound.
+  const cwd = useActive((s) => s?.cwd ?? null)
+  const ephemeral = useActive((s) => s?.ephemeral ?? false)
+  const modeChoice = useActive((s) => s?.modeChoice ?? 'inherit')
+  const modelChoice = useActive((s) => s?.modelChoice ?? '')
+  const chatDir = useSession((s) => s.chatDir)
+  const isDirectoryless = !!cwd && cwd === chatDir
 
   // Task puck: local UI state (open/pinned), reset when the session switches. The gate
   // hides it when idle+all-done (after a linger) or when the list empties.
@@ -135,6 +153,16 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollTarget?.nonce])
   if (messages.length === 0 && !busy) {
+    const title = resumed ? 'Resumed session' : ephemeral ? 'Quick session' : 'A fresh session'
+    const body = resumed
+      ? 'No messages were saved yet. Continue below; the CLI still has its context.'
+      : ephemeral
+        ? 'A quick, unsaved chat. Nothing is written to disk.'
+        : isDirectoryless
+          ? 'Type a message below to begin. Not tied to a project folder.'
+          : 'Type a message below to begin. Claude runs in this directory.'
+    const family = deriveModelInfo(modelChoice).family
+    const familyWord = family.charAt(0).toUpperCase() + family.slice(1)
     return (
       <div
         className="flex flex-1 flex-col overflow-y-auto px-7 py-6"
@@ -145,14 +173,14 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
             asserting what was saved. */}
         <div className="m-auto flex max-w-sm flex-col items-center gap-2 text-center" aria-live="polite">
           <span className="h-2 w-2 rounded-full bg-accent/70" aria-hidden="true" />
-          <p className="font-serif text-lg italic text-dim">
-            {resumed ? 'Resumed session' : 'A fresh session'}
-          </p>
-          <p className="text-sm leading-relaxed text-faint">
-            {resumed
-              ? 'No messages were saved yet. Continue below; the CLI still has its context.'
-              : 'Type a message below to begin. Claude runs in this workspace.'}
-          </p>
+          <p className="font-serif text-lg italic text-dim">{title}</p>
+          <p className="text-sm leading-relaxed text-faint">{body}</p>
+          {!resumed && ephemeral && (
+            <p className="text-xs leading-relaxed text-faint">
+              {familyWord} at high effort. Claude{' '}
+              {QUICK_PERMISSION_PHRASE[modeChoice] ?? 'uses your default permissions'}, with a limited tool set.
+            </p>
+          )}
         </div>
       </div>
     )

@@ -8,7 +8,6 @@ import { Customizations } from './components/Customizations'
 import { ChangedFiles } from './components/ChangedFiles'
 import { Settings } from './components/Settings'
 import { CommandPalette } from './components/CommandPalette'
-import { NewNamedSessionDialog } from './components/NewNamedSessionDialog'
 import { GlobalSearch } from './components/GlobalSearch'
 import { BackgroundTasks } from './components/BackgroundTasks'
 import { SubagentView } from './components/SubagentView'
@@ -46,7 +45,10 @@ export function App(): JSX.Element {
   // sidebar row; the live slice's title falls back only before the jsonl lands.
   const displayTitle =
     sessionGroups.flatMap((g) => g.sessions).find((s) => s.id === sessionId)?.title ?? sliceTitle
+  // "Untitled" is a placeholder, not a name; hide it (and any absent id/cwd) rather than show junk.
+  const showTitle = !!displayTitle && displayTitle !== 'Untitled'
   const startSession = useSession((s) => s.startSession)
+  const chatDir = useSession((s) => s.chatDir)
   const notice = useSession((s) => s.notice)
   const viewingSubagent = useSession((s) => s.viewingSubagent)
   const dismissNotice = useSession((s) => s.dismissNotice)
@@ -60,7 +62,6 @@ export function App(): JSX.Element {
   const [showCustomizations, setShowCustomizations] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
-  const [showNamedSession, setShowNamedSession] = useState(false)
   const [dockH, setDockH] = useState(0)
   const [sbW, setSbW] = useState(0)
   const globalSearchOpen = useSession((s) => s.globalSearchOpen)
@@ -83,7 +84,6 @@ export function App(): JSX.Element {
     showSettings ||
     showCustomizations ||
     showPalette ||
-    showNamedSession ||
     globalSearchOpen ||
     permissionPending
 
@@ -139,6 +139,8 @@ export function App(): JSX.Element {
     void loadPersistedCosts()
     // Read the CLI effort caps once so the picker/chip are honest from the first session.
     void useSession.getState().loadEffortCaps()
+    // Cache the directoryless cwd so the sidebar/status-bar/composer can recognize it.
+    void useSession.getState().loadChatDir()
     // Re-assert the theme and install the 'system' OS-change listener; read onboarded in the
     // same call so the first-run intro shows only once.
     void window.clui.getSettings().then(({ values }) => {
@@ -193,27 +195,30 @@ export function App(): JSX.Element {
     }
   }, [])
 
+  // Primary: start a directoryless session in the chat dir with no folder dialog, so the
+  // user lands straight in a live composer. First-run completion is handled by the
+  // cwd-keyed effect above, not here.
+  const newSession = useCallback(async (): Promise<void> => {
+    const dir = await window.clui.getChatDir()
+    await startSession(dir)
+  }, [startSession])
+
+  // Quick: an ephemeral session in the chat dir, spawned with --no-session-persistence so no
+  // transcript hits disk (discarded on close).
+  const quickSession = useCallback(async (): Promise<void> => {
+    const dir = await window.clui.getChatDir()
+    await startSession(dir, undefined, { ephemeral: true })
+  }, [startSession])
+
   const pickAndStart = useCallback(async (): Promise<void> => {
-    // First-run completion is handled by the cwd-keyed effect above, not here.
     const dir = await window.clui.pickWorkspace()
     if (dir) await startSession(dir)
   }, [startSession])
 
-  // Close FIRST so the OS folder picker isn't stacked behind a still-open Clui dialog.
-  const startNamedSession = useCallback(
-    async (name: string): Promise<void> => {
-      setShowNamedSession(false)
-      const dir = await window.clui.pickWorkspace()
-      if (dir) await startSession(dir, undefined, { name })
-    },
-    [startSession]
-  )
-
-  // ⌘N new session · ⌘⇧N named session · ⌘W close · ⌘, settings · ⌘K palette (native
-  // menu) + ⌃Tab / ⌃C.
+  // ⌘N new session · ⌘⇧N new session in a directory · ⌘W close · ⌘, settings · ⌘K palette
+  // (native menu) + ⌃Tab / ⌃C.
   const openSettings = useCallback(() => setShowSettings(true), [])
   const openPalette = useCallback(() => setShowPalette(true), [])
-  const openNamedSession = useCallback(() => setShowNamedSession(true), [])
 
   // Sidebar chrome remounts on toggle; if focus sat inside it, move it to the persistent
   // title-bar toggle rather than let it fall to <body>.
@@ -227,8 +232,9 @@ export function App(): JSX.Element {
   }, [])
 
   useKeyboardShortcuts({
-    onNewSession: pickAndStart,
-    onNewNamedSession: openNamedSession,
+    onNewSession: newSession,
+    onNewQuickSession: quickSession,
+    onNewSessionInDir: pickAndStart,
     onOpenSettings: openSettings,
     onOpenPalette: openPalette,
     onToggleSidebar: toggleSidebar
@@ -275,7 +281,7 @@ export function App(): JSX.Element {
                     ? 'cursor-default bg-bg-raised text-faint'
                     : 'bg-accent text-on-accent hover:bg-accent-hover'
                 }`}
-                onClick={cliUnavailable ? undefined : pickAndStart}
+                onClick={cliUnavailable ? undefined : newSession}
                 aria-disabled={cliUnavailable || undefined}
                 aria-label="New session"
                 title={cliUnavailable ? NEW_SESSION_DISABLED_HINT : 'New session'}
@@ -286,8 +292,8 @@ export function App(): JSX.Element {
           ) : (
             <>
               <SplitNewSession
-                onNew={pickAndStart}
-                onNewNamed={openNamedSession}
+                onNew={newSession}
+                onQuick={quickSession}
                 disabled={cliUnavailable}
                 disabledTitle={NEW_SESSION_DISABLED_HINT}
               />
@@ -394,16 +400,22 @@ export function App(): JSX.Element {
             {/* Bottom-left workspace/session info. Same h-8 as the sidebar footer
                 so their divider lines align across the two columns. */}
             <div className="flex h-8 items-center gap-3 border-t border-border px-4 text-[12px] text-dim">
-              <span className="min-w-0 truncate text-dim" title={displayTitle}>
-                {displayTitle}
-              </span>
-              <span className="shrink-0 text-faint">·</span>
-              <span className="shrink-0 font-mono text-faint" title={sessionId ?? ''}>
-                {sessionId ? sessionId.slice(0, 8) : '—'}
-              </span>
+              {showTitle && (
+                <span className="min-w-0 truncate text-dim" title={displayTitle}>
+                  {displayTitle}
+                </span>
+              )}
+              {sessionId && (
+                <>
+                  {showTitle && <span className="shrink-0 text-faint">·</span>}
+                  <span className="shrink-0 font-mono text-faint" title={sessionId}>
+                    {sessionId.slice(0, 8)}
+                  </span>
+                </>
+              )}
               {costUsd !== null && (
                 <>
-                  <span className="shrink-0 text-faint">·</span>
+                  {(showTitle || sessionId) && <span className="shrink-0 text-faint">·</span>}
                   <span
                     className="shrink-0 font-mono text-dim"
                     title="Cumulative session cost (from the CLI result event)"
@@ -415,9 +427,12 @@ export function App(): JSX.Element {
               <span className="flex-1" aria-hidden="true" />
               <BackgroundTasksSlot />
               <WorkflowTray />
-              <span className="max-w-[20ch] shrink-0 truncate text-faint" title={cwd ?? ''}>
-                {cwd ? basename(cwd) : '—'}
-              </span>
+              {/* A directoryless session runs in ~/.clui; show nothing rather than that internal path. */}
+              {cwd && cwd !== chatDir && (
+                <span className="max-w-[20ch] shrink-0 truncate text-faint" title={cwd}>
+                  {basename(cwd)}
+                </span>
+              )}
             </div>
           </>
         ) : // Onboarding takes the empty pane when the CLI is unhealthy or first-run isn't done.
@@ -444,13 +459,13 @@ export function App(): JSX.Element {
               A local window onto the <span className="font-mono text-dim">claude</span> CLI — your
               sessions, permissions, and tools, running side by side.
             </p>
-            <Button variant="primary" size="lg" className="mt-7" onClick={pickAndStart}>
+            <Button variant="primary" size="lg" className="mt-7" onClick={newSession}>
               <IconPlus className="h-4 w-4" />
               New session
             </Button>
             {/* Ghost, not a second accent: the hero's boldness is spent on the primary. */}
-            <Button variant="ghost" size="md" className="mt-2" onClick={openNamedSession}>
-              New named session…
+            <Button variant="ghost" size="md" className="mt-2" onClick={pickAndStart}>
+              New session in a directory…
             </Button>
           </div>
         )}
@@ -476,12 +491,6 @@ export function App(): JSX.Element {
       <div data-overlay-host>
         <PermissionDialog />
         <GlobalSearch />
-        {showNamedSession && (
-          <NewNamedSessionDialog
-            onClose={() => setShowNamedSession(false)}
-            onConfirm={(name) => void startNamedSession(name)}
-          />
-        )}
         {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} />}
         {showSettings && <Settings onClose={() => setShowSettings(false)} />}
         {showPalette && (
@@ -489,11 +498,11 @@ export function App(): JSX.Element {
             onClose={() => setShowPalette(false)}
             onNewSession={() => {
               setShowPalette(false)
-              void pickAndStart()
+              void newSession()
             }}
-            onNewNamedSession={() => {
+            onNewSessionInDir={() => {
               setShowPalette(false)
-              openNamedSession()
+              void pickAndStart()
             }}
             onOpenSettings={() => {
               setShowPalette(false)

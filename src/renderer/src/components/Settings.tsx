@@ -32,6 +32,32 @@ const FALLBACK_NOTES: Record<NonNullable<ModelListResult['reason']>, string> = {
     "Showing Clui's built-in list. The live Bedrock query failed, so newer models may be missing. Check the aws CLI and your credentials, then reopen Settings."
 }
 
+/** Model families offered for quick sessions (the latest live model of the pick is resolved at
+ *  spawn; see latestModelInFamily). Not the full live list: a quick chat picks a family, not a
+ *  concrete id. */
+const QUICK_FAMILIES: CluiSettings['quickModelFamily'][] = ['opus', 'sonnet', 'haiku']
+const QUICK_FAMILY_LABELS: Record<CluiSettings['quickModelFamily'], string> = {
+  opus: 'Opus',
+  sonnet: 'Sonnet',
+  haiku: 'Haiku'
+}
+
+/** Permission modes a quick session can use: a deliberate subset of PERMISSION_MODES (no
+ *  Silent Deny / Plan / Auto Edit, which don't fit a throwaway chat). */
+const QUICK_PERMISSION_MODES: CluiSettings['permissionMode'][] = [
+  'inherit',
+  'default',
+  'auto',
+  'bypassPermissions'
+]
+
+/** In the quick-session context, System Default couples to the global permission mode, not a
+ *  settings.json field, so its description is reworded to keep that coupling honest. */
+const QUICK_PERMISSION_DESCRIPTIONS: Record<CluiSettings['permissionMode'], string> = {
+  ...PERMISSION_MODE_DESCRIPTIONS,
+  inherit: 'Follows your global permission mode'
+}
+
 export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
   const [settings, setSettings] = useState<CluiSettings | null>(null)
   const [cliInfo, setCliInfo] = useState<CliInfo | null>(null)
@@ -311,6 +337,41 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
               Browse…
             </button>
           </div>
+        </Field>
+
+        <div className="text-[12px] uppercase tracking-wide text-dim">Quick sessions</div>
+
+        <Field
+          label="Model family"
+          hint="Quick sessions run this family's latest model at high effort, with a limited tool set. Applies to all quick sessions."
+          onReset={isOverridden('quickModelFamily') ? () => reset('quickModelFamily') : undefined}
+        >
+          <Dropdown<CluiSettings['quickModelFamily']>
+            value={settings.quickModelFamily}
+            ariaLabel="Quick session model family"
+            options={QUICK_FAMILIES.map((f) => ({ value: f, label: QUICK_FAMILY_LABELS[f] }))}
+            onChange={(f) => set('quickModelFamily', f)}
+          />
+        </Field>
+
+        <Field
+          label="Permission mode"
+          hint="How quick sessions handle tool permissions. Applies to all quick sessions, not per-session."
+          onReset={isOverridden('quickPermissionMode') ? () => reset('quickPermissionMode') : undefined}
+        >
+          <Dropdown<CluiSettings['quickPermissionMode']>
+            value={settings.quickPermissionMode}
+            ariaLabel="Quick session permission mode"
+            options={QUICK_PERMISSION_MODES.map((m) => ({
+              value: m,
+              label: PERMISSION_MODE_LABELS[m],
+              color: PERMISSION_MODE_COLORS[m],
+              description: QUICK_PERMISSION_DESCRIPTIONS[m],
+              tone: m === 'bypassPermissions' ? ('danger' as const) : undefined
+            }))}
+            menuClassName="w-72"
+            onChange={(m) => set('quickPermissionMode', m)}
+          />
         </Field>
       </div>
 

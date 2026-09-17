@@ -55,6 +55,14 @@ export interface CluiSettings {
   /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
    *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
+  /** Directory a "no directory" session spawns in. Empty resolves to ~/.clui, a dedicated,
+   *  contained location so a directoryless session can't touch the whole home tree. */
+  defaultChatDir: string
+  /** Model family a Quick (ephemeral) session runs. Its latest live model is resolved at
+   *  spawn (see latestModelInFamily), never a hardcoded id. Applies to every quick session. */
+  quickModelFamily: 'opus' | 'sonnet' | 'haiku'
+  /** Permission mode a Quick session launches with. 'inherit' honors ~/.claude/settings.json. */
+  quickPermissionMode: CluiSettings['permissionMode']
 }
 
 /** A settings key (used by the per-field reset affordance). */
@@ -255,6 +263,26 @@ export function deriveModelInfo(id: string): ModelInfo {
   return { id, label: labelFor(id), efforts: effortsFor(id), family, version }
 }
 
+/**
+ * The `--model` value a Quick session should spawn: the highest-version model of `family`
+ * in the LIVE list, preferring the non-1M id on a version tie (leaner for a throwaway chat).
+ * Falls back to the newest in-family id from FALLBACK_MODEL_IDS when the live list carries no
+ * member of the family, null when neither does. Never a hardcoded id; a newer family member
+ * in the live list wins automatically.
+ */
+export function latestModelInFamily(family: ModelInfo['family'], models: ModelInfo[]): string | null {
+  const pick = (list: ModelInfo[]): string | null => {
+    const inFamily = list.filter((m) => m.family === family)
+    if (inFamily.length === 0) return null
+    // Version desc; on a tie the non-1M id wins (1M is heavier, pointless for a quick chat).
+    inFamily.sort(
+      (a, b) => b.version - a.version || Number(a.id.includes('[1m]')) - Number(b.id.includes('[1m]'))
+    )
+    return inFamily[0].id
+  }
+  return pick(models) ?? pick(FALLBACK_MODEL_IDS.map(deriveModelInfo))
+}
+
 /** Group order for the model picker, most-capable families first. Unknown families
     fall through to a trailing "Other" bucket so a NEW Bedrock model is never dropped. */
 const FAMILY_ORDER: ModelInfo['family'][] = ['opus', 'sonnet', 'haiku', 'fable', 'unknown']
@@ -391,7 +419,13 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   // First launch shows the intro card until dismissed.
   onboarded: false,
   sidebarCollapsed: false,
-  enableTaskTools: false
+  enableTaskTools: false,
+  // Empty → resolves to ~/.clui in main (getChatDir).
+  defaultChatDir: '',
+  // Quick sessions default to the leanest family + an asking mode: a throwaway chat should
+  // be cheap and, by default, still ask before acting.
+  quickModelFamily: 'haiku',
+  quickPermissionMode: 'default'
 }
 
 // Ordered by the risk ramp (safest concrete mode → riskiest), with System Default

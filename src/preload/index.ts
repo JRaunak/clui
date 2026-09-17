@@ -18,6 +18,7 @@ import type { CluiSettings, EffortChoice, ModelChoice, SettingsKey } from '../sh
 
 const api: CluiApi = {
   pickWorkspace: () => ipcRenderer.invoke(IpcChannels.pickWorkspace),
+  getChatDir: () => ipcRenderer.invoke(IpcChannels.getChatDir),
   getCliInfo: () => ipcRenderer.invoke(IpcChannels.getCliInfo),
   getFullscreen: () => ipcRenderer.invoke(IpcChannels.getFullscreen),
   startSession: (opts: StartSessionOptions) =>

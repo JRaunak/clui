@@ -1,15 +1,16 @@
-/** The expanded sidebar's New session control: a split-button. The wide segment starts an unnamed session;
- *  the tag segment opens the named-session dialog directly. One accent fill, subdivided. */
-import { IconPlus, IconTag } from './Icon'
+/** The expanded sidebar's New session control: a split-button. The wide segment starts a
+ *  directoryless session (no folder dialog); the icon segment starts an ephemeral "Quick"
+ *  session (not saved). One accent fill, subdivided. */
+import { IconPlus, IconGhost } from './Icon'
 
 export function SplitNewSession({
   onNew,
-  onNewNamed,
+  onQuick,
   disabled = false,
   disabledTitle
 }: {
   onNew: () => void
-  onNewNamed: () => void
+  onQuick: () => void
   /** CLI can't start a session: render an inert neutral affordance (aria-disabled + tooltip). */
   disabled?: boolean
   disabledTitle?: string
@@ -38,15 +39,13 @@ export function SplitNewSession({
         New session
       </button>
       <button
-        aria-haspopup="dialog"
-        aria-label="New named session"
+        aria-label="Quick session (not saved)"
         aria-disabled={disabled || undefined}
-        title={disabled ? disabledTitle : 'New named session ⌘⇧N'}
-        onClick={disabled ? undefined : onNewNamed}
+        title={disabled ? disabledTitle : 'Quick session · not saved (discarded when closed) · ⌥⌘N'}
+        onClick={disabled ? undefined : onQuick}
         className={`${seg} w-9 shrink-0 rounded-r-md border-l ${disabled ? 'border-border' : 'border-on-accent/25'}`}
       >
-        {/* A tag, not a chevron: this opens the name dialog, so it signals labeling the session. */}
-        <IconTag className="h-3.5 w-3.5" />
+        <IconGhost className="h-4 w-4" />
       </button>
     </div>
   )

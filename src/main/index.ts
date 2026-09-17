@@ -9,7 +9,7 @@ import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import {
@@ -127,7 +127,8 @@ function buildMenu(): void {
       label: 'File',
       submenu: [
         { label: 'New Session', accelerator: 'CmdOrCtrl+N', click: () => send('new-session') },
-        { label: 'New Named Session…', accelerator: 'CmdOrCtrl+Shift+N', click: () => send('new-named-session') },
+        { label: 'New Quick Session', accelerator: 'Alt+CmdOrCtrl+N', click: () => send('new-quick-session') },
+        { label: 'New Session in a Directory…', accelerator: 'CmdOrCtrl+Shift+N', click: () => send('new-named-session') },
         { label: 'Quick Switcher…', accelerator: 'CmdOrCtrl+K', click: () => send('open-palette') },
         { label: 'Close Session', accelerator: 'CmdOrCtrl+W', click: () => send('close-session') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
@@ -271,6 +272,15 @@ function registerIpc(): void {
     return res.filePaths[0]
   })
 
+  // The cwd for a "no directory" session: a dedicated ~/.clui (configurable), created on
+  // demand so it always exists before spawn. Contained on purpose so it never touches the home tree.
+  handle(IpcChannels.getChatDir, async () => {
+    const { defaultChatDir } = await getSettings()
+    const dir = defaultChatDir.trim() || join(homedir(), '.clui')
+    await mkdir(dir, { recursive: true })
+    return dir
+  })
+
   handle(IpcChannels.getCliInfo, async () => {
     const { cliPath } = await getSettings()
     return detectCli(cliPath || null)
@@ -293,6 +303,7 @@ function registerIpc(): void {
       resumeSessionId: opts.resumeSessionId,
       fork: opts.fork,
       name: opts.name,
+      ephemeral: opts.ephemeral,
       env: authEnv,
       // Model/effort: per-session override wins over the global default.
       // model is the raw --model value (id or alias).

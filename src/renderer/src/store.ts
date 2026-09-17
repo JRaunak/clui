@@ -20,7 +20,7 @@ import type { DomainEvent, PermissionDenial, PermissionSuggestion, SessionTask, 
 import type { ProjectGroup } from '../../shared/sessions'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
-import { clampEffort, capBlocksUltra, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
+import { clampEffort, capBlocksUltra, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
 
 /** A tool-permission request awaiting the user's decision. */
@@ -225,6 +225,9 @@ export interface PerSessionState {
   costUsd: number | null
   /** True if this session was resumed from history (context carried by the CLI). */
   resumed: boolean
+  /** Quick session: spawned with `--no-session-persistence`, so no transcript ever hits disk.
+   *  Drives the "Not saved" marker and reduces the sidebar row to a live-only, close-to-discard row. */
+  ephemeral: boolean
   /** Number of messages in the index at which live turns begin (history above). */
   historyCount: number
   /** True while a turn is streaming. */
@@ -348,6 +351,10 @@ interface SessionStore {
   sessionGroups: ProjectGroup[]
   /** True while a `refreshSessions()` scan is in flight (drives the sidebar skeleton). */
   sessionsLoading: boolean
+  /** The "no directory" cwd (~/.clui or the configured default), fetched once and cached so
+   *  the sidebar, status bar, and composer can recognize a directoryless session by an exact
+   *  cwd match without each re-hitting IPC. null until `loadChatDir` resolves. */
+  chatDir: string | null
   /** Re-scan `~/.claude/projects` and replace `sessionGroups`. Awaitable so a caller can
    *  sequence work after the list lands (e.g. the delete-commit that hides a row).
    *  `quiet` skips `sessionsLoading` so a mid-session rescan can't flash the skeleton. */
@@ -356,6 +363,9 @@ interface SessionStore {
   /** Re-read the CLI effort caps from ~/.claude/settings.json into `effortCaps`. Called at
    *  startup and on each session start, so a settings.json edit is picked up at that boundary. */
   loadEffortCaps: () => Promise<void>
+
+  /** Fetch + cache the chat dir into `chatDir` once (idempotent). Called at startup. */
+  loadChatDir: () => Promise<void>
 
   /** Open/close the ⌘F find bar (no-op-open while viewing a subagent transcript). */
   setFindOpen: (open: boolean) => void
@@ -368,7 +378,7 @@ interface SessionStore {
   startSession: (
     cwd: string,
     mode?: PermissionModeChoice,
-    opts?: { model?: ModelChoice; effort?: EffortChoice; name?: string }
+    opts?: { model?: ModelChoice; effort?: EffortChoice; name?: string; ephemeral?: boolean }
   ) => Promise<void>
   /** Resume an on-disk session (loads history) and make it active. `hardTitle` (a sidecar
    *  rename or on-disk customTitle) is re-asserted as `-n` so the resumed session stays
@@ -718,6 +728,8 @@ async function beginSession(
     effort?: EffortChoice
     /** Session title → `-n` at spawn (named-session dialog); not persisted. */
     name?: string
+    /** Quick session: spawn with `--no-session-persistence` (no on-disk transcript). */
+    ephemeral?: boolean
   }
 ): Promise<void> {
   ensureSubscribed(get().applyEvent)
@@ -729,7 +741,9 @@ async function beginSession(
   // These are seeded ONCE here (a brand-new/resumed session); re-activating an
   // already-live session never re-seeds them, so per-session picks stick.
   const { values: settings } = await window.clui.getSettings()
-  const choice = opts.permissionMode ?? settings.permissionMode
+  // A Quick session runs a fixed profile (resolved once, here): the configured quick permission
+  // mode instead of the normal per-session/default one.
+  const choice = opts.ephemeral ? settings.quickPermissionMode : (opts.permissionMode ?? settings.permissionMode)
   // On RESUME, restore the session's last-used model/effort from the sidecar (the CLI
   // reverts to the settings.json default on --resume, so a mid-session switch would
   // otherwise be lost). Fresh sessions use the Settings default. `remembered` is only
@@ -738,8 +752,15 @@ async function beginSession(
   // an empty map and revert to the default.
   if (opts.resumeSessionId) await ensureModelPrefsLoaded()
   const remembered = opts.resumeSessionId ? modelPrefsBySessionId.get(opts.resumeSessionId) : undefined
-  const modelChoice = opts.model ?? remembered?.model ?? settings.model
-  const effortChoice = opts.effort ?? remembered?.effort ?? settings.effort
+  let modelChoice = opts.model ?? remembered?.model ?? settings.model
+  let effortChoice = opts.effort ?? remembered?.effort ?? settings.effort
+  // Quick profile: the latest live model of the configured family (never a hardcoded id) at
+  // locked high effort. No effort UI in the ephemeral composer, so seeding it here IS the lock.
+  if (opts.ephemeral) {
+    const { ids } = await window.clui.listModels()
+    modelChoice = latestModelInFamily(settings.quickModelFamily, ids.map(deriveModelInfo)) ?? modelChoice
+    effortChoice = 'high'
+  }
   // Ultracode is off by default on a fresh session; restored from the sidecar on resume.
   const ultracode = remembered?.ultracode ?? false
   // Cache the available model ids so session-init can reconcile the picker to the
@@ -834,6 +855,7 @@ async function beginSession(
     // resets across --resume, so carry our own running total forward).
     costUsd: opts.resumeSessionId ? (costBySessionId.get(opts.resumeSessionId) ?? null) : null,
     resumed: Boolean(opts.resumeSessionId),
+    ephemeral: Boolean(opts.ephemeral),
     historyCount: history.length,
     busy: false,
     interrupting: false,
@@ -1053,6 +1075,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   scrollTarget: null,
   sessionGroups: [],
   sessionsLoading: true,
+  chatDir: null,
 
   refreshSessions: async (quiet = false) => {
     // TODO: CommandPalette still fetches listSessions() independently; fold it onto this
@@ -1090,6 +1113,16 @@ export const useSession = create<SessionStore>((set, get) => ({
       set(() => ({ effortCaps: caps }))
     } catch {
       // best-effort: absent caps just means the picker shows every level (today's behavior)
+    }
+  },
+
+  loadChatDir: async () => {
+    if (get().chatDir) return
+    try {
+      const dir = await window.clui.getChatDir()
+      set(() => ({ chatDir: dir }))
+    } catch {
+      // best-effort: without it a directoryless session just renders as a normal project group
     }
   },
 

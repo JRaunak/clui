@@ -52,6 +52,8 @@ export interface StartSessionOptions {
    *  greps the title on its first turn). Empty/whitespace is dropped in buildArgs, so
    *  every caller inherits that one guard. Not persisted: the CLI owns the resulting title. */
   name?: string
+  /** Quick chat: spawn with `--no-session-persistence` so no transcript hits disk. */
+  ephemeral?: boolean
 }
 
 /** Permission-mode choices selectable per session. Aliased to the settings union so the
@@ -125,6 +127,8 @@ export interface CliInfo {
 export interface CluiApi {
   /** Pick a workspace folder via the native dialog. Returns null if cancelled. */
   pickWorkspace: () => Promise<string | null>
+  /** Resolve + create the "no directory" session cwd (~/.clui or the configured default). */
+  getChatDir: () => Promise<string>
   /** Detect / report the claude CLI binary. */
   getCliInfo: () => Promise<CliInfo>
   /** True in macOS fullscreen, where the OS hides the traffic lights. */
@@ -270,6 +274,7 @@ export interface CluiApi {
 /** Actions emitted by the native application menu. */
 export type MenuAction =
   | 'new-session'
+  | 'new-quick-session'
   | 'new-named-session'
   | 'close-session'
   | 'open-settings'
@@ -282,6 +287,7 @@ export type MenuAction =
 /** IPC channel names (single source of truth). */
 export const IpcChannels = {
   pickWorkspace: 'clui:pickWorkspace',
+  getChatDir: 'clui:getChatDir',
   getCliInfo: 'clui:getCliInfo',
   getFullscreen: 'clui:getFullscreen',
   startSession: 'clui:startSession',

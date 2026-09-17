@@ -16,6 +16,9 @@ export interface DropdownOption<T extends string> {
      in err with its own darker hover fill. Scoped per-option so the shared Settings/GlobalSearch
      dropdowns are unaffected. */
   tone?: 'danger'
+  /** Draws a hairline rule above this option, marking a group boundary (e.g. an action
+   *  separated from the value choices above it). */
+  divider?: boolean
 }
 
 /** A custom dropdown replacing the native <select>, which renders as the OS default
@@ -30,6 +33,7 @@ export function Dropdown<T extends string>({
   align = 'left',
   direction = 'down',
   variant = 'default',
+  checkTone = 'accent',
   icon,
   ariaLabel
 }: {
@@ -50,6 +54,9 @@ export function Dropdown<T extends string>({
   /** pill = the composer's borderless recessed-well trigger + a radius-xl borderless card.
    *  default = the bordered chip used in Settings/GlobalSearch. */
   variant?: 'default' | 'pill'
+  /** Pill-variant checkmark color. 'accent' (default) for the scarce-accent chips; 'neutral'
+   *  where accent would over-spend (the composer directory chip is fully neutral). */
+  checkTone?: 'accent' | 'neutral'
   /** Optional leading icon. */
   icon?: React.ReactNode
 }): JSX.Element {
@@ -145,7 +152,7 @@ export function Dropdown<T extends string>({
                 aria-current={selected ? 'true' : undefined}
                 className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors ${
                   danger ? 'text-err hover:bg-control-danger-hover' : 'hover:bg-row-hover'
-                }`}
+                } ${o.divider ? 'mt-1 border-t border-border pt-3' : ''}`}
                 onClick={() => select(o.value)}
               >
                 {o.icon && <span className="shrink-0">{o.icon}</span>}
@@ -164,7 +171,10 @@ export function Dropdown<T extends string>({
                   )}
                 </span>
                 {selected && (
-                  <span className="shrink-0 self-center text-accent" aria-hidden="true">
+                  <span
+                    className={`shrink-0 self-center ${checkTone === 'neutral' ? 'text-dim' : 'text-accent'}`}
+                    aria-hidden="true"
+                  >
                     ✓
                   </span>
                 )}

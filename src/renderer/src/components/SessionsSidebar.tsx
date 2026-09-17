@@ -13,7 +13,8 @@ import {
   IconGitFork,
   IconPlus,
   IconHand,
-  IconHalfRing
+  IconHalfRing,
+  IconGhost
 } from './Icon'
 import { TypingDots } from './TypingDots'
 import { Toast } from './Toast'
@@ -37,6 +38,9 @@ interface MergedSession {
   onDisk: boolean
   handleId?: string
   live: boolean
+  /** Quick session (spawned --no-session-persistence): no jsonl, so it can't be exported,
+   *  deleted, branched, or renamed, and it vanishes on close. */
+  ephemeral: boolean
   busy: boolean
   pendingCount: number
   /** Running background tasks on this session. Badged when not the active view. */
@@ -48,6 +52,9 @@ interface MergedGroup {
   label: string
   /** Defaults true for a live-only group whose process already spawned. */
   exists: boolean
+  /** The directoryless group (cwd === chatDir): pinned to the top, labeled "Workbench",
+   *  no per-group "+" (the New session button covers it). */
+  isChatDir: boolean
   sessions: MergedSession[]
 }
 
@@ -87,6 +94,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   const groups = useSession((s) => s.sessionGroups)
   const loading = useSession((s) => s.sessionsLoading)
   const refreshSessions = useSession((s) => s.refreshSessions)
+  const chatDir = useSession((s) => s.chatDir)
 
   // Export a session to Markdown (on-disk sessions only). Reads the jsonl in main (safe on dormant sessions).
   const exportSession = useCallback(
@@ -262,6 +270,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
           onDisk: true,
           handleId: stillLive ? liveMatch!.handleId : undefined,
           live: stillLive,
+          ephemeral: false,
           busy: liveMatch?.busy ?? false,
           pendingCount: liveMatch?.pendingPermissions.length ?? 0,
           bgCount: liveMatch
@@ -287,6 +296,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
         onDisk: false,
         handleId: s.handleId,
         live: true,
+        ephemeral: s.ephemeral,
         busy: s.busy,
         pendingCount: s.pendingPermissions.length,
         bgCount: Object.values(s.backgroundTasks).filter((t) => t.status === 'running').length
@@ -301,12 +311,22 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
       visible.sort((a, b) => b.createdMs - a.createdMs)
       // A cwd with no on-disk group is live-only and its process spawned successfully, so the folder exists.
       const exists = groups.find((g) => g.cwd === cwd)?.exists ?? true
-      out.push({ cwd, label: basename(cwd) || cwd, exists, sessions: visible })
+      const isChatDir = !!chatDir && cwd === chatDir
+      out.push({
+        cwd,
+        label: isChatDir ? 'Workbench' : basename(cwd) || cwd,
+        exists,
+        isChatDir,
+        sessions: visible
+      })
     }
     out.sort((a, b) => (b.sessions[0]?.createdMs ?? 0) - (a.sessions[0]?.createdMs ?? 0))
+    // Pin the directoryless group above the recency-sorted project groups.
+    const chatIdx = out.findIndex((g) => g.isChatDir)
+    if (chatIdx > 0) out.unshift(out.splice(chatIdx, 1)[0])
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, liveSig, pendingIds])
+  }, [groups, liveSig, pendingIds, chatDir])
 
   if (railMode) {
     // Same source and order as the expanded list, flattened to one monogram column. Undo toast still renders.
@@ -392,9 +412,10 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" title={`${groupLive} live here`} />
                   )}
                 </button>
-                {/* Fixed slot reserved so the count stays put when the "+" fades in. Only for a live cwd. */}
+                {/* Fixed slot reserved so the count stays put when the "+" fades in. Only for a live
+                    project cwd; the directoryless group has no "+" (the New session button covers it). */}
                 <div className="flex h-6 w-6 shrink-0 items-center justify-center">
-                  {g.exists && (
+                  {g.exists && !g.isChatDir && (
                     <button
                       className="flex h-6 w-6 items-center justify-center rounded text-dim opacity-0 transition-opacity hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent group-hover/hdr:opacity-100 group-focus-within/hdr:opacity-100"
                       aria-label={`New session in ${g.label}`}
@@ -425,13 +446,19 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
                       }
                       onExport={s.onDisk && s.id ? () => void exportSession(s.id!, s.title) : undefined}
                       // Branching spawns into the same cwd, so it's unavailable once the folder is gone. Export and delete only touch the transcript.
+                      // An ephemeral session has no jsonl to branch from, so it's omitted there too.
                       onFork={
-                        s.id && g.exists ? () => void forkSession(s.cwd, s.id!) : undefined
+                        s.id && g.exists && !s.ephemeral ? () => void forkSession(s.cwd, s.id!) : undefined
                       }
                       onChanged={refreshSessions}
                     />
                   ))}
                 </div>
+              )}
+              {/* Hairline separating the pinned directoryless group from the project groups below;
+                  skipped when there's nothing below it to separate. */}
+              {g.isChatDir && merged.length > 1 && (
+                <div className="mt-2 border-b border-border" aria-hidden="true" />
               )}
             </div>
           )
@@ -480,6 +507,14 @@ function SessionRow({
 }): JSX.Element {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(session.title)
+  const titleBtnRef = useRef<HTMLButtonElement>(null)
+  // Return focus to the title after a keyboard commit/cancel (Enter/Esc drop focus to body);
+  // a mouse blur-commit leaves focus on whatever was clicked, so don't steal it back.
+  const wasEditing = useRef(false)
+  useEffect(() => {
+    if (wasEditing.current && !editing && document.activeElement === document.body) titleBtnRef.current?.focus()
+    wasEditing.current = editing
+  }, [editing])
 
   const commitRename = async (): Promise<void> => {
     setEditing(false)
@@ -552,12 +587,32 @@ function SessionRow({
         />
       ) : (
         <button
+          ref={titleBtnRef}
           className={`min-w-0 flex-1 truncate rounded text-left text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 ${titleTone}`}
+          // Single-click uniformly opens/resumes on every row. Rename is the kebab or F2, never
+          // the title click, which on a dormant row would resume it instead of renaming.
           onClick={onOpen}
+          onKeyDown={(e) => {
+            if (e.key === 'F2' && onRename) {
+              e.preventDefault()
+              onRename()
+            }
+          }}
           title={`${session.title}${session.live ? '\n(live — click to view, no reload)' : '\n(click to resume)'}`}
         >
           {session.title}
         </button>
+      )}
+
+      {/* Not-saved marker for a quick session: neutral, word + glyph (never color alone). */}
+      {session.ephemeral && !editing && (
+        <span
+          className="flex shrink-0 items-center gap-1 text-[10px] font-medium text-faint"
+          title="Not saved · discarded when closed"
+        >
+          <IconGhost className="h-3 w-3" aria-hidden="true" />
+          Not saved
+        </span>
       )}
 
       {/* Pending-permission badge. Hand glyph + count so it reads apart from the bg badge in grayscale, not by hue alone. */}
@@ -590,8 +645,16 @@ function SessionRow({
           {onClose && (
             <button
               className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              title="Close — stop the process, keep the transcript (resume later)"
-              aria-label={`Close “${session.title}” (keep transcript)`}
+              title={
+                session.ephemeral
+                  ? 'Close and discard (not saved)'
+                  : 'Close — stop the process, keep the transcript (resume later)'
+              }
+              aria-label={
+                session.ephemeral
+                  ? `Close and discard “${session.title}” (not saved)`
+                  : `Close “${session.title}” (keep transcript)`
+              }
               onClick={onClose}
             >
               <IconClose className="h-3.5 w-3.5" />
@@ -602,7 +665,7 @@ function SessionRow({
             items={[
               onFork && { key: 'fork', label: 'Branch session', icon: <IconGitFork className="h-4 w-4" />, onClick: onFork },
               onExport && { key: 'export', label: 'Export to Markdown', icon: <IconDownload className="h-4 w-4" />, onClick: onExport },
-              onRename && { key: 'rename', label: 'Rename', icon: <IconEdit className="h-4 w-4" />, onClick: onRename },
+              onRename && { key: 'rename', label: 'Rename', icon: <IconEdit className="h-4 w-4" />, onClick: onRename, hint: 'F2' },
               onDelete && {
                 key: 'delete',
                 label: onClose ? 'Close & Delete' : 'Delete transcript',
@@ -690,6 +753,8 @@ interface RowMenuItem {
   icon: JSX.Element
   onClick: () => void
   danger?: boolean
+  /** Keyboard-accelerator hint shown right-aligned, so the visible menu teaches the invisible key. */
+  hint?: string
 }
 
 /** Session-row overflow (kebab) menu holds the rare actions as text-labeled items so they clear the 44px target.
@@ -796,7 +861,8 @@ function RowMenu({
               }}
             >
               <span className={`shrink-0 ${it.danger ? 'text-err' : 'text-dim'}`}>{it.icon}</span>
-              {it.label}
+              <span className="min-w-0 flex-1 truncate">{it.label}</span>
+              {it.hint && <span className="shrink-0 text-[11px] text-faint">{it.hint}</span>}
             </button>
           ))}
         </div>

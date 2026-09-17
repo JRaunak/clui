@@ -32,7 +32,7 @@ interface PaletteItem {
 export function CommandPalette({
   onClose,
   onNewSession,
-  onNewNamedSession,
+  onNewSessionInDir,
   onOpenSettings,
   onOpenCustomizations,
   onToggleSidebar,
@@ -40,7 +40,7 @@ export function CommandPalette({
 }: {
   onClose: () => void
   onNewSession: () => void
-  onNewNamedSession: () => void
+  onNewSessionInDir: () => void
   onOpenSettings: () => void
   onOpenCustomizations: () => void
   onToggleSidebar: () => void
@@ -126,17 +126,17 @@ export function CommandPalette({
         key: 'cmd:new',
         kind: 'command',
         label: 'New session',
-        hint: 'Pick a workspace and start',
+        hint: '⌘N',
         recency: 0,
         run: onNewSession
       },
       {
-        key: 'cmd:new-named',
+        key: 'cmd:new-in-dir',
         kind: 'command',
-        label: 'New named session…',
+        label: 'New session in a directory…',
         hint: '⌘⇧N',
         recency: 0,
-        run: onNewNamedSession
+        run: onNewSessionInDir
       },
       {
         key: 'cmd:settings',
@@ -211,7 +211,7 @@ export function CommandPalette({
         : [])
     ]
     return [...out, ...commands]
-  }, [commandMode, disk, onNewSession, onNewNamedSession, onOpenSettings, onOpenCustomizations])
+  }, [commandMode, disk, onNewSession, onNewSessionInDir, onOpenSettings, onOpenCustomizations])
 
   // Filter + rank by the scope-stripped query. Match the label (title) first; its matched
   // indices drive the highlight. If the label doesn't match, fall back to the hint (workspace
