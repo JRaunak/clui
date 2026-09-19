@@ -35,12 +35,14 @@ const sidecarPath = (): string => join(app.getPath('userData'), 'session-names.j
 interface ScanResult {
   cwd: string | null
   customTitle: string | null
-  aiTitle: string | null
   firstUserMessage: string | null
   lastPrompt: string | null
   firstTimestamp: string | null
   lastTimestamp: string | null
   messageCount: number
+  /** Cumulative cost from the LAST `cost-state` record (the CLI persists it per turn and
+   *  carries it across --resume). Null if the session has no completed turn on disk. */
+  costUsd: number | null
 }
 
 /** Read the sidecar rename map (id → display name). Missing/corrupt → empty. Values are
@@ -77,19 +79,19 @@ function serializeSidecar(mutate: () => Promise<void>): Promise<void> {
 /**
  * Stream a session's jsonl and pull out summary fields without loading it all
  * into memory (some sessions are multi-MB). Only a handful of fields per line are
- * inspected, but the whole file is read: a title (customTitle/aiTitle) can appear on
- * the last record, and the message count needs every line.
+ * inspected, but the whole file is read: a title (customTitle) or the latest
+ * cost-state can appear on the last record, and the message count needs every line.
  */
 async function scanSession(filePath: string): Promise<ScanResult> {
   const res: ScanResult = {
     cwd: null,
     customTitle: null,
-    aiTitle: null,
     firstUserMessage: null,
     lastPrompt: null,
     firstTimestamp: null,
     lastTimestamp: null,
-    messageCount: 0
+    messageCount: 0,
+    costUsd: null
   }
 
   const rl = createInterface({
@@ -115,8 +117,8 @@ async function scanSession(filePath: string): Promise<ScanResult> {
       const type = o.type as string | undefined
       if (typeof o.cwd === 'string' && !res.cwd) res.cwd = o.cwd
       if (typeof o.customTitle === 'string') res.customTitle = o.customTitle
-      if (typeof o.aiTitle === 'string') res.aiTitle = o.aiTitle
       if (typeof o.lastPrompt === 'string') res.lastPrompt = o.lastPrompt
+      if (type === 'cost-state' && typeof o.totalCostUSD === 'number') res.costUsd = o.totalCostUSD
 
       const ts = typeof o.timestamp === 'string' ? o.timestamp : null
       if (ts) {
@@ -172,7 +174,6 @@ function titleFrom(scan: ScanResult, sidecarName: string | undefined, id: string
   const raw =
     sidecarName ??
     scan.customTitle ??
-    scan.aiTitle ??
     scan.firstUserMessage ??
     scan.lastPrompt ??
     id
@@ -233,7 +234,7 @@ export async function listSessions(): Promise<ProjectGroup[]> {
         title: titleFrom(scan, sidecar[id], id),
         renamed: Boolean(sidecar[id]),
         hardTitle: sidecar[id] ?? scan.customTitle ?? undefined,
-        aiTitle: scan.aiTitle,
+        costUsd: scan.costUsd,
         cwd: scan.cwd ?? slugToPathGuess(slug),
         projectSlug: slug,
         firstTimestamp: scan.firstTimestamp,

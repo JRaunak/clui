@@ -32,7 +32,6 @@ import {
 } from './sessions/transcript'
 import { searchSessions, warmSearchCache } from './sessions/search'
 import { exportSessionMarkdown, exportFilename } from './sessions/export'
-import { readCosts, setCost, deleteCost } from './sessions/costs'
 import { readSessionModels, setSessionModel, deleteSessionModel } from './sessions/models'
 import { readConfig } from './config/reader'
 import { openInEditor, openDiff } from './ide/open'
@@ -464,13 +463,6 @@ function registerIpc(): void {
     return res.filePath
   })
 
-  handle(IpcChannels.getSessionCosts, async () => readCosts())
-  handle(IpcChannels.setSessionCost, async (_e, sessionId: string, usd: number) => {
-    await setCost(sessionId, usd)
-  })
-  handle(IpcChannels.deleteSessionCost, async (_e, sessionId: string) => {
-    await deleteCost(sessionId)
-  })
   handle(IpcChannels.getSessionModels, async () => readSessionModels())
   ipcMain.handle(
     IpcChannels.setSessionModel,

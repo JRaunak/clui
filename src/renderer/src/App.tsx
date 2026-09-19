@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { useActive, useSession, loadPersistedCosts, sessionDisplayTitle, EMPTY_PENDING, type NoticeTone } from './store'
+import { useActive, useSession, ensureModelPrefsLoaded, sessionDisplayTitle, EMPTY_PENDING, type NoticeTone } from './store'
 import { Chat } from './components/Chat'
 import { Composer } from './components/Composer'
 import { SessionsSidebar } from './components/SessionsSidebar'
@@ -135,8 +135,8 @@ export function App(): JSX.Element {
     window.clui.getCliInfo().then(setCliInfo)
     // Warm the model list at startup so the picker is instant (main-process caches it).
     void window.clui.listModels()
-    // Load persisted per-session costs so resumed sessions show accrued cost.
-    void loadPersistedCosts()
+    // Warm the per-session model/effort sidecar so a resumed session keeps its picks.
+    void ensureModelPrefsLoaded()
     // Read the CLI effort caps once so the picker/chip are honest from the first session.
     void useSession.getState().loadEffortCaps()
     // Cache the directoryless cwd so the sidebar/status-bar/composer can recognize it.

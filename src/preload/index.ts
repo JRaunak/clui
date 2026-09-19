@@ -58,11 +58,6 @@ const api: CluiApi = {
   warmSearchCache: () => ipcRenderer.invoke(IpcChannels.warmSearchCache),
   listWorkspaces: () => ipcRenderer.invoke(IpcChannels.listWorkspaces),
   exportSession: (sessionId: string) => ipcRenderer.invoke(IpcChannels.exportSession, sessionId),
-  getSessionCosts: () => ipcRenderer.invoke(IpcChannels.getSessionCosts),
-  setSessionCost: (sessionId: string, usd: number) =>
-    ipcRenderer.invoke(IpcChannels.setSessionCost, sessionId, usd),
-  deleteSessionCost: (sessionId: string) =>
-    ipcRenderer.invoke(IpcChannels.deleteSessionCost, sessionId),
   getSessionModels: () => ipcRenderer.invoke(IpcChannels.getSessionModels),
   setSessionModel: (sessionId: string, prefs: { model?: string; effort?: string; ultracode?: boolean }) =>
     ipcRenderer.invoke(IpcChannels.setSessionModel, sessionId, prefs),

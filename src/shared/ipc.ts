@@ -190,12 +190,6 @@ export interface CluiApi {
    *  sidecar), for NESTED children whose taskId the UI never learns. Used when no live
    *  forwarded stream is left to replay, i.e. a resumed session's finished agents. */
   readAgentTranscriptByToolUseId: (toolUseId: string) => Promise<TranscriptResult>
-  /** Load the persisted per-session cost map (sessionId → cumulative USD). */
-  getSessionCosts: () => Promise<Record<string, number>>
-  /** Persist one session's cumulative cost to the sidecar. */
-  setSessionCost: (sessionId: string, usd: number) => Promise<void>
-  /** Remove one session's persisted cost (on permanent delete). */
-  deleteSessionCost: (sessionId: string) => Promise<void>
   /** Load the per-session model+effort map (sessionId → {model,effort}). Passed as
    *  --model/--effort on resume so a mid-session switch survives (the CLI otherwise
    *  reverts to the settings.json default on --resume). */
@@ -312,9 +306,6 @@ export const IpcChannels = {
   exportSession: 'clui:exportSession',
   readAgentTranscript: 'clui:readAgentTranscript',
   readAgentTranscriptByToolUseId: 'clui:readAgentTranscriptByToolUseId',
-  getSessionCosts: 'clui:getSessionCosts',
-  setSessionCost: 'clui:setSessionCost',
-  deleteSessionCost: 'clui:deleteSessionCost',
   getSessionModels: 'clui:getSessionModels',
   setSessionModel: 'clui:setSessionModel',
   deleteSessionModel: 'clui:deleteSessionModel',

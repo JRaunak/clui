@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { SessionSummary } from '../../../shared/sessions'
-import { useSession, forgetSessionCost, sessionDisplayTitle } from '../store'
+import { useSession, forgetSessionModel, sessionDisplayTitle } from '../store'
 import {
   IconRefresh,
   IconChevron,
@@ -121,8 +121,8 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   const commitDelete = useCallback(async (pd: PendingDelete): Promise<void> => {
     setCommittingIds((cur) => new Set(cur).add(pd.id))
     await window.clui.deleteSession(pd.projectSlug, pd.id)
-    // Session is gone: drop its remembered cost so the map doesn't leak.
-    forgetSessionCost(pd.id)
+    // Session is gone: drop its remembered model/effort so the sidecar doesn't leak.
+    forgetSessionModel(pd.id)
     await refreshSessions()
     setCommittingIds((cur) => {
       const next = new Set(cur)

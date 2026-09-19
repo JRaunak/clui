@@ -382,7 +382,7 @@ interface SessionStore {
   ) => Promise<void>
   /** Resume an on-disk session (loads history) and make it active. `hardTitle` (a sidecar
    *  rename or on-disk customTitle) is re-asserted as `-n` so the resumed session stays
-   *  peer-discoverable under that name; omit for a derived/aiTitle session. */
+   *  peer-discoverable under that name; omit for a derived (first-message) title. */
   resumeSession: (
     cwd: string,
     resumeSessionId: string,
@@ -574,23 +574,9 @@ function retireHandle(handleId: string): void {
   }
 }
 
-/**
- * Accrued cost (USD) per CLI sessionId, remembered across close→resume within an
- * app run. The CLI's `total_cost_usd` is PER-INVOCATION, not cumulative across a
- * `--resume` (verified: turn1 $0.114, resumed turn2 reports only its own $0.026),
- * and cost is NOT persisted in the jsonl, so we accumulate it here and re-seed a
- * resumed/respawned session's slice from it, instead of resetting to null.
- * Best-effort/in-memory: a fresh app launch resuming an old session starts at $0
- * for new turns (there's no historical cost on disk to recover).
- */
-const costBySessionId = new Map<string, number>()
-
 /** A rename typed on a LIVE-but-busy session, held until its turn ends so the `/rename`
  *  suppress window can't swallow a real turn's result. */
 const pendingLiveRename = new Map<string, string>()
-/** handleIds whose CLI story-title has been mirrored onto the discovery name, so the
- *  once-per-session auto-rename can't re-fire on later rescans. */
-const aiTitleMirrored = new Set<string>()
 
 /**
  * Last-known available model ids (full inference-profile forms). Populated by
@@ -629,29 +615,11 @@ function rememberModelPrefs(
   void window.clui.setSessionModel(sessionId, next)
 }
 
-/** Drop a session's remembered cost AND model/effort (call on permanent delete). */
-export function forgetSessionCost(sessionId: string): void {
-  costBySessionId.delete(sessionId)
-  void window.clui.deleteSessionCost(sessionId)
+/** Drop a session's remembered model/effort (call on permanent delete) so the
+ *  model-prefs sidecar doesn't accumulate dead entries. */
+export function forgetSessionModel(sessionId: string): void {
   modelPrefsBySessionId.delete(sessionId)
   void window.clui.deleteSessionModel(sessionId)
-}
-
-/**
- * Load persisted per-session costs from the sidecar into the in-memory map.
- * Called once at app startup so a session resumed after a relaunch shows its
- * accrued cost. In-memory values (from the live run) always win over disk.
- */
-export async function loadPersistedCosts(): Promise<void> {
-  try {
-    const persisted = await window.clui.getSessionCosts()
-    for (const [sid, usd] of Object.entries(persisted)) {
-      if (!costBySessionId.has(sid)) costBySessionId.set(sid, usd)
-    }
-  } catch {
-    // best-effort: cost display just starts empty if the sidecar is unreadable
-  }
-  void ensureModelPrefsLoaded()
 }
 
 /** Load the per-session model/effort sidecar into `modelPrefsBySessionId` once (memoized;
@@ -770,6 +738,13 @@ async function beginSession(
 
   // On resume, reconstruct prior history from the transcript so it renders in the
   // chat, then continue streaming new turns on top. Best-effort / display-only.
+  // Seed a resumed session's cost from its transcript scan (the CLI persists cumulative
+  // cost per turn as a cost-state record, carried across --resume). The live max-replace
+  // on result events corrects it once a new turn completes.
+  const resumedCostUsd = opts.resumeSessionId
+    ? (get().sessionGroups.flatMap((g) => g.sessions).find((s) => s.id === opts.resumeSessionId)?.costUsd ?? null)
+    : null
+
   let history: ChatMessage[] = []
   let resumedContextTokens: number | null = null
   if (opts.resumeSessionId) {
@@ -850,10 +825,7 @@ async function beginSession(
     contextTokens: seededTokens,
     contextWindow: seededTokens != null ? seededWindow : null,
     compactDismissedAtRunway: null,
-    // Re-seed accrued cost when resuming a session we've already spent on this app
-    // run (cost isn't persisted on disk, and the CLI's per-invocation total_cost
-    // resets across --resume, so carry our own running total forward).
-    costUsd: opts.resumeSessionId ? (costBySessionId.get(opts.resumeSessionId) ?? null) : null,
+    costUsd: resumedCostUsd,
     resumed: Boolean(opts.resumeSessionId),
     ephemeral: Boolean(opts.ephemeral),
     historyCount: history.length,
@@ -1088,16 +1060,6 @@ export const useSession = create<SessionStore>((set, get) => ({
       // stale one stops an older scan from overwriting fresher rename/delete state.
       if (gen !== refreshGen) return
       set(() => ({ sessionGroups: groups, ...(quiet ? {} : { sessionsLoading: false }) }))
-      // Mirror a live session's CLI story-title onto its discovery name once it generates, so
-      // peers see the sidebar name.
-      for (const [hid, slice] of Object.entries(get().sessions)) {
-        if (slice.exited || slice.busy || !slice.sessionId || aiTitleMirrored.has(hid)) continue
-        const summary = groups.flatMap((g) => g.sessions).find((su) => su.id === slice.sessionId)
-        if (summary && !summary.hardTitle && summary.aiTitle) {
-          aiTitleMirrored.add(hid)
-          void window.clui.injectRename(hid, summary.aiTitle)
-        }
-      }
     } catch {
       if (gen !== refreshGen) return
       set(() => ({
@@ -1156,8 +1118,8 @@ export const useSession = create<SessionStore>((set, get) => ({
       })
     }
     try {
-      // Only a hard title becomes `-n`; a derived/aiTitle session passes nothing so it
-      // can't clobber the aiTitle the CLI backfills.
+      // Only a hard title becomes `-n`; a derived (first-message) session passes nothing so
+      // resume doesn't pin a paraphrase as the discovery name.
       await beginSession(get, set, { cwd, resumeSessionId, permissionMode: mode, name: hardTitle })
     } finally {
       resumingIds.delete(resumeSessionId)
@@ -1615,7 +1577,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     // Set in the session-init case, acted on post-commit (see there). Holder like `release`.
     const flush: { prefs: { sessionId: string; model: ModelChoice; effort: EffortChoice; ultracode: boolean } | null } =
       { prefs: null }
-    // A title change on disk (a `/rename`, or the CLI's early aiTitle backfill) emits no
+    // A title change on disk (a `/rename`, or a resume mirroring customTitle) emits no
     // stream event to map, so nothing else refreshes the sidebar. Detected at the turn
     // boundary below and quiet-rescanned post-commit. Holder like `release`.
     const rescanSessions = { needed: false }
@@ -1679,15 +1641,6 @@ export const useSession = create<SessionStore>((set, get) => ({
           // makes the live session group with its on-disk siblings instead of
           // spawning a duplicate group under the unresolved path (macOS /tmp).
           if (e.cwd) patch.cwd = e.cwd
-          // Re-seed accrued cost for this sessionId (survives close→resume and
-          // effort-respawn within an app run). Only when we don't already have a
-          // higher running total on the slice, so we never lose in-session cost.
-          if (e.sessionId) {
-            const remembered = costBySessionId.get(e.sessionId)
-            if (remembered !== undefined && remembered > (slice.costUsd ?? 0)) {
-              patch.costUsd = remembered
-            }
-          }
           // A fresh init means any prior transient notice (e.g. the effort/ultracode
           // respawn "reconnecting…" message) is now resolved, so clear both the per-slice
           // error and the app-level notice.
@@ -2052,26 +2005,20 @@ export const useSession = create<SessionStore>((set, get) => ({
             if (!wasInterrupting) {
               const lastUser = slice.messages.findLast((m) => m.role === 'user')
               if (lastUser && /^\/rename(\s|$)/.test(lastUser.text.trim())) rescanSessions.needed = true
-              // The CLI backfills an aiTitle (and a resume mirrors customTitle) within the
-              // first turn or two but emits no stream event, so quiet-rescan the list while
-              // the title is still settling; later changes ride the switch/liveIds refresh.
+              // A resume mirrors customTitle within the first turn or two but emits no stream
+              // event, so quiet-rescan the list while the title is still settling; later
+              // changes ride the switch/liveIds refresh.
               if (slice.messages.filter((m) => m.role === 'user').length <= 3) rescanSessions.needed = true
             }
           }
-          // The CLI's `total_cost_usd` is PER-INVOCATION (not cumulative across a
-          // --resume, and it resets on an effort-respawn), so ACCUMULATE it rather
-          // than replace. Also remember it by sessionId so a later close→resume or
-          // respawn re-seeds the running total instead of dropping to this turn's
-          // cost. Undefined on some results (e.g. interrupted), a no-op then.
-          // (Accrued for BOTH result kinds: the bg completion turn really did cost.)
+          // `total_cost_usd` is the session's cumulative total (it runs up within an
+          // invocation and, since CLI 2.1.277, carries across a --resume), so take it as
+          // authoritative; accumulating double-counts every turn after the first. max()
+          // guards a transient lower report (pre-seed / effort-respawn) and undefined
+          // results (e.g. interrupted). The CLI persists it in the transcript (cost-state),
+          // so a resume re-seeds from the scan. Re-verify across-resume on a CLI bump.
           if (typeof e.totalCostUsd === 'number') {
-            const nextCost = (slice.costUsd ?? 0) + e.totalCostUsd
-            patch.costUsd = nextCost
-            if (slice.sessionId) {
-              costBySessionId.set(slice.sessionId, nextCost)
-              // Persist to the sidecar so cost survives an app relaunch.
-              void window.clui.setSessionCost(slice.sessionId, nextCost)
-            }
+            patch.costUsd = Math.max(slice.costUsd ?? 0, e.totalCostUsd)
           }
           // Result arrives after the assistant text, so hang usage/denials on the last assistant message.
           if (e.usage || e.denials?.length) {

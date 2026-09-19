@@ -6,17 +6,17 @@
 export interface SessionSummary {
   /** CLI session id (the `.jsonl` filename stem). */
   id: string
-  /** Display title: sidecar rename → customTitle → aiTitle → first user message → id. */
+  /** Display title: sidecar rename → customTitle → first user message → id. */
   title: string
   /** True if the title came from the app's sidecar rename map. */
   renamed: boolean
-  /** A HARD title (sidecar rename or on-disk customTitle), absent for a derived/aiTitle
-   *  one. On resume it's re-asserted as the CLI `-n` so the session stays peer-discoverable
+  /** A HARD title (sidecar rename or on-disk customTitle), absent for a derived one. On
+   *  resume it's re-asserted as the CLI `-n` so the session stays peer-discoverable
    *  under this name. */
   hardTitle?: string
-  /** The CLI's story-summary title, if generated (independent of hardTitle). Lets the
-   *  renderer mirror it onto a live session's discovery name. */
-  aiTitle: string | null
+  /** Cumulative cost read from the transcript's last cost-state record. Null if the
+   *  session has no completed turn on disk. */
+  costUsd: number | null
   /** Absolute workspace path (from the jsonl `cwd`), authoritative. */
   cwd: string
   /** Project slug (the parent directory name under ~/.claude/projects). */
