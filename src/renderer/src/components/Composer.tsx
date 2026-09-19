@@ -356,9 +356,7 @@ export function Composer(): JSX.Element {
           />
         </div>
         <div className="flex items-center">
-          {/* Attach-file button (keyboard/a11y affordance for paste + drop). No accept filter:
-              the picker routes every file the same way the drop handler does. Images go inline;
-              everything else becomes an @path token the model Reads on demand. */}
+           {/* Attach-file button (keyboard/a11y affordance for paste + drop). */}
           <input
             ref={fileInputRef}
             type="file"
@@ -381,9 +379,7 @@ export function Composer(): JSX.Element {
           <div className="ml-3 flex items-center gap-1.5">
             {ephemeral ? (
               <>
-                {/* A quick session trims the control row to its contract: not saved, and (only when
-                    it runs unguarded) a static danger readout. No model/effort/permission/dir here;
-                    the profile is fixed at spawn. */}
+                {/* A quick session trims the control row to its contract: not saved. */}
                 <span
                   className="flex h-8 items-center gap-1.5 px-1 text-xs text-dim"
                   title="Not saved · discarded when you close it"
@@ -464,8 +460,8 @@ function basename(p: string): string {
 }
 
 /**
- * The session's working directory, neutral throughout (accent-scarcity: never terracotta), state
- * legible by glyph AND text. Before the first turn it's a dropdown to bind/rebind/unbind the dir
+ * The session's working directory, state legible by glyph AND text. Before the first turn 
+ * it's a dropdown to bind/rebind/unbind the dir
  * (recent dirs · choose a folder · "Workbench"); after, the folder is locked at the CLI's
  * spawn-time slug, so it renders a static bound label or nothing when directoryless.
  */
@@ -520,7 +516,7 @@ function DirectoryChip({
 }
 
 /** The @-reference for a dropped file: workspace-relative when under cwd (matches the
- *  @-picker), else absolute. Pure string math — no node `path` in the renderer. */
+ *  @-picker), else absolute. Pure string math. No node `path` in the renderer. */
 function toWorkspaceRef(abs: string, cwd: string | null): string {
   if (cwd) {
     const base = cwd.endsWith('/') ? cwd : cwd + '/'
@@ -530,11 +526,7 @@ function toWorkspaceRef(abs: string, cwd: string | null): string {
   return abs
 }
 
-/** Per-mode glyph so the mode is legible by shape, not color alone (two modes share green).
- *  Each metaphor: gear=inherit config, no-entry=deny-by-default, hand=asks-you, sparkles=
- *  classifier-decides, pencil=auto-edits, checklist=plan, slashed-shield=danger/unguarded.
- *  The color class carries the risk tier for the collapsed chip; in the open menu the icon
- *  inherits the option row's color via currentColor. */
+// Per-mode glyph so the mode is legible by shape, not color alone 
 const PERMISSION_MODE_ICONS: Record<
   PermissionModeChoice,
   (p: { className?: string }) => JSX.Element
@@ -559,8 +551,7 @@ function PermissionIcon({
   return <Glyph className={`${className} shrink-0 ${PERMISSION_MODE_COLORS[mode]}`} />
 }
 
-/** A thumbnail chip for one staged attachment: image preview + filename + remove button.
- *  Neutral surfaces (accent-scarcity); the button is a ≥24px keyboard-reachable target. */
+// A thumbnail chip for one staged attachment: image preview + filename + remove button.
 function AttachmentPill({
   att,
   onRemove

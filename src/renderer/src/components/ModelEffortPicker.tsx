@@ -11,6 +11,8 @@ import {
   clampEffort,
   cappedEffort,
   capBlocksUltra,
+  contextSizeLabel,
+  contextWindowForModel,
   EFFORT_LABELS,
   type EffortChoice,
   type ModelChoice,
@@ -294,6 +296,16 @@ export function ModelEffortPicker(): JSX.Element {
                       {info.id === modelChoice ? '✓' : ''}
                     </span>
                     <span className="flex-1 truncate">{info.label}</span>
+                    {/* No size for 'unknown' families (policy selectors, unrecognized ids):
+                        they assert no context window. */}
+                    {info.family !== 'unknown' && (
+                      <span
+                        className="shrink-0 tabular-nums text-[11px] text-dim"
+                        title={`Context window: ${contextWindowForModel(info.id).toLocaleString()} tokens`}
+                      >
+                        {contextSizeLabel(info.id)}
+                      </span>
+                    )}
                   </button>
                   {/* Chevron = explicit "adjust effort" affordance (only meaningful when
                       effort is selectable; hidden while Ultra locks it to X-High). */}

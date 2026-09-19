@@ -10,7 +10,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { ModelListResult } from '../../shared/ipc'
-import { FALLBACK_MODEL_IDS, deriveModelInfo } from '../../shared/settings'
+import { FALLBACK_MODEL_IDS, deriveModelInfo, supports1m } from '../../shared/settings'
 import { loginShellAuthEnv } from '../cli/shell-env'
 import { readCliSettings } from '../settings/cli-settings'
 
@@ -88,8 +88,6 @@ function failureReason(e: unknown): NonNullable<ModelListResult['reason']> {
  * failure (aws not yet on PATH, creds refreshing, network blip) is retried on the
  * next call instead of pinning the stale fallback for the whole process lifetime.
  * `live` is therefore a per-call fact, never a process-wide "offline" state.
- * The 1M Opus variant is appended when the base opus-4-8 is present (Bedrock
- * doesn't list [1m] as a separate profile, but the CLI accepts the suffix).
  */
 export async function listModels(refresh = false): Promise<ModelListResult> {
   if (cache && !refresh) return { ids: cache, live: true }
@@ -124,22 +122,21 @@ export async function listModels(refresh = false): Promise<ModelListResult> {
     return { ids: cache, live: true }
   } catch (e) {
     // Do NOT cache the fallback: leave `cache` null so the next call retries the
-    // live query. Return the bundled list for this call only.
-    return { ids: FALLBACK_MODEL_IDS, live: false, reason: failureReason(e) }
+    // live query. Return the bundled list for this call only, through `withVariants`
+    // too so off-Bedrock users see identical picker ids.
+    return { ids: withVariants(FALLBACK_MODEL_IDS), live: false, reason: failureReason(e) }
   }
 }
 
-/** Add the [1m] Opus variants (accepted by --model though Bedrock never lists them). */
+/**
+ * One picker entry per model at its real max context: a `supports1m` model becomes only its
+ * `${id}[1m]` id (Bedrock exposes 1M via the suffix, never as a separate profile), every other
+ * keeps its base id. Never append `[1m]` to a non-1M model: Haiku 400s the suffix. Re-verify the
+ * `supports1m` set on a CLI bump; it drifts like the effort gates.
+ */
 function withVariants(ids: string[]): string[] {
-  const out: string[] = []
-  for (const id of ids) {
-    // Surface the 1M variant right before the base for large-context Opus. Derived
-    // from the parsed version (like the effort gates) so a new Opus qualifies without
-    // an edit here. The base id alone caps at 200K even on Opus 5, where the CLI
-    // still requires the [1m] suffix to unlock 1M (verified live on 2.1.220).
+  return ids.map((id) => {
     const { family, version } = deriveModelInfo(id)
-    if (family === 'opus' && version >= 4.7 && !/\[1m\]$/.test(id)) out.push(`${id}[1m]`)
-    out.push(id)
-  }
-  return out
+    return supports1m(family, version) && !/\[1m\]$/.test(id) ? `${id}[1m]` : id
+  })
 }

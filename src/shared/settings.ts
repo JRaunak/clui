@@ -141,19 +141,14 @@ export interface ModelInfo {
 }
 
 /**
- * Fallback model ids used before the live Bedrock query lands or when it fails (no `aws`
- * on PATH, creds refreshing). A curated recent set; superseded models are omitted.
- *
- * ponytail: re-check against `aws bedrock list-inference-profiles` when a new family ships.
- * Every Opus >=4.7 needs its `[1m]` twin listed explicitly, since `withVariants()` only
- * derives those on the live path; a missing one silently caps a fallback user at 200K.
+ * Base model ids for when the live Bedrock query hasn't landed or fails (no `aws`, creds
+ * refreshing, a non-Bedrock provider). Base ids only: `withVariants` synthesizes the [1m]
+ * twins on both the live and fallback paths, so the 1M rule lives in one place. Re-check
+ * against `aws bedrock list-inference-profiles` when a new family ships.
  */
 export const FALLBACK_MODEL_IDS: string[] = [
-  'claude-opus-5[1m]',
   'claude-opus-5',
-  'claude-opus-4-8[1m]',
   'claude-opus-4-8',
-  'claude-opus-4-7[1m]',
   'claude-opus-4-7',
   'claude-opus-4-6',
   'claude-sonnet-5',
@@ -251,11 +246,11 @@ const SELECTOR_LABELS: Record<string, string> = {
 function labelFor(id: string): string {
   const selector = SELECTOR_LABELS[id.toLowerCase().replace(/\[1m\]$/, '')]
   if (selector) return selector
-  const { family, version, is1m } = parseModelId(id)
+  const { family, version } = parseModelId(id)
   if (family === 'unknown') return id
   const cap = family.charAt(0).toUpperCase() + family.slice(1)
   const ver = version ? ` ${version % 1 === 0 ? version : version.toFixed(1)}` : ''
-  return `${cap}${ver}${is1m ? ' (1M)' : ''}`
+  return `${cap}${ver}`
 }
 
 export function deriveModelInfo(id: string): ModelInfo {
@@ -325,6 +320,19 @@ export function groupModels(models: ModelInfo[]): ModelGroup[] {
 }
 
 /**
+ * The verified 1M-context set (Claude API pricing table + live Bedrock, CLI 2.1.278):
+ * Fable 5+, Opus 4.6+, Sonnet 4.6+. Haiku and older versions are 200K. Drifts like the
+ * effort gates; re-verify on a CLI/model bump.
+ */
+export function supports1m(family: ModelInfo['family'], version: number): boolean {
+  return (
+    (family === 'fable' && version >= 5) ||
+    (family === 'opus' && version >= 4.6) ||
+    (family === 'sonnet' && version >= 4.6)
+  )
+}
+
+/**
  * Context-window size (tokens) for a model id: 1M for the `[1m]` variant, else 200K.
  * The `result` event carries the authoritative window once a turn streams; this is
  * the id-derived estimate used before that (session start, and on a mid-session model
@@ -332,6 +340,15 @@ export function groupModels(models: ModelInfo[]): ModelGroup[] {
  */
 export function contextWindowForModel(id: string): number {
   return /\[1m\]/i.test(id) ? 1_000_000 : 200_000
+}
+
+/**
+ * Short context label for the picker ('1M', '200K'). Derived from contextWindowForModel
+ * so the label can never drift from the window it names.
+ */
+export function contextSizeLabel(id: string): string {
+  const n = contextWindowForModel(id)
+  return n >= 1_000_000 ? '1M' : `${Math.round(n / 1000)}K`
 }
 
 /** ultracode (= xhigh + workflow orchestration) is available iff the model has xhigh. */
@@ -362,9 +379,24 @@ export function sameModel(a: string, b: string): boolean {
  *  the model the CLI is ACTUALLY running (e.g. after a mid-session switch survives
  *  a resume) instead of the stale Settings default. */
 export function reconcileModelChoice(current: string, reported: string, listed: string[]): string {
-  if (sameModel(current, reported)) return current
-  const match = listed.find((id) => sameModel(id, reported))
-  return match ?? reported
+  const resolved = sameModel(current, reported)
+    ? current
+    : (listed.find((id) => sameModel(id, reported)) ?? reported)
+  // A supports1m model is offered ONLY at its [1m] id, so a resolved BASE id (an older
+  // stored pick, or the CLI reporting the base) matches no picker row. Adopt the list's
+  // [1m] entry for the same model; synthesize the suffix when the list is empty so the size
+  // still reads 1M. 200K models and models whose base entry is still offered are untouched.
+  if (!/\[1m\]$/i.test(resolved)) {
+    const p = parseModelId(resolved)
+    if (supports1m(p.family, p.version)) {
+      const oneM = listed.find((id) => {
+        const q = parseModelId(id)
+        return q.is1m && q.family === p.family && q.version === p.version
+      })
+      return oneM ?? `${resolved}[1m]`
+    }
+  }
+  return resolved
 }
 
 /** Clamp an effort to what a model supports (nearest lower level). `EFFORT_CHOICES` is

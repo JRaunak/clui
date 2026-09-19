@@ -3,7 +3,15 @@
 import { writeFileSync, readFileSync } from 'node:fs'
 import { app } from './support/electron-stub.mjs'
 import { join } from 'node:path'
-import { sameModel, clampEffort, cappedEffort, capBlocksUltra } from '../src/shared/settings.ts'
+import {
+  sameModel,
+  clampEffort,
+  cappedEffort,
+  capBlocksUltra,
+  supports1m,
+  contextSizeLabel,
+  reconcileModelChoice
+} from '../src/shared/settings.ts'
 import { ok } from './support/harness.mjs'
 
 const SP = join(app.getPath('userData'), 'settings.json')
@@ -15,6 +23,49 @@ const onDisk = (): any => JSON.parse(readFileSync(SP, 'utf8'))
 ok(sameModel('provider-a', 'provider-b') === false, 'model: distinct unknown ids are not equal')
 ok(sameModel('claude-opus-4-8', 'us.anthropic.claude-opus-4-8') === true, 'model: recognized prefixed/bare equivalent')
 ok(sameModel('claude-opus-4-8[1m]', 'claude-opus-4-8') === false, 'model: 1m vs non-1m differ')
+
+// supports1m: the verified 1M set (Fable 5+, Opus 4.6+, Sonnet 4.6+); everything else 200K
+ok(supports1m('opus', 4.6) === true, 'supports1m: opus 4.6 is 1M')
+ok(supports1m('opus', 4.5) === false, 'supports1m: opus 4.5 is 200K')
+ok(supports1m('sonnet', 4.6) === true, 'supports1m: sonnet 4.6 is 1M')
+ok(supports1m('sonnet', 4.5) === false, 'supports1m: sonnet 4.5 is 200K')
+ok(supports1m('fable', 5) === true, 'supports1m: fable 5 is 1M')
+ok(supports1m('fable', 4) === false, 'supports1m: fable 4 is 200K')
+ok(supports1m('haiku', 4.5) === false, 'supports1m: no haiku is 1M')
+
+// contextSizeLabel: derived from the window, never hardcoded
+ok(contextSizeLabel('claude-opus-4-8[1m]') === '1M', 'contextSizeLabel: [1m] → 1M')
+ok(contextSizeLabel('claude-opus-4-8') === '200K', 'contextSizeLabel: base → 200K')
+ok(contextSizeLabel('claude-haiku-4-5') === '200K', 'contextSizeLabel: haiku → 200K')
+
+// reconcile: a stored/kept BASE id of a supports1m model resolves to the [1m] picker entry
+{
+  const listed = ['us.anthropic.claude-opus-4-8[1m]', 'us.anthropic.claude-haiku-4-5']
+  ok(
+    reconcileModelChoice('us.anthropic.claude-opus-4-8', 'claude-opus-4-8', listed) ===
+      'us.anthropic.claude-opus-4-8[1m]',
+    'reconcile: kept base 1M model adopts the list [1m] entry'
+  )
+  ok(
+    reconcileModelChoice('us.anthropic.claude-sonnet-5', 'claude-opus-4-8', listed) ===
+      'us.anthropic.claude-opus-4-8[1m]',
+    'reconcile: reported base 1M model (no direct list match) adopts the [1m] entry'
+  )
+  ok(
+    reconcileModelChoice('claude-opus-4-8', 'claude-opus-4-8', []) === 'claude-opus-4-8[1m]',
+    'reconcile: empty list synthesizes the [1m] suffix so the size still reads 1M'
+  )
+  ok(
+    reconcileModelChoice('us.anthropic.claude-haiku-4-5', 'claude-haiku-4-5', listed) ===
+      'us.anthropic.claude-haiku-4-5',
+    'reconcile: a 200K model is left untouched'
+  )
+  ok(
+    reconcileModelChoice('claude-opus-4-8[1m]', 'claude-opus-4-8[1m]', listed) ===
+      'claude-opus-4-8[1m]',
+    'reconcile: an already-[1m] choice is unchanged'
+  )
+}
 
 // cappedEffort: no cap → byte-identical to clampEffort (the no-regression guarantee)
 for (const ef of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
