@@ -122,7 +122,7 @@
   --color-control-hover: color-mix(in oklab, #000 30%, var(--color-bg-elev));
   /* The danger permission row's hover fill: neutral control-hover would drop err below 4.5:1, so it darkens toward err instead. */
   --color-control-danger-hover: color-mix(in oklab, var(--color-err) 14%, #121213);
-  /* Menu-row hover for the composer cards. In dark it lifts; in light it's a soft warm darken. Scoped to these cards. */
+  /* Menu-row hover for the composer cards. In dark it lifts; in light there's nothing brighter than the white surface, so it's a soft darken. Scoped to these cards. */
   --color-row-hover: var(--color-bg-raised);
   --color-content: var(--paper-100);
   --color-dim: var(--paper-400);
@@ -180,42 +180,42 @@
 
 /* ─────────────────────────────────────────────────────────────────────────
    LIGHT THEME: re-maps the semantic layer only. Applied via `<html data-theme="light">`.
-   Colors are re-derived, never inverted. Terracotta #d97757 is only ~2.3:1 on white, so
+   Colors are re-derived, never inverted. Terracotta #de7356 is only ~3.1:1 on white, so
    accent/ring/status hues are darkened until every text + fill + focus pair clears WCAG AA.
-   Warm-paper palette echoes the light app-icon background (#f4f1ea).
+   Surfaces are white with a neutral gray chrome ramp, so the accent stays the one scarce warm note.
    ───────────────────────────────────────────────────────────────────────── */
 :root[data-theme='light'] {
-  /* Surfaces: warm off-white canvas; elevation reads brighter, sidebar recedes into a deeper cream, hover/chips darken a step. */
-  --color-bg: #f6f3ee;
-  --color-bg-elev: #fffdfa;
-  --color-bg-sidebar: #efe9e0;
-  --color-bg-raised: #e7e0d4;
-  --color-border: #e0d8ca;
-  --color-border-strong: #cabfac;
-  /* Warm neutral, ~3.8:1 on the light bg-elev. */
-  --color-control-edge: #8a8272;
+  /* Surfaces: white reading surface; the sidebar chrome and code insets recede to gray, chips/hover deepen further. Depth comes from the receding gray, not floating white cards (the chat-transcript convention: VS Code, ChatGPT). Steps sized by CIELAB lightness, since near white a contrast RATIO reads far flatter than the same ratio near black. */
+  --color-bg: #ffffff;
+  --color-bg-elev: #ffffff;
+  --color-bg-sidebar: #f2f2f3;
+  --color-bg-raised: #eaeaea;
+  --color-border: #dcdcde;
+  --color-border-strong: #c4c4c6;
+  /* Neutral control boundary, 3.84:1 on the white bg-elev; clears the 3:1 non-text gate. */
+  --color-control-edge: #828282;
   /* A shallow recess on paper: 3% black gives the pill a visible boundary, and hover cannot exceed 4%. */
   --color-control: color-mix(in oklab, #000 3%, var(--color-bg-elev));
   --color-control-hover: color-mix(in oklab, #000 4%, var(--color-bg-elev));
-  --color-control-danger-hover: color-mix(in oklab, var(--color-err) 10%, #fffdfa);
+  --color-control-danger-hover: color-mix(in oklab, var(--color-err) 10%, #ffffff);
   --color-row-hover: color-mix(in oklab, #000 5%, var(--color-bg-elev));
 
-  /* Text: warm near-black ramp (14.7 / 6.6 / 5.0 :1 on the base surface). */
-  --color-content: #22201c;
-  --color-dim: #5c554c;
-  /* faint darkened #6f675c→#645d52 so it clears AA as text on the darkest light surface (4.96:1 on bg-raised), still a step lighter than `dim`. */
-  --color-faint: #645d52;
+  /* Text: neutral near-black ramp (17.4 / 8.9 / 7.2 :1 on the white surface). */
+  --color-content: #1a1a1a;
+  --color-dim: #4a4a4a;
+  /* faint: tertiary meta; clears AA as text on the darkest surface it lands on (6.01:1 on bg-raised, 4.78:1 on the scoped raised #d2d2d2), a step lighter than dim. */
+  --color-faint: #575757;
 
-  /* Accent: #de7356 darkened for AA as text/marks/ring on paper (#a8492a gives 5.2:1). Paired foreground flips to white. */
-  --color-accent: #a8492a;
-  --color-accent-hover: #8f3d20;
-  --color-accent-deep: #7a3216;
-  --color-accent-surface: #f3e4dc;
+  /* Accent: #de7356 (~3.1:1 on white) is darkened for AA as text/marks/ring; #b8502e = 4.97:1, kept as vivid as the 4.5 body floor allows so the terracotta stays punchy on white. Paired foreground flips to white. */
+  --color-accent: #b8502e;
+  --color-accent-hover: #984324;
+  --color-accent-deep: #82381c;
+  --color-accent-surface: #e6e6e7;
   --color-on-accent: #ffffff;
 
-  /* Message + tool surfaces: subtle warm cards, text ≥12:1. */
-  --color-user: #ece4d7;
-  --color-tool: #efe9df;
+  /* Message + tool surfaces: neutral gray insets recessed from the white surface, text ≥12:1. */
+  --color-user: #ececed;
+  --color-tool: #f2f2f3;
 
   /* Status: darkened so each clears 4.5:1 on both bg and elevated surfaces. Paired foregrounds flip: warn/err fills are now dark. */
   --color-err: #c02718;
@@ -230,21 +230,45 @@
   --color-on-err: #ffffff;
   --color-on-info: #ffffff; /* white on the deep light-mode info-blue */
   --color-effort-xhigh: #c2410c;
-  /* Ultracode purple, darkened for AA on the warm-paper surface. */
+  /* Ultracode purple, darkened for AA on the light surface (#6d28d9 ≈ 7.1:1 on white). */
   --color-effort-ultra: #6d28d9;
 
-  /* Focus ring: must be the darkened accent (5.2:1); the dark-mode terracotta would be ~2.3:1 on white and fail the 3:1 non-text-UI floor. */
-  --color-ring: #a8492a;
+  /* Focus ring: the darkened accent (4.97:1 on white). Dark's terracotta is only ~3.1:1 on white (a hair over the 3:1 ring floor, no margin) and fails as text, so light reuses one text-safe accent value for ring and marks alike. */
+  --color-ring: #b8502e;
 
-  /* Syntax palette: light values, all verified ≥4.5:1 on the light code surface --color-tool (#efe9df). attr uses info. */
-  --syntax-base: #22201c;
+  /* Syntax palette: light values, all verified ≥4.5:1 on the light code surface --color-tool (#f2f2f3). attr uses info.
+     keyword holds the deeper #a8492a (not the brighter accent #b8502e): as code text on the inset the accent is only 4.44:1, below the body floor, so keyword decouples to stay legible. */
+  --syntax-base: #1a1a1a;
   --syntax-keyword: #a8492a;
   --syntax-string: #0f766e;
   --syntax-number: #c02718;
   --syntax-func: #1d4ed8;
   --syntax-attr: #1d4ed8;
-  --syntax-comment: #6f675c;
+  --syntax-comment: #6b6b6b;
   /* Shadows are Tailwind's own black-low-alpha utilities, which already read correctly on paper. */
+}
+
+/* bg-raised is a fixed near-white gray, so hover:bg-bg-raised lands ~7 CIELAB L* below the white main area (a strong,
+   clear hover) but only ~2.8 below the gray sidebar surface (a whisper). A fixed fill can't serve both backdrops. Inside
+   the expanded sidebar (the .bg-bg-sidebar surface; the collapsed rail is .bg-bg and keeps the global value), re-map raised
+   to a step measured against the gray: #e2e2e2 puts a live-row hover ~5.6 L* below the sidebar and a dormant /60 hover ~3.5
+   below, both clearly readable. Selection still leads via the terracotta rail, not fill darkness. */
+:root[data-theme='light'] .bg-bg-sidebar {
+  --color-bg-raised: #e2e2e2;
+}
+
+/* The composer's recessed config pills darken only from 3% to 4% black on hover: on white that is ~1.2 L*, near-invisible,
+   and the pill can't darken further because the X-High effort readout (#c2410c) sitting on it needs 4.5:1, which fails past
+   ~#efefef. So hover adds a crisp inset edge instead of leaning on the fill; an edge is a hue-independent cue that clears
+   the 3:1 non-text gate and never reflows. Light only; dark's pills already darken 30% on hover. */
+:root[data-theme='light'] .bg-control {
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+:root[data-theme='light'] .bg-control:hover {
+  box-shadow: inset 0 0 0 1px var(--color-control-edge);
 }
 
 /* The live-dot "breath" is carried by scale only; opacity stays at 1. Dipping opacity dropped the dot below the
@@ -287,6 +311,15 @@
 }
 .dock-fade-both {
   box-shadow:
+    0 -6px 8px 2px var(--color-bg),
+    0 6px 8px 2px var(--color-bg);
+}
+
+/* Light-only lift for the composer, the app's one primary input: on the white transcript its border is the faintest separator in the layout, so a whisper of ambient shadow gives the white fill real elevation. The lift is listed first so it renders in front of the bg-colored dock-fade halo instead of being washed out behind it. Dark needs no lift (the composer already sits lighter than its surface). */
+:root[data-theme='light'] .dock-fade-both {
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.05),
+    0 -1px 2px rgb(0 0 0 / 0.03),
     0 -6px 8px 2px var(--color-bg),
     0 6px 8px 2px var(--color-bg);
 }

@@ -71,7 +71,7 @@ function modeToFlag(choice: PermissionModeChoice): string | undefined {
 
 /** Window background per theme. Matches the renderer's --color-bg so there's no
  *  flash of the wrong color before the React/CSS paint. Keep in sync with styles.css. */
-const THEME_BG = { dark: '#161617', light: '#f6f3ee' } as const
+const THEME_BG = { dark: '#161617', light: '#ffffff' } as const
 
 function resolveTheme(): 'dark' | 'light' {
   const pref = getSettingsSync().theme
