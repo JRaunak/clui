@@ -20,6 +20,7 @@ import { TypingDots } from './TypingDots'
 import { Toast } from './Toast'
 import { useEscape } from '../lib/useEscape'
 import { useClickOutside } from '../lib/useClickOutside'
+import { useGuardedAsync } from '../lib/useGuardedAsync'
 
 /** A row in the merged sidebar list. On-disk sessions and live sessions are merged by CLI session id;
  *  live-only sessions get synthesized rows so they show up immediately. */
@@ -89,6 +90,9 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   const closeSession = useSession((s) => s.closeSession)
   const forkSession = useSession((s) => s.forkSession)
   const startSession = useSession((s) => s.startSession)
+  // One guard shared by every group "+": startSession awaits the spawn before any store write,
+  // so an unguarded double-click on a group header starts two sessions in that folder.
+  const [startInGroup, groupSpawnPending] = useGuardedAsync((cwd: string) => startSession(cwd))
   const setNotice = useSession((s) => s.setNotice)
   // Store-owned so a store-side trigger (a `/rename` turn) can refresh the same copy this renders.
   const groups = useSession((s) => s.sessionGroups)
@@ -417,10 +421,13 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
                 <div className="flex h-6 w-6 shrink-0 items-center justify-center">
                   {g.exists && !g.isChatDir && (
                     <button
-                      className="flex h-6 w-6 items-center justify-center rounded text-dim opacity-0 transition-opacity hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent group-hover/hdr:opacity-100 group-focus-within/hdr:opacity-100"
+                      className={`flex h-6 w-6 items-center justify-center rounded text-dim opacity-0 transition-opacity hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent group-hover/hdr:opacity-100 group-focus-within/hdr:opacity-100 ${
+                        groupSpawnPending ? 'pointer-events-none opacity-40' : ''
+                      }`}
                       aria-label={`New session in ${g.label}`}
+                      aria-busy={groupSpawnPending || undefined}
                       title="New session here"
-                      onClick={() => void startSession(g.cwd)}
+                      onClick={() => void startInGroup(g.cwd)}
                     >
                       <IconPlus className="h-3.5 w-3.5" />
                     </button>

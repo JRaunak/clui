@@ -19,6 +19,7 @@ import { IconSettings, IconPlus, IconSidebar, IconCheck, IconWarn, IconNoEntry, 
 import { applyTheme } from './lib/theme'
 import { formatCost } from './lib/formatCost'
 import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
+import { useGuardedAsync } from './lib/useGuardedAsync'
 import type { CliInfo } from '../../shared/ipc'
 
 /** Per-tone notice styling. Message text stays text-content in the render, not the tone color:
@@ -199,21 +200,31 @@ export function App(): JSX.Element {
   // user lands straight in a live composer. First-run completion is handled by the
   // cwd-keyed effect above, not here.
   const newSession = useCallback(async (): Promise<void> => {
-    const dir = await window.clui.getChatDir()
+    const dir = chatDir ?? (await window.clui.getChatDir())
     await startSession(dir)
-  }, [startSession])
+  }, [startSession, chatDir])
 
   // Quick: an ephemeral session in the chat dir, spawned with --no-session-persistence so no
   // transcript hits disk (discarded on close).
   const quickSession = useCallback(async (): Promise<void> => {
-    const dir = await window.clui.getChatDir()
+    const dir = chatDir ?? (await window.clui.getChatDir())
     await startSession(dir, undefined, { ephemeral: true })
-  }, [startSession])
+  }, [startSession, chatDir])
 
   const pickAndStart = useCallback(async (): Promise<void> => {
     const dir = await window.clui.pickWorkspace()
     if (dir) await startSession(dir)
   }, [startSession])
+
+  // One guard across every spawn entry point (split button, rail, welcome, ⌘N/⌥⌘N/⌘⇧N,
+  // onboarding): each handler awaits the CLI spawn before any store write, so an unguarded
+  // flurry of clicks starts one session per click. `spawnPending` drives the busy affordance.
+  const [spawnSession, spawnPending] = useGuardedAsync((kind: 'new' | 'quick' | 'pick') =>
+    kind === 'new' ? newSession() : kind === 'quick' ? quickSession() : pickAndStart()
+  )
+  const startNew = useCallback(() => void spawnSession('new'), [spawnSession])
+  const startQuick = useCallback(() => void spawnSession('quick'), [spawnSession])
+  const startInDir = useCallback(() => void spawnSession('pick'), [spawnSession])
 
   // ⌘N new session · ⌘⇧N new session in a directory · ⌘W close · ⌘, settings · ⌘K palette
   // (native menu) + ⌃Tab / ⌃C.
@@ -232,9 +243,9 @@ export function App(): JSX.Element {
   }, [])
 
   useKeyboardShortcuts({
-    onNewSession: newSession,
-    onNewQuickSession: quickSession,
-    onNewSessionInDir: pickAndStart,
+    onNewSession: startNew,
+    onNewQuickSession: startQuick,
+    onNewSessionInDir: startInDir,
     onOpenSettings: openSettings,
     onOpenPalette: openPalette,
     onToggleSidebar: toggleSidebar
@@ -279,10 +290,11 @@ export function App(): JSX.Element {
                 className={`flex h-[30px] w-[30px] items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar ${
                   cliUnavailable
                     ? 'cursor-default bg-bg-raised text-faint'
-                    : 'bg-accent text-on-accent hover:bg-accent-hover'
+                    : `bg-accent text-on-accent hover:bg-accent-hover ${spawnPending ? 'pointer-events-none opacity-60' : ''}`
                 }`}
-                onClick={cliUnavailable ? undefined : newSession}
+                onClick={cliUnavailable ? undefined : startNew}
                 aria-disabled={cliUnavailable || undefined}
+                aria-busy={spawnPending || undefined}
                 aria-label="New session"
                 title={cliUnavailable ? NEW_SESSION_DISABLED_HINT : 'New session'}
               >
@@ -292,9 +304,10 @@ export function App(): JSX.Element {
           ) : (
             <>
               <SplitNewSession
-                onNew={newSession}
-                onQuick={quickSession}
+                onNew={startNew}
+                onQuick={startQuick}
                 disabled={cliUnavailable}
+                pending={spawnPending}
                 disabledTitle={NEW_SESSION_DISABLED_HINT}
               />
             </>
@@ -443,7 +456,7 @@ export function App(): JSX.Element {
             onboarded={onboarded}
             onOpenSettings={openSettings}
             onRecheck={recheckCli}
-            onPickWorkspace={pickAndStart}
+            onPickWorkspace={startInDir}
             onDismissIntro={dismissIntro}
           />
         ) : (
@@ -459,12 +472,12 @@ export function App(): JSX.Element {
               A local window onto the <span className="font-mono text-dim">claude</span> CLI — your
               sessions, permissions, and tools, running side by side.
             </p>
-            <Button variant="primary" size="lg" className="mt-7" onClick={newSession}>
+            <Button variant="primary" size="lg" className="mt-7" onClick={startNew} busy={spawnPending}>
               <IconPlus className="h-4 w-4" />
               New session
             </Button>
             {/* Ghost, not a second accent: the hero's boldness is spent on the primary. */}
-            <Button variant="ghost" size="md" className="mt-2" onClick={pickAndStart}>
+            <Button variant="ghost" size="md" className="mt-2" onClick={startInDir} busy={spawnPending}>
               New session in a directory…
             </Button>
           </div>
