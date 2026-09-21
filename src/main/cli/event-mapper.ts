@@ -125,8 +125,9 @@ interface RawUsage {
   output_tokens?: number
 }
 
-/** models[] is kept alongside the summed totals so a multi-model turn can show a per-model
- *  cost split. */
+/** Every field here is CUMULATIVE session-to-date (the CLI reports modelUsage and
+ *  total_cost_usd that way, verified live); the store deltas it against the prior envelope to
+ *  get one turn's marginal. models[] is kept so a multi-model turn can show a per-model split. */
 function turnUsageFrom(env: RawEnvelope): TurnUsage | undefined {
   const entries = env.modelUsage ? Object.entries(env.modelUsage) : []
   if (entries.length === 0) return undefined

@@ -141,7 +141,7 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
       {!isUser && message.denials && message.denials.length > 0 && (
         <BlockedActionsNotice denials={message.denials} />
       )}
-      {!isUser && message.usage && <TurnUsageTrailer usage={message.usage} />}
+      {!isUser && message.usage && <TurnUsageTrailer usage={message.usage} id={message.id} />}
     </div>
   )
 }
@@ -268,28 +268,35 @@ function UsageRow({ label, value, strong }: { label: string; value: string; stro
   )
 }
 
-/** Cache read vs creation is the Bedrock money signal, so cache creation gets its own row
- *  only when this turn actually wrote cache. */
-function TurnUsageTrailer({ usage }: { usage: TurnUsage }): JSX.Element {
+/** This TURN's usage (the store deltas it off the cumulative envelope), the actionable signal
+ *  for spotting the turn that blew the cache. The cumulative total lives in the footer + ring.
+ *  Cache read vs creation is the Bedrock money signal, so cache creation gets its own row only
+ *  when this turn actually wrote cache. */
+function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.Element {
   const [open, setOpen] = useState(false)
   const totalInput = usage.inputTokens + usage.cacheReadInputTokens + usage.cacheCreationInputTokens
   const cachedPct = totalInput > 0 ? Math.round((usage.cacheReadInputTokens / totalInput) * 100) : 0
   const n = (v: number): string => v.toLocaleString('en-US')
+  const panelId = `turn-usage-${id}`
   return (
     <div className="flex flex-col items-end">
       <button
         type="button"
         className="flex min-h-[24px] items-center gap-1 rounded px-1.5 font-mono text-[10.5px] tabular-nums text-faint transition-colors hover:text-content"
         aria-expanded={open}
-        aria-label="Turn usage breakdown"
+        aria-controls={panelId}
+        aria-label={`Turn cost ${fmtCost(usage.costUSD)}, show breakdown`}
         onClick={() => setOpen((o) => !o)}
       >
         <IconChevron className={`h-3 w-3 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden="true" />
         {fmtCost(usage.costUSD)}
       </button>
       {open && (
-        <dl className="mt-1 flex w-full max-w-xs flex-col gap-1 rounded-md border border-border bg-bg-elev px-3 py-2 text-[12px]">
-          <UsageRow label="Cost" value={fmtCost(usage.costUSD)} strong />
+        <dl
+          id={panelId}
+          className="mt-1 flex w-full max-w-xs flex-col gap-1 rounded-md border border-border bg-bg-elev px-3 py-2 text-[12px]"
+        >
+          <UsageRow label="Turn cost" value={fmtCost(usage.costUSD)} strong />
           <UsageRow label="Tokens" value={`${n(usage.inputTokens)} in · ${n(usage.outputTokens)} out`} />
           <UsageRow
             label="Cache read"
@@ -300,7 +307,14 @@ function TurnUsageTrailer({ usage }: { usage: TurnUsage }): JSX.Element {
           )}
           {usage.thinkingTokens > 0 && <UsageRow label="Thinking" value={n(usage.thinkingTokens)} />}
           {usage.models.length > 1 &&
-            usage.models.map((m, i) => <UsageRow key={i} label={m.model} value={fmtCost(m.costUSD)} />)}
+            usage.models.map((m, i) => (
+              <div key={i} className="flex items-baseline justify-between gap-6">
+                <dt className="min-w-0 truncate font-mono text-faint" title={m.model}>
+                  {m.model}
+                </dt>
+                <dd className="shrink-0 font-mono tabular-nums text-dim">{fmtCost(m.costUSD)}</dd>
+              </div>
+            ))}
         </dl>
       )}
     </div>

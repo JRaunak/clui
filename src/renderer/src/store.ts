@@ -223,6 +223,10 @@ export interface PerSessionState {
   compactDismissedAtRunway: number | null
   /** Cumulative session cost in USD (summed from each turn's `result` event). */
   costUsd: number | null
+  /** Last result envelope's CUMULATIVE usage, the baseline the per-turn trailer subtracts to
+   *  show one turn's marginal cost/tokens. Zeroed on slice creation (and thus after a resume,
+   *  where usage isn't persisted) so the first new turn reads as cumulative and self-corrects. */
+  prevCumUsage: TurnUsage
   /** True if this session was resumed from history (context carried by the CLI). */
   resumed: boolean
   /** Quick session: spawned with `--no-session-persistence`, so no transcript ever hits disk.
@@ -539,6 +543,36 @@ export const EMPTY_TASKS: SessionTask[] = []
 /** Stable empty ref for a session's staged draft attachments (zustand-v5 selector safety). */
 export const EMPTY_ATTACHMENTS: ProcessedAttachment[] = []
 
+/** Baseline for the first turn's delta: every field zero, so turn 1's marginal equals its
+ *  own cumulative. Also the resume baseline (usage isn't persisted). */
+const ZERO_USAGE: TurnUsage = {
+  costUSD: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadInputTokens: 0,
+  cacheCreationInputTokens: 0,
+  thinkingTokens: 0,
+  models: []
+}
+
+/** The CLI reports every modelUsage field CUMULATIVELY session-to-date, so a turn's own
+ *  usage is the current envelope minus the previous one. max(0, …) guards a transient lower
+ *  report; per-model cost deltas off the prior snapshot's same model id so the whole card
+ *  stays one scope. */
+export function perTurnUsage(cur: TurnUsage, prev: TurnUsage): TurnUsage {
+  const d = (a: number | undefined, b: number | undefined): number => Math.max(0, (a ?? 0) - (b ?? 0))
+  const prevByModel = new Map(prev.models.map((m) => [m.model, m.costUSD]))
+  return {
+    costUSD: d(cur.costUSD, prev.costUSD),
+    inputTokens: d(cur.inputTokens, prev.inputTokens),
+    outputTokens: d(cur.outputTokens, prev.outputTokens),
+    cacheReadInputTokens: d(cur.cacheReadInputTokens, prev.cacheReadInputTokens),
+    cacheCreationInputTokens: d(cur.cacheCreationInputTokens, prev.cacheCreationInputTokens),
+    thinkingTokens: d(cur.thinkingTokens, prev.thinkingTokens),
+    models: cur.models.map((m) => ({ ...m, costUSD: d(m.costUSD, prevByModel.get(m.model)) }))
+  }
+}
+
 /** Read shares the file_path key but writes nothing, so changed-files gates on the tool
  *  name, not the key's presence. */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
@@ -826,6 +860,7 @@ async function beginSession(
     contextWindow: seededTokens != null ? seededWindow : null,
     compactDismissedAtRunway: null,
     costUsd: resumedCostUsd,
+    prevCumUsage: ZERO_USAGE,
     resumed: Boolean(opts.resumeSessionId),
     ephemeral: Boolean(opts.ephemeral),
     historyCount: history.length,
@@ -2020,16 +2055,20 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (typeof e.totalCostUsd === 'number') {
             patch.costUsd = Math.max(slice.costUsd ?? 0, e.totalCostUsd)
           }
-          // Result arrives after the assistant text, so hang usage/denials on the last assistant message.
+          // Result arrives after the assistant text, so hang usage/denials on the last assistant
+          // message. The envelope's usage is cumulative session-to-date, so the trailer shows this
+          // turn's marginal (delta off prevCumUsage); the cumulative total lives in the footer + ring.
           if (e.usage || e.denials?.length) {
             const idx = messages.findLastIndex((m) => m.role === 'assistant')
             if (idx >= 0) {
+              const perTurn = e.usage ? perTurnUsage(e.usage, slice.prevCumUsage) : undefined
               messages[idx] = {
                 ...messages[idx],
-                ...(e.usage ? { usage: e.usage } : {}),
+                ...(perTurn ? { usage: perTurn } : {}),
                 ...(e.denials?.length ? { denials: e.denials } : {})
               }
             }
+            if (e.usage) patch.prevCumUsage = e.usage
           }
           break
         case 'error':
