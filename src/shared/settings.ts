@@ -52,6 +52,9 @@ export interface CluiSettings {
    * expanded. Toggled by ⌘B or the header/rail button; persisted like `onboarded`.
    */
   sidebarCollapsed: boolean
+  /** Expanded sidebar width in px. Applied clamped to the live window, so a width saved on a wide
+   *  monitor still fits a laptop. Persisted like `sidebarCollapsed`. */
+  sidebarWidth: number
   /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
    *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
@@ -451,6 +454,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   // First launch shows the intro card until dismissed.
   onboarded: false,
   sidebarCollapsed: false,
+  sidebarWidth: 288,
   enableTaskTools: false,
   // Empty → resolves to ~/.clui in main (getChatDir).
   defaultChatDir: '',

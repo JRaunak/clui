@@ -29,6 +29,7 @@ import { applyTheme } from './lib/theme'
 import { formatCost } from './lib/formatCost'
 import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
 import { useGuardedAsync } from './lib/useGuardedAsync'
+import { useSidebarResize, SIDEBAR_DEFAULT } from './lib/useSidebarResize'
 import type { CliInfo } from '../../shared/ipc'
 
 /** Per-tone notice styling. Message text stays text-content in the render, not the tone color:
@@ -71,6 +72,7 @@ export function App(): JSX.Element {
   // First-run intro flag; `null` until loaded, so the intro doesn't flash before we know.
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showCustomizations, setShowCustomizations] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -160,6 +162,7 @@ export function App(): JSX.Element {
       applyTheme(values.theme)
       setOnboarded(values.onboarded)
       setSidebarCollapsed(values.sidebarCollapsed)
+      setSidebarWidth(values.sidebarWidth)
     })
   }, [])
 
@@ -254,6 +257,18 @@ export function App(): JSX.Element {
     })
   }, [])
 
+  // Persist on release, not per-frame.
+  const persistWidth = useCallback((w: number) => {
+    setSidebarWidth(w)
+    void window.clui.updateSettings({ sidebarWidth: w })
+  }, [])
+
+  const sidebarResize = useSidebarResize({
+    width: sidebarWidth,
+    setWidth: persistWidth,
+    collapsed: sidebarCollapsed
+  })
+
   useKeyboardShortcuts({
     onNewSession: startNew,
     onNewQuickSession: startQuick,
@@ -270,9 +285,11 @@ export function App(): JSX.Element {
         key="sidebar"
         ref={asideRef}
         id="app-sidebar"
-        className={`sidebar-anim flex h-screen min-h-0 shrink-0 flex-col ${
-          sidebarCollapsed ? 'w-11 items-center gap-2.5 bg-bg' : 'w-72 gap-3 bg-bg-sidebar'
+        // No width transition while dragging, so the edge tracks the pointer 1:1.
+        className={`relative flex h-screen min-h-0 shrink-0 flex-col ${sidebarResize.dragging ? '' : 'sidebar-anim'} ${
+          sidebarCollapsed ? 'w-11 items-center gap-2.5 bg-bg' : 'gap-3 bg-bg-sidebar'
         }`}
+        style={sidebarCollapsed ? undefined : { width: sidebarResize.appliedWidth }}
       >
         {/* Top band under the OS title bar. Drag region starts past the toggle, so the toggle
             stays clickable (drag regions swallow clicks). */}
@@ -368,6 +385,23 @@ export function App(): JSX.Element {
             >
               <IconSettings className="h-4 w-4" />
             </button>
+          </div>
+        )}
+        {/* Resize handle on the right seam, shown only when expanded (the collapsed rail is
+            toggle-only, no drag). */}
+        {!sidebarCollapsed && (
+          <div
+            {...sidebarResize.separatorProps}
+            className="group absolute right-0 top-0 z-20 h-full w-2.5 translate-x-1/2 cursor-col-resize [-webkit-app-region:no-drag] focus-visible:outline-none"
+          >
+            <span
+              className={`absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors ${
+                sidebarResize.dragging
+                  ? 'bg-accent'
+                  : 'bg-transparent group-hover:bg-accent/40 group-focus-visible:bg-accent'
+              }`}
+              aria-hidden="true"
+            />
           </div>
         )}
       </aside>
