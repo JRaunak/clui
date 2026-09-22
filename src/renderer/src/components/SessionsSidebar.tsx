@@ -183,7 +183,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     useShallow((s) =>
       Object.values(s.sessions).map(
         (v) =>
-          `${v.handleId} ${v.sessionId ?? ''} ${v.cwd} ${v.busy ? 1 : 0} ${v.exited ? 1 : 0} ${v.pendingPermissions.length} ${Object.values(v.backgroundTasks).filter((t) => t.status === 'running').length} ${v.createdMs}`
+          `${v.handleId} ${v.sessionId ?? ''} ${v.cwd} ${v.busy ? 1 : 0} ${v.exited ? 1 : 0} ${v.pendingPermissions.length} ${Object.values(v.backgroundTasks).filter((t) => t.status === 'running').length} ${v.createdMs} ${v.title ?? ''}`
       )
     )
   )
@@ -264,7 +264,9 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
         const stillLive = Boolean(liveMatch) && !liveMatch!.exited
         ensureGroup(s.cwd).push({
           id: s.id,
-          title: s.title,
+          // Live slice's title wins so a rename shows before the CLI mirrors it to customTitle
+          // and the next scan makes it authoritative.
+          title: stillLive && liveMatch!.title ? liveMatch!.title : s.title,
           renamed: s.renamed,
           hardTitle: s.hardTitle,
           cwd: s.cwd,

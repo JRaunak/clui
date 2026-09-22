@@ -42,10 +42,13 @@ export function App(): JSX.Element {
   const costUsd = useActive((s) => s?.costUsd ?? null)
   const sessionGroups = useSession((s) => s.sessionGroups)
   const sliceTitle = useActive((s) => sessionDisplayTitle(s))
-  // Prefer the on-disk resolved title (sidecar/custom/ai/first-user) so the footer matches the
-  // sidebar row; the live slice's title falls back only before the jsonl lands.
+  const activeTitle = useActive((s) => s?.title ?? null)
+  // Live title wins so a rename shows instantly; else the on-disk resolved title so the footer
+  // matches the sidebar row; else the slice's own title before the jsonl lands.
   const displayTitle =
-    sessionGroups.flatMap((g) => g.sessions).find((s) => s.id === sessionId)?.title ?? sliceTitle
+    activeTitle ??
+    sessionGroups.flatMap((g) => g.sessions).find((s) => s.id === sessionId)?.title ??
+    sliceTitle
   // "Untitled" is a placeholder, not a name; hide it (and any absent id/cwd) rather than show junk.
   const showTitle = !!displayTitle && displayTitle !== 'Untitled'
   const startSession = useSession((s) => s.startSession)

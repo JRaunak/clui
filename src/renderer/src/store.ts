@@ -1213,6 +1213,10 @@ export const useSession = create<SessionStore>((set, get) => ({
   renameLiveSession: (handleId, name) => {
     const slice = get().sessions[handleId]
     if (!slice || slice.exited) return
+    // Optimistic: footer and sidebar prefer a live slice's explicit title, so the rename shows
+    // before the CLI mirrors it to customTitle. Inject now if idle, else defer to turn-end so the
+    // /rename suppression window can't swallow an in-flight result.
+    set((s) => patchSlice(s, handleId, { title: name }))
     if (slice.busy) pendingLiveRename.set(handleId, name)
     else void window.clui.injectRename(handleId, name)
   },
