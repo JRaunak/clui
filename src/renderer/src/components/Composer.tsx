@@ -480,19 +480,9 @@ function DirectoryChip({
   options: DropdownOption<string>[]
   onSelect: (v: string) => void
 }): JSX.Element | null {
-  if (!editable) {
-    // Locked + directoryless: nothing to show (a quick session surfaces "Not saved" instead).
-    if (directoryless) return null
-    return (
-      <span
-        className="flex h-8 items-center gap-1.5 px-2.5 text-xs text-dim"
-        title={`${cwd ?? ''}\ndirectory is fixed after the first message`}
-      >
-        <IconFolder className="h-3.5 w-3.5 shrink-0" />
-        <span className="max-w-[16ch] truncate">{basename(cwd ?? '')}</span>
-      </span>
-    )
-  }
+  // Once locked (after the first message) the bottom bar carries the cwd, so the composer shows no
+  // chip; a second static copy above the footer is redundant. Only the editable picker below shows.
+  if (!editable) return null
   return (
     <Dropdown<string>
       value={value}

@@ -15,7 +15,16 @@ import { WorkflowTray } from './components/WorkflowTray'
 import { Button } from './components/Button'
 import { SplitNewSession } from './components/SplitNewSession'
 import { Onboarding, cliHealth } from './components/Onboarding'
-import { IconSettings, IconPlus, IconSidebar, IconCheck, IconWarn, IconNoEntry, IconClose } from './components/Icon'
+import {
+  IconSettings,
+  IconPlus,
+  IconSidebar,
+  IconCheck,
+  IconWarn,
+  IconNoEntry,
+  IconClose,
+  IconFolder
+} from './components/Icon'
 import { applyTheme } from './lib/theme'
 import { formatCost } from './lib/formatCost'
 import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
@@ -443,10 +452,16 @@ export function App(): JSX.Element {
               <span className="flex-1" aria-hidden="true" />
               <BackgroundTasksSlot />
               <WorkflowTray />
-              {/* A directoryless session runs in ~/.clui; show nothing rather than that internal path. */}
+              {/* Directoryless sessions run in ~/.clui; hide that internal path. This is now the only
+                  surface for the cwd (the composer no longer repeats it), so text-dim, not faint. */}
               {cwd && cwd !== chatDir && (
-                <span className="max-w-[20ch] shrink-0 truncate text-faint" title={cwd}>
-                  {basename(cwd)}
+                <span
+                  className="flex shrink-0 items-center gap-1 text-dim"
+                  title={cwd}
+                  aria-label={`Working directory: ${cwd}`}
+                >
+                  <IconFolder className="h-3.5 w-3.5 shrink-0" />
+                  <span className="max-w-[20ch] truncate">{basename(cwd)}</span>
                 </span>
               )}
             </div>
