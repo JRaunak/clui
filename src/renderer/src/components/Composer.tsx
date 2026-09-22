@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -199,6 +200,29 @@ export function Composer(): JSX.Element {
     if (handleId && noMessages) textareaRef.current?.focus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handleId])
+
+  // Keyed on `text` so it re-measures on programmatic changes too (autocomplete insert, draft
+  // restore, empty-after-send reset), not just typing. The ResizeObserver handles width changes
+  // (a sidebar toggle rewraps the text); guarded to width-only so setting height can't loop it.
+  useLayoutEffect(() => {
+    const ta = textareaRef.current
+    if (!ta) return
+    const measure = (): void => {
+      ta.style.height = 'auto'
+      ta.style.height = `${ta.scrollHeight}px`
+      // 192px = max-h-48; keep in sync.
+      ta.style.overflowY = ta.scrollHeight > 192 ? 'auto' : 'hidden'
+    }
+    measure()
+    let width = ta.clientWidth
+    const ro = new ResizeObserver(() => {
+      if (ta.clientWidth === width) return
+      width = ta.clientWidth
+      measure()
+    })
+    ro.observe(ta)
+    return () => ro.disconnect()
+  }, [text])
 
   // Rebind a still-empty session to `dir`, carrying its draft. The CLI fixes the transcript folder
   // at process-create, so a pre-message dir change must respawn, not set_cwd; the jsonl is lazy, so
