@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useEscape } from '../lib/useEscape'
 import { useClickOutside } from '../lib/useClickOutside'
 
@@ -19,6 +19,12 @@ export interface DropdownOption<T extends string> {
   /** Draws a hairline rule above this option, marking a group boundary (e.g. an action
    *  separated from the value choices above it). */
   divider?: boolean
+  /** Group header rendered above this option; set on the first of each group. */
+  header?: string
+  /** Right-aligned dim meta in the open menu (e.g. a model's context size). */
+  meta?: string
+  /** Full title for `meta` so an abbreviation stays recoverable (e.g. the exact token count). */
+  metaTitle?: string
 }
 
 /** A custom dropdown replacing the native <select>, which renders as the OS default
@@ -198,31 +204,45 @@ export function Dropdown<T extends string>({
             // active-item idiom (the active-session rail), absolutely positioned so it adds zero
             // horizontal shift; aria-current carries it for AT.
             return (
-              <button
-                key={o.value}
-                type="button"
-                aria-current={selected ? 'true' : undefined}
-                className={`relative flex w-full items-start gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
-                  selected ? 'bg-user' : 'hover:bg-user'
-                } ${o.color ?? 'text-content'}`}
-                onClick={() => select(o.value)}
-              >
-                {selected && (
-                  <span
-                    className="absolute inset-y-0 left-0 w-0.5 bg-accent"
-                    aria-hidden="true"
-                  />
+              <Fragment key={o.value}>
+                {o.header && (
+                  <div className="px-3 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-faint">
+                    {o.header}
+                  </div>
                 )}
-                {o.icon && <span className="mt-px shrink-0">{o.icon}</span>}
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="whitespace-nowrap font-medium">{o.label}</span>
-                  {o.description && (
-                    <span className="whitespace-normal text-[11px] leading-snug text-faint">
-                      {o.description}
+                <button
+                  type="button"
+                  aria-current={selected ? 'true' : undefined}
+                  className={`relative flex w-full items-start gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+                    selected ? 'bg-user' : 'hover:bg-user'
+                  } ${o.color ?? 'text-content'}`}
+                  onClick={() => select(o.value)}
+                >
+                  {selected && (
+                    <span
+                      className="absolute inset-y-0 left-0 w-0.5 bg-accent"
+                      aria-hidden="true"
+                    />
+                  )}
+                  {o.icon && <span className="mt-px shrink-0">{o.icon}</span>}
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="truncate font-medium">{o.label}</span>
+                    {o.description && (
+                      <span className="whitespace-normal text-[11px] leading-snug text-faint">
+                        {o.description}
+                      </span>
+                    )}
+                  </span>
+                  {o.meta && (
+                    <span
+                      className="shrink-0 self-center tabular-nums text-[11px] text-dim"
+                      title={o.metaTitle}
+                    >
+                      {o.meta}
                     </span>
                   )}
-                </span>
-              </button>
+                </button>
+              </Fragment>
             )
           })}
         </div>

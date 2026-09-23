@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CliInfo, ModelListResult } from '../../../shared/ipc'
 import {
   PERMISSION_MODES,
@@ -10,6 +10,9 @@ import {
   THEME_CHOICES,
   THEME_LABELS,
   deriveModelInfo,
+  groupModels,
+  contextSizeLabel,
+  contextWindowForModel,
   type CluiSettings,
   type SettingsKey,
   type SettingsSource
@@ -86,6 +89,25 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
     })
     window.clui.listModels().then(setModelList)
   }, [])
+
+  // Group + version-sort the unordered live Bedrock list into the composer picker's shape.
+  // Headers only when there's more than one family; the context-size column only for known ones.
+  const modelOptions = useMemo(
+    () =>
+      groupModels(modelList.ids.map(deriveModelInfo)).flatMap((g, gi, groups) =>
+        g.models.map((info, i) => ({
+          value: info.id,
+          label: info.label,
+          header: groups.length > 1 && i === 0 ? g.label : undefined,
+          meta: info.family !== 'unknown' ? contextSizeLabel(info.id) : undefined,
+          metaTitle:
+            info.family !== 'unknown'
+              ? `Context window: ${contextWindowForModel(info.id).toLocaleString()} tokens`
+              : undefined
+        }))
+      ),
+    [modelList.ids]
+  )
 
   // On unmount, revert an unsaved live theme preview, but only if one was made and we know the persisted baseline.
   useEffect(() => {
@@ -269,7 +291,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
           <Dropdown<CluiSettings['model']>
             value={settings.model}
             ariaLabel="Default model for new sessions"
-            options={modelList.ids.map((id) => ({ value: id, label: deriveModelInfo(id).label }))}
+            options={modelOptions}
             onChange={(m) => set('model', m)}
           />
         </Field>
