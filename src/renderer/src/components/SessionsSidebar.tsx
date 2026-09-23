@@ -17,7 +17,7 @@ import {
   IconGhost
 } from './Icon'
 import { TypingDots } from './TypingDots'
-import { Toast } from './Toast'
+import { ToastStack } from './Toast'
 import { useEscape } from '../lib/useEscape'
 import { useClickOutside } from '../lib/useClickOutside'
 import { useGuardedAsync } from '../lib/useGuardedAsync'
@@ -66,6 +66,8 @@ function basename(p: string): string {
 
 /** How long a deleted session can be undone before the on-disk delete fires. */
 const UNDO_MS = 5000
+/** Most undo toasts kept at once; a further delete commits the oldest immediately. */
+const STACK_CAP = 3
 
 interface PendingDelete {
   id: string
@@ -76,13 +78,25 @@ interface PendingDelete {
 export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: boolean }): JSX.Element {
   /** Collapsed project cwds. */
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
-  // Session pending an undoable delete, hidden from the list. One at a time: a second delete commits the first.
-  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
+  // Sessions pending an undoable delete, newest first, hidden from the list. Each commits on its own
+  // 5s expiry, so a later delete never commits an earlier one.
+  const [pending, setPendingState] = useState<PendingDelete[]>([])
+  // Ref mirror so back-to-back deletes read the current list without waiting for a state flush, and so
+  // the cap/expiry math stays out of a setState updater (updaters must be side-effect-free).
+  const pendingRef = useRef<PendingDelete[]>([])
+  const setPending = useCallback((next: PendingDelete[]): void => {
+    pendingRef.current = next
+    setPendingState(next)
+  }, [])
   // Ids committed to on-disk delete but not yet dropped by refreshSessions(); kept hidden so rows
   // don't flash back between leaving the toast and leaving `groups`.
   const [committingIds, setCommittingIds] = useState<Set<string>>(() => new Set())
-  // Timer in a ref, not state: a setState updater must be side-effect-free.
-  const deleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // One expiry timer per pending id.
+  const deleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  // sr-only announcement for the latest delete; coalesces rapid ones to the most recent.
+  const [announce, setAnnounce] = useState('')
+  // Toggling suffix so two same-titled deletes still differ as text; an unchanged aria-live node is silent.
+  const announceSeq = useRef(0)
 
   const activeHandleId = useSession((s) => s.activeHandleId)
   const activateSession = useSession((s) => s.activateSession)
@@ -113,10 +127,11 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     [setNotice]
   )
 
-  const clearDeleteTimer = useCallback(() => {
-    if (deleteTimer.current) {
-      clearTimeout(deleteTimer.current)
-      deleteTimer.current = null
+  const clearDeleteTimer = useCallback((id: string) => {
+    const t = deleteTimers.current.get(id)
+    if (t) {
+      clearTimeout(t)
+      deleteTimers.current.delete(id)
     }
   }, [])
 
@@ -136,38 +151,51 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Delete-with-undo: hide the row and start a timer; the on-disk delete fires only when it expires.
+  // Hide the row and start its own timer; the on-disk delete fires only when that expires.
   const requestDelete = useCallback(
     (id: string, projectSlug: string, title: string, liveHandleId?: string) => {
-      // A second delete while one is pending commits the first now; its id enters `committingIds` synchronously.
-      const prev = pendingDelete
-      clearDeleteTimer()
-      if (prev && prev.id !== id) void commitDelete(prev)
-
       // If live, stop the process now so the live counter and dots update at once. Undo restores only the on-disk transcript.
       if (liveHandleId) void closeSession(liveHandleId)
 
       const pd: PendingDelete = { id, projectSlug, title }
-      setPendingDelete(pd)
-      deleteTimer.current = setTimeout(() => {
-        deleteTimer.current = null
+      let next = [pd, ...pendingRef.current.filter((p) => p.id !== id)]
+      // Over the cap: the oldest commits now.
+      if (next.length > STACK_CAP) {
+        for (const overflow of next.slice(STACK_CAP)) {
+          clearDeleteTimer(overflow.id)
+          void commitDelete(overflow)
+        }
+        next = next.slice(0, STACK_CAP)
+      }
+      setPending(next)
+
+      const t = setTimeout(() => {
+        deleteTimers.current.delete(id)
         void commitDelete(pd)
-        setPendingDelete((cur) => (cur?.id === pd.id ? null : cur))
+        setPending(pendingRef.current.filter((p) => p.id !== id))
       }, UNDO_MS)
+      deleteTimers.current.set(id, t)
+      setAnnounce(`Deleted ${title}. Undo available.${'\u200b'.repeat(++announceSeq.current % 2)}`)
     },
-    [pendingDelete, clearDeleteTimer, commitDelete, closeSession]
+    [clearDeleteTimer, commitDelete, closeSession, setPending]
   )
 
-  const undoDelete = useCallback(() => {
-    clearDeleteTimer()
-    setPendingDelete(null)
-    // The process is stopped, but the transcript survives on disk. Re-scan so the row reappears as resumable.
-    void refreshSessions()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clearDeleteTimer])
+  const undoDelete = useCallback(
+    (id: string) => {
+      clearDeleteTimer(id)
+      setPending(pendingRef.current.filter((p) => p.id !== id))
+      // The process is stopped, but the transcript survives on disk. Re-scan so the row reappears as resumable.
+      void refreshSessions()
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [clearDeleteTimer, setPending]
+  )
 
-  // Cancel any pending timer on unmount.
-  useEffect(() => () => clearDeleteTimer(), [clearDeleteTimer])
+  // Cancel any pending timers on unmount.
+  useEffect(() => {
+    const timers = deleteTimers.current
+    return () => timers.forEach(clearTimeout)
+  }, [])
 
   // Shallow signature of the live sessions: re-renders only when identity/busy/pending-count changes.
   const liveSig = useSession(
@@ -223,12 +251,12 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     void refreshSessions()
   }, [liveIdsKey, refreshSessions])
 
-  // Ids to hide: the one showing the undo toast plus any committed but not yet dropped by refreshSessions().
+  // Ids to hide: those showing an undo toast plus any committed but not yet dropped by refreshSessions().
   const pendingIds = useMemo(() => {
     const s = new Set(committingIds)
-    if (pendingDelete) s.add(pendingDelete.id)
+    for (const p of pending) s.add(p.id)
     return s
-  }, [pendingDelete, committingIds])
+  }, [pending, committingIds])
 
   // Merge on-disk groups with live sessions (read the store non-reactively; liveSig drives the re-render).
   const merged = useMemo<MergedGroup[]>(() => {
@@ -325,158 +353,152 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, liveSig, pendingIds, chatDir])
 
+  // One ToastStack for both branches, kept as each fragment's last child so a rail toggle reconciles it
+  // in place instead of remounting it.
+  const stack = (
+    <ToastStack
+      items={pending.map((p) => ({ id: p.id, title: p.title, suffix: '· deleted' }))}
+      durationMs={UNDO_MS}
+      announce={announce}
+      onUndo={undoDelete}
+    />
+  )
+
   if (railMode) {
-    // Same source and order as the expanded list, flattened to one monogram column. Undo toast still renders.
+    // Same source and order as the expanded list, flattened to one monogram column.
     const flat = merged.flatMap((g) => g.sessions.map((s) => ({ s, exists: g.exists })))
     return (
-      <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto scrollbar-none pt-2.5 pb-3">
-        {flat.map(({ s, exists }) => (
-          <SessionMonogram
-            key={s.handleId ?? s.id ?? `${s.cwd}-x`}
-            session={s}
-            active={Boolean(s.handleId) && s.handleId === activeHandleId}
-            onOpen={() => openMerged(s, exists)}
-          />
-        ))}
-        {pendingDelete && (
-          <Toast
-            key={pendingDelete.id}
-            title={pendingDelete.title}
-            suffix="· deleted"
-            actionLabel="Undo"
-            onAction={undoDelete}
-            durationMs={UNDO_MS}
-          />
-        )}
-      </div>
+      <>
+        <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto scrollbar-none pt-2.5 pb-3">
+          {flat.map(({ s, exists }) => (
+            <SessionMonogram
+              key={s.handleId ?? s.id ?? `${s.cwd}-x`}
+              session={s}
+              active={Boolean(s.handleId) && s.handleId === activeHandleId}
+              onOpen={() => openMerged(s, exists)}
+            />
+          ))}
+        </div>
+        {stack}
+      </>
     )
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-between px-1 pb-2">
-        <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-dim">
-          Sessions
-          {/* No tint behind the label: text-ok on a bg-ok/15 pill was 3.73:1 in light (fails AA). */}
-          {liveCount > 0 && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-normal text-ok">
-              <span className="h-1.5 w-1.5 rounded-full bg-ok" style={{ animation: 'var(--animate-breathe)' }} />
-              {liveCount} live
-            </span>
-          )}
-        </span>
-        <button
-          className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content"
-          onClick={() => void refreshSessions()}
-          title="Refresh sessions"
-        >
-          <IconRefresh className="h-3.5 w-3.5" />
-        </button>
-      </div>
-      <div className="-mr-1 min-h-0 flex-1 overflow-y-auto pr-1">
-        {loading && merged.length === 0 && (
-          <div className="flex flex-col gap-1.5 px-1 py-2">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="h-7 animate-pulse rounded-md bg-bg-raised/60" />
-            ))}
-          </div>
-        )}
-        {!loading && merged.length === 0 && (
-          <div className="px-2 py-6 text-center text-xs leading-relaxed text-dim">
-            No sessions yet.
-            <br />
-            Start one to see it here.
-          </div>
-        )}
-        {merged.map((g) => {
-          const isCollapsed = collapsed.has(g.cwd)
-          const groupLive = g.sessions.filter((s) => s.live).length
-          return (
-            <div key={g.cwd} className="mb-1.5">
-              <div className="group/hdr flex w-full items-center gap-1.5 rounded px-1" title={g.cwd}>
-                {/* Toggle takes flex-1 so the label truncates; the "+" is a sibling (button-in-button is invalid). */}
-                <button
-                  className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
-                  onClick={() => toggleGroup(g.cwd)}
-                >
-                  <IconChevron
-                    className={`h-3 w-3 shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
-                  />
-                  <span className="truncate">{g.label}</span>
-                  {groupLive > 0 && (
-                    /* Full opacity: bg-ok/70 was 2.89:1 in light (below the 3:1 non-text floor). */
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" title={`${groupLive} live here`} />
-                  )}
-                </button>
-                {/* Fixed slot reserved so the count stays put when the "+" fades in. Only for a live
-                    project cwd; the directoryless group has no "+" (the New session button covers it). */}
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center">
-                  {g.exists && !g.isChatDir && (
-                    <button
-                      className={`flex h-6 w-6 items-center justify-center rounded text-dim opacity-0 transition-opacity hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent group-hover/hdr:opacity-100 group-focus-within/hdr:opacity-100 ${
-                        groupSpawnPending ? 'pointer-events-none opacity-40' : ''
-                      }`}
-                      aria-label={`New session in ${g.label}`}
-                      aria-busy={groupSpawnPending || undefined}
-                      title="New session here"
-                      onClick={() => void startInGroup(g.cwd)}
-                    >
-                      <IconPlus className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-                <span className="shrink-0 text-[11px] font-semibold tabular-nums text-dim">
-                  {g.sessions.length}
-                </span>
-              </div>
-              {!isCollapsed && (
-                <div className="mt-0.5 flex flex-col gap-0.5">
-                  {g.sessions.map((s) => (
-                    <SessionRow
-                      key={s.handleId ?? s.id ?? `${g.cwd}-x`}
-                      session={s}
-                      active={Boolean(s.handleId) && s.handleId === activeHandleId}
-                      onOpen={() => openMerged(s, g.exists)}
-                      onClose={s.live && s.handleId ? () => void closeSession(s.handleId!) : undefined}
-                      onDelete={
-                        s.onDisk && s.projectSlug && s.id
-                          ? () => requestDelete(s.id!, s.projectSlug!, s.title, s.handleId)
-                          : undefined
-                      }
-                      onExport={s.onDisk && s.id ? () => void exportSession(s.id!, s.title) : undefined}
-                      // Branching spawns into the same cwd, so it's unavailable once the folder is gone. Export and delete only touch the transcript.
-                      // An ephemeral session has no jsonl to branch from, so it's omitted there too.
-                      onFork={
-                        s.id && g.exists && !s.ephemeral ? () => void forkSession(s.cwd, s.id!) : undefined
-                      }
-                      onChanged={refreshSessions}
-                    />
-                  ))}
-                </div>
-              )}
-              {/* Hairline separating the pinned directoryless group from the project groups below;
-                  skipped when there's nothing below it to separate. */}
-              {g.isChatDir && merged.length > 1 && (
-                <div className="mt-2 border-b border-border" aria-hidden="true" />
-              )}
+    <>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex items-center justify-between px-1 pb-2">
+          <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-dim">
+            Sessions
+            {/* No tint behind the label: text-ok on a bg-ok/15 pill was 3.73:1 in light (fails AA). */}
+            {liveCount > 0 && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-normal text-ok">
+                <span className="h-1.5 w-1.5 rounded-full bg-ok" style={{ animation: 'var(--animate-breathe)' }} />
+                {liveCount} live
+              </span>
+            )}
+          </span>
+          <button
+            className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content"
+            onClick={() => void refreshSessions()}
+            title="Refresh sessions"
+          >
+            <IconRefresh className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="-mr-1 min-h-0 flex-1 overflow-y-auto pr-1">
+          {loading && merged.length === 0 && (
+            <div className="flex flex-col gap-1.5 px-1 py-2">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="h-7 animate-pulse rounded-md bg-bg-raised/60" />
+              ))}
             </div>
-          )
-        })}
+          )}
+          {!loading && merged.length === 0 && (
+            <div className="px-2 py-6 text-center text-xs leading-relaxed text-dim">
+              No sessions yet.
+              <br />
+              Start one to see it here.
+            </div>
+          )}
+          {merged.map((g) => {
+            const isCollapsed = collapsed.has(g.cwd)
+            const groupLive = g.sessions.filter((s) => s.live).length
+            return (
+              <div key={g.cwd} className="mb-1.5">
+                <div className="group/hdr flex w-full items-center gap-1.5 rounded px-1" title={g.cwd}>
+                  {/* Toggle takes flex-1 so the label truncates; the "+" is a sibling (button-in-button is invalid). */}
+                  <button
+                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
+                    onClick={() => toggleGroup(g.cwd)}
+                  >
+                    <IconChevron
+                      className={`h-3 w-3 shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                    />
+                    <span className="truncate">{g.label}</span>
+                    {groupLive > 0 && (
+                      /* Full opacity: bg-ok/70 was 2.89:1 in light (below the 3:1 non-text floor). */
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" title={`${groupLive} live here`} />
+                    )}
+                  </button>
+                  {/* Fixed slot reserved so the count stays put when the "+" fades in. Only for a live
+                      project cwd; the directoryless group has no "+" (the New session button covers it). */}
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center">
+                    {g.exists && !g.isChatDir && (
+                      <button
+                        className={`flex h-6 w-6 items-center justify-center rounded text-dim opacity-0 transition-opacity hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent group-hover/hdr:opacity-100 group-focus-within/hdr:opacity-100 ${
+                          groupSpawnPending ? 'pointer-events-none opacity-40' : ''
+                        }`}
+                        aria-label={`New session in ${g.label}`}
+                        aria-busy={groupSpawnPending || undefined}
+                        title="New session here"
+                        onClick={() => void startInGroup(g.cwd)}
+                      >
+                        <IconPlus className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-[11px] font-semibold tabular-nums text-dim">
+                    {g.sessions.length}
+                  </span>
+                </div>
+                {!isCollapsed && (
+                  <div className="mt-0.5 flex flex-col gap-0.5">
+                    {g.sessions.map((s) => (
+                      <SessionRow
+                        key={s.handleId ?? s.id ?? `${g.cwd}-x`}
+                        session={s}
+                        active={Boolean(s.handleId) && s.handleId === activeHandleId}
+                        onOpen={() => openMerged(s, g.exists)}
+                        onClose={s.live && s.handleId ? () => void closeSession(s.handleId!) : undefined}
+                        onDelete={
+                          s.onDisk && s.projectSlug && s.id
+                            ? () => requestDelete(s.id!, s.projectSlug!, s.title, s.handleId)
+                            : undefined
+                        }
+                        onExport={s.onDisk && s.id ? () => void exportSession(s.id!, s.title) : undefined}
+                        // Branching spawns into the same cwd, so it's unavailable once the folder is gone. Export and delete only touch the transcript.
+                        // An ephemeral session has no jsonl to branch from, so it's omitted there too.
+                        onFork={
+                          s.id && g.exists && !s.ephemeral ? () => void forkSession(s.cwd, s.id!) : undefined
+                        }
+                        onChanged={refreshSessions}
+                      />
+                    ))}
+                  </div>
+                )}
+                {/* Hairline separating the pinned directoryless group from the project groups below;
+                    skipped when there's nothing below it to separate. */}
+                {g.isChatDir && merged.length > 1 && (
+                  <div className="mt-2 border-b border-border" aria-hidden="true" />
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
-
-      {/* Undo toast for a just-deleted session (nothing removed from disk until this window elapses).
-          Keyed by id so a second delete restarts the enter + drain animations. */}
-      {pendingDelete && (
-        <Toast
-          key={pendingDelete.id}
-          title={pendingDelete.title}
-          suffix="· deleted"
-          actionLabel="Undo"
-          onAction={undoDelete}
-          durationMs={UNDO_MS}
-        />
-      )}
-    </div>
+      {stack}
+    </>
   )
 }
 
