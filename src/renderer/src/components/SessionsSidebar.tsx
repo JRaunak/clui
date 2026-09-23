@@ -65,7 +65,7 @@ function basename(p: string): string {
 }
 
 /** How long a deleted session can be undone before the on-disk delete fires. */
-const UNDO_MS = 6000
+const UNDO_MS = 5000
 
 interface PendingDelete {
   id: string
@@ -165,15 +165,6 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     void refreshSessions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearDeleteTimer])
-
-  // Dismissing the toast means "let the delete proceed", not undo: commit immediately. Only Undo button cancels.
-  const dismissDelete = useCallback(() => {
-    const pd = pendingDelete
-    clearDeleteTimer()
-    setPendingDelete(null)
-    if (pd) void commitDelete(pd)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingDelete, clearDeleteTimer, commitDelete])
 
   // Cancel any pending timer on unmount.
   useEffect(() => () => clearDeleteTimer(), [clearDeleteTimer])
@@ -350,12 +341,11 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
         {pendingDelete && (
           <Toast
             key={pendingDelete.id}
-            message="Session deleted"
-            highlight={pendingDelete.title}
+            title={pendingDelete.title}
+            suffix="· deleted"
             actionLabel="Undo"
             onAction={undoDelete}
             durationMs={UNDO_MS}
-            onDismiss={dismissDelete}
           />
         )}
       </div>
@@ -475,17 +465,15 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
       </div>
 
       {/* Undo toast for a just-deleted session (nothing removed from disk until this window elapses).
-          Floating snackbar: position:fixed so it overlays the window bottom-center. Keyed by id so a
-          second delete restarts the enter + drain animations. */}
+          Keyed by id so a second delete restarts the enter + drain animations. */}
       {pendingDelete && (
         <Toast
           key={pendingDelete.id}
-          message="Session deleted"
-          highlight={pendingDelete.title}
+          title={pendingDelete.title}
+          suffix="· deleted"
           actionLabel="Undo"
           onAction={undoDelete}
           durationMs={UNDO_MS}
-          onDismiss={dismissDelete}
         />
       )}
     </div>
