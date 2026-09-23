@@ -1,0 +1,38 @@
+src/renderer/src/components/Toast.tsx
+  s_241e0a6e45c8b0::t_822497cd3d3c36 159,163,168-169,173-176,178,182,189
+  s_241e0a6e45c8b0::t_7e26cd1b4a48e3 93
+  s_241e0a6e45c8b0::t_73b789f210941e 152-154,157,170-172,177,179-181,183-187
+  s_241e0a6e45c8b0::t_c92dc3622169f8 4
+  s_241e0a6e45c8b0::t_564e956e5644cc 31
+  s_241e0a6e45c8b0::t_59abe9ab3f8e89 1,5,7-30,32-60,68-92,94-105,107-137,145-151,155-156,158,160-162,164-167,188,190-200,203,205-213,215-229,231-247
+  s_241e0a6e45c8b0::t_5bdcd1cd8cffdd 138-144
+src/renderer/src/components/SessionsSidebar.tsx
+  s_241e0a6e45c8b0::t_8aa8ca3f996bf6 178
+  s_241e0a6e45c8b0::t_5c3a8ee7f719c5 154,161-173,175,177,180,183-192,194-198
+  s_241e0a6e45c8b0::t_3700be62cab7a8 356-366,368,371-383
+  s_241e0a6e45c8b0::t_7f833e7edd211f 388-415,417-436,438-463,465-498,500-501
+  s_241e0a6e45c8b0::t_2b51bc54f52360 98
+  s_241e0a6e45c8b0::t_f6bc4bca9bc59e 99
+  s_241e0a6e45c8b0::t_fe6e678e2451c9 81,83-90,94-97
+  s_241e0a6e45c8b0::t_1c17910cbff8de 69-70
+  s_241e0a6e45c8b0::t_e8be912a28f4d7 130-134
+  s_241e0a6e45c8b0::t_af3ce13ccdea8f 254,257,259
+  s_241e0a6e45c8b0::t_224a0983e0d617 20
+  s_241e0a6e45c8b0::t_1bc9edc0db290d 82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "db16de174859e28709d3af99251fe69f1eac96af",
+  "prompts": {},
+  "sessions": {
+    "s_241e0a6e45c8b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3538965e-b974-4c24-a7fb-cc426942b3fc",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Raunak Jain <raunakjain5000@gmail.com>"
+    }
+  }
+}
