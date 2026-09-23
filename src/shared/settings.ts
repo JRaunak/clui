@@ -150,6 +150,7 @@ export interface ModelInfo {
  * against `aws bedrock list-inference-profiles` when a new family ships.
  */
 export const FALLBACK_MODEL_IDS: string[] = [
+  'claude-opus-5-5',
   'claude-opus-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
