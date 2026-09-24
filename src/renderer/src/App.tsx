@@ -394,11 +394,13 @@ export function App(): JSX.Element {
             {...sidebarResize.separatorProps}
             className="group absolute right-0 top-0 z-20 h-full w-2.5 translate-x-1/2 cursor-col-resize [-webkit-app-region:no-drag] focus-visible:outline-none"
           >
+            {/* All-neutral: a full-height accent ring on this h-full sliver would be the accent-heaviness
+                we're removing, so focus reads as a bright content hairline, drag as the mid-gray one. */}
             <span
               className={`absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors ${
                 sidebarResize.dragging
-                  ? 'bg-accent'
-                  : 'bg-transparent group-hover:bg-accent/40 group-focus-visible:bg-accent'
+                  ? 'bg-dim'
+                  : 'bg-transparent group-hover:bg-dim/50 group-focus-visible:bg-content'
               }`}
               aria-hidden="true"
             />
