@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useActive, useSession, effortCap } from '../store'
 import { useEscape } from '../lib/useEscape'
@@ -84,6 +84,9 @@ export function ModelEffortPicker(): JSX.Element {
   const checkedRef = useRef<HTMLButtonElement>(null)
   // The currently-hovered row, so the portaled flyout can anchor to its rect.
   const rowRef = useRef<HTMLDivElement>(null)
+  // The portaled effort flyout lives under <body>, outside `ref`, so click-outside must treat it as
+  // inside too; otherwise a mousedown on the slider reads as an outside click and collapses the picker.
+  const flyoutRef = useRef<HTMLDivElement>(null)
 
   // Load the live model list once the popover first opens.
   useEffect(() => {
@@ -112,7 +115,9 @@ export function ModelEffortPicker(): JSX.Element {
   }
 
   const dismiss = useCallback(() => setOpen(false), [])
-  useClickOutside(ref, open, dismiss)
+  // Stable across renders (refs never change identity), so the listener binds once.
+  const dismissRefs = useMemo(() => [ref, flyoutRef], [ref, flyoutRef])
+  useClickOutside(dismissRefs, open, dismiss)
   // Esc closes via the shared escape-stack (nesting-aware) and hands focus back to the
   // trigger, since the focused row unmounts with the popover and would otherwise leave
   // focus on <body>. An outside click deliberately doesn't: it would steal focus from
@@ -340,6 +345,7 @@ export function ModelEffortPicker(): JSX.Element {
                   <EffortFlyout
                     info={info}
                     anchorRef={rowRef}
+                    flyoutRef={flyoutRef}
                     cap={effortCap(info.id)}
                     current={cappedEffort(info.id, effortChoice, effortCap(info.id))}
                     onEnter={clearHoverTimer}
@@ -370,6 +376,7 @@ export function ModelEffortPicker(): JSX.Element {
 function EffortFlyout({
   info,
   anchorRef,
+  flyoutRef,
   cap,
   current,
   onEnter,
@@ -378,6 +385,7 @@ function EffortFlyout({
 }: {
   info: ModelInfo
   anchorRef: React.RefObject<HTMLElement>
+  flyoutRef: React.RefObject<HTMLDivElement>
   cap?: EffortChoice
   current: EffortChoice
   onEnter: () => void
@@ -396,7 +404,6 @@ function EffortFlyout({
   // Portaled to <body> so vertical scroll on the model list can't clip it (a scroll
   // container's overflow-x computes to auto, hiding this right-side flyout). Positioned
   // fixed from the row's rect and clamped to the viewport; measured once on open.
-  const flyoutRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   useLayoutEffect(() => {
     // The flyout is a descendant of its anchor row, so on the opening commit the row's ref

@@ -11,19 +11,24 @@ import { useEffect, type RefObject } from 'react'
 
 /**
  * Call `onOutside` when a mousedown lands outside `ref`, while `active` is true.
- * @param ref the popover's container (clicks inside it are ignored)
+ * @param ref the popover's container, or several containers when a portalled sub-menu lives
+ *   outside the main one in the DOM (a click inside ANY of them counts as inside). Pass a stable
+ *   array (memoized or refs) so the listener isn't re-bound every render.
  * @param active whether the popover is currently open
  * @param onOutside called on an outside click (typically closes the popover)
  */
 export function useClickOutside(
-  ref: RefObject<HTMLElement>,
+  ref: RefObject<HTMLElement> | ReadonlyArray<RefObject<HTMLElement>>,
   active: boolean,
   onOutside: () => void
 ): void {
   useEffect(() => {
     if (!active) return
+    const refs = Array.isArray(ref) ? ref : [ref]
     const onDown = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onOutside()
+      const target = e.target as Node
+      if (refs.some((r) => r.current?.contains(target))) return
+      onOutside()
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
