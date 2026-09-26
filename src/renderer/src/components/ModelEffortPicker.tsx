@@ -52,7 +52,7 @@ const MIN_SPIN = 350
 /** Composer control: model + effort picker. Applies to THIS session only; never
  *  writes any settings file. */
 export function ModelEffortPicker(): JSX.Element {
-  const modelChoice = useActive((s) => s?.modelChoice ?? 'claude-opus-4-8[1m]')
+  const modelChoice = useActive((s) => s?.modelChoice ?? 'claude-opus-5-5[1m]')
   const effortChoice = useActive((s) => s?.effortChoice ?? 'high')
   const ultracode = useActive((s) => s?.ultracode ?? false)
   // Subscribe so a startup / session-start caps load re-renders the chip and flyout.

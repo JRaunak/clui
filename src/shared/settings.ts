@@ -447,7 +447,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   permissionMode: 'inherit',
   // Model/effort are Clui-managed and always concrete (independent of settings.json).
   // model is the raw --model value; the list is derived from Bedrock at runtime.
-  model: 'claude-opus-4-8[1m]',
+  model: 'claude-opus-5-5[1m]',
   effort: 'high',
   defaultWorkspace: '',
   // Dark is Clui's signature surface; light + system are opt-in.
