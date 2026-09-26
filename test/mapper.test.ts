@@ -1,5 +1,4 @@
-// Boundary: the wire→DomainEvent mapper. Covers error-dedup, interrupt scoping, malformed
-// envelopes, usage dedup, and terminal-status handling.
+// Boundary: the wire→DomainEvent mapper.
 import { EventMapper } from '../src/main/cli/event-mapper.ts'
 import { ok } from './support/harness.mjs'
 
@@ -92,4 +91,23 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   const evs = feed(m, [beat(10), beat(20), beat(30)])
   const t = evs.filter((e) => e.type === 'thinking-tokens')
   ok(t.length === 1 && t[0].estimated === 10, 'mapper: thinking_tokens throttled')
+}
+
+// compaction: status → running/done, boundary → marker + context drop
+{
+  const m = new EventMapper()
+  const running = m.map({ type: 'system', subtype: 'status', status: 'compacting' }) as any[]
+  const done = m.map({ type: 'system', subtype: 'status', status: null, compact_result: 'success' }) as any[]
+  const boundary = m.map({
+    type: 'system',
+    subtype: 'compact_boundary',
+    compact_metadata: { trigger: 'manual', pre_tokens: 24266, post_tokens: 5087 }
+  }) as any[]
+  ok(running[0]?.type === 'compact-status' && running[0].state === 'running', 'mapper: compacting status')
+  ok(done[0]?.state === 'done', 'mapper: compact_result success → done')
+  ok(
+    boundary.some((e) => e.type === 'compact-boundary' && e.preTokens === 24266 && e.postTokens === 5087) &&
+      boundary.some((e) => e.type === 'context-usage' && e.usedTokens === 5087),
+    'mapper: compact_boundary → marker + context drop'
+  )
 }

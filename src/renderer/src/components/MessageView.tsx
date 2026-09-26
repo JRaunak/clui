@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import type { CompactionMarker } from '../../../shared/sessions'
+import { fmtTokens } from '../lib/formatTokens'
 import { useSession, type ChatMessage, type MessageAttachment, type PeerMessage, type ToolCall } from '../store'
 import { TypingDots } from './TypingDots'
 import { Markdown } from './Markdown'
@@ -77,6 +79,7 @@ function renderUserText(text: string): (string | JSX.Element)[] {
 
 export function MessageView({ message, hideThinking = false }: { message: ChatMessage; hideThinking?: boolean }): JSX.Element {
   if (message.role === 'peer' && message.peer) return <PeerMessageView message={message} peer={message.peer} />
+  if (message.compaction) return <CompactionDivider marker={message.compaction} />
   const isUser = message.role === 'user'
   // An assistant turn whose only content is entering plan mode renders as a bare full-width
   // marker, not an empty "Claude" bubble.
@@ -171,6 +174,23 @@ function PlanModeDivider(): JSX.Element {
       <span className="flex items-center gap-1.5 text-info">
         <IconChecklist className="h-3.5 w-3.5" aria-hidden="true" />
         <span className="uppercase tracking-[0.14em]">entered plan mode</span>
+      </span>
+      <span className="h-px flex-1 bg-border" aria-hidden="true" />
+    </div>
+  )
+}
+
+function CompactionDivider({ marker }: { marker: CompactionMarker }): JSX.Element {
+  return (
+    <div className="my-6 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-faint">
+      <span className="h-px flex-1 bg-border" aria-hidden="true" />
+      <span>
+        {marker.trigger === 'auto' ? 'auto-compacted' : 'compacted'}{' '}
+        <span className="font-mono normal-case tabular-nums">
+          {fmtTokens(marker.preTokens)} <span aria-hidden="true">→</span>
+          <span className="sr-only">to</span> {fmtTokens(marker.postTokens)}
+        </span>{' '}
+        tokens
       </span>
       <span className="h-px flex-1 bg-border" aria-hidden="true" />
     </div>

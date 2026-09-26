@@ -1,8 +1,10 @@
-/** The foreground "working" indicator: 3 bouncing dots + a whimsical randomized verb + an elapsed timer.
+/** The foreground "working" indicator: 3 bouncing dots, a label, and an elapsed timer. The label is a
+ *  randomized verb, "Thinking" with a live token estimate, or "Compacting context…".
  *  Lives at the tail of the chat transcript where the next output appears. The single animated element of a
  *  foreground turn. Absent during background work.
  *  The verb rotates every few seconds so a long turn never reads as frozen. When the task puck is present,
- *  the verb is dropped (dots + timer only): the puck's in_progress activeForm already narrates the work. */
+ *  the verb is dropped because the puck's in_progress activeForm already narrates the work; the compacting
+ *  label still shows. */
 import { useEffect, useState } from 'react'
 import { useActive } from '../store'
 import { TypingDots } from './TypingDots'
@@ -14,6 +16,7 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
   // or entering a detail view doesn't reset a live turn's timer, and each queued turn restarts it.
   const startMs = useActive((s) => s?.turnStartMs ?? null)
   const thinkingTokens = useActive((s) => s?.thinkingTokens ?? null)
+  const compacting = useActive((s) => s?.compacting ?? false)
   const [elapsed, setElapsed] = useState(() => (startMs ? Math.floor((Date.now() - startMs) / 1000) : 0))
   const [verb, setVerb] = useState(randomWorkingVerb)
   useEffect(() => {
@@ -31,10 +34,14 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
   return (
     <span className="flex items-center gap-2 text-[13px]">
       <TypingDots className="text-ok" />
-      {!taskMerged && (
-        <span className="font-serif italic text-content">{thinkingTokens !== null ? 'Thinking' : `${verb}…`}</span>
+      {compacting ? (
+        <span className="text-content">Compacting context…</span>
+      ) : (
+        !taskMerged && (
+          <span className="font-serif italic text-content">{thinkingTokens !== null ? 'Thinking' : `${verb}…`}</span>
+        )
       )}
-      {thinkingTokens !== null && (
+      {!compacting && thinkingTokens !== null && (
         <span aria-hidden="true" className="font-mono tabular-nums text-dim">
           <span className="inline-block min-w-[6ch] text-right">~{fmtTokens(thinkingTokens)}</span>{' '}
           {thinkingTokens === 1 ? 'token' : 'tokens'}

@@ -268,6 +268,8 @@ interface FooterContext {
 /** Reads the store itself so it stays reactive as a Virtuoso Footer without prop threading. */
 function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
   const busy = useActive((s) => s?.busy ?? false)
+  const compacting = useActive((s) => s?.compacting ?? false)
+  const compactAnnounce = useActive((s) => s?.compactAnnounce ?? '')
   const lastError = useActive((s) => s?.lastError ?? null)
   // Merge the verb away while the puck shows: it already narrates the work, so the verb would
   // compete. Gated on the same condition as the puck, so they stay in lockstep.
@@ -297,7 +299,10 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
       className="mx-auto max-w-5xl px-7"
       style={{ paddingBottom: 'calc(var(--dock-h, 0px) + 1.5rem)' }}
     >
-      {busy && <WorkingStatus taskMerged={taskMerged} />}
+      <span className="sr-only" role="status" aria-live="polite">
+        {compactAnnounce}
+      </span>
+      {(busy || compacting) && <WorkingStatus taskMerged={taskMerged} />}
       {/* Queued messages live at the tail, below the response: renderer-held drafts, not committed
           transcript, so they stay editable and cancelable before reaching the CLI. */}
       <QueuedMessages />

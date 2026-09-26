@@ -43,6 +43,8 @@ interface RawEntry {
   usage?: RawUsage
   /** Record-level effort on an agent transcript's assistant entries (effort-capable models). */
   effort?: string
+  isCompactSummary?: boolean
+  compactMetadata?: { trigger?: string; preTokens?: number; postTokens?: number }
 }
 
 /** Unwrap <local-command-stdout>…</local-command-stdout> to the inner text. */
@@ -377,6 +379,21 @@ async function parseTranscriptFile(
       // Capture usage (main thread only); the last one is the resident context.
       const usedNow = residentTokens(entry.message?.usage ?? entry.usage)
       if (usedNow > 0) lastContextTokens = usedNow
+
+      if (entry.type === 'system' && entry.subtype === 'compact_boundary') {
+        const meta = entry.compactMetadata
+        if (meta?.postTokens) lastContextTokens = meta.postTokens
+        messages.push({
+          id: `h-${seq++}-${entry.uuid ?? ''}`,
+          role: 'assistant',
+          text: '',
+          thinking: '',
+          tools: [],
+          compaction: { trigger: meta?.trigger ?? 'manual', preTokens: meta?.preTokens ?? 0, postTokens: meta?.postTokens ?? 0 }
+        })
+        continue
+      }
+      if (entry.isCompactSummary) continue
 
       // Slash-command output is logged as a `system` record of subtype
       // `local_command` carrying <local-command-stdout>…</local-command-stdout>

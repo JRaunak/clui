@@ -21,6 +21,8 @@ interface RawEnvelope {
   permissionMode?: string
   tools?: string[]
   estimated_tokens?: number
+  compact_result?: string
+  compact_metadata?: { trigger?: string; pre_tokens?: number; post_tokens?: number }
   request_id?: string
   request?: {
     subtype?: string
@@ -603,14 +605,41 @@ export class EventMapper {
           }
         ]
       }
-      case 'status':
+      case 'status': {
+        const out: DomainEvent[] = []
+        if (env.status === 'compacting') out.push({ type: 'compact-status', state: 'running' })
+        else if (typeof env.compact_result === 'string') {
+          out.push({ type: 'compact-status', state: env.compact_result === 'success' ? 'done' : 'failed' })
+        }
         // A live permission-mode switch arrives as a status envelope carrying the new
         // permissionMode; the status:'requesting' heartbeats carry none, so the field's
         // presence is the gate. Surfacing it lets the chip track a model-driven switch.
         if (typeof env.permissionMode === 'string' && env.permissionMode) {
-          return [{ type: 'permission-mode-changed', mode: env.permissionMode }]
+          out.push({ type: 'permission-mode-changed', mode: env.permissionMode })
         }
-        return []
+        return out
+      }
+      case 'compact_boundary': {
+        const meta = env.compact_metadata
+        if (typeof meta?.post_tokens !== 'number') return []
+        const post = meta.post_tokens
+        this.lastUsed = post
+        this.lastWindow = this.contextWindow
+        return [
+          {
+            type: 'compact-boundary',
+            trigger: meta.trigger ?? 'manual',
+            preTokens: meta.pre_tokens ?? 0,
+            postTokens: post
+          },
+          {
+            type: 'context-usage',
+            usedTokens: post,
+            contextWindow: this.contextWindow,
+            usedPercent: Math.min(100, Math.round((post / this.contextWindow) * 100))
+          }
+        ]
+      }
       case 'thinking_tokens': {
         if (typeof env.estimated_tokens !== 'number') return []
         const now = Date.now()

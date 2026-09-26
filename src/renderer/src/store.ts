@@ -17,7 +17,7 @@
  */
 import { create } from 'zustand'
 import type { DomainEvent, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo, TurnUsage } from '../../shared/events'
-import type { ProjectGroup } from '../../shared/sessions'
+import type { CompactionMarker, ProjectGroup } from '../../shared/sessions'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { clampEffort, capBlocksUltra, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
@@ -155,6 +155,7 @@ export interface ChatMessage {
   /** This turn's usage breakdown, rendered as a disclosure trailer. Absent on
    *  rebuilt-from-disk history (not persisted). */
   usage?: TurnUsage
+  compaction?: CompactionMarker
 }
 
 /**
@@ -250,6 +251,8 @@ export interface PerSessionState {
    *  resets per queued turn. */
   turnStartMs: number | null
   thinkingTokens: number | null
+  compacting: boolean
+  compactAnnounce: string
   messages: ChatMessage[]
   /** Messages composed while a turn was running: held renderer-side (editable/cancelable),
    *  rendered at the transcript tail, dispatched FIFO at the next turn boundary. */
@@ -795,6 +798,7 @@ async function beginSession(
         // pending) since it's read whole from disk.
         role: m.peer ? ('peer' as const) : m.role,
         peer: m.peer ? { from: m.peer.from, pending: false } : undefined,
+        compaction: m.compaction,
         text: m.text,
         thinking: m.thinking,
         tools: m.tools.map((tc) => ({ ...tc })),
@@ -873,6 +877,8 @@ async function beginSession(
     interrupting: false,
     turnStartMs: null,
     thinkingTokens: null,
+    compacting: false,
+    compactAnnounce: '',
     messages: history,
     queuedMessages: EMPTY_QUEUED,
     draftText: '',
@@ -993,6 +999,7 @@ async function dispatchTurn(
       interrupting: false,
       turnStartMs: now,
       lastError: null,
+      compactAnnounce: '',
       lastActivityMs: now
     })
   })
@@ -1010,6 +1017,7 @@ async function dispatchTurn(
         interrupting: false,
         turnStartMs: null,
         thinkingTokens: null,
+        compacting: false,
         lastError: 'Message not delivered — the session may have stopped. Resume it and try again.'
       })
     })
@@ -1019,7 +1027,7 @@ async function dispatchTurn(
 /** Find or create the current (last) assistant message to append streamed content. */
 function currentAssistant(messages: ChatMessage[]): ChatMessage {
   const last = messages[messages.length - 1]
-  if (last && last.role === 'assistant') return last
+  if (last && last.role === 'assistant' && !last.compaction) return last
   const msg: ChatMessage = {
     id: `a-${Date.now()}-${messages.length}`,
     role: 'assistant',
@@ -1493,6 +1501,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           interrupting: false,
           turnStartMs: null,
           thinkingTokens: null,
+          compacting: false,
           ...(next ? { queuedMessages: rest } : {})
         })
       )
@@ -1503,7 +1512,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     // A running turn will emit a terminal `result`. Mark `interrupting` (distinct from idle)
     // so a new prompt queues instead of dispatching a second concurrent turn; the late result
     // is recognized as THIS turn's boundary and swallowed, not the new turn's.
-    set((s) => patchSlice(s, active.handleId, { busy: false, interrupting: true, turnStartMs: null, thinkingTokens: null }))
+    set((s) => patchSlice(s, active.handleId, { busy: false, interrupting: true, turnStartMs: null, thinkingTokens: null, compacting: false }))
     await window.clui.interrupt(active.handleId)
   },
 
@@ -1716,6 +1725,28 @@ export const useSession = create<SessionStore>((set, get) => ({
         }
         case 'thinking-tokens':
           patch.thinkingTokens = e.estimated
+          break
+        case 'compact-status':
+          patch.compacting = e.state === 'running'
+          patch.compactAnnounce = e.state === 'running' ? 'Compacting context' : 'Context compacted'
+          if (e.state === 'failed') {
+            const lastUser = messages.findLast((m) => m.role === 'user')
+            patch.lastError = lastUser?.text.trim().startsWith('/compact')
+              ? "Couldn't compact the context. Your conversation is unchanged. Run /compact to try again."
+              : `Auto-compact failed.${slice.contextPercent !== null ? ` Context is ${slice.contextPercent}% full.` : ''} Run /compact or start a new session.`
+            patch.compactAnnounce = patch.lastError
+          }
+          break
+        case 'compact-boundary':
+          messages.push({
+            id: `c-${Date.now()}-${messages.length}`,
+            role: 'assistant',
+            text: '',
+            thinking: '',
+            tools: [],
+            blocks: [],
+            compaction: { trigger: e.trigger, preTokens: e.preTokens, postTokens: e.postTokens }
+          })
           break
         case 'thinking-delta': {
           const m = currentAssistant(messages)
@@ -2046,6 +2077,7 @@ export const useSession = create<SessionStore>((set, get) => ({
             patch.interrupting = false
             patch.turnStartMs = null
             patch.thinkingTokens = null
+            patch.compacting = false
             patch.lastActivityMs = Date.now()
             // A real turn boundary: if the user queued message(s) during this turn, release
             // the OLDEST now (FIFO). Dequeue it here and dispatch it after this set commits
@@ -2118,6 +2150,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.interrupting = false
           patch.turnStartMs = null
           patch.thinkingTokens = null
+          patch.compacting = false
           patch.exited = true
           break
       }

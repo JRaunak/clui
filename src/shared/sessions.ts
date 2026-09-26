@@ -75,6 +75,12 @@ export type HistoryAttachment =
   | { kind: 'document'; name: string; bytes: number }
   | { kind: 'text'; name: string; bytes: number; lines: number }
 
+export interface CompactionMarker {
+  trigger: string
+  preTokens: number
+  postTokens: number
+}
+
 export interface HistoryMessage {
   id: string
   role: 'user' | 'assistant'
@@ -87,6 +93,7 @@ export interface HistoryMessage {
    *  holds the body. Role stays 'user' so search/export are untouched; the renderer promotes
    *  it to a 'peer' block on resume. */
   peer?: { from: string }
+  compaction?: CompactionMarker
 }
 
 /** Result of reading a session transcript (may be capped for huge sessions). */

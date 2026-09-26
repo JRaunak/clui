@@ -9,6 +9,7 @@
  *
  * Keep this list minimal and defensive; never hard-depend on the raw jsonl shape.
  */
+import type { CompactionMarker } from './sessions'
 
 /**
  * One entry from the CLI's live task list (Task tool family), read from disk at
@@ -91,6 +92,8 @@ export type DomainEvent =
   /** A streamed chunk of thinking/reasoning text. */
   | { type: 'thinking-delta'; text: string }
   | { type: 'thinking-tokens'; estimated: number }
+  | { type: 'compact-status'; state: 'running' | 'done' | 'failed' }
+  | ({ type: 'compact-boundary' } & CompactionMarker)
   | { type: 'tool-use-start'; id: string; name: string }
   | { type: 'tool-use-input-delta'; id: string; partialJson: string }
   | { type: 'tool-use-stop'; id: string; input: unknown }
