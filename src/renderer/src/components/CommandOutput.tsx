@@ -11,6 +11,7 @@
  * formatting-preserving <pre> so output is never lost. Worst case it looks plain, never
  * blank or scrambled.
  */
+import { Fragment } from 'react'
 
 /** A parsed usage/cost report. Fields are optional; we render whatever we found. */
 export interface UsageReport {
@@ -20,6 +21,7 @@ export interface UsageReport {
   codeChanges?: string
   /** Per-model usage lines, e.g. "claude-opus-4-8" → "774.3k input, … ($235.91)". */
   models: { model: string; detail: string }[]
+  promptCache: { scope: string; segments: string[] }[]
 }
 
 /**
@@ -35,7 +37,7 @@ export function parseUsageReport(text: string): UsageReport | null {
   const firstNonEmpty = text.split('\n').find((l) => l.trim() !== '')
   if (!firstNonEmpty || !/^\s*Total cost:/.test(firstNonEmpty)) return null
 
-  const report: UsageReport = { models: [] }
+  const report: UsageReport = { models: [], promptCache: [] }
   const lines = text.split('\n')
   let inModels = false
   // A real report is entirely "Label: value" rows / model rows / blanks. A non-blank line
@@ -65,6 +67,11 @@ export function parseUsageReport(text: string): UsageReport | null {
       if (line.trim() === '') continue
       inModels = false
     }
+    const cache = /^\s*Prompt cache \(([^)]+)\):\s+(.+?)\s*$/.exec(line)
+    if (cache) {
+      report.promptCache.push({ scope: cache[1], segments: cache[2].split(' · ') })
+      continue
+    }
     if (!kv) continue
     const key = kv[1].trim().toLowerCase()
     const val = kv[2].trim()
@@ -86,7 +93,8 @@ export function parseUsageReport(text: string): UsageReport | null {
     !report.apiDuration &&
     !report.wallDuration &&
     !report.codeChanges &&
-    report.models.length === 0
+    report.models.length === 0 &&
+    report.promptCache.length === 0
   ) {
     return null
   }
@@ -244,6 +252,26 @@ export function UsageCard({ report }: { report: UsageReport }): JSX.Element {
               <div key={i} className="flex flex-col gap-0.5 font-mono text-xs sm:flex-row sm:gap-2">
                 {m.model && <span className="shrink-0 font-semibold text-content">{m.model}</span>}
                 <span className="text-dim">{m.detail}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {report.promptCache.length > 0 && (
+        <div className="border-t border-border/60 px-3.5 py-2.5">
+          <span className="text-[11px] uppercase tracking-wide text-faint">Prompt cache</span>
+          <div className="mt-1.5 flex flex-col gap-1">
+            {report.promptCache.map((c, i) => (
+              <div key={i} className="flex flex-col gap-0.5 font-mono text-xs sm:flex-row sm:gap-2">
+                <span className="shrink-0 font-semibold text-content">{c.scope}</span>
+                <span className="text-dim">
+                  {c.segments.map((seg, j) => (
+                    <Fragment key={j}>
+                      {j > 0 && <span className="text-faint"> · </span>}
+                      {seg}
+                    </Fragment>
+                  ))}
+                </span>
               </div>
             ))}
           </div>
