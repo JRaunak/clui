@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useSession, type ChatMessage, type MessageAttachment, type PeerMessage, type ToolCall } from '../store'
 import { TypingDots } from './TypingDots'
 import { Markdown } from './Markdown'
@@ -75,7 +75,7 @@ function renderUserText(text: string): (string | JSX.Element)[] {
   return out
 }
 
-export function MessageView({ message }: { message: ChatMessage }): JSX.Element {
+export function MessageView({ message, hideThinking = false }: { message: ChatMessage; hideThinking?: boolean }): JSX.Element {
   if (message.role === 'peer' && message.peer) return <PeerMessageView message={message} peer={message.peer} />
   const isUser = message.role === 'user'
   // An assistant turn whose only content is entering plan mode renders as a bare full-width
@@ -107,7 +107,9 @@ export function MessageView({ message }: { message: ChatMessage }): JSX.Element 
             : 'flex flex-col gap-2'
         }
       >
-        {message.thinking && <ThinkingBlock text={message.thinking} />}
+        {message.thinking && !(hideThinking && !message.text && message.tools.length === 0) && (
+          <ThinkingBlock text={message.thinking} />
+        )}
         {isUser ? (
           // User input is literal text; render as-is (don't reformat what they typed).
           // Attachments (image thumbnails / file chips) render above the text.
@@ -539,13 +541,21 @@ export function ToolGroup({ tools }: { tools: ToolCall[] }): JSX.Element | null 
 
 function ThinkingBlock({ text }: { text: string }): JSX.Element {
   const [open, setOpen] = useState(false)
+  const panelId = useId()
   return (
     <div className="text-xs">
-      <button className="cursor-pointer text-xs text-dim" onClick={() => setOpen((o) => !o)}>
-        {open ? '▾' : '▸'} Thinking
+      <button
+        type="button"
+        className="-ml-1.5 flex min-h-[24px] items-center gap-1 rounded px-1.5 text-xs text-faint transition-colors hover:text-content"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <IconChevron className={`h-3 w-3 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden="true" />
+        Reasoning
       </button>
       {open && (
-        <div className="mt-1 border-l-2 border-border px-2.5 py-1.5 text-dim italic [&_*]:text-dim">
+        <div id={panelId} className="mt-1 border-l-2 border-border px-2.5 py-1.5 text-dim italic [&_*]:text-dim">
           <Markdown text={text} />
         </div>
       )}

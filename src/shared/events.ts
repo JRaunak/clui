@@ -90,6 +90,7 @@ export type DomainEvent =
   | { type: 'text-delta'; text: string }
   /** A streamed chunk of thinking/reasoning text. */
   | { type: 'thinking-delta'; text: string }
+  | { type: 'thinking-tokens'; estimated: number }
   | { type: 'tool-use-start'; id: string; name: string }
   | { type: 'tool-use-input-delta'; id: string; partialJson: string }
   | { type: 'tool-use-stop'; id: string; input: unknown }

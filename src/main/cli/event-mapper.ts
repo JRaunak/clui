@@ -20,6 +20,7 @@ interface RawEnvelope {
   cwd?: string
   permissionMode?: string
   tools?: string[]
+  estimated_tokens?: number
   request_id?: string
   request?: {
     subtype?: string
@@ -208,6 +209,7 @@ export class EventMapper {
    *  'local_agent', the reliable "this subagent was backgrounded" signal (a foreground
    *  subagent never appears in that snapshot). Consumed by the task_started handler. */
   private bgAgentTaskIds = new Set<string>()
+  private lastThinkingEmitMs = 0
   /** tool_use_id + description per local_agent task_id, so a subagent moved to the
    *  background AFTER its task_started (no fresh one fires) can still get a tray handle
    *  from its later task_updated. Cleared on the task's terminal notification. */
@@ -609,6 +611,13 @@ export class EventMapper {
           return [{ type: 'permission-mode-changed', mode: env.permissionMode }]
         }
         return []
+      case 'thinking_tokens': {
+        if (typeof env.estimated_tokens !== 'number') return []
+        const now = Date.now()
+        if (now - this.lastThinkingEmitMs < 500) return []
+        this.lastThinkingEmitMs = now
+        return [{ type: 'thinking-tokens', estimated: env.estimated_tokens }]
+      }
       default:
         return []
     }

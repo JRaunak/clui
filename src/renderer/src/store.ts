@@ -249,6 +249,7 @@ export interface PerSessionState {
    *  WorkingStatus timer from the clock so it survives session-switch / detail remounts and
    *  resets per queued turn. */
   turnStartMs: number | null
+  thinkingTokens: number | null
   messages: ChatMessage[]
   /** Messages composed while a turn was running: held renderer-side (editable/cancelable),
    *  rendered at the transcript tail, dispatched FIFO at the next turn boundary. */
@@ -871,6 +872,7 @@ async function beginSession(
     busy: false,
     interrupting: false,
     turnStartMs: null,
+    thinkingTokens: null,
     messages: history,
     queuedMessages: EMPTY_QUEUED,
     draftText: '',
@@ -1007,6 +1009,7 @@ async function dispatchTurn(
         busy: false,
         interrupting: false,
         turnStartMs: null,
+        thinkingTokens: null,
         lastError: 'Message not delivered — the session may have stopped. Resume it and try again.'
       })
     })
@@ -1489,6 +1492,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           busy: false,
           interrupting: false,
           turnStartMs: null,
+          thinkingTokens: null,
           ...(next ? { queuedMessages: rest } : {})
         })
       )
@@ -1499,7 +1503,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     // A running turn will emit a terminal `result`. Mark `interrupting` (distinct from idle)
     // so a new prompt queues instead of dispatching a second concurrent turn; the late result
     // is recognized as THIS turn's boundary and swallowed, not the new turn's.
-    set((s) => patchSlice(s, active.handleId, { busy: false, interrupting: true, turnStartMs: null }))
+    set((s) => patchSlice(s, active.handleId, { busy: false, interrupting: true, turnStartMs: null, thinkingTokens: null }))
     await window.clui.interrupt(active.handleId)
   },
 
@@ -1700,6 +1704,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           break
         }
         case 'text-delta': {
+          if (slice.thinkingTokens !== null) patch.thinkingTokens = null
           const m = currentAssistant(messages)
           m.text += e.text
           // Extend the trailing text block, or start a new one (after a tool block)
@@ -1709,12 +1714,16 @@ export const useSession = create<SessionStore>((set, get) => ({
           else m.blocks.push({ kind: 'text', text: e.text })
           break
         }
+        case 'thinking-tokens':
+          patch.thinkingTokens = e.estimated
+          break
         case 'thinking-delta': {
           const m = currentAssistant(messages)
           m.thinking += e.text
           break
         }
         case 'tool-use-start': {
+          if (slice.thinkingTokens !== null) patch.thinkingTokens = null
           const m = currentAssistant(messages)
           m.tools.push({ id: e.id, name: e.name, input: {}, startMs: Date.now() })
           m.blocks.push({ kind: 'tool', id: e.id })
@@ -2036,6 +2045,7 @@ export const useSession = create<SessionStore>((set, get) => ({
             patch.busy = false
             patch.interrupting = false
             patch.turnStartMs = null
+            patch.thinkingTokens = null
             patch.lastActivityMs = Date.now()
             // A real turn boundary: if the user queued message(s) during this turn, release
             // the OLDEST now (FIFO). Dequeue it here and dispatch it after this set commits
@@ -2107,6 +2117,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.busy = false
           patch.interrupting = false
           patch.turnStartMs = null
+          patch.thinkingTokens = null
           patch.exited = true
           break
       }

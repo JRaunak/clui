@@ -7,11 +7,13 @@ import { useEffect, useState } from 'react'
 import { useActive } from '../store'
 import { TypingDots } from './TypingDots'
 import { randomWorkingVerb } from '../lib/workingVerbs'
+import { fmtTokens } from '../lib/formatTokens'
 
 export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }): JSX.Element {
   // Elapsed derives from the turn's start timestamp in the slice, not component mount, so switching sessions
   // or entering a detail view doesn't reset a live turn's timer, and each queued turn restarts it.
   const startMs = useActive((s) => s?.turnStartMs ?? null)
+  const thinkingTokens = useActive((s) => s?.thinkingTokens ?? null)
   const [elapsed, setElapsed] = useState(() => (startMs ? Math.floor((Date.now() - startMs) / 1000) : 0))
   const [verb, setVerb] = useState(randomWorkingVerb)
   useEffect(() => {
@@ -29,7 +31,15 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
   return (
     <span className="flex items-center gap-2 text-[13px]">
       <TypingDots className="text-ok" />
-      {!taskMerged && <span className="font-serif italic text-content">{verb}…</span>}
+      {!taskMerged && (
+        <span className="font-serif italic text-content">{thinkingTokens !== null ? 'Thinking' : `${verb}…`}</span>
+      )}
+      {thinkingTokens !== null && (
+        <span aria-hidden="true" className="font-mono tabular-nums text-dim">
+          <span className="inline-block min-w-[6ch] text-right">~{fmtTokens(thinkingTokens)}</span>{' '}
+          {thinkingTokens === 1 ? 'token' : 'tokens'}
+        </span>
+      )}
       <span className="font-mono tabular-nums text-dim">{formatElapsed(elapsed)}</span>
     </span>
   )

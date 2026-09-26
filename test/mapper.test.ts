@@ -84,3 +84,12 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
     'mapper: permission decision reason forwarded'
   )
 }
+
+// thinking_tokens heartbeats are throttled to one per 500ms
+{
+  const m = new EventMapper()
+  const beat = (n: number): unknown => ({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: n, estimated_tokens_delta: 5 })
+  const evs = feed(m, [beat(10), beat(20), beat(30)])
+  const t = evs.filter((e) => e.type === 'thinking-tokens')
+  ok(t.length === 1 && t[0].estimated === 10, 'mapper: thinking_tokens throttled')
+}

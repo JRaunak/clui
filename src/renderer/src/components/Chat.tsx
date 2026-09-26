@@ -35,6 +35,7 @@ const QUICK_PERMISSION_PHRASE: Partial<Record<PermissionModeChoice, string>> = {
  */
 export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => void }): JSX.Element {
   const messages = useActive((s) => s?.messages ?? EMPTY_MESSAGES)
+  const thinkingLive = useActive((s) => s?.thinkingTokens != null)
   const busy = useActive((s) => s?.busy ?? false)
   const resumed = useActive((s) => s?.resumed ?? false)
   const historyCount = useActive((s) => s?.historyCount ?? 0)
@@ -222,7 +223,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
                     : 'rounded-lg border-l-2 border-transparent ring-0 ring-transparent transition-shadow duration-700'
               }
             >
-              <MessageView message={m} />
+              <MessageView message={m} hideThinking={thinkingLive && index === messages.length - 1} />
             </div>
           </div>
         )}

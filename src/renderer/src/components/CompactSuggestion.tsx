@@ -15,11 +15,7 @@
  */
 import { useActive, useSession } from '../store'
 import { compactSuggestion } from '../lib/compaction'
-
-/** 120000 → "120K", 17000 → "17K". */
-function fmtK(n: number): string {
-  return n >= 1000 ? `${Math.round(n / 1000)}K` : String(n)
-}
+import { fmtTokens } from '../lib/formatTokens'
 
 export function CompactSuggestion(): JSX.Element | null {
   const percent = useActive((s) => s?.contextPercent ?? null)
@@ -44,7 +40,7 @@ export function CompactSuggestion(): JSX.Element | null {
     ? 'border-warn/50 text-warn hover:bg-warn/10'
     : 'border-info/50 text-info hover:bg-info/10'
 
-  const runway = fmtK(sug.runwayTokens)
+  const runway = fmtTokens(sug.runwayTokens)
   // Human-facing prose gets a rounded threshold ("near 97%"): the one-decimal
   // 96.7 reads as machine false-precision next to the approximating word "near".
   // The exact value still lives on the ContextRing tooltip.
@@ -59,15 +55,15 @@ export function CompactSuggestion(): JSX.Element | null {
       <div className="text-sm leading-relaxed text-dim">
         {warn ? (
           <>
-            <span className={`font-medium ${accentText}`}>About to auto-compact</span> — context is{' '}
+            <span className={`font-medium ${accentText}`}>About to auto-compact.</span> Context is{' '}
             <span className="text-content">{percent}% full</span> ({runway} tokens left before I
-            summarize near {autoPct}%). Compact now to keep control of the timing — your
+            summarize near {autoPct}%). Compact now to keep control of the timing. Your
             transcript here stays intact.
           </>
         ) : (
           <>
             Context is <span className="text-content">{percent}% full</span>. I'll auto-compact near{' '}
-            {autoPct}%, or you can compact now to free up room — older messages get
+            {autoPct}%, or you can compact now to free up room. Older messages get
             summarized, but your transcript here stays intact.
           </>
         )}
