@@ -68,16 +68,16 @@ export function WorkflowTray(): JSX.Element | null {
 
   return (
     <button
-      className={`flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-[11px] transition-[filter] hover:brightness-125 ${
+      className={`flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-meta transition-[filter] hover:brightness-125 ${
         hasRunning ? 'bg-info/15 text-info' : anyFailed ? 'bg-err/10 text-err' : 'text-dim'
       }`}
       onClick={() => {
         viewWorkflow(target.taskId)
         clearCompleted('workflow') // opening = "seen" → clear the lingering done state.
       }}
-      title={hasRunning ? "Open the workflow's live phase tree" : 'Workflow finished — open its phase tree'}
+      title={hasRunning ? "Open the workflow's live phase tree" : 'Workflow finished. Open its phase tree'}
     >
-      <span className="text-[10px]">◆</span>
+      <span className="text-badge">◆</span>
       <span>{label}</span>
       {hasRunning ? (
         agents.length > 0 && (

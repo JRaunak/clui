@@ -140,7 +140,7 @@ export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null)
         className="w-52 bg-transparent text-sm text-content placeholder:text-faint focus:outline-none"
       />
       <span
-        className="min-w-[3.5rem] shrink-0 text-right font-mono text-[11px] tabular-nums text-dim"
+        className="min-w-[3.5rem] shrink-0 text-right font-mono text-meta tabular-nums text-dim"
         aria-hidden="true"
       >
         {deferredQuery.trim() ? (count ? `${current + 1} of ${count}` : 'No matches') : ''}

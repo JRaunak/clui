@@ -65,7 +65,7 @@ export function UltracodeToggle(): JSX.Element | null {
         >
           <span
             aria-hidden="true"
-            className={`ultra-star text-[11px] leading-none ${
+            className={`ultra-star text-badge leading-none ${
               ultraEngageable ? (on ? 'text-effort-ultra' : 'text-dim') : 'text-faint'
             } ${engaged ? 'ultra-star-glow' : ''}`}
           >

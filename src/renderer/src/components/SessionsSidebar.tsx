@@ -388,11 +388,11 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     <>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center justify-between px-1 pb-2">
-          <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-dim">
+          <span className="flex items-center gap-1.5 text-caps uppercase text-dim">
             Sessions
-            {/* No tint behind the label: text-ok on a bg-ok/15 pill was 3.73:1 in light (fails AA). */}
+            {/* No tint behind the label: text-ok on a bg-ok/15 pill is 3.73:1 in light, below AA. */}
             {liveCount > 0 && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-normal text-ok">
+              <span className="inline-flex items-center gap-1 text-badge text-ok">
                 <span className="h-1.5 w-1.5 rounded-full bg-ok" style={{ animation: 'var(--animate-breathe)' }} />
                 {liveCount} live
               </span>
@@ -429,7 +429,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
                 <div className="group/hdr flex w-full items-center gap-1.5 rounded px-1" title={g.cwd}>
                   {/* Toggle takes flex-1 so the label truncates; the "+" is a sibling (button-in-button is invalid). */}
                   <button
-                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 text-left text-label font-medium text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
                     onClick={() => toggleGroup(g.cwd)}
                   >
                     <IconChevron
@@ -458,7 +458,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
                       </button>
                     )}
                   </div>
-                  <span className="shrink-0 text-[11px] font-semibold tabular-nums text-dim">
+                  <span className="shrink-0 text-meta font-medium tabular-nums text-dim">
                     {g.sessions.length}
                   </span>
                 </div>
@@ -626,7 +626,7 @@ function SessionRow({
       {/* Not-saved marker for a quick session: neutral, word + glyph (never color alone). */}
       {session.ephemeral && !editing && (
         <span
-          className="flex shrink-0 items-center gap-1 text-[10px] font-medium text-faint"
+          className="flex shrink-0 items-center gap-1 text-meta text-faint"
           title="Not saved · discarded when closed"
         >
           <IconGhost className="h-3 w-3" aria-hidden="true" />
@@ -637,7 +637,7 @@ function SessionRow({
       {/* Pending-permission badge. Hand glyph + count so it reads apart from the bg badge in grayscale, not by hue alone. */}
       {session.pendingCount > 0 && !editing && (
         <span
-          className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded-full bg-warn px-1 text-[10px] font-bold text-on-warn shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-warn)_28%,transparent)]"
+          className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded-full bg-warn px-1 text-badge text-on-warn shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-warn)_28%,transparent)]"
           title={`${session.pendingCount} permission request${session.pendingCount > 1 ? 's' : ''} awaiting your approval`}
         >
           <IconHand className="h-2.5 w-2.5" aria-hidden="true" />
@@ -649,7 +649,7 @@ function SessionRow({
           Static half-ring glyph, not rotation: reduced-motion would erase a motion-only cue. */}
       {session.bgCount > 0 && !active && !editing && (
         <span
-          className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded-full bg-info px-1 text-[10px] font-bold text-on-info shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-info)_28%,transparent)]"
+          className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded-full bg-info px-1 text-badge text-on-info shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-info)_28%,transparent)]"
           title={`${session.bgCount} background task${session.bgCount > 1 ? 's' : ''} running`}
         >
           <IconHalfRing className="h-2.5 w-2.5" aria-hidden="true" />
@@ -743,7 +743,7 @@ function SessionMonogram({
         <span className="absolute -left-[7px] top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-accent" aria-hidden="true" />
       )}
       <button
-        className={`relative flex h-[30px] w-[30px] items-center justify-center rounded-lg text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${fill} ${tone} ${!active && !session.busy && !pending ? 'hover:bg-bg-raised' : ''}`}
+        className={`relative flex h-[30px] w-[30px] items-center justify-center rounded-lg text-badge transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${fill} ${tone} ${!active && !session.busy && !pending ? 'hover:bg-bg-raised' : ''}`}
         style={session.busy ? { animation: 'var(--animate-breathe)' } : undefined}
         aria-label={label}
         title={session.title}
@@ -752,7 +752,7 @@ function SessionMonogram({
         {monogram(session.title)}
         {/* Pending permission is the blocking state, so its amber count-badge wins the corner. */}
         {pending ? (
-          <span className="absolute -right-1 -top-1 flex h-[9px] min-w-[9px] items-center justify-center rounded-full bg-warn px-[3px] text-[8px] font-bold leading-none text-on-warn ring-[1.5px] ring-bg-sidebar">
+          <span className="absolute -right-1.5 -top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-warn px-1 text-badge leading-none text-on-warn ring-[1.5px] ring-bg-sidebar">
             {session.pendingCount}
           </span>
         ) : session.live ? (
@@ -868,7 +868,7 @@ function RowMenu({
               tabIndex={i === focusIdx ? 0 : -1}
               /* A destructive item reads as danger at rest (err token, divider above) so it can't be mis-hit.
                  It keeps the global accent focus ring so a keyboard user sees which action Enter fires. */
-              className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] transition-colors -outline-offset-2 ${
+              className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-label transition-colors -outline-offset-2 ${
                 it.danger
                   ? 'mt-1 border-t border-border pt-2 text-err hover:bg-err/10 focus-visible:bg-err/15'
                   : 'text-content hover:bg-bg-raised focus-visible:bg-bg-raised'
@@ -881,7 +881,7 @@ function RowMenu({
             >
               <span className={`shrink-0 ${it.danger ? 'text-err' : 'text-dim'}`}>{it.icon}</span>
               <span className="min-w-0 flex-1 truncate">{it.label}</span>
-              {it.hint && <span className="shrink-0 text-[11px] text-faint">{it.hint}</span>}
+              {it.hint && <span className="shrink-0 text-meta text-faint">{it.hint}</span>}
             </button>
           ))}
         </div>

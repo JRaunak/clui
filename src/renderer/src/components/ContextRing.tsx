@@ -70,7 +70,7 @@ export function ContextRing({
           />
         </svg>
         <span
-          className="absolute font-mono text-[9px] font-medium leading-none tabular-nums"
+          className="absolute font-mono text-badge leading-none tabular-nums"
           style={{ color }}
         >
           {p}

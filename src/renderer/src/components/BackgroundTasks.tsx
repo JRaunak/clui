@@ -148,7 +148,7 @@ export function BackgroundTasks(): JSX.Element | null {
             <span className="text-xs font-semibold text-content">Background tasks</span>
             {/* Failed sits in its own err-toned segment so an outcome isn't folded into the
                 neutral "done" count. */}
-            <span className="ml-auto flex items-center gap-1 font-mono text-[11px] text-faint">
+            <span className="ml-auto flex items-center gap-1 font-mono text-meta text-faint">
               {running.length} running · {done} done
               {stopped > 0 ? ` · ${stopped} stopped` : ''}
               {failed > 0 && (
@@ -218,7 +218,7 @@ export function BackgroundTasks(): JSX.Element | null {
 
 function SectionLabel({ children }: { children: React.ReactNode }): JSX.Element {
   return (
-    <div className="px-3 pb-1 pt-2 font-mono text-[11px] uppercase tracking-[0.14em] text-faint">
+    <div className="px-3 pb-1 pt-2 text-caps uppercase text-faint">
       {children}
     </div>
   )
@@ -252,7 +252,7 @@ function Row({
       ) : task.status === 'failed' ? (
         // Killed was a requested stop, so only a real failure takes the err tone. The
         // trailing word states it too, so this isn't colour alone. The word stays faint:
-        // err is 4.34:1 on the hover surface, which fails 4.5:1 as 11px text, while the
+        // err is 4.34:1 on the hover surface, which fails 4.5:1 as small text, while the
         // glyph only needs 3:1.
         <IconWarn className="h-3.5 w-3.5 text-err" />
       ) : task.status === 'killed' ? (
@@ -265,11 +265,11 @@ function Row({
 
   // A subagent keeps its "Agent" label even when nested: it's the only at-rest cue separating
   // a nested agent (clickable, has a transcript) from a nested shell, since the arrow is one
-  // 11px glyph and hover shows nothing until hovered. Nested spends faint rather than the
+  // small glyph and hover shows nothing until hovered. Nested spends faint rather than the
   // accent so a parent/child pair doesn't spend the scarce accent twice.
   const typeLabel = isSubagent && (
     <span
-      className={`shrink-0 font-mono text-[11px] font-semibold ${nested ? 'text-faint' : 'text-accent'}`}
+      className={`shrink-0 font-mono text-meta font-semibold ${nested ? 'text-faint' : 'text-accent'}`}
     >
       Agent
     </span>
@@ -282,7 +282,7 @@ function Row({
       </span>
       {/* Open-transcript affordance, mirroring the inline Agent card's arrow. Inside the button
           so clicking the glyph opens too, with pr-1.5 to clear the inset focus ring. */}
-      {onOpen && <span className="shrink-0 pr-1.5 font-mono text-[11px] text-faint">→</span>}
+      {onOpen && <span className="shrink-0 pr-1.5 font-mono text-meta text-faint">→</span>}
     </>
   )
 
@@ -293,7 +293,7 @@ function Row({
     <>
       <BgTimer startMs={task.startMs} />
       {task.stopping ? (
-        <span className="text-[11px] text-faint">stopping…</span>
+        <span className="text-meta text-faint">stopping…</span>
       ) : (
         <button
           // h-6 w-6 is the house pattern for a row's icon button; the 14px glyph alone is an
@@ -308,13 +308,13 @@ function Row({
       )}
     </>
   ) : (
-    <span className="text-[11px] text-faint">
+    <span className="text-meta text-faint">
       {task.status === 'killed' ? 'stopped' : task.status === 'failed' ? 'failed' : 'done'}
     </span>
   )
 
   // min-h-10 holds the row at its running height: the trailing slot swaps a 24px stop button
-  // for an ~17px status word, which would otherwise shrink the row 6px when a task finishes.
+  // for a shorter status word, which would otherwise shrink the row when a task finishes.
   const rowCls = `group flex min-h-10 items-center gap-2.5 py-1 pr-3 ${nested ? 'pl-6' : 'pl-3'}`
   // A subagent row opens its transcript; a bg-shell row has none. The button is the label
   // region, not the whole row: a row-level button would nest the stop button inside it, which
@@ -352,5 +352,5 @@ function BgTimer({ startMs }: { startMs: number }): JSX.Element {
   }, [])
   const s = Math.max(0, Math.floor((now - startMs) / 1000))
   const label = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`
-  return <span className="font-mono tabular-nums text-[11px] text-faint">{label}</span>
+  return <span className="font-mono tabular-nums text-meta text-faint">{label}</span>
 }

@@ -372,7 +372,7 @@ export function App(): JSX.Element {
           </div>
         ) : (
           // Gear is absolute so it doesn't pull the centered CLI status off-center.
-          <div className="relative flex h-8 shrink-0 items-center justify-center border-t border-border bg-bg-sidebar px-3 text-[12px] text-dim">
+          <div className="relative flex h-8 shrink-0 items-center justify-center border-t border-border bg-bg-sidebar px-3 text-meta text-dim">
             {cliInfo?.path ? (
               <span className="truncate font-mono" title={cliInfo.path}>
                 claude {cliInfo.version ?? ''}
@@ -428,7 +428,7 @@ export function App(): JSX.Element {
         {notice && (() => {
           const { cls, Icon, tint } = NOTICE_STYLES[notice.tone]
           return (
-            <div className={`flex items-center gap-2 border-b px-4 py-1.5 text-[12px] text-content ${cls}`}>
+            <div className={`flex items-center gap-2 border-b px-4 py-1.5 text-label text-content ${cls}`}>
               <Icon className={`h-3.5 w-3.5 shrink-0 ${tint}`} />
               <span className="flex-1">{notice.message}</span>
               <button className="text-dim hover:text-content" onClick={dismissNotice} aria-label="Dismiss" title="Dismiss">
@@ -463,7 +463,7 @@ export function App(): JSX.Element {
             </div>
             {/* Bottom-left workspace/session info. Same h-8 as the sidebar footer
                 so their divider lines align across the two columns. */}
-            <div className="flex h-8 items-center gap-3 border-t border-border px-4 text-[12px] text-dim">
+            <div className="flex h-8 items-center gap-3 border-t border-border px-4 text-meta text-dim">
               {showTitle && (
                 <span className="min-w-0 truncate text-dim" title={displayTitle}>
                   {displayTitle}
