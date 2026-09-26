@@ -231,6 +231,10 @@ export type DomainEvent =
       displayName?: string
       description?: string
       permissionSuggestions?: PermissionSuggestion[]
+      decisionReason?: string
+      decisionReasonType?: string
+      blockedPath?: string
+      suppressAlwaysAllow?: boolean
     }
   /**
    * The CLI withdrew a still-pending permission request (e.g. the turn was

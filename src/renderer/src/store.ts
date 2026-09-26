@@ -32,6 +32,10 @@ export interface PendingPermission {
   description?: string
   /** Actions the CLI suggests with this request (2.1.245+), e.g. "accept edits this session". */
   permissionSuggestions?: PermissionSuggestion[]
+  decisionReason?: string
+  decisionReasonType?: string
+  blockedPath?: string
+  suppressAlwaysAllow?: boolean
 }
 
 /**
@@ -1754,7 +1758,11 @@ export const useSession = create<SessionStore>((set, get) => ({
               input: e.input,
               displayName: e.displayName,
               description: e.description,
-              permissionSuggestions: e.permissionSuggestions
+              permissionSuggestions: e.permissionSuggestions,
+              decisionReason: e.decisionReason,
+              decisionReasonType: e.decisionReasonType,
+              blockedPath: e.blockedPath,
+              suppressAlwaysAllow: e.suppressAlwaysAllow
             }
           ]
           patch.lastActivityMs = Date.now()

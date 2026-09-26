@@ -63,13 +63,15 @@ function GenericPermission({
   }
   // Session-scoped mode switch. setPermissionMode is per-session, so a project- or
   // user-scoped suggestion would under-apply.
-  const suggestion = pickModeSuggestion(request.permissionSuggestions)
+  const suggestion = request.suppressAlwaysAllow ? null : pickModeSuggestion(request.permissionSuggestions)
   const allowAndSwitch = (): void => {
     void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: request.input })
     if (suggestion) void setPermissionMode(suggestion.mode)
   }
   // Label tracks the armed effect so the click's consequence is legible before pressing.
   const allowLabel = !suggestion ? 'Allow' : armed ? `Allow & switch to ${suggestion.label}` : 'Allow once'
+  const sessionMode = useActive((s) => s?.permissionMode ?? null)
+  const reason = request.decisionReason?.trim()
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -79,6 +81,7 @@ function GenericPermission({
         role="dialog"
         aria-modal="true"
         aria-labelledby="permission-title"
+        aria-describedby={reason ? 'permission-reason' : undefined}
         className="w-[min(560px,90%)] rounded-xl border border-border bg-bg-elev shadow-lg outline-none"
       >
         <div className="border-b border-border px-5 py-3.5">
@@ -92,6 +95,14 @@ function GenericPermission({
         </div>
 
         <div className="max-h-[45vh] overflow-y-auto px-5 py-4">
+          {reason && (
+            <PermissionReason
+              reason={reason}
+              safetyCheck={request.decisionReasonType === 'safetyCheck'}
+              bypass={sessionMode === 'bypassPermissions'}
+              blockedPath={shownPath(request) ? undefined : request.blockedPath}
+            />
+          )}
           {request.description && (
             <p className="mb-3 text-sm text-dim">{request.description}</p>
           )}
@@ -160,6 +171,49 @@ function GenericPermission({
       </div>
     </div>
   )
+}
+
+function PermissionReason({
+  reason,
+  safetyCheck,
+  bypass,
+  blockedPath
+}: {
+  reason: string
+  safetyCheck: boolean
+  bypass: boolean
+  blockedPath?: string
+}): JSX.Element {
+  const path = blockedPath && (
+    <div className="mt-2">
+      <div className="text-[12px] uppercase tracking-wide text-dim">Path</div>
+      <div className="mt-0.5 break-all font-mono text-[13px] text-content">{blockedPath}</div>
+    </div>
+  )
+  if (!safetyCheck) {
+    return (
+      <div id="permission-reason" className="mb-3 text-sm">
+        <span className="text-dim">Asked because: </span>
+        <span className="whitespace-pre-wrap break-words text-content">{reason}</span>
+        {path}
+      </div>
+    )
+  }
+  return (
+    <div id="permission-reason" className="mb-3 border-l-2 border-warn/60 pl-3">
+      <div className="text-[12px] font-medium text-warn">Safety check</div>
+      <div className="mt-0.5 whitespace-pre-wrap break-words text-sm text-content">{reason}</div>
+      {bypass && <div className="mt-1 text-xs text-dim">Autonomous mode doesn&apos;t skip safety checks.</div>}
+      {path}
+    </div>
+  )
+}
+
+function shownPath(request: PendingPermission): boolean {
+  if (!request.blockedPath) return true
+  const diff = diffOf(request.toolName, request.input)
+  const shown = diff ? diff.filePath : highlightOf(request.input)?.value
+  return shown === request.blockedPath
 }
 
 /** First session-scoped setMode suggestion for a known mode, else null. Broader scopes can't

@@ -63,3 +63,24 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   const ids = (changed.find((e) => e.type === 'bg-tasks-changed') as any)?.taskIds ?? []
   ok(!ids.includes('t1'), "mapper: 'stopped' task removed from tracked set")
 }
+
+// can_use_tool decision reason fields are forwarded
+{
+  const m = new EventMapper()
+  const [e] = m.map({
+    type: 'control_request',
+    request_id: 'r1',
+    request: {
+      subtype: 'can_use_tool',
+      tool_name: 'Bash',
+      input: { command: 'rm -rf "$(echo x)"' },
+      decision_reason: 'Dangerous rm operation',
+      decision_reason_type: 'safetyCheck',
+      blocked_path: '/tmp/x'
+    }
+  }) as any[]
+  ok(
+    e?.decisionReason === 'Dangerous rm operation' && e.decisionReasonType === 'safetyCheck' && e.blockedPath === '/tmp/x',
+    'mapper: permission decision reason forwarded'
+  )
+}

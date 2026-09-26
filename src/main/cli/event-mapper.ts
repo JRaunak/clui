@@ -30,6 +30,10 @@ interface RawEnvelope {
     display_name?: string
     description?: string
     permission_suggestions?: PermissionSuggestion[]
+    decision_reason?: string
+    decision_reason_type?: string
+    blocked_path?: string
+    suppress_always_allow_rule?: boolean
   }
   event?: {
     type?: string
@@ -761,7 +765,11 @@ export class EventMapper {
           title: req.title,
           displayName: req.display_name,
           description: req.description,
-          permissionSuggestions: req.permission_suggestions
+          permissionSuggestions: req.permission_suggestions,
+          decisionReason: req.decision_reason,
+          decisionReasonType: req.decision_reason_type,
+          blockedPath: req.blocked_path,
+          suppressAlwaysAllow: req.suppress_always_allow_rule
         }
       ]
     }
