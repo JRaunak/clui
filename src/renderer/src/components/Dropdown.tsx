@@ -198,7 +198,7 @@ export function Dropdown<T extends string>({
           {options.map((o) => {
             const selected = o.value === value
             // Left-aligned list (correct for scannable menus w/ multi-line descriptions). No
-            // leading tick-gutter (was lopsided dead space) and no trailing tick (the trigger
+            // leading tick-gutter (it reads as lopsided dead space) and no trailing tick (the trigger
             // chip still shows the current choice while the menu is open, so an in-menu tick is
             // redundant). Selection = a full-row highlight + a 2px accent left-edge bar, Clui's
             // active-item idiom (the active-session rail), absolutely positioned so it adds zero
@@ -206,7 +206,7 @@ export function Dropdown<T extends string>({
             return (
               <Fragment key={o.value}>
                 {o.header && (
-                  <div className="px-3 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-faint">
+                  <div className="px-3 pb-0.5 pt-1.5 text-caps uppercase text-faint">
                     {o.header}
                   </div>
                 )}
@@ -228,14 +228,14 @@ export function Dropdown<T extends string>({
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="truncate font-medium">{o.label}</span>
                     {o.description && (
-                      <span className="whitespace-normal text-[11px] leading-snug text-faint">
+                      <span className="whitespace-normal text-meta leading-snug text-faint">
                         {o.description}
                       </span>
                     )}
                   </span>
                   {o.meta && (
                     <span
-                      className="shrink-0 self-center tabular-nums text-[11px] text-dim"
+                      className="shrink-0 self-center tabular-nums text-meta text-dim"
                       title={o.metaTitle}
                     >
                       {o.meta}

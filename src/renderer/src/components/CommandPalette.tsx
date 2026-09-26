@@ -316,7 +316,7 @@ export function CommandPalette({
             aria-expanded={filtered.length > 0}
             aria-activedescendant={filtered.length ? `palette-opt-${sel}` : undefined}
           />
-          <kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-faint">
+          <kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-badge text-faint">
             esc
           </kbd>
         </div>
@@ -429,17 +429,17 @@ function Row({
       </span>
       {selected ? (
         // Focused row: the action affordance replaces the hint.
-        <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-dim">
+        <span className="flex shrink-0 items-center gap-1.5 text-meta text-dim">
           {verb}
           {/* text-dim (not faint) so the whole affordance clears AA 4.5:1 on the selected
               row's raised surface in both themes. */}
-          <kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px] text-dim">
+          <kbd className="rounded border border-border px-1 py-0.5 font-mono text-badge text-dim">
             ↵
           </kbd>
         </span>
       ) : (
         item.hint && (
-          <span className="shrink-0 truncate font-mono text-[11px] text-faint">{item.hint}</span>
+          <span className="shrink-0 truncate text-meta text-faint">{item.hint}</span>
         )
       )}
     </div>

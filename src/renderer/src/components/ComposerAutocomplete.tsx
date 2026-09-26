@@ -261,7 +261,7 @@ export function useComposerAutocomplete(
     return (
       <div className="absolute bottom-full left-0 z-50 mb-2 flex w-[min(640px,calc(100%-1.5rem))] flex-col rounded-lg border border-border bg-bg-elev shadow-lg">
         <div id={listboxId} ref={listRef} className="max-h-72 overflow-y-auto py-1" role="listbox">
-          <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-faint">
+          <div className="flex items-center gap-2 px-3 py-1.5 text-meta text-faint">
             {trigger?.char === '@' && <IconSearch className="h-3 w-3" />}
             {trigger?.char === '/' ? 'Commands & skills' : 'Agents & files'}
           </div>
@@ -290,17 +290,17 @@ export function useComposerAutocomplete(
                   )}
                 </span>
                 {r.it.args && (
-                  <span className="max-w-[30%] shrink-0 truncate font-mono text-[11px] text-faint" title={r.it.args}>
+                  <span className="max-w-[30%] shrink-0 truncate font-mono text-meta text-faint" title={r.it.args}>
                     {r.it.args}
                   </span>
                 )}
                 {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
-                  <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 text-[10px] text-faint">
+                  <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 text-badge text-faint">
                     {r.it.kind}
                   </span>
                 )}
                 {r.it.hint && (
-                  <span className="min-w-0 flex-1 truncate text-[11px] text-dim" title={r.it.hint}>
+                  <span className="min-w-0 flex-1 truncate text-meta text-dim" title={r.it.hint}>
                     {r.it.hint}
                   </span>
                 )}

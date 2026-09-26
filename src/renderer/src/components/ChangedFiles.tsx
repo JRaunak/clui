@@ -35,7 +35,7 @@ export function ChangedFiles(): JSX.Element | null {
           <IconChevron className={`h-3 w-3 transition-transform ${open ? 'rotate-90' : ''}`} />
           <IconFile className="h-3.5 w-3.5" />
           Changed files
-          <span className="rounded-full bg-bg-raised px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">
+          <span className="rounded-full bg-bg-raised px-1.5 py-0.5 text-badge tabular-nums">
             {changedFiles.length}
           </span>
         </button>
@@ -49,7 +49,7 @@ export function ChangedFiles(): JSX.Element | null {
               return (
                 <button
                   key={f}
-                  className="group flex items-center rounded px-1 py-0.5 text-left font-mono text-[12px] transition-colors hover:bg-bg-raised"
+                  className="group flex items-center rounded px-1 py-0.5 text-left font-mono text-meta transition-colors hover:bg-bg-raised"
                   onClick={() => void openFile(f)}
                   title={`Open in editor: ${f}`}
                 >
@@ -64,7 +64,7 @@ export function ChangedFiles(): JSX.Element | null {
                 </button>
               )
             })}
-            {error && <div className="mt-1 text-[12px] text-err">{error}</div>}
+            {error && <div className="mt-1 text-meta text-err">{error}</div>}
           </div>
         )}
       </div>

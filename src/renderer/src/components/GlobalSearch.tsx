@@ -180,7 +180,7 @@ export function GlobalSearch(): JSX.Element | null {
         {q.length >= MIN_QUERY && (
           <div className="flex items-center gap-4 border-b border-border px-4 py-2">
             <div className="flex items-center gap-2">
-              <span className="text-[11px] uppercase tracking-wide text-faint">Scope</span>
+              <span className="text-caps uppercase text-faint">Scope</span>
               <Dropdown<string>
                 value={scope}
                 options={[
@@ -226,7 +226,7 @@ export function GlobalSearch(): JSX.Element | null {
             </p>
           ) : (
             <>
-              <div className="px-4 pb-1 pt-3 text-[11px] uppercase tracking-wide text-faint">
+              <div className="px-4 pb-1 pt-3 text-caps uppercase text-faint">
                 {totalHits} match{totalHits === 1 ? '' : 'es'} in {groups.length} conversation
                 {groups.length === 1 ? '' : 's'}
               </div>
@@ -239,12 +239,12 @@ export function GlobalSearch(): JSX.Element | null {
                     <span className={`truncate text-sm font-medium ${isLive ? 'text-content' : 'text-dim'}`}>
                       {g.title}
                     </span>
-                    <span className="shrink-0 font-mono text-[11px] text-faint">{g.label}</span>
+                    <span className="shrink-0 font-mono text-meta text-faint">{g.label}</span>
                     {/* Name the click consequence so the resume cost isn't a surprise. */}
-                    <span className="shrink-0 text-[11px] text-faint">
+                    <span className="shrink-0 text-meta text-faint">
                       {isLive ? 'live · opens' : 'resumes on open'}
                     </span>
-                    <span className="ml-auto shrink-0 text-[11px] text-faint">
+                    <span className="ml-auto shrink-0 text-meta text-faint">
                       {g.totalHits} hit{g.totalHits === 1 ? '' : 's'}
                     </span>
                   </div>
@@ -255,7 +255,7 @@ export function GlobalSearch(): JSX.Element | null {
                       onClick={() => void openHit(hit)}
                       className="flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-user focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                     >
-                      <span className="text-[11px] font-medium uppercase tracking-wide text-faint">
+                      <span className="text-meta font-medium text-faint">
                         {hit.role === 'user' ? 'You' : 'Claude'}
                       </span>
                       <span className="text-sm leading-snug text-dim">
@@ -272,7 +272,7 @@ export function GlobalSearch(): JSX.Element | null {
                     </button>
                   ))}
                   {g.totalHits > g.hits.length && (
-                    <div className="px-2 py-1 text-[11px] text-faint">
+                    <div className="px-2 py-1 text-meta text-faint">
                       +{g.totalHits - g.hits.length} more in this conversation
                     </div>
                   )}

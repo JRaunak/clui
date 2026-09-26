@@ -594,7 +594,7 @@ function AttachmentPill({
         <span className="max-w-[120px] truncate text-xs text-content" title={label}>
           {label}
         </span>
-        <span className="font-mono text-[10px] text-faint">{meta}</span>
+        <span className="font-mono text-meta text-faint">{meta}</span>
       </div>
       <button
         type="button"

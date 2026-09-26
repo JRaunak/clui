@@ -208,7 +208,7 @@ export function ModelEffortPicker(): JSX.Element {
           className="absolute bottom-full left-0 mb-1.5 flex max-h-[min(60vh,calc(100vh-24px))] w-[196px] flex-col rounded-xl bg-bg-elev py-1 text-xs shadow-lg"
           onMouseLeave={scheduleHide}
         >
-          <div className="flex shrink-0 items-center justify-between px-3 py-1 text-[11px] uppercase tracking-wide text-dim">
+          <div className="flex shrink-0 items-center justify-between px-3 py-1 text-caps uppercase text-dim">
             <span>{ultracode ? 'Model · Ultra needs X-High' : 'Model'}</span>
             <button
               type="button"
@@ -227,7 +227,7 @@ export function ModelEffortPicker(): JSX.Element {
               meta size would fail the contrast/size floor. */}
           {!live && (
             <div
-              className="flex shrink-0 items-start gap-1 px-3 pb-1 text-[11px] text-warn"
+              className="flex shrink-0 items-start gap-1 px-3 pb-1 text-meta text-warn"
               title="Couldn't reach Bedrock. This is Clui's built-in list and may be missing newer models. Refresh to retry."
             >
               <IconWarn className="mt-px h-3 w-3 shrink-0" />
@@ -244,7 +244,7 @@ export function ModelEffortPicker(): JSX.Element {
               {/* One subtle section header per family; skip when there's a single group
                   (no grouping value if everything is one family). */}
               {groupModels(models).length > 1 && (
-                <div className="px-3 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-faint">
+                <div className="px-3 pb-0.5 pt-1.5 text-caps uppercase text-faint">
                   {group.label}
                 </div>
               )}
@@ -263,7 +263,7 @@ export function ModelEffortPicker(): JSX.Element {
                 >
                   <span className="w-3 shrink-0">{info.id === modelChoice ? '✓' : ''}</span>
                   <span className="min-w-0 flex-1 truncate">{info.label}</span>
-                  <span className="shrink-0 font-mono text-[10px] text-faint">Needs X-High</span>
+                  <span className="shrink-0 text-meta text-faint">Needs X-High</span>
                 </div>
               )
             }
@@ -305,7 +305,7 @@ export function ModelEffortPicker(): JSX.Element {
                         they assert no context window. */}
                     {info.family !== 'unknown' && (
                       <span
-                        className="shrink-0 tabular-nums text-[11px] text-dim"
+                        className="shrink-0 tabular-nums text-meta text-dim"
                         title={`Context window: ${contextWindowForModel(info.id).toLocaleString()} tokens`}
                       >
                         {contextSizeLabel(info.id)}
@@ -440,8 +440,8 @@ function EffortFlyout({
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-baseline gap-1.5">
-          <span className="shrink-0 text-[12px] uppercase tracking-wide text-dim">Effort</span>
-          <span className="min-w-0 truncate text-[12px] text-dim">{info.label}</span>
+          <span className="shrink-0 text-caps uppercase text-dim">Effort</span>
+          <span className="min-w-0 truncate text-meta text-dim">{info.label}</span>
         </span>
         <span className={`shrink-0 font-medium ${EFFORT_COLORS[value]}`}>
           {EFFORT_LABELS[value]}
@@ -471,7 +471,7 @@ function EffortFlyout({
       />
       {/* Underlined tick = the committed level; the colored top-right pill = the inspected one.
           Ticks past the cap are dimmed (unreachable), never struck through. */}
-      <div className="mt-1 flex justify-between text-[11px]">
+      <div className="mt-1 flex justify-between text-meta">
         {levels.map((lv, i) => (
           <span
             key={lv}
@@ -488,7 +488,7 @@ function EffortFlyout({
         ))}
       </div>
       {cap && (
-        <div className="mt-1.5 text-[11px] text-dim">
+        <div className="mt-1.5 text-meta text-dim">
           Effort is capped at {capLabel} in your CLI settings.
         </div>
       )}
