@@ -18,7 +18,7 @@
  * EXCLUDED on purpose (Clui owns these natively, or they no-op/mislead over the pipe):
  *   /model, /effort        → the composer's model+effort picker + Ultra toggle
  *   /clear, /resume        → New Session button + the sessions sidebar
- *   /config, /mcp-ui, /vim, /terminal-setup, /doctor, /debug, /insights, /recap,
+ *   /config, /mcp-ui, /vim, /terminal-setup, /debug, /insights, /recap,
  *   /agents (removed), /login, /status, /help, __remote-workflow, /rewind …
  *                          → TUI-chrome / server-only / diagnostic: meaningless or
  *                            broken through Clui's pipe (verified live).
@@ -29,6 +29,7 @@ export interface SlashCommand {
   /** The command name WITHOUT the leading slash (e.g. "compact"). */
   name: string
   description: string
+  argumentHint?: string
 }
 
 /**
@@ -46,7 +47,8 @@ export const HEADLESS_SAFE_COMMANDS: readonly string[] = [
   'reload-plugins', // reload plugins mid-session; no Clui-native equivalent
   'rename', // set the session's on-disk title; free local command, reflects in the sidebar on send
   'security-review', // review the branch's pending changes for security issues (prompt command, like code-review)
-  'output-style' // switch Claude's response style (Concise/Explanatory/custom); no Clui-native control, persists project-local not ~/.claude
+  'output-style', // switch Claude's response style (Concise/Explanatory/custom); no Clui-native control, persists project-local not ~/.claude
+  'doctor' // health report, or `prompt-audit` of CLAUDE.md/skills/agents; a model turn, so it costs tokens
 ]
 
 /** Bundled fallback descriptions, used only until the live list arrives (pre-handshake)
@@ -81,10 +83,7 @@ export function resolveSlashCommands(live: SlashCommandInfo[]): SlashCommand[] {
   for (const name of HEADLESS_SAFE_COMMANDS) {
     const info = byName.get(name)
     if (!info) continue // allowlisted but not in the live list, even via alias (CLI dropped it) → skip
-    const desc = info.description || fallback.get(name) || ''
-    // Append the argument hint so the menu teaches the syntax (e.g. "manage MCP … [reconnect|…]").
-    const hint = info.argumentHint ? `${desc} · ${info.argumentHint}` : desc
-    out.push({ name, description: hint })
+    out.push({ name, description: info.description || fallback.get(name) || '', argumentHint: info.argumentHint })
   }
   return out
 }

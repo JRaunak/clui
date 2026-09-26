@@ -19,6 +19,7 @@ interface Item {
   value: string
   label: string
   hint?: string
+  args?: string
   kind: 'command' | 'skill' | 'file' | 'agent'
   /** Full literal replacement (incl. trigger char), overriding the default
    *  `trigger.char + value`. Agents need the quoted `@"name (agent)"` form. */
@@ -109,6 +110,7 @@ export function useComposerAutocomplete(
           value: c.name,
           label: `/${c.name}`,
           hint: c.description,
+          args: c.argumentHint,
           kind: 'command' as const
         })),
         ...skills.map((s) => ({
@@ -287,13 +289,20 @@ export function useComposerAutocomplete(
                     )
                   )}
                 </span>
+                {r.it.args && (
+                  <span className="max-w-[30%] shrink-0 truncate font-mono text-[11px] text-faint" title={r.it.args}>
+                    {r.it.args}
+                  </span>
+                )}
                 {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
                   <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 text-[10px] text-faint">
                     {r.it.kind}
                   </span>
                 )}
                 {r.it.hint && (
-                  <span className="min-w-0 flex-1 truncate text-[11px] text-dim">{r.it.hint}</span>
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-dim" title={r.it.hint}>
+                    {r.it.hint}
+                  </span>
                 )}
               </button>
             )
