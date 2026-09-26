@@ -319,10 +319,10 @@ export function App(): JSX.Element {
             <>
               <button
                 data-new-session
-                className={`flex h-[30px] w-[30px] items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar ${
+                className={`flex h-[30px] w-[30px] items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg ${
                   cliUnavailable
-                    ? 'cursor-default bg-bg-raised text-faint'
-                    : `bg-accent text-on-accent hover:bg-accent-hover ${spawnPending ? 'pointer-events-none opacity-60' : ''}`
+                    ? 'cursor-default border border-border text-faint'
+                    : `border border-control-edge text-content hover:bg-bg-raised ${spawnPending ? 'pointer-events-none opacity-60' : ''}`
                 }`}
                 onClick={cliUnavailable ? undefined : startNew}
                 aria-disabled={cliUnavailable || undefined}
@@ -397,8 +397,8 @@ export function App(): JSX.Element {
             {...sidebarResize.separatorProps}
             className="group absolute right-0 top-0 z-20 h-full w-2.5 translate-x-1/2 cursor-col-resize [-webkit-app-region:no-drag] focus-visible:outline-none"
           >
-            {/* All-neutral: a full-height accent ring on this h-full sliver would be the accent-heaviness
-                we're removing, so focus reads as a bright content hairline, drag as the mid-gray one. */}
+            {/* All-neutral: an accent ring on this h-full sliver would paint a full-window accent band,
+                so focus reads as a bright content hairline and drag as the mid-gray one. */}
             <span
               className={`absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors ${
                 sidebarResize.dragging
@@ -526,7 +526,7 @@ export function App(): JSX.Element {
               Drive Claude Code, visually.
             </p>
             <p className="mt-3 text-sm leading-relaxed text-faint">
-              A local window onto the <span className="font-mono text-dim">claude</span> CLI — your
+              A local window onto the <span className="font-mono text-dim">claude</span> CLI: your
               sessions, permissions, and tools, running side by side.
             </p>
             <Button variant="primary" size="lg" className="mt-7" onClick={startNew} busy={spawnPending}>

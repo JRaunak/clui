@@ -238,7 +238,7 @@ async function processPdfFile(file: File): Promise<ProcessedAttachment> {
 async function processTextFile(file: File): Promise<ProcessedAttachment> {
   if (file.size > MAX_TEXT_BYTES) {
     throw new ImageError(
-      `${file.name || 'That file'} is too large to inline (max 256 KB) — reference it with @ if it's in your project.`
+      `${file.name || 'That file'} is too large to inline (max 256 KB). Reference it with @ if it's in your project.`
     )
   }
   const text = await readAsText(file)
@@ -248,7 +248,7 @@ async function processTextFile(file: File): Promise<ProcessedAttachment> {
   // codepoints so it survives editor/encoding round-tripping.
   if (hasBinaryMarker(text)) {
     throw new ImageError(
-      `${file.name || 'That file'} doesn't look like text — Clui can only inline text files.`
+      `${file.name || 'That file'} doesn't look like text. Clui can only inline text files.`
     )
   }
   return {
@@ -288,7 +288,7 @@ export async function processDroppedFiles(
         attachments.push(await processTextFile(file))
       } else {
         errors.push(
-          `Can't attach ${file.name || 'that file'} — Clui inlines images, PDFs, and text files. Use @ to reference a file in your project.`
+          `Can't attach ${file.name || 'that file'}. Clui inlines images, PDFs, and text files. Use @ to reference a file in your project.`
         )
       }
     } catch (e) {

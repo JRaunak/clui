@@ -1018,7 +1018,7 @@ async function dispatchTurn(
         turnStartMs: null,
         thinkingTokens: null,
         compacting: false,
-        lastError: 'Message not delivered — the session may have stopped. Resume it and try again.'
+        lastError: 'Message not delivered. The session may have stopped. Resume it and try again.'
       })
     })
   }

@@ -623,7 +623,7 @@ export class ClaudeSession extends EventEmitter {
     // respawn fallback if the control_request errors or times out.
     const ok = await this.sendControl('apply_flag_settings', { settings: { effortLevel: effort } })
     if (!ok) {
-      this.emitEvent({ type: 'error', severity: 'info', message: `Live effort change unavailable — reconnecting to apply "${effort}"…` })
+      this.emitEvent({ type: 'error', severity: 'info', message: `Live effort change unavailable. Reconnecting to apply "${effort}"…` })
       this.respawnForEffort()
     }
   }

@@ -181,7 +181,7 @@ export function ModelEffortPicker(): JSX.Element {
           }`}
           title={
             ultraEngaged
-              ? 'Ultra runs at X-High — turn off Ultra to change effort'
+              ? 'Ultra runs at X-High. Turn off Ultra to change effort.'
               : cappedDown
                 ? `Your CLI settings cap effort at ${capLabel}.`
                 : undefined

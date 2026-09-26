@@ -291,7 +291,7 @@ function registerIpc(): void {
   handle(IpcChannels.startSession, async (_e, opts: StartSessionOptions) => {
     const settings = await getSettings()
     const info = await detectCli(settings.cliPath || null)
-    if (!info.path) throw new Error('claude CLI not found — set its path in Settings')
+    if (!info.path) throw new Error('claude CLI not found. Set its path in Settings.')
     // Finder/app-drawer-launched Electron gets a minimal env, so the spawned CLI would
     // miss the user's Bedrock/Vertex/API-key auth vars → "Not logged in". Pull the
     // auth-relevant subset from the login shell (like detect.ts does for PATH) and merge

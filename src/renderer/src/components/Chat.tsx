@@ -483,7 +483,7 @@ function JumpToLatest({
   onClick: () => void
   taskCount: { done: number; total: number } | null
 }): JSX.Element {
-  const label = hasNew ? 'Jump to latest — new messages below' : 'Jump to latest messages'
+  const label = hasNew ? 'Jump to latest (new messages below)' : 'Jump to latest messages'
   const taskLabel = taskCount ? `, ${taskCount.done} of ${taskCount.total} tasks done` : ''
   return (
     <button

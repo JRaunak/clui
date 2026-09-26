@@ -77,8 +77,8 @@ export function Onboarding({
             </>
           ) : (
             <>
-              Clui is a window onto the <span className="font-mono text-content">claude</span> command-
-              line tool — it drives your installed CLI, it doesn’t replace it. Install it, then re-check.
+              Clui is a window onto the <span className="font-mono text-content">claude</span> command-line tool.
+              It drives your installed CLI; it doesn’t replace it. Install it, then re-check.
             </>
           )}
         </p>
@@ -130,10 +130,10 @@ export function Onboarding({
         </p>
         <ul className="mt-5 w-full space-y-3 text-left">
           <IntroPoint title="Run sessions side by side">
-            Keep several Claude Code sessions live at once — switch between them without losing context.
+            Keep several Claude Code sessions live at once, and switch between them without losing context.
           </IntroPoint>
           <IntroPoint title="See and control permissions">
-            Approve or deny tool calls in a dialog, and set how much Claude can do on its own — per session.
+            Approve or deny tool calls in a dialog, and set per session how much Claude can do on its own.
           </IntroPoint>
           <IntroPoint title="Watch the work unfold">
             Streamed replies, tool calls, subagents, and workflows rendered visually as they run.

@@ -91,7 +91,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
             project skills" confusion). Say so explicitly instead of pretending it's complete. */}
         {!loading && !cwd && (
           <div className="border-b border-info/30 bg-info/10 px-5 py-2 text-meta text-info">
-            Global scope only — open a session to also see this workspace’s project configuration.
+            Global scope only. Open a session to also see this workspace’s project configuration.
           </div>
         )}
 

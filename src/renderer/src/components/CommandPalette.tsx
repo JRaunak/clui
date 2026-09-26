@@ -170,7 +170,7 @@ export function CommandPalette({
         key: 'cmd:customizations',
         kind: 'command',
         label: 'Open Configuration',
-        hint: 'Agents · Skills · Hooks · MCP — read-only audit',
+        hint: 'Agents · Skills · Hooks · MCP (read-only audit)',
         recency: 0,
         run: onOpenCustomizations
       },
@@ -382,9 +382,9 @@ function Row({
   // so SR row-by-row navigation still hears live/dormant + consequence).
   const aria = isSession
     ? item.live
-      ? `${item.label} — live session, switch instantly`
-      : `${item.label} — dormant session, resume (starts a new process)`
-    : `${item.label} — command`
+      ? `${item.label}, live session, switch instantly`
+      : `${item.label}, dormant session, resume (starts a new process)`
+    : `${item.label}, command`
 
   return (
     // role=option in the input's listbox: keyboard focus stays in the combobox and
@@ -451,5 +451,9 @@ function CommandIcon({ label }: { label: string }): JSX.Element {
   if (label.startsWith('Open Settings')) return <IconSettings className="h-3.5 w-3.5" />
   if (label.startsWith('Open Customizations')) return <IconSliders className="h-3.5 w-3.5" />
   if (label.startsWith('Close')) return <IconClose className="h-3.5 w-3.5" />
-  return <span className="block h-1.5 w-1.5 rounded-full bg-accent/60" />
+  return (
+    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden="true">
+      <span className="h-1.5 w-1.5 rounded-full bg-faint" />
+    </span>
+  )
 }

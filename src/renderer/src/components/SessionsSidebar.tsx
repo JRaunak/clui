@@ -617,7 +617,7 @@ function SessionRow({
               onRename()
             }
           }}
-          title={`${session.title}${session.live ? '\n(live — click to view, no reload)' : '\n(click to resume)'}`}
+          title={`${session.title}${session.live ? '\n(live: click to view, no reload)' : '\n(click to resume)'}`}
         >
           {session.title}
         </button>
@@ -667,7 +667,7 @@ function SessionRow({
               title={
                 session.ephemeral
                   ? 'Close and discard (not saved)'
-                  : 'Close — stop the process, keep the transcript (resume later)'
+                  : 'Close: stops the process, keeps the transcript to resume later'
               }
               aria-label={
                 session.ephemeral
@@ -724,11 +724,11 @@ function SessionMonogram({
 }): JSX.Element {
   const pending = session.pendingCount > 0
   const project = basename(session.cwd)
-  let label = `${session.title} — ${project}`
+  let label = `${session.title}, ${project}`
   if (pending)
-    label += ` — ${session.pendingCount} permission request${session.pendingCount > 1 ? 's' : ''} awaiting approval`
+    label += `, ${session.pendingCount} permission request${session.pendingCount > 1 ? 's' : ''} awaiting approval`
   if (session.bgCount > 0 && !active)
-    label += ` — ${session.bgCount} background task${session.bgCount > 1 ? 's' : ''} running`
+    label += `, ${session.bgCount} background task${session.bgCount > 1 ? 's' : ''} running`
 
   const tone = active || session.busy || pending ? 'text-content' : session.live ? 'text-dim' : 'text-faint'
   const fill = active

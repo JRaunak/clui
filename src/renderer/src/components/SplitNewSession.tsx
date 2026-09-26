@@ -1,6 +1,6 @@
 /** The expanded sidebar's New session control: a split-button. The wide segment starts a
  *  directoryless session (no folder dialog); the icon segment starts an ephemeral "Quick"
- *  session (not saved). One accent fill, subdivided. */
+ *  session (not saved). One outlined control, subdivided. */
 import { IconPlus, IconGhost } from './Icon'
 
 export function SplitNewSession({
@@ -14,7 +14,7 @@ export function SplitNewSession({
   onQuick: () => void
   /** CLI can't start a session: render an inert neutral affordance (aria-disabled + tooltip). */
   disabled?: boolean
-  /** A session spawn is in flight: keep the accent fill (busy, not unavailable), dim it, and
+  /** A session spawn is in flight: keep the live styling (busy, not unavailable), dim it, and
    *  swallow clicks so a slow CLI cold-start can't be double-submitted. */
   pending?: boolean
   disabledTitle?: string
@@ -23,11 +23,10 @@ export function SplitNewSession({
     'flex h-9 items-center justify-center transition-colors duration-150 ease-out ' +
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ' +
     'focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar focus-visible:z-10'
-  // Neutral inert fill when disabled, so it can't read as a live accent button (mirrors the Button
-  // disabled treatment). aria-disabled + tooltip keep it perceivable beyond color; clicks no-op.
+  // Faint so disabled can't read as live; aria-disabled + tooltip carry it beyond color.
   const seg = disabled
-    ? `${base} cursor-default bg-bg-raised text-faint`
-    : `${base} bg-accent text-on-accent hover:bg-accent-hover active:scale-[0.98] ${
+    ? `${base} cursor-default border border-border text-faint`
+    : `${base} border border-control-edge bg-transparent text-content hover:bg-bg-raised active:scale-[0.98] ${
         pending ? 'pointer-events-none opacity-60' : ''
       }`
 
@@ -40,7 +39,7 @@ export function SplitNewSession({
         aria-disabled={disabled || undefined}
         aria-busy={pending || undefined}
         title={disabled ? disabledTitle : undefined}
-        className={`${seg} flex-1 gap-2 rounded-l-md text-sm font-semibold`}
+        className={`${seg} flex-1 gap-2 rounded-l-md text-sm font-medium`}
       >
         <IconPlus className="h-4 w-4" />
         New session
@@ -51,7 +50,7 @@ export function SplitNewSession({
         aria-busy={pending || undefined}
         title={disabled ? disabledTitle : 'Quick session · not saved (discarded when closed) · ⌥⌘N'}
         onClick={disabled ? undefined : onQuick}
-        className={`${seg} w-9 shrink-0 rounded-r-md border-l ${disabled ? 'border-border' : 'border-on-accent/25'}`}
+        className={`${seg} w-9 shrink-0 rounded-r-md border-l-0`}
       >
         <IconGhost className="h-4 w-4" />
       </button>
