@@ -7,7 +7,7 @@ import { PermissionDialog } from './components/PermissionDialog'
 import { Customizations } from './components/Customizations'
 import { ChangedFiles } from './components/ChangedFiles'
 import { Settings } from './components/Settings'
-import { CommandPalette } from './components/CommandPalette'
+import { CommandPalette, type PaletteMode } from './components/CommandPalette'
 import { GlobalSearch } from './components/GlobalSearch'
 import { BackgroundTasks } from './components/BackgroundTasks'
 import { SubagentView } from './components/SubagentView'
@@ -76,7 +76,7 @@ export function App(): JSX.Element {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showCustomizations, setShowCustomizations] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [showPalette, setShowPalette] = useState(false)
+  const [palette, setPalette] = useState<{ mode: PaletteMode; seq: number } | null>(null)
   const [dockH, setDockH] = useState(0)
   const [sbW, setSbW] = useState(0)
   const globalSearchOpen = useSession((s) => s.globalSearchOpen)
@@ -98,7 +98,7 @@ export function App(): JSX.Element {
   const anyOverlayOpen =
     showSettings ||
     showCustomizations ||
-    showPalette ||
+    !!palette ||
     globalSearchOpen ||
     permissionPending
 
@@ -241,10 +241,13 @@ export function App(): JSX.Element {
   const startQuick = useCallback(() => void spawnSession('quick'), [spawnSession])
   const startInDir = useCallback(() => void spawnSession('pick'), [spawnSession])
 
-  // ⌘N new session · ⌘⇧N new session in a directory · ⌘W close · ⌘, settings · ⌘K palette
+  // ⌘N new session · ⌘⇧N new session in a directory · ⌘W close · ⌘, settings · ⌘K palette · ⌘⇧K commands
   // (native menu) + ⌃Tab / ⌃C.
   const openSettings = useCallback(() => setShowSettings(true), [])
-  const openPalette = useCallback(() => setShowPalette(true), [])
+  const openPalette = useCallback(
+    (mode: PaletteMode) => setPalette((p) => ({ mode, seq: (p?.seq ?? 0) + 1 })),
+    []
+  )
 
   // Sidebar chrome remounts on toggle; if focus sat inside it, move it to the persistent
   // title-bar toggle rather than let it fall to <body>.
@@ -560,27 +563,29 @@ export function App(): JSX.Element {
         <GlobalSearch />
         {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} />}
         {showSettings && <Settings onClose={() => setShowSettings(false)} />}
-        {showPalette && (
+        {palette && (
           <CommandPalette
-            onClose={() => setShowPalette(false)}
+            mode={palette.mode}
+            openSeq={palette.seq}
+            onClose={() => setPalette(null)}
             onNewSession={() => {
-              setShowPalette(false)
+              setPalette(null)
               void newSession()
             }}
             onNewSessionInDir={() => {
-              setShowPalette(false)
+              setPalette(null)
               void pickAndStart()
             }}
             onOpenSettings={() => {
-              setShowPalette(false)
+              setPalette(null)
               setShowSettings(true)
             }}
             onOpenCustomizations={() => {
-              setShowPalette(false)
+              setPalette(null)
               setShowCustomizations(true)
             }}
             onToggleSidebar={() => {
-              setShowPalette(false)
+              setPalette(null)
               toggleSidebar()
             }}
             sidebarCollapsed={sidebarCollapsed}

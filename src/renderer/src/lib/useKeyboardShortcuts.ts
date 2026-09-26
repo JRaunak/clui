@@ -17,6 +17,7 @@
  */
 import { useEffect } from 'react'
 import { useSession } from '../store'
+import type { PaletteMode } from '../components/CommandPalette'
 
 /**
  * @param onNewSession start a directoryless session in the chat dir (⌘N)
@@ -29,7 +30,7 @@ export function useKeyboardShortcuts(opts: {
   onNewQuickSession: () => void
   onNewSessionInDir: () => void
   onOpenSettings: () => void
-  onOpenPalette: () => void
+  onOpenPalette: (mode: PaletteMode) => void
   onToggleSidebar: () => void
 }): void {
   const {
@@ -68,7 +69,10 @@ export function useKeyboardShortcuts(opts: {
           onOpenSettings()
           break
         case 'open-palette':
-          onOpenPalette()
+          onOpenPalette('switch')
+          break
+        case 'open-command-palette':
+          onOpenPalette('command')
           break
         // Find/search route straight to store flags (no App callback needed).
         // ⌘F only means something with a session open; ⌘⇧F is always available.

@@ -3,8 +3,8 @@
  *
  * Sessions are listed first (recency-ordered) so the common path (jump to a session
  * by name) is instant. A leading `>` scopes the query to commands only (New session,
- * Settings, Customizations, Toggle theme, Close session), matching the VS Code convention,
- * so both live on one key with no second shortcut.
+ * Settings, Customizations, Toggle theme, Close session), matching the VS Code convention;
+ * ⌘⇧K opens straight into it.
  *
  * Fuzzy subsequence matching with highlighted characters. Keyboard: ↑/↓ move, Enter runs,
  * Esc closes (via the shared escape-stack so a palette over a modal closes the palette first).
@@ -16,6 +16,8 @@ import { applyTheme } from '../lib/theme'
 import { fuzzyMatch, highlightRuns } from '../lib/fuzzy'
 import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage } from './Icon'
 import type { ProjectGroup } from '../../../shared/sessions'
+
+export type PaletteMode = 'switch' | 'command'
 
 interface PaletteItem {
   key: string
@@ -30,6 +32,8 @@ interface PaletteItem {
 }
 
 export function CommandPalette({
+  mode,
+  openSeq,
   onClose,
   onNewSession,
   onNewSessionInDir,
@@ -38,6 +42,8 @@ export function CommandPalette({
   onToggleSidebar,
   sidebarCollapsed
 }: {
+  mode: PaletteMode
+  openSeq: number
   onClose: () => void
   onNewSession: () => void
   onNewSessionInDir: () => void
@@ -46,7 +52,7 @@ export function CommandPalette({
   onToggleSidebar: () => void
   sidebarCollapsed: boolean
 }): JSX.Element {
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(mode === 'command' ? '>' : '')
   const [sel, setSel] = useState(0)
   const [disk, setDisk] = useState<ProjectGroup[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
@@ -56,9 +62,23 @@ export function CommandPalette({
 
   // Focus the input on open; load the on-disk session list once.
   useEffect(() => {
-    inputRef.current?.focus()
+    const el = inputRef.current
+    el?.focus()
+    el?.setSelectionRange(el.value.length, el.value.length)
     void window.clui.listSessions().then(setDisk)
   }, [])
+
+  const queryRef = useRef(query)
+  queryRef.current = query
+
+  useEffect(() => {
+    if (queryRef.current.startsWith('>') === (mode === 'command')) return
+    const q = mode === 'command' ? '>' : ''
+    setQuery(q)
+    setSel(0)
+    const raf = requestAnimationFrame(() => inputRef.current?.setSelectionRange(q.length, q.length))
+    return () => cancelAnimationFrame(raf)
+  }, [mode, openSeq])
 
   // Build the full item set (sessions first, then commands). Recomputed when the query
   // toggles command-scope or the disk list arrives; live sessions are read non-reactively
@@ -305,7 +325,7 @@ export function CommandPalette({
           ref={listRef}
           id="palette-listbox"
           role="listbox"
-          aria-label="Results"
+          aria-label={commandMode ? 'Commands' : 'Sessions and commands'}
           className="min-h-0 flex-1 overflow-y-auto py-1.5"
         >
           {filtered.length === 0 ? (

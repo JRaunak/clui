@@ -273,6 +273,7 @@ export type MenuAction =
   | 'close-session'
   | 'open-settings'
   | 'open-palette'
+  | 'open-command-palette'
   | 'find-in-conversation'
   | 'find-next'
   | 'find-prev'

@@ -129,6 +129,7 @@ function buildMenu(): void {
         { label: 'New Quick Session', accelerator: 'Alt+CmdOrCtrl+N', click: () => send('new-quick-session') },
         { label: 'New Session in a Directory…', accelerator: 'CmdOrCtrl+Shift+N', click: () => send('new-named-session') },
         { label: 'Quick Switcher…', accelerator: 'CmdOrCtrl+K', click: () => send('open-palette') },
+        { label: 'Command Palette…', accelerator: 'CmdOrCtrl+Shift+K', click: () => send('open-command-palette') },
         { label: 'Close Session', accelerator: 'CmdOrCtrl+W', click: () => send('close-session') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
         { type: 'separator' },
