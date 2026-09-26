@@ -473,9 +473,12 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Lora is soft/calligraphic by construction. Nudge the weight up a touch so the display type has presence without going sharp. */
-.font-serif {
-  font-weight: 500;
+/* Lora is soft/calligraphic by construction. Nudge the weight up a touch so the display type has presence without going sharp.
+   In @layer base so an explicit weight utility on the element still wins. */
+@layer base {
+  .font-serif {
+    font-weight: 500;
+  }
 }
 
 /* Global keyboard focus ring: keyboard-only (focus-visible), so mouse clicks stay clean. Placed in @layer base so elements
