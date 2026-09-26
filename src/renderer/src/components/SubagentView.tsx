@@ -140,8 +140,8 @@ function WorkflowAgentDetail({ agent }: { agent: WorkflowAgent }): JSX.Element {
   return (
     <div className="max-w-3xl">
       <div className="mb-4 flex items-center gap-2.5">
-        <span className="font-mono text-[14px] font-semibold text-accent">{agent.label}</span>
-        <span className="flex items-center gap-1.5 font-mono text-[12px]">
+        <span className="font-mono text-ui font-semibold text-accent">{agent.label}</span>
+        <span className="flex items-center gap-1.5 font-mono text-meta">
           <span className={`h-1.5 w-1.5 rounded-full ${status.cls}`} aria-hidden="true" />
           <span className="text-dim">{status.label}</span>
         </span>
@@ -157,7 +157,7 @@ function WorkflowAgentDetail({ agent }: { agent: WorkflowAgent }): JSX.Element {
           {msgs.map((m) => (
             <HistoryBlock key={m.id} msg={m} />
           ))}
-          {running && <div className="text-[12px] text-faint">••• still running…</div>}
+          {running && <div className="text-meta text-faint">••• still running…</div>}
         </div>
       )}
     </div>
@@ -176,21 +176,21 @@ function HistoryBlock({
   const tools = hideAgentTools ? msg.tools.filter((t) => !isAgentTool(t.name)) : msg.tools
   return (
     <div>
-      <div className="mb-1.5 font-serif text-[13px] text-dim">
+      <div className="mb-1.5 text-label font-semibold text-dim">
         {isUser ? 'Prompt' : <span className="text-accent">Agent</span>}
       </div>
       {msg.thinking && (
-        <div className="mb-2 border-l-2 border-border pl-3 text-[12.5px] italic text-dim [&_*]:text-dim">
+        <div className="mb-2 border-l-2 border-border pl-3 text-label italic text-dim [&_*]:text-dim">
           <Markdown text={msg.thinking} />
         </div>
       )}
       {msg.text && (isUser ? (
-        <div className="whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-dim">{msg.text}</div>
+        <div className="whitespace-pre-wrap font-mono text-code text-dim">{msg.text}</div>
       ) : (
         <Markdown text={msg.text} />
       ))}
       {tools.map((t) => (
-        <div key={t.id} className="my-1.5 rounded-md border border-border bg-tool px-3 py-1.5 font-mono text-[11.5px]">
+        <div key={t.id} className="my-1.5 rounded-md border border-border bg-tool px-3 py-1.5 font-mono text-meta">
           <span className="font-semibold text-accent">{t.name}</span>
           {toolSummary(t.input) && <span className="ml-2 text-dim">{toolSummary(t.input)}</span>}
         </div>
@@ -226,14 +226,14 @@ function WorkflowTreeView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-[13px]">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-label">
         <button className="font-semibold text-accent hover:brightness-110" onClick={onClose}>
           ← Chat
         </button>
         <span className="text-faint">·</span>
         <span className="text-info">◆</span>
         <span className="font-mono text-content">{workflow.name}</span>
-        <span className="ml-auto flex items-center gap-2 font-mono text-[12px]">
+        <span className="ml-auto flex items-center gap-2 font-mono text-meta">
           <span className="text-ok">{done} done</span>
           <span className="text-faint">·</span>
           <span className="text-warn">{running} running</span>
@@ -261,12 +261,12 @@ function WorkflowTreeView({
       <div className="flex min-h-0 flex-1">
         {/* Phase tree rail */}
         <div className="w-64 shrink-0 overflow-y-auto border-r border-border bg-bg-elev p-2">
-          <div className="px-2 pb-2 pt-1 font-mono text-[11px] text-faint">{workflow.description}</div>
+          <div className="px-2 pb-2 pt-1 text-meta text-faint">{workflow.description}</div>
           {workflow.phases.map((ph) => {
             const inPhase = workflow.agents.filter((a) => a.phaseIndex === ph.index)
             return (
               <div key={ph.index} className="mt-1">
-                <div className="flex items-center gap-1.5 px-2 py-1.5 text-[12px] font-semibold text-dim">
+                <div className="flex items-center gap-1.5 px-2 py-1.5 text-meta font-semibold text-dim">
                   {ph.title}
                   <span className="font-normal text-faint">({inPhase.length})</span>
                 </div>
@@ -277,13 +277,13 @@ function WorkflowTreeView({
                     <button
                       key={a.index}
                       onClick={() => setSelIdx(a.index)}
-                      className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-5 pr-2 text-left text-[12px] ${
+                      className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-5 pr-2 text-left text-meta ${
                         selected ? 'bg-accent-surface text-content' : 'text-dim hover:bg-bg-raised'
                       } ${/fail|error/i.test(a.state) ? 'text-content' : ''}`}
                     >
                       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.cls}`} aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px]">{a.label}</span>
-                      <span className="shrink-0 font-mono text-[11px] text-faint">{st.label}</span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-meta">{a.label}</span>
+                      <span className="shrink-0 font-mono text-meta text-faint">{st.label}</span>
                     </button>
                   )
                 })}
@@ -291,7 +291,7 @@ function WorkflowTreeView({
             )
           })}
           {workflow.agents.length === 0 && (
-            <div className="px-2 py-3 text-[12px] text-faint">Starting workflow…</div>
+            <div className="px-2 py-3 text-meta text-faint">Starting workflow…</div>
           )}
         </div>
 
@@ -349,11 +349,11 @@ function NestedAgentCard({
         </span>
       )}
       {child.subagentType && (
-        <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-[10px] text-faint">
+        <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint">
           {child.subagentType}
         </span>
       )}
-      <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-[11px]">
+      <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-meta">
         <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden="true" />
         <span className="text-faint">{status}</span>
         <span className="text-faint">→</span>
@@ -373,7 +373,7 @@ function SpawnedChildren({
   if (items.length === 0) return null
   return (
     <div className="mt-2 flex flex-col gap-1.5">
-      <div className="font-serif text-[13px] text-dim">
+      <div className="text-label font-medium text-dim">
         Spawned {items.length === 1 ? 'subagent' : `${items.length} subagents`}
       </div>
       {items.map((c) => (
@@ -407,7 +407,7 @@ function SubagentStream({ entries }: { entries: SubagentMessage[] }): JSX.Elemen
     }
     out.push(
       <div key={`m${i}`}>
-        <div className="mb-1.5 flex items-center gap-1.5 font-serif text-[13px] text-dim">
+        <div className="mb-1.5 flex items-center gap-1.5 text-label font-semibold text-dim">
           {e.role === 'user' ? (
             // The subagent's turn input (prompt).
             <span className="text-dim">Prompt</span>
@@ -420,7 +420,7 @@ function SubagentStream({ entries }: { entries: SubagentMessage[] }): JSX.Elemen
           {e.kind === 'thinking' && <span className="text-faint">· thinking</span>}
         </div>
         {e.kind === 'thinking' ? (
-          <div className="border-l-2 border-border pl-3 text-[12.5px] italic text-dim [&_*]:text-dim">
+          <div className="border-l-2 border-border pl-3 text-label italic text-dim [&_*]:text-dim">
             <Markdown text={e.text} />
           </div>
         ) : (
@@ -583,7 +583,7 @@ export function SubagentView(): JSX.Element | null {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Breadcrumb (clickable to jump up). Back button pops one level. */}
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-[13px]">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-label">
         <button
           className="font-semibold text-accent hover:brightness-110"
           onClick={popSubagent}
@@ -616,20 +616,20 @@ export function SubagentView(): JSX.Element | null {
           )
         })}
         {subtype && (
-          <span className="rounded bg-bg-raised px-1.5 py-0.5 font-mono text-[11px] text-faint">
+          <span className="rounded bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-faint">
             {subtype}
           </span>
         )}
         {modelLabel && (
           <span
-            className="shrink-0 whitespace-nowrap rounded bg-bg-raised px-1.5 py-0.5 font-mono text-[11px] text-faint"
+            className="shrink-0 whitespace-nowrap rounded bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-faint"
             title={`Ran on ${modelLabel}${effortLabel ? ` at ${effortLabel} effort` : ''}`}
           >
             {modelLabel}
             {effortLabel && <>{' · '}{effortLabel}</>}
           </span>
         )}
-        <span className="ml-auto flex items-center gap-2 font-mono text-[12px]">
+        <span className="ml-auto flex items-center gap-2 font-mono text-meta">
           {running ? (
             <>
               {/* A backgrounded subagent reads ambient info-blue "launched" (its Agent tool fired);
@@ -659,7 +659,7 @@ export function SubagentView(): JSX.Element | null {
       {/* Transcript: full width. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
         {desc && (
-          <div className="mb-5 max-w-3xl font-mono text-[12px] leading-relaxed text-faint">
+          <div className="mb-5 max-w-3xl font-mono text-code text-faint">
             {desc}
           </div>
         )}
@@ -683,7 +683,7 @@ export function SubagentView(): JSX.Element | null {
           <div className="flex max-w-3xl flex-col gap-4">
             <SubagentStream entries={subMsgs} />
             {running && (
-              <div className="text-[12px] text-faint">••• streaming from subagent…</div>
+              <div className="text-meta text-faint">••• streaming from subagent…</div>
             )}
             <SpawnedChildren items={shownChildren} onOpen={pushSubagent} />
           </div>

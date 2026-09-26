@@ -2,7 +2,7 @@
 
 /* ─────────────────────────────────────────────────────────────────────────
    Bundled fonts (local; the app phones nothing home).
-   Lora = soft, calligraphic variable serif for wordmark + headings + speaker labels.
+   Lora = soft, calligraphic variable serif for wordmark and welcome/onboarding display type.
    IBM Plex Mono = tool output, code, ids.
    ───────────────────────────────────────────────────────────────────────── */
 @font-face {
@@ -169,6 +169,28 @@
   --text-xl--line-height: 1.75rem; /* 28px */
   --text-2xl: 1.625rem; /* 26px */
   --text-2xl--line-height: 2rem; /* 32px */
+  /* Semantic type roles. Components use these, never text-[Npx]. Weight and tracking baked in here
+     are overridable: an explicit font-* or tracking-* utility on the element still wins. */
+  --text-title: 1.125rem; /* 18px */
+  --text-title--line-height: 1.5rem;
+  --text-title--font-weight: 600;
+  --text-ui: 0.875rem; /* 14px */
+  --text-ui--line-height: 1.25rem;
+  --text-label: 0.8125rem; /* 13px */
+  --text-label--line-height: 1.125rem;
+  --text-code: 0.8125rem; /* 13px */
+  --text-code--line-height: 1.25rem;
+  --text-meta: 0.75rem; /* 12px */
+  --text-meta--line-height: 1rem;
+  /* Only caps labels and badges go below 12px: uppercase glyphs at 11px are as tall as lowercase at ~14px. */
+  --text-caps: 0.6875rem; /* 11px */
+  --text-caps--line-height: 1rem;
+  --text-caps--letter-spacing: 0.06em;
+  --text-caps--font-weight: 500;
+  --text-badge: 0.6875rem; /* 11px */
+  --text-badge--line-height: 0.875rem;
+  --text-badge--letter-spacing: 0;
+  --text-badge--font-weight: 600;
 
   /* Signature motion: a gentle "breathe" for the live-session dot, and a soft dock-edge pulse while a turn streams. Both restrained and disabled under prefers-reduced-motion. */
   --animate-breathe: breathe 2.8s var(--ease-out) infinite;
@@ -567,7 +589,7 @@ body {
   border-radius: var(--radius-md);
   background: var(--color-accent);
   padding: 0.5rem 0.75rem;
-  font-size: 0.8125rem;
+  font-size: var(--text-label);
   font-weight: 600;
   color: var(--color-on-accent);
   transition: background-color var(--duration-fast) var(--ease-out);

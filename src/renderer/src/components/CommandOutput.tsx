@@ -168,11 +168,11 @@ export function ContextCard({ report }: { report: ContextReport }): JSX.Element 
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-border bg-tool">
       <div className="flex items-center justify-between border-b border-border/60 px-3.5 py-2">
-        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-accent">
+        <span className="text-caps uppercase text-accent">
           Context
         </span>
         {report.model && (
-          <span className="truncate font-mono text-[11px] text-faint" title={report.model}>
+          <span className="truncate font-mono text-meta text-faint" title={report.model}>
             {report.model}
           </span>
         )}
@@ -218,7 +218,7 @@ export function ContextCard({ report }: { report: ContextReport }): JSX.Element 
 function Stat({ label, value }: { label: string; value: string }): JSX.Element {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[11px] uppercase tracking-wide text-faint">{label}</span>
+      <span className="text-caps uppercase text-faint">{label}</span>
       <span className="font-mono text-sm tabular-nums text-content">{value}</span>
     </div>
   )
@@ -235,7 +235,7 @@ export function UsageCard({ report }: { report: UsageReport }): JSX.Element {
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-border bg-tool">
       <div className="border-b border-border/60 px-3.5 py-2">
-        <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-accent">Usage</span>
+        <span className="text-caps uppercase text-accent">Usage</span>
       </div>
       {stats.length > 0 && (
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 px-3.5 py-3 sm:grid-cols-4">
@@ -246,7 +246,7 @@ export function UsageCard({ report }: { report: UsageReport }): JSX.Element {
       )}
       {report.models.length > 0 && (
         <div className="border-t border-border/60 px-3.5 py-2.5">
-          <span className="text-[11px] uppercase tracking-wide text-faint">By model</span>
+          <span className="text-caps uppercase text-faint">By model</span>
           <div className="mt-1.5 flex flex-col gap-1">
             {report.models.map((m, i) => (
               <div key={i} className="flex flex-col gap-0.5 font-mono text-xs sm:flex-row sm:gap-2">
@@ -259,7 +259,7 @@ export function UsageCard({ report }: { report: UsageReport }): JSX.Element {
       )}
       {report.promptCache.length > 0 && (
         <div className="border-t border-border/60 px-3.5 py-2.5">
-          <span className="text-[11px] uppercase tracking-wide text-faint">Prompt cache</span>
+          <span className="text-caps uppercase text-faint">Prompt cache</span>
           <div className="mt-1.5 flex flex-col gap-1">
             {report.promptCache.map((c, i) => (
               <div key={i} className="flex flex-col gap-0.5 font-mono text-xs sm:flex-row sm:gap-2">

@@ -257,7 +257,7 @@ export function TaskPuck({
                 Tasks · {done}/{total}
               </span>
               {activeTask && (
-                <span className="truncate text-[13px] text-content" title={activeTask.activeForm || activeTask.subject}>
+                <span className="truncate text-label text-content" title={activeTask.activeForm || activeTask.subject}>
                   {activeTask.activeForm || activeTask.subject}
                 </span>
               )}
@@ -296,9 +296,9 @@ export function TaskPuck({
                 >
                   <v.Icon className={`mt-px h-4 w-4 shrink-0 ${TONE_CLASS[v.glyph]}`} />
                   <span className="min-w-0 flex-1">
-                    <span className={`block text-[13px] leading-snug ${TONE_CLASS[v.text]}`}>{t.subject}</span>
+                    <span className={`block text-label leading-snug ${TONE_CLASS[v.text]}`}>{t.subject}</span>
                     {blocked && blockers && (
-                      <span className="mt-0.5 block text-[11px] leading-tight text-faint">blocked by: {blockers}</span>
+                      <span className="mt-0.5 block text-meta leading-tight text-faint">blocked by: {blockers}</span>
                     )}
                   </span>
                 </li>

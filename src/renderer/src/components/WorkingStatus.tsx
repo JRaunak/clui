@@ -32,13 +32,13 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
     }
   }, [startMs])
   return (
-    <span className="flex items-center gap-2 text-[13px]">
+    <span className="flex items-center gap-2 text-label">
       <TypingDots className="text-ok" />
       {compacting ? (
         <span className="text-content">Compacting context…</span>
       ) : (
         !taskMerged && (
-          <span className="font-serif italic text-content">{thinkingTokens !== null ? 'Thinking' : `${verb}…`}</span>
+          <span className="font-medium text-content">{thinkingTokens !== null ? 'Thinking' : `${verb}…`}</span>
         )
       )}
       {!compacting && thinkingTokens !== null && (

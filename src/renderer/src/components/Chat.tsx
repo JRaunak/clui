@@ -174,7 +174,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
             asserting what was saved. */}
         <div className="m-auto flex max-w-sm flex-col items-center gap-2 text-center" aria-live="polite">
           <span className="h-2 w-2 rounded-full bg-accent/70" aria-hidden="true" />
-          <p className="font-serif text-lg italic text-dim">{title}</p>
+          <p className="text-title text-content">{title}</p>
           <p className="text-sm leading-relaxed text-faint">{body}</p>
           {!resumed && ephemeral && (
             <p className="text-xs leading-relaxed text-faint">
@@ -206,7 +206,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
           // scrollWidth past clientWidth (a react-virtuoso quirk), producing a spurious h-scrollbar.
           <div className="mx-auto max-w-5xl px-7 pb-6 [&:first-child]:pt-6">
             {resumed && historyCount > 0 && index === historyCount && (
-              <div className="mb-6 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-faint">
+              <div className="mb-6 flex items-center gap-2 text-caps uppercase text-faint">
                 <span className="h-px flex-1 bg-border" />
                 resumed here
                 <span className="h-px flex-1 bg-border" />
@@ -320,7 +320,7 @@ function QueuedMessages(): JSX.Element | null {
   if (queued.length === 0) return null
   return (
     <div className="mt-4 flex flex-col gap-2" role="list" aria-label="Queued messages">
-      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-info">
+      <div className="flex items-center gap-1.5 text-caps uppercase text-info">
         <span
           className="h-1.5 w-1.5 rounded-full bg-info"
           style={{ animation: 'var(--animate-breathe)' }}
@@ -383,7 +383,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
           rows={Math.min(6, Math.max(1, draft.split('\n').length))}
           className="w-full resize-none bg-transparent text-sm leading-relaxed text-content focus-visible:outline-none"
         />
-        <div className="mt-1.5 flex items-center justify-end gap-1.5 text-[11px] text-faint">
+        <div className="mt-1.5 flex items-center justify-end gap-1.5 text-meta text-faint">
           <span className="mr-auto">Enter to save · Esc to discard</span>
           <button
             className="rounded p-1 text-faint hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -460,7 +460,7 @@ function QueuedAttachments({ atts }: { atts: SendAttachment[] }): JSX.Element {
         ) : (
           <span
             key={i}
-            className="flex items-center gap-1 rounded border border-border bg-bg-raised px-1.5 py-0.5 font-mono text-[10px] text-dim"
+            className="flex items-center gap-1 rounded border border-border bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-dim"
             title={d.name}
           >
             <IconFile className="h-3 w-3 shrink-0" />

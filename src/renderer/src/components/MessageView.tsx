@@ -29,7 +29,7 @@ function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element
         <span className="max-w-[160px] truncate text-xs text-content" title={att.name}>
           {att.name}
         </span>
-        <span className="font-mono text-[10px] text-faint">{meta}</span>
+        <span className="font-mono text-meta text-faint">{meta}</span>
       </div>
     </div>
   )
@@ -96,7 +96,7 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
   return (
     <div className="flex flex-col gap-2">
       <div
-        className={`flex items-center gap-1.5 font-serif text-[14px] font-semibold ${
+        className={`flex items-center gap-1.5 text-label font-semibold ${
           isUser ? 'text-dim' : 'text-accent'
         }`}
       >
@@ -169,11 +169,11 @@ function isPlanEntry(name: string): boolean {
  *  "resumed here" divider but carrying plan mode's info-blue identity. */
 function PlanModeDivider(): JSX.Element {
   return (
-    <div className="my-6 flex items-center gap-2 text-[11px]">
+    <div className="my-6 flex items-center gap-2 text-caps">
       <span className="h-px flex-1 bg-border" aria-hidden="true" />
       <span className="flex items-center gap-1.5 text-info">
         <IconChecklist className="h-3.5 w-3.5" aria-hidden="true" />
-        <span className="uppercase tracking-[0.14em]">entered plan mode</span>
+        <span className="uppercase">entered plan mode</span>
       </span>
       <span className="h-px flex-1 bg-border" aria-hidden="true" />
     </div>
@@ -182,11 +182,11 @@ function PlanModeDivider(): JSX.Element {
 
 function CompactionDivider({ marker }: { marker: CompactionMarker }): JSX.Element {
   return (
-    <div className="my-6 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-faint">
+    <div className="my-6 flex items-center gap-2 text-caps uppercase text-faint">
       <span className="h-px flex-1 bg-border" aria-hidden="true" />
       <span>
         {marker.trigger === 'auto' ? 'auto-compacted' : 'compacted'}{' '}
-        <span className="font-mono normal-case tabular-nums">
+        <span className="font-mono normal-case tracking-normal tabular-nums">
           {fmtTokens(marker.preTokens)} <span aria-hidden="true">→</span>
           <span className="sr-only">to</span> {fmtTokens(marker.postTokens)}
         </span>{' '}
@@ -236,13 +236,13 @@ function BlockedActionsNotice({ denials }: { denials: PermissionDenial[] }): JSX
           aria-hidden="true"
         />
         <IconShieldOff className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
-        <span className="shrink-0 text-[13px] font-medium text-info">
+        <span className="shrink-0 text-label font-medium text-info">
           {denials.length === 1 ? '1 action' : `${denials.length} actions`} blocked by your permission rules
         </span>
         {/* Single-denial only: on multi, a one-item preview misdirects to an arbitrary (often
             benign) entry and hides the rest, so the count alone is the headline. */}
         {!open && denials.length === 1 && first && (
-          <span className="flex min-w-0 flex-1 items-baseline gap-1 text-[12.5px]">
+          <span className="flex min-w-0 flex-1 items-baseline gap-1 text-meta">
             <span className="shrink-0 text-dim">{first.tool}</span>
             {first.target && (
               <>
@@ -258,8 +258,8 @@ function BlockedActionsNotice({ denials }: { denials: PermissionDenial[] }): JSX
       {open && (
         <ul className="mt-1.5 flex flex-col gap-1 pl-6">
           {rows.map((r, i) => (
-            <li key={i} className="flex items-baseline gap-1.5 text-[12.5px]">
-              <span className="shrink-0 font-serif font-medium text-content">{r.tool}</span>
+            <li key={i} className="flex items-baseline gap-1.5 text-meta">
+              <span className="shrink-0 font-medium text-content">{r.tool}</span>
               {r.target && (
                 <>
                   <span className="shrink-0 text-faint" aria-hidden="true">
@@ -304,7 +304,7 @@ function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.
     <div className="flex flex-col items-end">
       <button
         type="button"
-        className="flex min-h-[24px] items-center gap-1 rounded px-1.5 font-mono text-[10.5px] tabular-nums text-faint transition-colors hover:text-content"
+        className="flex min-h-[24px] items-center gap-1 rounded px-1.5 font-mono text-meta tabular-nums text-faint transition-colors hover:text-content"
         aria-expanded={open}
         aria-controls={panelId}
         aria-label={`Turn cost ${fmtCost(usage.costUSD)}, show breakdown`}
@@ -316,7 +316,7 @@ function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.
       {open && (
         <dl
           id={panelId}
-          className="mt-1 flex w-full max-w-xs flex-col gap-1 rounded-md border border-border bg-bg-elev px-3 py-2 text-[12px]"
+          className="mt-1 flex w-full max-w-xs flex-col gap-1 rounded-md border border-border bg-bg-elev px-3 py-2 text-meta"
         >
           <UsageRow label="Turn cost" value={fmtCost(usage.costUSD)} strong />
           <UsageRow label="Tokens" value={`${n(usage.inputTokens)} in · ${n(usage.outputTokens)} out`} />
@@ -349,7 +349,7 @@ const PEER_COLLAPSE_OVER = 72
 
 /**
  * An inbound cross-session peer message. Info-blue (never terracotta), with identity on the
- * glyph + @ sigil + serif name + verb, not hue alone. Pending is the anonymous placeholder
+ * glyph + @ sigil + name + verb, not hue alone. Pending is the anonymous placeholder
  * that backfills in place when the peer-origin result lands. Collapsible via ToolGroup's
  * local-state pattern; Virtuoso remeasures on the height change.
  */
@@ -384,7 +384,7 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
           {gutter}
           <IconMessage className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
           {/* Accessible text is the stable sentence; the dots are decorative. */}
-          <span className="font-serif text-[13px] font-medium italic text-faint">
+          <span className="text-label font-medium text-faint">
             A peer session is messaging this session
             <span className="peer-ellipsis inline-flex" aria-hidden="true">
               <b>.</b>
@@ -399,9 +399,9 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
 
   const head = justResolved ? 'peer-head-in' : ''
   const glyph = <IconMessage className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
-  const name = <span className="shrink-0 font-serif text-[13px] font-semibold text-info">@{peer.from}</span>
+  const name = <span className="shrink-0 text-label font-semibold text-info">@{peer.from}</span>
   // Full-strength info (not reduced opacity) for the contrast margin verified.
-  const verb = <span className="shrink-0 text-[11px] uppercase tracking-[0.12em] text-info">messaged</span>
+  const verb = <span className="shrink-0 text-meta text-info">messaged</span>
 
   return (
     <div className={shell}>
@@ -421,7 +421,7 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
           {open ? (
             verb
           ) : (
-            <span className="min-w-0 flex-1 truncate text-[13.5px] italic text-dim">{message.text}</span>
+            <span className="min-w-0 flex-1 truncate text-label italic text-dim">{message.text}</span>
           )}
         </button>
       ) : (
@@ -433,7 +433,7 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
         </div>
       )}
       {open && (
-        <div className="mb-px mt-2 whitespace-pre-wrap pl-[43px] text-[15px] leading-[1.55] text-content max-w-[70ch]">
+        <div className="mb-px mt-2 whitespace-pre-wrap pl-[43px] text-sm text-content max-w-[70ch]">
           {message.text}
         </div>
       )}
@@ -535,7 +535,7 @@ export function ToolGroup({ tools }: { tools: ToolCall[] }): JSX.Element | null 
         {/* Static dot: the chat footer is the single animated element per turn. */}
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden="true" />
         <span className="text-xs font-semibold text-content">Tasks</span>
-        <span className="ml-auto flex items-center gap-2 font-mono text-[11px]">
+        <span className="ml-auto flex items-center gap-2 font-mono text-meta">
           <span className="text-ok">{done} done</span>
           <span className="text-faint">·</span>
           <span className="text-warn">{running} running</span>
@@ -549,7 +549,7 @@ export function ToolGroup({ tools }: { tools: ToolCall[] }): JSX.Element | null 
       </button>
       <div className="flex flex-col gap-1.5 pl-3">
         {collapse && !expanded && done > 0 && (
-          <div className="px-1 text-[11px] text-faint">{done} completed hidden — click to expand</div>
+          <div className="px-1 text-meta text-faint">{done} completed hidden · click to expand</div>
         )}
         {visible.map((t) => (
           <ToolCallView key={t.id} tool={t} showDots={false} />
@@ -631,7 +631,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
           Bash result would be overkill). */}
       <div className="flex w-full items-center">
       <button
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-[14px]"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-ui"
         onClick={() => (isSubagent ? viewSubagent(tool.id) : setOpen((o) => !o))}
         aria-expanded={isSubagent ? undefined : open}
       >
@@ -649,11 +649,11 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
           <span className="truncate font-mono text-xs text-dim">{summary}</span>
         )}
         {isSubagent && subType && (
-          <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-[10px] text-faint">
+          <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint">
             {subType}
           </span>
         )}
-        <span className="ml-auto flex items-center gap-1.5 text-[11px]">
+        <span className="ml-auto flex items-center gap-1.5 text-meta">
           {running && isBackgrounded ? (
             // A backgrounded tool (Workflow / run_in_background Bash) returns its result almost
             // immediately, then the real work continues in the tray. In the brief gap before its
@@ -701,7 +701,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
           )}
         </span>
         {/* Subagent: a hint that the card opens the transcript (arrow). */}
-        {isSubagent && <span className="ml-2 shrink-0 font-mono text-[11px] text-faint">→</span>}
+        {isSubagent && <span className="ml-2 shrink-0 font-mono text-meta text-faint">→</span>}
       </button>
       {/* Sibling of the head button, not nested: button-in-button is invalid. Persistent, not
           hover-only, so it stays discoverable. */}
@@ -721,7 +721,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
           on the tool surface is under 4.5:1, so the reason itself is text-dim, not text-err). */}
       {tool.isError && !open && (
         <div
-          className="truncate border-t border-border px-3 py-1.5 font-mono text-[12px] text-dim"
+          className="truncate border-t border-border px-3 py-1.5 font-mono text-meta text-dim"
           title={errLine || undefined}
         >
           {errLine || 'View error'}
@@ -730,7 +730,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
       {open && !isSubagent && (
         <div className="border-t border-border px-3 py-2.5">
           <div className="mb-1.5 flex items-center gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">Output</span>
+            <span className="text-caps uppercase text-faint">Output</span>
             <button
               type="button"
               onClick={onCopy}
@@ -750,7 +750,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
             type="button"
             onClick={() => setInputOpen((o) => !o)}
             aria-expanded={inputOpen}
-            className="mt-2.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-faint transition-colors hover:text-dim"
+            className="mt-2.5 flex min-h-6 items-center gap-1.5 text-caps uppercase text-faint transition-colors hover:text-dim"
           >
             <IconChevron
               className={`h-3 w-3 transition-transform ${inputOpen ? 'rotate-90' : ''}`}

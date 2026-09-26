@@ -49,14 +49,14 @@ function CodeBlock({ code, lang }: { code: string; lang: string | null }): JSX.E
   return (
     <div className="group relative my-2 overflow-hidden rounded-md border border-border bg-tool">
       <div className="flex items-center justify-between border-b border-border/60 px-3 py-1">
-        <span className="font-mono text-[11px] uppercase tracking-wide text-faint">
+        <span className="font-mono text-meta text-faint">
           {used ?? 'text'}
         </span>
         {/* Persistent at-rest affordance (opacity-60), brightening on hover/focus. A hover-only
             copy button is undiscoverable and unreachable by a keyboard scan of visible controls. */}
         <button
           onClick={onCopy}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-dim transition-colors hover:text-content"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-dim transition-colors hover:text-content"
           title="Copy code"
         >
           {copied ? (
