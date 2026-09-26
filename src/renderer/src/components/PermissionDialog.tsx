@@ -85,11 +85,11 @@ function GenericPermission({
         className="w-[min(560px,90%)] rounded-xl border border-border bg-bg-elev shadow-lg outline-none"
       >
         <div className="border-b border-border px-5 py-3.5">
-          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-warn">
+          <div className="flex items-center gap-1.5 text-caps uppercase text-warn">
             <IconShield className="h-3.5 w-3.5" />
             Permission required
           </div>
-          <div id="permission-title" className="mt-1.5 font-serif text-lg font-semibold text-content">
+          <div id="permission-title" className="mt-1.5 text-title text-content">
             Allow <span className="text-accent">{request.displayName || request.toolName}</span>?
           </div>
         </div>
@@ -140,10 +140,10 @@ function GenericPermission({
                 <IconCheck className="h-3 w-3" />
               </span>
               <span>
-                <span className="block text-[13px] leading-tight text-content">
+                <span className="block text-label leading-tight text-content">
                   Also switch to {suggestion.label} for this session
                 </span>
-                <span id="perm-quickaction-desc" className="mt-0.5 block text-[11px] leading-tight text-faint">
+                <span id="perm-quickaction-desc" className="mt-0.5 block text-meta leading-tight text-faint">
                   {suggestion.description}
                 </span>
               </span>
@@ -186,8 +186,8 @@ function PermissionReason({
 }): JSX.Element {
   const path = blockedPath && (
     <div className="mt-2">
-      <div className="text-[12px] uppercase tracking-wide text-dim">Path</div>
-      <div className="mt-0.5 break-all font-mono text-[13px] text-content">{blockedPath}</div>
+      <div className="text-caps uppercase text-dim">Path</div>
+      <div className="mt-0.5 break-all font-mono text-code text-content">{blockedPath}</div>
     </div>
   )
   if (!safetyCheck) {
@@ -201,7 +201,7 @@ function PermissionReason({
   }
   return (
     <div id="permission-reason" className="mb-3 border-l-2 border-warn/60 pl-3">
-      <div className="text-[12px] font-medium text-warn">Safety check</div>
+      <div className="text-meta font-medium text-warn">Safety check</div>
       <div className="mt-0.5 whitespace-pre-wrap break-words text-sm text-content">{reason}</div>
       {bypass && <div className="mt-1 text-xs text-dim">Autonomous mode doesn&apos;t skip safety checks.</div>}
       {path}
@@ -241,8 +241,8 @@ function PermissionInput({
       {diff && (
         <>
           <div className="rounded-md border border-border bg-bg px-3 py-2">
-            <div className="text-[12px] uppercase tracking-wide text-dim">File</div>
-            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[14px] text-content">
+            <div className="text-caps uppercase text-dim">File</div>
+            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-code text-content">
               {diff.filePath}
             </pre>
           </div>
@@ -255,8 +255,8 @@ function PermissionInput({
       )}
       {highlight && (
         <div className="rounded-md border border-border bg-bg px-3 py-2">
-          <div className="text-[12px] uppercase tracking-wide text-dim">{highlight.label}</div>
-          <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[14px] text-content">
+          <div className="text-caps uppercase text-dim">{highlight.label}</div>
+          <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-code text-content">
             {highlight.value}
           </pre>
         </div>
@@ -312,7 +312,7 @@ function DiffBlock({ edits }: { edits: DiffEdit[] }): JSX.Element {
       {edits.map((e, i) => (
         <div key={i} className={i > 0 ? 'border-t border-border' : ''}>
           {e.label && (
-            <div className="px-3 py-1 text-[11px] uppercase tracking-wide text-dim">{e.label}</div>
+            <div className="px-3 py-1 text-caps uppercase text-dim">{e.label}</div>
           )}
           <DiffLines removed={e.removed} added={e.added} />
         </div>
@@ -326,8 +326,8 @@ function DiffBlock({ edits }: { edits: DiffEdit[] }): JSX.Element {
 function DiffLines({ removed, added }: { removed: string | null; added: string | null }): JSX.Element {
   const line = (glyph: string, tint: string, glyphColor: string, text: string, key: string): JSX.Element => (
     <div key={key} className={`flex ${tint}`}>
-      <span className={`w-4 shrink-0 select-none text-center font-mono text-[13px] ${glyphColor}`}>{glyph}</span>
-      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed text-content">
+      <span className={`w-4 shrink-0 select-none text-center font-mono text-code ${glyphColor}`}>{glyph}</span>
+      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-code text-content">
         {text}
       </span>
     </div>

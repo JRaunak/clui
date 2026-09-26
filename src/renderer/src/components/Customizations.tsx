@@ -70,10 +70,10 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div>
-            <div id="config-title" className="font-serif text-lg font-semibold text-content">
+            <div id="config-title" className="text-title text-content">
               Configuration
             </div>
-            <div className="mt-0.5 text-[12px] text-dim">
+            <div className="mt-0.5 text-meta text-dim">
               What applies to this workspace, and where it comes from. Read-only.
             </div>
           </div>
@@ -90,7 +90,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
             silently show only user + plugin entries (the reported "I can't see my
             project skills" confusion). Say so explicitly instead of pretending it's complete. */}
         {!loading && !cwd && (
-          <div className="border-b border-info/30 bg-info/10 px-5 py-2 text-[12px] text-info">
+          <div className="border-b border-info/30 bg-info/10 px-5 py-2 text-meta text-info">
             Global scope only — open a session to also see this workspace’s project configuration.
           </div>
         )}
@@ -99,7 +99,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
           {(['agents', 'skills', 'hooks', 'mcp'] as Tab[]).map((t) => (
             <button
               key={t}
-              className={`rounded-t px-3 py-2 text-[14px] capitalize ${
+              className={`rounded-t px-3 py-2 text-ui capitalize ${
                 tab === t
                   ? 'border-b-2 border-accent font-semibold text-content'
                   : 'text-dim hover:text-content'
@@ -116,7 +116,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
           {/* Only on agents/skills, the scopes that have plugin entries. */}
           {!loading && (tab === 'agents' || tab === 'skills') && (hiddenPluginCount > 0 || showPlugins) && (
             <button
-              className="mb-3 rounded-md border border-border px-2.5 py-1 text-[12px] text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="mb-3 rounded-md border border-border px-2.5 py-1 text-label text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               onClick={() => setShowPlugins((v) => !v)}
               aria-pressed={showPlugins}
             >
@@ -247,7 +247,7 @@ function ItemRow({
         <OriginBadge origin={origin} />
         {onOpen && (
           <button
-            className="ml-auto text-[12px] text-dim hover:text-accent"
+            className="ml-auto text-meta text-dim hover:text-accent"
             onClick={onOpen}
             title="Open source file in editor"
           >
@@ -262,7 +262,7 @@ function ItemRow({
           </div>
           {overflows && (
             <button
-              className="mt-0.5 text-[12px] text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="mt-0.5 text-meta text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               onClick={() => setExpanded((v) => !v)}
               aria-expanded={expanded}
             >
@@ -274,7 +274,7 @@ function ItemRow({
       {chipItems.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1">
           {chipItems.map((c, i) => (
-            <span key={i} className="rounded bg-bg-raised px-1.5 py-0.5 text-[11px] text-dim">
+            <span key={i} className="rounded bg-bg-raised px-1.5 py-0.5 text-meta text-dim">
               {c}
             </span>
           ))}
@@ -283,7 +283,7 @@ function ItemRow({
       {metaItems.length > 0 && (
         <div className="mt-1.5 flex flex-col gap-1">
           {metaItems.map((m, i) => (
-            <code key={i} className="block break-words font-mono text-[12px] text-dim">
+            <code key={i} className="block break-words font-mono text-meta text-dim">
               {m}
             </code>
           ))}
@@ -297,7 +297,7 @@ function OriginBadge({ origin }: { origin: ConfigOrigin }): JSX.Element {
   const color =
     origin === 'project' ? 'text-ok' : origin === 'user' ? 'text-accent' : 'text-dim'
   return (
-    <span className={`rounded border border-border px-1.5 py-0.5 text-[11px] uppercase ${color}`}>
+    <span className={`rounded border border-border px-1.5 py-0.5 text-badge capitalize ${color}`}>
       {origin}
     </span>
   )
@@ -309,7 +309,7 @@ function OriginBadge({ origin }: { origin: ConfigOrigin }): JSX.Element {
 function Empty({ what, hint }: { what: string; hint: string }): JSX.Element {
   return (
     <div className="flex min-h-[40vh] flex-col items-center justify-center gap-1.5 text-center">
-      <div className="font-serif text-base text-dim">No {what} found</div>
+      <div className="text-ui text-dim">No {what} found</div>
       <div className="max-w-xs text-xs text-faint">{hint}</div>
     </div>
   )

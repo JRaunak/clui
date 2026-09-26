@@ -205,7 +205,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
       {/* Type something: this row itself becomes the text input when chosen. */}
       {(picked[qi] ?? []).includes(FREE_TEXT) ? (
         <div className="flex items-center gap-2.5 rounded-md border border-accent bg-accent-surface px-3 py-2">
-          <span className="w-4 shrink-0 text-center font-mono text-[11px] text-faint">
+          <span className="w-4 shrink-0 text-center font-mono text-meta text-faint">
             {q.options.length + 1}
           </span>
           <input
@@ -263,8 +263,8 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
       )}
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
-        <div className="font-serif text-base font-semibold text-content">{q.question}</div>
-        {q.multiSelect && <div className="text-[11px] text-faint">Select all that apply</div>}
+        <div className="text-title text-content">{q.question}</div>
+        {q.multiSelect && <div className="text-meta text-faint">Select all that apply</div>}
         {hasPreviews ? (
           <div className="flex items-start gap-4">
             <div
@@ -287,7 +287,7 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
         )}
         {hasPreviews && (
           <label className="mt-1 flex flex-col gap-1.5">
-            <span className="text-[11px] text-faint">Note (optional)</span>
+            <span className="text-meta text-faint">Note (optional)</span>
             <input
               value={note[qi] ?? ''}
               onChange={(e) => setNote((p) => ({ ...p, [qi]: e.target.value }))}
@@ -335,7 +335,7 @@ function OptionRow({
         selected ? 'border-accent bg-accent-surface' : 'border-border hover:border-border-strong hover:bg-bg-raised'
       }`}
     >
-      <span className="mt-0.5 w-4 shrink-0 text-center font-mono text-[11px] text-faint">{index}</span>
+      <span className="mt-0.5 w-4 shrink-0 text-center font-mono text-meta text-faint">{index}</span>
       <span className="min-w-0 flex-1">
         <span className="block text-sm text-content">{label}</span>
         {description && <span className="mt-0.5 block text-xs text-dim">{description}</span>}
@@ -351,8 +351,8 @@ function PreviewPane({ text, selectedLabel }: { text: string; selectedLabel: str
   return (
     <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-tool">
       <div className="flex min-w-0 items-baseline gap-1.5 border-b border-border/60 px-3 py-1.5">
-        <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.14em] text-faint">Preview</span>
-        {selectedLabel && <span className="min-w-0 truncate text-[11px] text-dim">{selectedLabel}</span>}
+        <span className="shrink-0 text-caps uppercase text-faint">Preview</span>
+        {selectedLabel && <span className="min-w-0 truncate text-meta text-dim">{selectedLabel}</span>}
       </div>
       {selectedLabel === null ? (
         <div className="flex flex-1 items-center justify-center px-3 py-2.5 text-center text-sm text-faint">
@@ -434,7 +434,7 @@ function Shell({
         }`}
       >
         <div className="border-b border-border px-5 py-3">
-          <div className="text-[11px] uppercase tracking-[0.14em] text-accent">Claude is asking</div>
+          <div className="text-caps uppercase text-accent">Claude is asking</div>
         </div>
         {children}
       </div>

@@ -62,7 +62,7 @@ export function Onboarding({
           <span className="font-serif text-4xl font-semibold tracking-tight text-content">Clui</span>
           <span className="h-2 w-2 translate-y-[-5px] rounded-full bg-accent" aria-hidden="true" />
         </div>
-        <h2 className="font-serif text-xl text-content">
+        <h2 className="text-title text-content">
           {broken ? 'The claude CLI isn’t responding' : 'Clui needs the claude CLI'}
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-dim">
@@ -85,7 +85,7 @@ export function Onboarding({
 
         {!broken && (
           <div className="mt-5 w-full rounded-lg border border-border bg-tool px-4 py-3 text-left">
-            <span className="text-[11px] uppercase tracking-wide text-faint">Install</span>
+            <span className="text-caps uppercase text-faint">Install</span>
             <p className="mt-1 select-all font-mono text-sm text-content">{INSTALL_CMD}</p>
             <p className="mt-2 text-xs text-faint">
               Or see{' '}

@@ -49,11 +49,11 @@ export function PlanDialog({ request }: { request: PendingPermission }): JSX.Ele
         className="flex max-h-[80vh] w-[min(720px,94%)] flex-col rounded-xl border border-border bg-bg-elev shadow-lg outline-none"
       >
         <div className="border-b border-border px-5 py-3.5">
-          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-info">
+          <div className="flex items-center gap-1.5 text-caps uppercase text-info">
             <IconChecklist className="h-3.5 w-3.5" />
             Plan mode
           </div>
-          <div id="plan-title" className="mt-1.5 font-serif text-lg font-semibold text-content">
+          <div id="plan-title" className="mt-1.5 text-title text-content">
             {plan ? 'Review the plan' : 'No plan to review'}
           </div>
         </div>

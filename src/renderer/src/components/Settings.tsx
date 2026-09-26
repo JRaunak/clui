@@ -173,7 +173,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
   return (
     <Overlay>
       <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
-        <div className="font-serif text-lg font-semibold text-content">Settings</div>
+        <div className="text-title text-content">Settings</div>
         <button
           className="rounded-md p-1 text-dim transition-colors hover:bg-bg-raised hover:text-content"
           onClick={onClose}
@@ -224,7 +224,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
             </button>
           </div>
           {/* Version + path are machine values, rendered in mono. */}
-          <div className="mt-1 text-[12px]">
+          <div className="mt-1 text-meta">
             {checking ? (
               <span className="text-dim">checking…</span>
             ) : cliInfo?.path ? (
@@ -251,7 +251,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
           />
         </Field>
 
-        <div className="text-[12px] uppercase tracking-wide text-dim">Defaults for new sessions</div>
+        <div className="mt-4 text-caps uppercase text-dim">Defaults for new sessions</div>
 
         <Field
           label="Permission mode"
@@ -281,7 +281,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
           // Amber = degraded but usable: they still have a working list, just possibly incomplete.
           note={
             !modelList.live && (
-              <p className="flex items-start gap-1.5 text-[12px] text-warn" role="status">
+              <p className="flex items-start gap-1.5 text-meta text-warn" role="status">
                 <IconWarn className="mt-px h-3.5 w-3.5 shrink-0" />
                 {FALLBACK_NOTES[modelList.reason ?? 'other']}
               </p>
@@ -335,7 +335,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
             >
               <IconCheck className="h-3 w-3" />
             </span>
-            <span className="text-[13px] text-content">Enable for new sessions</span>
+            <span className="text-label text-content">Enable for new sessions</span>
           </button>
         </Field>
 
@@ -361,7 +361,7 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
           </div>
         </Field>
 
-        <div className="text-[12px] uppercase tracking-wide text-dim">Quick sessions</div>
+        <div className="mt-4 text-caps uppercase text-dim">Quick sessions</div>
 
         <Field
           label="Model family"
@@ -460,13 +460,13 @@ function Field({
       {/* min-h-6 keeps the row a constant height whether or not the button is there,
           so resetting a field doesn't reflow everything below it. */}
       <div className="flex min-h-6 items-center justify-between gap-3">
-        <label className="text-[14px] font-semibold text-content">{label}</label>
+        <label className="text-ui font-semibold text-content">{label}</label>
         {onReset && (
           <button
             type="button"
             onClick={onReset}
             aria-label={`Reset ${label} to its inherited value`}
-            className="-mr-1.5 flex h-6 items-center rounded px-1.5 text-[12px] font-medium text-dim transition-colors hover:text-content"
+            className="-mr-1.5 flex h-6 items-center rounded px-1.5 text-label font-medium text-dim transition-colors hover:text-content"
           >
             Reset
           </button>
@@ -474,7 +474,7 @@ function Field({
       </div>
       {children}
       {hint && (
-        <p id={hintId} className="text-[12px] text-dim">
+        <p id={hintId} className="text-meta text-dim">
           {hint}
         </p>
       )}
