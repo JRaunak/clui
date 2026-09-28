@@ -1,53 +1,23 @@
 import { useState } from 'react'
-import { useActive, useSession, EMPTY_PENDING, type PendingPermission } from '../store'
-import { Button } from './Button'
-import { IconShield, IconCheck } from './Icon'
-import { QuestionDialog } from './QuestionDialog'
-import { PlanDialog } from './PlanDialog'
-import { useDialogFocus } from '../lib/useDialogFocus'
-import { highlightOf } from '../lib/toolHighlight'
-import { PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS } from '../../../shared/settings'
-import type { PermissionModeChoice } from '../../../shared/ipc'
-import type { PermissionSuggestion } from '../../../shared/events'
+import { useActive, useSession, type PendingPermission } from '../../store'
+import { Button } from '../Button'
+import { IconCheck, IconShield } from '../Icon'
+import { highlightOf } from '../../lib/toolHighlight'
+import { PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS } from '../../../../shared/settings'
+import type { PermissionModeChoice } from '../../../../shared/ipc'
+import type { PermissionSuggestion } from '../../../../shared/events'
+import { GateFrame, type GateCount } from './GateFrame'
 
-/** Modal shown when Claude requests permission for a gated tool call. Shows only the
- *  oldest pending request of the active session; background sessions accumulate their own. */
-export function PermissionDialog(): JSX.Element | null {
-  const pending = useActive((s) => s?.pendingPermissions ?? EMPTY_PENDING)
-  const activeHandleId = useSession((s) => s.activeHandleId)
-  const current = pending[0]
-  if (!current) return null
-
-  // Keyed by session handle + request id so a new request mounts clean: no armed quick-action,
-  // prior answers, or focus-on-Allow can survive from the one before it.
-  const key = `${activeHandleId ?? ''}:${current.requestId}`
-
-  // AskUserQuestion fires can_use_tool with requires_user_interaction even in bypass mode.
-  // Route to a dedicated picker, not the Allow/Deny dialog.
-  if (current.toolName === 'AskUserQuestion') {
-    return <QuestionDialog key={key} request={current} />
-  }
-
-  // ExitPlanMode is a decision to approve the plan, not a raw grant; renders the plan.
-  if (current.toolName === 'ExitPlanMode') {
-    return <PlanDialog key={key} request={current} />
-  }
-
-  return <GenericPermission key={key} request={current} queued={pending.length - 1} />
-}
-
-/** Allow/Deny body for a generic gated tool. Keyed per request so consent state is per-request. */
-function GenericPermission({
+/** Allow/Deny Gate for a generic gated tool. Keyed per request so consent state is per-request. */
+export function PermissionGate({
   request,
-  queued
+  count
 }: {
   request: PendingPermission
-  queued: number
+  count: GateCount
 }): JSX.Element {
   const respond = useSession((s) => s.respondPermission)
   const setPermissionMode = useSession((s) => s.setPermissionMode)
-  // Focus the container, not a button: announces the dialog without pre-selecting Allow/Deny.
-  const dialogRef = useDialogFocus<HTMLDivElement>()
   // Arms the "also switch mode" quick action; plain Allow stays a one-off.
   const [armed, setArmed] = useState(false)
 
@@ -74,53 +44,18 @@ function GenericPermission({
   const reason = request.decisionReason?.trim()
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div
-        ref={dialogRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="permission-title"
-        aria-describedby={reason ? 'permission-reason' : undefined}
-        className="w-[min(560px,90%)] rounded-xl border border-border bg-bg-elev shadow-lg outline-none"
-      >
-        <div className="border-b border-border px-5 py-3.5">
-          <div className="flex items-center gap-1.5 text-caps uppercase text-warn">
-            <IconShield className="h-3.5 w-3.5" />
-            Permission required
-          </div>
-          <div id="permission-title" className="mt-1.5 text-title text-content">
-            Allow <span className="text-accent">{request.displayName || request.toolName}</span>?
-          </div>
-        </div>
-
-        <div className="max-h-[45vh] overflow-y-auto px-5 py-4">
-          {reason && (
-            <PermissionReason
-              reason={reason}
-              safetyCheck={request.decisionReasonType === 'safetyCheck'}
-              bypass={sessionMode === 'bypassPermissions'}
-              blockedPath={shownPath(request) ? undefined : request.blockedPath}
-            />
-          )}
-          {request.description && (
-            <p className="mb-3 text-sm text-dim">{request.description}</p>
-          )}
-          <PermissionInput toolName={request.toolName} input={request.input} />
-          {queued > 0 && (
-            <div className="mt-3 text-xs text-dim">
-              +{queued} more request{queued > 1 ? 's' : ''} queued
-            </div>
-          )}
-        </div>
-
-        {/* Trust-critical: Deny is equal-size and nothing is autofocused, so a reflexive Enter
-            can't grant a write/exec. Quick action only arms; plain Allow stays a one-off. */}
-        <div
-          className={`flex items-center gap-3 border-t border-border px-5 py-3 ${
-            suggestion ? 'justify-between' : 'justify-end'
-          }`}
-        >
+    <GateFrame
+      icon={<IconShield className="h-3.5 w-3.5" />}
+      kicker="Permission required"
+      title={
+        <>
+          Allow <span className="font-mono">{request.displayName || request.toolName}</span>?
+        </>
+      }
+      count={count}
+      describedBy={reason ? 'permission-reason' : undefined}
+      footer={
+        <>
           {suggestion && (
             <button
               type="button"
@@ -128,7 +63,7 @@ function GenericPermission({
               aria-checked={armed}
               aria-describedby="perm-quickaction-desc"
               onClick={() => setArmed((v) => !v)}
-              className="group flex items-start gap-2 rounded-md py-1 pr-1 text-left"
+              className="group flex min-w-0 items-start gap-2 rounded-md py-1 pr-1 text-left"
             >
               <span
                 className={`mt-px flex h-4 w-4 flex-none items-center justify-center rounded-[4px] border transition-colors duration-150 ${
@@ -139,26 +74,24 @@ function GenericPermission({
               >
                 <IconCheck className="h-3 w-3" />
               </span>
-              <span>
+              <span className="min-w-0">
                 <span className="block text-label leading-tight text-content">
                   Also switch to {suggestion.label} for this session
                 </span>
-                <span id="perm-quickaction-desc" className="mt-0.5 block text-meta leading-tight text-faint">
+                <span id="perm-quickaction-desc" className="mt-0.5 block text-meta leading-tight text-dim">
                   {suggestion.description}
                 </span>
               </span>
             </button>
           )}
-          <div className="flex flex-none gap-2">
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={deny}
-              className="border-control-edge hover:border-err hover:text-err"
-            >
+          {/* Deny is equal-size and nothing is autofocused, so a reflexive Enter
+              can't grant a write or exec. The quick action only arms; plain Allow stays a one-off. */}
+          <div className="ml-auto flex flex-none gap-2">
+            <Button data-ui="gate-secondary" variant="control" size="md" onClick={deny} className="hover:border-err">
               Deny
             </Button>
             <Button
+              data-ui="gate-primary"
               variant="primary"
               size="md"
               className="flex-none whitespace-nowrap"
@@ -167,9 +100,22 @@ function GenericPermission({
               {allowLabel}
             </Button>
           </div>
-        </div>
+        </>
+      }
+    >
+      <div className="pb-1">
+        {reason && (
+          <PermissionReason
+            reason={reason}
+            safetyCheck={request.decisionReasonType === 'safetyCheck'}
+            bypass={sessionMode === 'bypassPermissions'}
+            blockedPath={shownPath(request) ? undefined : request.blockedPath}
+          />
+        )}
+        {request.description && <p className="mb-3 text-sm text-dim">{request.description}</p>}
+        <PermissionInput toolName={request.toolName} input={request.input} />
       </div>
-    </div>
+    </GateFrame>
   )
 }
 
@@ -240,7 +186,7 @@ function PermissionInput({
     <div className="flex flex-col gap-2">
       {diff && (
         <>
-          <div className="rounded-md border border-border bg-bg px-3 py-2">
+          <div className="rounded-md border border-border bg-tool px-3 py-2">
             <div className="text-caps uppercase text-dim">File</div>
             <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-code text-content">
               {diff.filePath}
@@ -254,7 +200,7 @@ function PermissionInput({
         </>
       )}
       {highlight && (
-        <div className="rounded-md border border-border bg-bg px-3 py-2">
+        <div className="rounded-md border border-border bg-tool px-3 py-2">
           <div className="text-caps uppercase text-dim">{highlight.label}</div>
           <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-code text-content">
             {highlight.value}
@@ -263,7 +209,7 @@ function PermissionInput({
       )}
       <details className="text-xs">
         <summary className="cursor-pointer text-dim">Full input ({toolName})</summary>
-        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-bg p-2 font-mono text-xs text-dim">
+        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-tool p-2 font-mono text-xs text-dim">
           {JSON.stringify(input, null, 2)}
         </pre>
       </details>
@@ -308,7 +254,7 @@ function diffOf(toolName: string, input: unknown): { filePath: string; edits: Di
 
 function DiffBlock({ edits }: { edits: DiffEdit[] }): JSX.Element {
   return (
-    <div className="max-h-[32vh] overflow-auto rounded-md border border-border">
+    <div className="max-h-[32vh] overflow-auto rounded-md border border-border bg-tool">
       {edits.map((e, i) => (
         <div key={i} className={i > 0 ? 'border-t border-border' : ''}>
           {e.label && (

@@ -17,6 +17,7 @@ import { useEscape } from '../lib/useEscape'
 import { Markdown } from './Markdown'
 import { ToolGroup } from './MessageView'
 import { IconClose, IconWarn } from './Icon'
+import { NeedsYouButton } from './Gate'
 import type { HistoryMessage } from '../../../shared/sessions'
 import type { SubagentMessage } from '../store'
 import { deriveModelInfo, EFFORT_LABELS, isEffortChoice } from '../../../shared/settings'
@@ -249,6 +250,7 @@ function WorkflowTreeView({
           )}
           {workflow.endedStatus && <span className="ml-1 text-faint">· ended</span>}
         </span>
+        <NeedsYouButton />
         <button
           className="ml-1 rounded-md p-1 text-dim hover:bg-bg-raised hover:text-content"
           onClick={onClose}
@@ -647,6 +649,7 @@ export function SubagentView(): JSX.Element | null {
             </>
           )}
         </span>
+        <NeedsYouButton />
         <button
           className="ml-1 rounded-md p-1 text-dim transition-colors hover:bg-bg-raised hover:text-content"
           onClick={close}

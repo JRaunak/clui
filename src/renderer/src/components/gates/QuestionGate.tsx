@@ -3,11 +3,10 @@
  *  Multiple questions, numbered options + free-text, Submit enables only when every question
  *  is answered. Wire format: allow + updatedInput = { questions, answers }. */
 import { useCallback, useRef, useState } from 'react'
-import { useSession, type PendingPermission } from '../store'
-import { useEscape } from '../lib/useEscape'
-import { useDialogFocus } from '../lib/useDialogFocus'
-import { Button } from './Button'
-import { IconCheck } from './Icon'
+import { useSession, type PendingPermission } from '../../store'
+import { Button } from '../Button'
+import { IconCheck, IconMessage } from '../Icon'
+import { GateFrame, type GateCount } from './GateFrame'
 
 interface QOption {
   label: string
@@ -59,10 +58,10 @@ function parseQuestions(input: unknown): Question[] {
   return []
 }
 
-export function QuestionDialog({ request }: { request: PendingPermission }): JSX.Element {
+export function QuestionGate({ request, count }: { request: PendingPermission; count: GateCount }): JSX.Element {
   const respond = useSession((s) => s.respondPermission)
   const questions = parseQuestions(request.input)
-  const [tab, setTab] = useState(0) // active question index (== questions.length → Submit tab)
+  const [tab, setTab] = useState(0) // active question index
   // Per-question chosen option labels or the FREE_TEXT sentinel.
   const [picked, setPicked] = useState<Record<number, string[]>>({})
   const [freeText, setFreeText] = useState<Record<number, string>>({})
@@ -85,10 +84,9 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     setPicked((prev) => {
       const cur = prev[qi] ?? []
       if (multi) {
-        // Custom text is EXCLUSIVE in multi-select: picking "Something else" clears the
-        // normal picks, and picking a normal option clears the custom sentinel. If both
-        // stay selected, submit sends ONLY the free text, silently dropping the
-        // visibly-selected option.
+        // Custom text is exclusive in multi-select: picking "Something else" clears the normal
+        // picks, and picking a normal option clears the custom sentinel. If both stayed selected,
+        // submit would send only the free text and silently drop the visibly-selected option.
         if (label === FREE_TEXT) {
           return { ...prev, [qi]: cur.includes(FREE_TEXT) ? cur.filter((l) => l !== FREE_TEXT) : [FREE_TEXT] }
         }
@@ -132,17 +130,15 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     })
   }
 
-  // Cancel: neutral skip (allow + empty answers). Distinct from "chat": no message to the model.
-  const cancel = useCallback((): void => {
+  // Cancel is a neutral skip (allow with empty answers). Unlike chat, it sends the model no message.
+  const cancel = (): void => {
     void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: { questions, answers: {} } })
-  }, [respond, request.requestId, questions])
-
-  useEscape(true, cancel)
+  }
 
   const tablistRef = useRef<HTMLDivElement>(null)
 
-  // Tab stays native so options, free text, and footer are reachable in DOM order. Enter submits
-  // when every question is answered, but not while an option button or free-text input has focus.
+  // Enter submits when every question is answered, but not while an option button or the
+  // free-text input has focus.
   const onKeyDown = (e: React.KeyboardEvent): void => {
     const tag = (e.target as HTMLElement).tagName
     if (tag === 'INPUT' || tag === 'BUTTON') return
@@ -152,7 +148,8 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
     }
   }
 
-  // W3C tabs pattern: Left/Right move both selected tab and DOM focus; roving tabindex keeps the tablist a single Tab stop.
+  // W3C tabs pattern: Left/Right move both the selected tab and DOM focus; roving tabindex keeps
+  // the tablist a single Tab stop.
   const onTablistKeyDown = (e: React.KeyboardEvent): void => {
     const last = questions.length - 1
     let next = tab
@@ -167,146 +164,144 @@ export function QuestionDialog({ request }: { request: PendingPermission }): JSX
   }
 
   if (questions.length === 0) {
-    // Degenerate input: just let the user dismiss.
     return (
-      <Shell>
-        <div className="px-5 py-4 text-sm text-dim">Claude asked a question, but it couldn’t be parsed.</div>
-        <Footer onCancel={cancel} onChat={chatInstead} submitDisabled onSubmit={submit} answeredCount={0} total={0} />
-      </Shell>
+      <GateFrame
+        icon={<IconMessage className="h-3.5 w-3.5" />}
+        kicker="Question"
+        title="Claude is asking"
+        count={count}
+        footer={
+          <QuestionFooter onCancel={cancel} onChat={chatInstead} submitDisabled onSubmit={submit} answeredCount={0} total={0} />
+        }
+      >
+        <p className="pb-1 text-sm text-dim">Claude asked a question, but it couldn’t be parsed.</p>
+      </GateFrame>
     )
   }
 
-  const q = questions[Math.min(tab, questions.length - 1)]
   const qi = Math.min(tab, questions.length - 1)
-  // Tab-bar only shows when there's more than one question.
+  const q = questions[qi]
   const showTabs = questions.length > 1
 
-  // Pane follows the selected option (first, for multiSelect); empty until something is picked.
+  // The pane follows the selected option (the first one, for multiSelect) and stays empty until
+  // something is picked. Hover never drives it.
   const hasPreviews = q.options.some((o) => !!o.preview)
   const selectedIdx = q.options.findIndex((o) => (picked[qi] ?? []).includes(o.label))
   const selectedOption = selectedIdx >= 0 ? q.options[selectedIdx] : null
-  // Coerce non-string preview to '' so the pane never shows `[object Object]`.
   const rawPreview = selectedOption?.preview
   const activePreview = typeof rawPreview === 'string' ? rawPreview : ''
 
-  const optionList = (
-    <>
+  const group = (
+    <div
+      role={q.multiSelect ? 'group' : 'radiogroup'}
+      aria-label={q.question}
+      className={`flex flex-col gap-1.5 ${hasPreviews ? 'w-full shrink-0 @min-[640px]:w-[300px]' : ''}`}
+    >
       {q.options.map((opt, oi) => (
         <OptionRow
           key={opt.label}
           index={oi + 1}
           label={opt.label}
           description={opt.description}
-          multi={Boolean(q.multiSelect)}
+          multi={!!q.multiSelect}
           selected={(picked[qi] ?? []).includes(opt.label)}
-          onClick={() => choose(qi, opt.label, Boolean(q.multiSelect))}
+          onClick={() => choose(qi, opt.label, !!q.multiSelect)}
         />
       ))}
-      {/* Type something: this row itself becomes the text input when chosen. */}
+      {/* The "Something else" row itself becomes the text input once chosen. */}
       {(picked[qi] ?? []).includes(FREE_TEXT) ? (
-        <div className="flex items-center gap-2.5 rounded-md border border-accent bg-accent-surface px-3 py-2">
-          <span className="w-4 shrink-0 text-center font-mono text-meta text-faint">
-            {q.options.length + 1}
-          </span>
+        <div className="flex items-center gap-2.5 rounded-md border border-content bg-tool px-3 py-2">
+          <span className="w-4 shrink-0 text-center font-mono text-meta text-dim">{q.options.length + 1}</span>
           <input
             ref={freeRef}
             value={freeText[qi] ?? ''}
             onChange={(e) => setFreeText((p) => ({ ...p, [qi]: e.target.value }))}
             placeholder="Type your answer…"
-            className="min-w-0 flex-1 bg-transparent text-sm text-content outline-none placeholder:text-faint"
+            className="min-w-0 flex-1 bg-transparent text-sm text-content outline-none placeholder:text-dim"
           />
-          <IconCheck className="h-3.5 w-3.5 shrink-0 text-accent" />
+          <IconCheck className="h-3.5 w-3.5 shrink-0 text-content" />
         </div>
       ) : (
         <OptionRow
           index={q.options.length + 1}
           label="Something else…"
-          multi={Boolean(q.multiSelect)}
+          multi={!!q.multiSelect}
           selected={false}
           onClick={() => choose(qi, FREE_TEXT, false)}
         />
       )}
-    </>
+    </div>
   )
 
   return (
-    <Shell onKeyDown={onKeyDown} wide={hasPreviews}>
-      {/* Tab uses no leading circle and no filled pill because those misread as a
-          single-select control. */}
-      {showTabs && (
-        <div
-          ref={tablistRef}
-          role="tablist"
-          aria-label="Questions"
-          onKeyDown={onTablistKeyDown}
-          className="flex items-stretch gap-1 overflow-x-auto border-b border-border px-4"
-        >
-          {questions.map((qq, i) => (
-            <button
-              key={i}
-              role="tab"
-              aria-selected={i === tab}
-              tabIndex={i === tab ? 0 : -1}
-              onClick={() => setTab(i)}
-              className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
-                i === tab
-                  ? 'border-accent font-medium text-accent'
-                  : 'border-transparent text-dim hover:text-content'
-              }`}
-            >
-              {qq.header || `Q${i + 1}`}
-              {/* title (not aria-label): Svg renders it as a real <title> so "answered" reaches AT. */}
-              {isAnswered(i) && <IconCheck className="h-3 w-3 text-ok" title="answered" />}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
-        <div className="text-title text-content">{q.question}</div>
-        {q.multiSelect && <div className="text-meta text-faint">Select all that apply</div>}
+    <GateFrame
+      icon={<IconMessage className="h-3.5 w-3.5" />}
+      kicker="Question"
+      title={q.question}
+      count={count}
+      onKeyDown={onKeyDown}
+      tabs={
+        showTabs ? (
+          <div
+            ref={tablistRef}
+            role="tablist"
+            aria-label="Questions"
+            onKeyDown={onTablistKeyDown}
+            className="flex shrink-0 items-stretch gap-1 overflow-x-auto overflow-y-hidden px-4 shadow-[inset_0_-1px_0_var(--color-border)]"
+          >
+            {questions.map((qq, i) => (
+              <button
+                key={i}
+                role="tab"
+                aria-selected={i === tab}
+                tabIndex={i === tab ? 0 : -1}
+                onClick={() => setTab(i)}
+                className={`flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
+                  i === tab ? 'border-content font-medium text-content' : 'border-transparent text-dim hover:text-content'
+                }`}
+              >
+                {qq.header || `Q${i + 1}`}
+                {/* title, not aria-label: Svg renders it as a real <title>, so "answered" reaches AT. */}
+                {isAnswered(i) && <IconCheck className="h-3 w-3 text-ok" title="answered" />}
+              </button>
+            ))}
+          </div>
+        ) : undefined
+      }
+      footer={
+        <QuestionFooter
+          onCancel={cancel}
+          onChat={chatInstead}
+          submitDisabled={!allAnswered}
+          onSubmit={submit}
+          answeredCount={answeredCount}
+          total={questions.length}
+        />
+      }
+    >
+      <div className="flex flex-col gap-3 pt-1 pb-1">
+        {q.multiSelect && <div className="text-meta text-dim">Select all that apply</div>}
         {hasPreviews ? (
-          <div className="flex items-start gap-4">
-            <div
-              role={q.multiSelect ? 'group' : 'radiogroup'}
-              aria-label={q.question}
-              className="flex w-[300px] shrink-0 flex-col gap-1.5"
-            >
-              {optionList}
-            </div>
+          <div className="flex flex-col gap-4 @min-[640px]:flex-row @min-[640px]:items-start">
+            {group}
             <PreviewPane text={activePreview} selectedLabel={selectedOption?.label ?? null} />
           </div>
         ) : (
-          <div
-            role={q.multiSelect ? 'group' : 'radiogroup'}
-            aria-label={q.question}
-            className="flex flex-col gap-1.5"
-          >
-            {optionList}
-          </div>
+          group
         )}
         {hasPreviews && (
           <label className="mt-1 flex flex-col gap-1.5">
-            <span className="text-meta text-faint">Note (optional)</span>
+            <span className="text-meta text-dim">Note (optional)</span>
             <input
               value={note[qi] ?? ''}
               onChange={(e) => setNote((p) => ({ ...p, [qi]: e.target.value }))}
               placeholder="Add a note for Claude…"
-              className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-content outline-none placeholder:text-faint focus:border-accent"
+              className="rounded-md border border-border bg-tool px-3 py-2 text-sm text-content outline-none placeholder:text-dim focus:border-accent"
             />
           </label>
         )}
       </div>
-
-      <Footer
-        onCancel={cancel}
-        onChat={chatInstead}
-        submitDisabled={!allAnswered}
-        onSubmit={submit}
-        answeredCount={answeredCount}
-        total={questions.length}
-      />
-    </Shell>
+    </GateFrame>
   )
 }
 
@@ -331,16 +326,16 @@ function OptionRow({
       role={multi ? 'checkbox' : 'radio'}
       aria-checked={selected}
       onClick={onClick}
-      className={`flex items-start gap-2.5 rounded-md border px-3 py-2 text-left transition-colors ${
-        selected ? 'border-accent bg-accent-surface' : 'border-border hover:border-border-strong hover:bg-bg-raised'
+      className={`flex items-start gap-2.5 rounded-md border bg-tool px-3 py-2 text-left transition-colors ${
+        selected ? 'border-content' : 'border-border hover:border-border-strong hover:bg-bg-raised'
       }`}
     >
-      <span className="mt-0.5 w-4 shrink-0 text-center font-mono text-meta text-faint">{index}</span>
+      <span className="mt-0.5 w-4 shrink-0 text-center font-mono text-meta text-dim">{index}</span>
       <span className="min-w-0 flex-1">
         <span className="block text-sm text-content">{label}</span>
         {description && <span className="mt-0.5 block text-xs text-dim">{description}</span>}
       </span>
-      {selected && <IconCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />}
+      {selected && <IconCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-content" />}
     </button>
   )
 }
@@ -351,26 +346,26 @@ function PreviewPane({ text, selectedLabel }: { text: string; selectedLabel: str
   return (
     <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-tool">
       <div className="flex min-w-0 items-baseline gap-1.5 border-b border-border/60 px-3 py-1.5">
-        <span className="shrink-0 text-caps uppercase text-faint">Preview</span>
+        <span className="shrink-0 text-caps uppercase text-dim">Preview</span>
         {selectedLabel && <span className="min-w-0 truncate text-meta text-dim">{selectedLabel}</span>}
       </div>
       {selectedLabel === null ? (
-        <div className="flex flex-1 items-center justify-center px-3 py-2.5 text-center text-sm text-faint">
+        <div className="flex flex-1 items-center justify-center px-3 py-2.5 text-center text-sm text-dim">
           Select an option to preview it.
         </div>
       ) : text ? (
-        <pre className="max-h-[46vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs text-content">
+        <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs text-content">
           {text}
         </pre>
       ) : (
         // This option carries no preview; say so rather than showing an empty box.
-        <div className="px-3 py-2.5 text-xs text-faint">No preview for this option.</div>
+        <div className="px-3 py-2.5 text-xs text-dim">No preview for this option.</div>
       )}
     </div>
   )
 }
 
-function Footer({
+function QuestionFooter({
   onCancel,
   onChat,
   submitDisabled,
@@ -386,8 +381,8 @@ function Footer({
   total: number
 }): JSX.Element {
   return (
-    <div className="flex items-center gap-2 border-t border-border px-5 py-3">
-      <Button variant="ghost" size="md" onClick={onChat} title="Skip the question and chat freely instead">
+    <div className="flex w-full items-center gap-2">
+      <Button data-ui="gate-secondary" variant="ghost" size="md" onClick={onChat} title="Skip the question and chat freely instead">
         Chat about this
       </Button>
       <div className="ml-auto flex items-center gap-3">
@@ -398,45 +393,13 @@ function Footer({
           </span>
         )}
         <div className="flex gap-2">
-          <Button variant="outline" size="md" onClick={onCancel}>
+          <Button data-ui="gate-secondary" variant="control" size="md" onClick={onCancel}>
             Cancel
           </Button>
-          <Button variant="primary" size="md" onClick={onSubmit} disabled={submitDisabled}>
+          <Button data-ui="gate-primary" variant="primary" size="md" onClick={onSubmit} disabled={submitDisabled}>
             {total > 1 ? 'Send answers' : 'Send answer'}
           </Button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function Shell({
-  children,
-  onKeyDown,
-  // Widen only when the active question has previews. Clamps against 720px min window width.
-  wide = false
-}: {
-  children: React.ReactNode
-  onKeyDown?: (e: React.KeyboardEvent) => void
-  wide?: boolean
-}): JSX.Element {
-  const dialogRef = useDialogFocus<HTMLDivElement>()
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onKeyDown={onKeyDown}>
-      <div
-        ref={dialogRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Claude is asking"
-        className={`flex max-h-[80vh] flex-col rounded-xl border border-border bg-bg-elev shadow-lg outline-none ${
-          wide ? 'w-[min(880px,94%)]' : 'w-[min(600px,92%)]'
-        }`}
-      >
-        <div className="border-b border-border px-5 py-3">
-          <div className="text-caps uppercase text-accent">Claude is asking</div>
-        </div>
-        {children}
       </div>
     </div>
   )

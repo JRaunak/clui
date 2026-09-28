@@ -7,8 +7,8 @@
  * component that wants Esc-to-close calls `useEscape(active, onEscape)`; the most
  * recently activated one wins, and it stops there (no cascade).
  *
- * The permission dialog intentionally does NOT use this: dismissing a security
- * decision with Esc is ambiguous (deny? cancel?), so it stays click-only.
+ * Gates don't register here. Esc inside a Gate only hands focus back to the composer and is
+ * handled on the Gate itself, so an Esc meant for a popover can never land on a decision.
  */
 import { useEffect } from 'react'
 

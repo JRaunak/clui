@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { useActive, useSession, ensureModelPrefsLoaded, sessionDisplayTitle, EMPTY_PENDING, type NoticeTone } from './store'
+import { useActive, useSession, ensureModelPrefsLoaded, sessionDisplayTitle, type NoticeTone } from './store'
 import { Chat } from './components/Chat'
 import { Composer } from './components/Composer'
 import { SessionsSidebar } from './components/SessionsSidebar'
-import { PermissionDialog } from './components/PermissionDialog'
+import { GateAnnouncer } from './components/Gate'
 import { Customizations } from './components/Customizations'
 import { ChangedFiles } from './components/ChangedFiles'
 import { Settings } from './components/Settings'
@@ -80,7 +80,6 @@ export function App(): JSX.Element {
   const [dockH, setDockH] = useState(0)
   const [sbW, setSbW] = useState(0)
   const globalSearchOpen = useSession((s) => s.globalSearchOpen)
-  const permissionPending = useActive((s) => (s?.pendingPermissions ?? EMPTY_PENDING).length > 0)
 
   // Native `inert` on the background regions contains focus and hides them from AT while a
   // dialog is open (WCAG 2.4.3 / 2.1.2), in one property instead of a hand-rolled Tab cycle.
@@ -95,12 +94,7 @@ export function App(): JSX.Element {
   const wasOverlayOpenRef = useRef(false)
   // Measured so --dock-h can give the transcript bottom clearance and lift the bottom-right pills.
   const dockRef = useRef<HTMLDivElement>(null)
-  const anyOverlayOpen =
-    showSettings ||
-    showCustomizations ||
-    !!palette ||
-    globalSearchOpen ||
-    permissionPending
+  const anyOverlayOpen = showSettings || showCustomizations || !!palette || globalSearchOpen
 
   // Track the floating dock's height (composer grows, ChangedFiles toggles). rAF-coalesced
   // to dodge the ResizeObserver-loop warning; re-armed when the transcript view mounts.
@@ -559,7 +553,7 @@ export function App(): JSX.Element {
       {/* Overlays mount outside <aside>/<main> so those regions can be inerted wholesale (see the
           inert effect above). `data-overlay-host` marks this subtree so the focus tracker ignores it. */}
       <div data-overlay-host>
-        <PermissionDialog />
+        <GateAnnouncer />
         <GlobalSearch />
         {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} />}
         {showSettings && <Settings onClose={() => setShowSettings(false)} />}

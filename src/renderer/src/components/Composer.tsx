@@ -14,6 +14,7 @@ import { useComposerAutocomplete } from './ComposerAutocomplete'
 import { ModelEffortPicker } from './ModelEffortPicker'
 import { UltracodeToggle } from './UltracodeToggle'
 import { ContextRing } from './ContextRing'
+import { GateHost } from './Gate'
 import { Dropdown, type DropdownOption } from './Dropdown'
 import {
   IconArrowUp,
@@ -324,14 +325,16 @@ export function Composer(): JSX.Element {
   return (
     <div className="mx-auto w-full max-w-5xl px-7">
       <div
-        className={`dock-fade-both relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 transition-colors ${
-          dragOver ? 'border-accent' : 'border-border focus-within:border-accent'
+        data-ui="composer-dock"
+        className={`dock-fade-both relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 ${
+          dragOver ? 'border-accent' : 'border-border has-[textarea:focus]:border-accent'
         }`}
         onDrop={onDrop}
         onDragEnter={onDragEnter}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
       >
+        <GateHost />
         {/* Drag-to-attach overlay: accent is legit here (a live, transient state cue). */}
         {dragOver && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg-elev/85">

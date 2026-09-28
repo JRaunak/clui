@@ -10,7 +10,7 @@ function toWorkspaceRelative(cwd: string | null, path: string): string {
 export function ChangedFiles(): JSX.Element | null {
   const changedFiles = useActive((s) => s?.changedFiles ?? EMPTY_STRINGS)
   const cwd = useActive((s) => s?.cwd ?? null)
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   if (changedFiles.length === 0) return null
 

@@ -286,7 +286,8 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
       cancelAnimationFrame(raf)
       raf = requestAnimationFrame(context.repin)
     })
-    ro.observe(el)
+    // Border box: the dock height arrives as padding (--dock-h), which the content box doesn't see.
+    ro.observe(el, { box: 'border-box' })
     return () => {
       ro.disconnect()
       cancelAnimationFrame(raf)

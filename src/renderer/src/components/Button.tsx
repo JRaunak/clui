@@ -6,7 +6,7 @@
  */
 import type { ButtonHTMLAttributes } from 'react'
 
-type Variant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive'
+type Variant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'control'
 type Size = 'sm' | 'md' | 'lg' | 'icon'
 
 const VARIANTS: Record<Variant, string> = {
@@ -14,7 +14,9 @@ const VARIANTS: Record<Variant, string> = {
   secondary: 'bg-bg-raised text-content hover:bg-border border border-border',
   outline: 'border border-border text-content hover:border-accent hover:text-content bg-transparent',
   ghost: 'text-dim hover:text-content hover:bg-bg-raised bg-transparent',
-  destructive: 'bg-err text-on-err hover:brightness-110'
+  destructive: 'bg-err text-on-err hover:brightness-110',
+  // Secondary actions in a Gate footer: a bordered well reads as a button against the dock's elevated fill.
+  control: 'border border-control-edge bg-control text-content hover:bg-control-hover'
 }
 
 const SIZES: Record<Size, string> = {
