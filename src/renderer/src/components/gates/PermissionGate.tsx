@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useActive, useSession, type PendingPermission } from '../../store'
 import { Button } from '../Button'
 import { IconCheck, IconShield } from '../Icon'
@@ -11,10 +11,13 @@ import { GateFrame, type GateCount } from './GateFrame'
 /** Allow/Deny Gate for a generic gated tool. Keyed per request so consent state is per-request. */
 export function PermissionGate({
   request,
-  count
+  count,
+  copy
 }: {
   request: PendingPermission
   count: GateCount
+  /** For a request Clui raises itself: its own wording, and no tool input or mode switch to offer. */
+  copy?: { title: ReactNode; description: string; allowLabel: string; note?: string }
 }): JSX.Element {
   const respond = useSession((s) => s.respondPermission)
   const setPermissionMode = useSession((s) => s.setPermissionMode)
@@ -33,13 +36,13 @@ export function PermissionGate({
   }
   // Session-scoped mode switch. setPermissionMode is per-session, so a project- or
   // user-scoped suggestion would under-apply.
-  const suggestion = request.suppressAlwaysAllow ? null : pickModeSuggestion(request.permissionSuggestions)
+  const suggestion = copy || request.suppressAlwaysAllow ? null : pickModeSuggestion(request.permissionSuggestions)
   const allowAndSwitch = (): void => {
     void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: request.input })
     if (suggestion) void setPermissionMode(suggestion.mode)
   }
   // Label tracks the armed effect so the click's consequence is legible before pressing.
-  const allowLabel = !suggestion ? 'Allow' : armed ? `Allow & switch to ${suggestion.label}` : 'Allow once'
+  const allowLabel = copy ? copy.allowLabel : !suggestion ? 'Allow' : armed ? `Allow & switch to ${suggestion.label}` : 'Allow once'
   const sessionMode = useActive((s) => s?.permissionMode ?? null)
   const reason = request.decisionReason?.trim()
 
@@ -48,9 +51,11 @@ export function PermissionGate({
       icon={<IconShield className="h-3.5 w-3.5" />}
       kicker="Permission required"
       title={
-        <>
-          Allow <span className="font-mono">{request.displayName || request.toolName}</span>?
-        </>
+        copy?.title ?? (
+          <>
+            Allow <span className="font-mono">{request.displayName || request.toolName}</span>?
+          </>
+        )
       }
       count={count}
       describedBy={reason ? 'permission-reason' : undefined}
@@ -103,18 +108,25 @@ export function PermissionGate({
         </>
       }
     >
-      <div className="pb-1">
-        {reason && (
-          <PermissionReason
-            reason={reason}
-            safetyCheck={request.decisionReasonType === 'safetyCheck'}
-            bypass={sessionMode === 'bypassPermissions'}
-            blockedPath={shownPath(request) ? undefined : request.blockedPath}
-          />
-        )}
-        {request.description && <p className="mb-3 text-ui text-dim">{request.description}</p>}
-        <PermissionInput toolName={request.toolName} input={request.input} />
-      </div>
+      {copy ? (
+        <div className="pb-1">
+          <p className="text-ui text-dim">{copy.description}</p>
+          {copy.note && <div className="mt-1 text-meta text-dim">{copy.note}</div>}
+        </div>
+      ) : (
+        <div className="pb-1">
+          {reason && (
+            <PermissionReason
+              reason={reason}
+              safetyCheck={request.decisionReasonType === 'safetyCheck'}
+              bypass={sessionMode === 'bypassPermissions'}
+              blockedPath={shownPath(request) ? undefined : request.blockedPath}
+            />
+          )}
+          {request.description && <p className="mb-3 text-ui text-dim">{request.description}</p>}
+          <PermissionInput toolName={request.toolName} input={request.input} />
+        </div>
+      )}
     </GateFrame>
   )
 }

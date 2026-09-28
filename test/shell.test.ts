@@ -32,4 +32,7 @@ equal(
 }
 equal(sessionStatusOf(slice({ busy: true, lastError: 'boom' })).kind, 'failed', 'status: failed outranks working')
 equal(statusText(sessionStatusOf(slice({ pendingPermissions: [{ requestId: 'r', toolName: 'Write', displayName: 'Write', input: {} }] }))), 'Needs you: Allow Write', 'status: sentence form')
+const gate = (toolName: string) => statusText(sessionStatusOf(slice({ pendingPermissions: [{ requestId: 'r', toolName, displayName: 'github.com', input: {} }] })))
+equal(gate('BrowserLogin'), 'Needs you: Sign in to github.com', 'status: a login request reads as a sign-in')
+equal(gate('BrowserSite'), 'Needs you: Allow github.com', 'status: a site request reads as an approval')
 equal(statusKey(slice({})), 'idle|Idle||0', 'status: key is a stable primitive')

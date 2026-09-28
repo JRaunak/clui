@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from '../store'
 import { useEscape } from '../lib/useEscape'
+import { viaOf, type Via } from '../lib/motion'
 import { highlightRuns } from '../lib/fuzzy'
 import { Dropdown } from './Dropdown'
 import { IconSearch, IconClose, IconCheck } from './Icon'
@@ -96,7 +97,7 @@ export function GlobalSearch(): JSX.Element | null {
   // requestScrollTo after the await lands on a populated list; Chat's findIndex maps
   // the id → index.
   const openHit = useCallback(
-    async (hit: SearchHit) => {
+    async (hit: SearchHit, via: Via) => {
       const store = useSession.getState()
       const live = Object.values(store.sessions).find((s) => s.sessionId === hit.sessionId && !s.exited)
       if (live) {
@@ -109,7 +110,7 @@ export function GlobalSearch(): JSX.Element | null {
           .find((s) => s.id === hit.sessionId)?.hardTitle
         await store.resumeSession(hit.cwd, hit.sessionId, undefined, hardTitle)
       }
-      requestScrollTo(hit.messageId)
+      requestScrollTo(hit.messageId, { flash: via })
       close()
     },
     [requestScrollTo, close]
@@ -254,7 +255,7 @@ export function GlobalSearch(): JSX.Element | null {
                     <button
                       key={hit.messageId}
                       type="button"
-                      onClick={() => void openHit(hit)}
+                      onClick={(e) => void openHit(hit, viaOf(e))}
                       className="flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-[var(--glass-row-hover)] focus-visible:outline-offset-[-2px]"
                     >
                       <span className="text-meta font-medium text-dim">

@@ -1,7 +1,7 @@
 /** A subagent's or workflow's transcript in the Stage's right pane, beside the conversation (half) or
  *  over it (full). Renders `subagentMessages[parentToolUseId]` in stream order. The launching Agent
  *  tool call supplies the header. */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   useActive,
   useSession,
@@ -19,6 +19,9 @@ import { viaOf } from '../lib/motion'
 import { Markdown } from './Markdown'
 import { ToolGroup } from './MessageView'
 import { IconWarn } from './Icon'
+import { RunningTimer } from './InstrumentRow'
+import { Lumen } from './Lumen'
+import { lumenKeyOf } from '../lib/lumen'
 import { PaneHeader, usePane } from './Stage'
 import type { HistoryMessage } from '../../../shared/sessions'
 import type { SubagentMessage } from '../store'
@@ -113,15 +116,16 @@ function agentStatus(state: string): { cls: string; label: string } {
   return { cls: 'bg-accent', label: 'running' }
 }
 
-type RunState = 'running' | 'launched' | 'done' | 'failed' | 'stopped'
+type RunState = 'running' | 'background' | 'done' | 'failed' | 'stopped'
 
 /** A bead plus a word, so the state reads without colour. Running is never amber (amber means Claude
- *  needs you), and faint and err never appear as text on the header's glass. */
-function StatusMark({ state }: { state: RunState }): JSX.Element {
+ *  needs you), and faint and err never appear as text on the header's glass. The elapsed time is what
+ *  tells a live agent from a stuck one. */
+function StatusMark({ state, startMs }: { state: RunState; startMs?: number }): JSX.Element {
   const mark =
     state === 'running'
       ? 'bg-accent'
-      : state === 'launched'
+      : state === 'background'
         ? 'bg-info'
         : state === 'failed'
           ? 'bg-err'
@@ -132,7 +136,46 @@ function StatusMark({ state }: { state: RunState }): JSX.Element {
     <span className="flex shrink-0 items-center gap-1.5 text-meta">
       <span className={`h-2 w-2 rounded-full ${mark}`} aria-hidden="true" />
       {state === 'failed' && <IconWarn className="h-3.5 w-3.5 text-err" />}
-      <span className={state === 'failed' ? 'text-content' : 'text-dim'}>{state}</span>
+      <span className={state === 'failed' ? 'text-content' : 'text-dim'}>
+        {state === 'background' ? 'in background' : state}
+        {(state === 'running' || state === 'background') && startMs !== undefined && (
+          <> <RunningTimer startMs={startMs} /></>
+        )}
+      </span>
+    </span>
+  )
+}
+
+/** The tail of a running subagent's transcript. Beside the transcript the main view keeps the one
+ *  light; with the pane full nothing else is on screen, so a foreground agent's bead takes it. */
+function WorkingTail({ bg }: { bg: boolean }): JSX.Element {
+  const full = usePane().state === 'full'
+  const on = useActive((s) => lumenKeyOf(s) !== '')
+  return (
+    <span data-ui="subagent-working" className="flex items-center gap-2 text-label">
+      <span className="relative mr-1 flex h-2 w-2 shrink-0" aria-hidden="true">
+        <Lumen lit={full && !bg && on} />
+        <span className={`relative h-2 w-2 rounded-full ${bg ? 'bg-info' : 'bg-accent'}`} />
+      </span>
+      <span className="font-medium text-content">{bg ? 'Working in the background' : 'Working…'}</span>
+    </span>
+  )
+}
+
+const ENDED: Partial<Record<RunState, string>> = { done: 'Subagent finished', failed: 'Subagent failed', stopped: 'Subagent stopped' }
+
+/** Speaks only when the viewed agent stops running, never on mount or when the trail moves to another agent. */
+function RunAnnounce({ id, state }: { id: string; state: RunState }): JSX.Element {
+  const [text, setText] = useState('')
+  const prev = useRef({ id, state })
+  useEffect(() => {
+    const was = prev.current
+    prev.current = { id, state }
+    if (was.id === id && (was.state === 'running' || was.state === 'background') && ENDED[state]) setText(ENDED[state])
+  }, [id, state])
+  return (
+    <span className="sr-only" role="status" aria-live="polite">
+      {text}
     </span>
   )
 }
@@ -204,7 +247,7 @@ function HistoryBlock({
   return (
     <div>
       <div className="mb-1.5 text-label font-semibold text-dim">
-        {isUser ? 'Prompt' : <span className="text-accent">Agent</span>}
+        {isUser ? 'Prompt' : <span className="text-content">Agent</span>}
       </div>
       {msg.thinking && (
         <div className="mb-2 border-l-2 border-border pl-3 text-label italic text-dim [&_*]:text-dim">
@@ -446,8 +489,8 @@ function SubagentStream({ entries }: { entries: SubagentMessage[] }): JSX.Elemen
             // The subagent's turn input (prompt).
             <span className="text-dim">Prompt</span>
           ) : (
-            <span className="flex items-center gap-1.5 text-accent">
-              <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
+            <span className="flex items-center gap-1.5 text-content">
+              <span className="h-1.5 w-1.5 rounded-full bg-dim" aria-hidden="true" />
               Subagent
             </span>
           )}
@@ -593,6 +636,8 @@ export function SubagentView(): JSX.Element | null {
       ? (meta.tool.isError ?? false)
       : (nestedTool?.isError ?? false)
   const stopped = bgTask?.status === 'killed'
+  const runState: RunState = running ? (bgTask ? 'background' : 'running') : stopped ? 'stopped' : failed ? 'failed' : 'done'
+  const startMs = bgTask?.startMs ?? meta.tool?.startMs ?? nestedTool?.startMs
   const atRoot = subagentTrail.length <= 1
 
   // Resume seeds `subagentChildren` empty, so a resumed subagent's nested agents would render as inert history rows.
@@ -616,10 +661,8 @@ export function SubagentView(): JSX.Element | null {
     <div className="relative flex min-h-0 flex-1 flex-col">
       {/* At the root of a split the transcript is already beside the pane, so there's no Back and
           Close is the way out. */}
-      <PaneHeader
-        kind={name}
-        status={<StatusMark state={running ? (bgTask ? 'launched' : 'running') : stopped ? 'stopped' : failed ? 'failed' : 'done'} />}
-      >
+      <RunAnnounce id={parentId} state={runState} />
+      <PaneHeader kind={name} status={<StatusMark state={runState} startMs={startMs} />}>
         {!(atRoot && pane.state === 'half') && (
           <button
             type="button"
@@ -664,7 +707,9 @@ export function SubagentView(): JSX.Element | null {
           )
         })}
         {subtype && (
-          <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-dim">{subtype}</span>
+          <span className="min-w-0 shrink-[2] truncate rounded bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-dim" title={subtype}>
+            {subtype}
+          </span>
         )}
         {modelLabel && (
           <span
@@ -703,9 +748,7 @@ export function SubagentView(): JSX.Element | null {
         ) : (
           <div className="flex max-w-3xl flex-col gap-4">
             <SubagentStream entries={subMsgs} />
-            {running && (
-              <div className="text-meta text-faint">••• streaming from subagent…</div>
-            )}
+            {running && <WorkingTail bg={!!bgTask} />}
             <SpawnedChildren items={shownChildren} onOpen={pushSubagent} />
           </div>
         )}

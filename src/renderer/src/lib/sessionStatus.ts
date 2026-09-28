@@ -1,6 +1,7 @@
 import type { PerSessionState } from '../store'
 import { isBackgroundedTool } from './lumen'
 import { highlightOf } from './toolHighlight'
+import { isBrowserTool } from './instrument'
 
 export type SessionStatusKind = 'needs' | 'failed' | 'working' | 'idle'
 
@@ -27,7 +28,8 @@ export function sessionStatusOf(s: StatusSlice): SessionStatus {
   const pending = s.pendingPermissions.length
   if (pending > 0) {
     const p = s.pendingPermissions[0]
-    return { kind: 'needs', lead: 'Needs you', rest: `Allow ${p.displayName || p.toolName}`, count: pending }
+    const rest = p.toolName === 'BrowserLogin' ? `Sign in to ${p.displayName}` : `Allow ${p.displayName || p.toolName}`
+    return { kind: 'needs', lead: 'Needs you', rest, count: pending }
   }
   if (s.lastError !== null) return { kind: 'failed', lead: 'Last turn failed', rest: null, count: 0 }
   if (s.compacting) return { kind: 'working', lead: 'Compacting', rest: null, count: 0 }
@@ -56,7 +58,7 @@ export function statusText(st: SessionStatus): string {
 }
 
 function toolLabel(name: string): string {
-  return name === 'Task' || name === 'Agent' ? 'Agent' : name
+  return name === 'Task' || name === 'Agent' ? 'Agent' : isBrowserTool(name) ? 'Browser' : name
 }
 
 function argOf(input: unknown): string | null {

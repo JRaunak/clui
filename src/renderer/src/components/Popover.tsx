@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { useEscape } from '../lib/useEscape'
 import { viaOf, type Via } from '../lib/motion'
+import { occludeIfIntersects } from '../lib/browserOcclusion'
 
 export type PopoverPlacement = 'up' | 'down'
 export type PopoverAlign = 'start' | 'end'
@@ -64,8 +65,11 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>({
       const w = triggerRef.current?.getBoundingClientRect().width ?? 0
       el.style.setProperty('--pop-ox', align === 'start' ? `${w / 2}px` : `calc(100% - ${w / 2}px)`)
     }
+    let release: (() => void) | null = null
     const onToggle = (e: Event): void => {
       const isOpen = (e as ToggleEvent).newState === 'open'
+      release?.()
+      release = isOpen ? occludeIfIntersects(el) : null
       setOpen(isOpen)
       onOpenChangeRef.current?.(isOpen)
       via.current = 'pointer'
@@ -75,6 +79,7 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>({
     return () => {
       el.removeEventListener('beforetoggle', onBefore)
       el.removeEventListener('toggle', onToggle)
+      release?.()
     }
   }, [popEl, align])
 

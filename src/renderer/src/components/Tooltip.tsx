@@ -5,6 +5,7 @@
  * never closes an open picker.
  */
 import { cloneElement, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { occludeIfIntersects } from '../lib/browserOcclusion'
 
 export function Tooltip({
   content,
@@ -37,9 +38,14 @@ export function Tooltip({
     setOpen(false)
   }
   useEffect(() => () => clearTimeout(timer.current), [])
+  const release = useRef<(() => void) | null>(null)
+  useEffect(() => () => release.current?.(), [])
 
   const bubbleRef = useCallback((el: HTMLSpanElement | null) => {
+    release.current?.()
+    release.current = null
     if (el && !el.matches(':popover-open')) el.showPopover()
+    if (el) release.current = occludeIfIntersects(el)
   }, [])
 
   const trigger = describedBy && open ? cloneElement(children, { 'aria-describedby': id }) : children

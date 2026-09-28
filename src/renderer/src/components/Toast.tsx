@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { occludeIfIntersects } from '../lib/browserOcclusion'
 
 /**
  * A delete-undo card; ToastStack owns its positioning and stacking.
@@ -97,7 +98,8 @@ export function ToastStack({
   items,
   durationMs,
   announce,
-  onUndo
+  onUndo,
+  label = 'Recently deleted sessions'
 }: {
   /** Live (undoable) toasts, newest first. */
   items: StackToast[]
@@ -105,6 +107,8 @@ export function ToastStack({
   /** sr-only text for the latest delete; coalesces rapid deletes to the most recent. */
   announce: string
   onUndo: (id: string) => void
+  /** Names the group for assistive tech. */
+  label?: string
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const cardRefs = useRef<Map<string, HTMLElement>>(new Map())
@@ -120,6 +124,10 @@ export function ToastStack({
     const el = containerRef.current
     if (el && !el.matches(':popover-open')) el.showPopover()
   }, [])
+
+  // The stack is always shown, but it only covers the page while it holds cards.
+  const hasCards = items.length > 0 || exiting.length > 0
+  useLayoutEffect(() => (hasCards ? (occludeIfIntersects(containerRef.current) ?? undefined) : undefined), [hasCards])
 
   useLayoutEffect(() => {
     const curIds = new Set(items.map((i) => i.id))
@@ -215,7 +223,7 @@ export function ToastStack({
       <div
         ref={containerRef}
         role="group"
-        aria-label="Recently deleted sessions"
+        aria-label={label}
         tabIndex={-1}
         onFocus={(e) => {
           const card = (e.target as HTMLElement).closest('[data-toast-id]')

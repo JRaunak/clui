@@ -4,6 +4,7 @@ import { reducedMotion } from '../lib/motion'
 import { PermissionGate } from './gates/PermissionGate'
 import { PlanGate } from './gates/PlanGate'
 import { QuestionGate } from './gates/QuestionGate'
+import { LoginGate } from './gates/LoginGate'
 import { focusComposer, type GateCount } from './gates/GateFrame'
 
 const cssVar = (name: string): string => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -155,6 +156,10 @@ export function GateHost(): JSX.Element | null {
         <QuestionGate key={key} request={shown} count={count} />
       ) : shown.toolName === 'ExitPlanMode' ? (
         <PlanGate key={key} request={shown} count={count} />
+      ) : shown.toolName === 'BrowserSite' ? (
+        <SiteGate key={key} request={shown} count={count} />
+      ) : shown.toolName === 'BrowserLogin' ? (
+        <LoginGate key={key} request={shown} count={count} />
       ) : (
         <PermissionGate key={key} request={shown} count={count} />
       )}
@@ -162,8 +167,45 @@ export function GateHost(): JSX.Element | null {
   )
 }
 
+/** The first time Claude, or a page it drives, opens a site. One approval covers every session, so the copy says so. */
+function SiteGate({ request, count }: { request: PendingPermission; count: GateCount }): JSX.Element {
+  const bypass = useActive((s) => s?.permissionMode === 'bypassPermissions')
+  const site = request.displayName ?? ''
+  const input = request.input as { cause?: string; from?: string | null } | null
+  const byPage = input?.cause === 'page'
+  const from = input?.from ?? null
+  return (
+    <PermissionGate
+      request={request}
+      count={count}
+      copy={{
+        title: byPage ? (
+          from ? (
+            <>
+              <span className="font-mono">{from}</span> wants to open <span className="font-mono">{site}</span>. Allow it?
+            </>
+          ) : (
+            <>
+              This page wants to open <span className="font-mono">{site}</span>. Allow it?
+            </>
+          )
+        ) : (
+          <>
+            Allow Claude to open <span className="font-mono">{site}</span>?
+          </>
+        ),
+        description: `This approves ${site} for every session. You can remove it in Settings → Browser.`,
+        allowLabel: `Allow ${site}`,
+        note: bypass ? "Autonomous mode doesn't skip site approvals." : undefined
+      }}
+    />
+  )
+}
+
 function announcementOf(p: PendingPermission): string {
   if (p.toolName === 'ExitPlanMode') return 'Plan ready: review the plan'
+  if (p.toolName === 'BrowserSite') return `Permission required: open ${p.displayName}`
+  if (p.toolName === 'BrowserLogin') return `Sign-in needed: ${p.displayName}`
   if (p.toolName === 'AskUserQuestion') {
     const q = (p.input as { questions?: { question?: unknown }[] } | null)?.questions?.[0]?.question
     return typeof q === 'string' ? `Question: ${q}` : 'Question from Claude'

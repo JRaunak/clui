@@ -20,9 +20,11 @@ import type { DomainEvent, PermissionDenial, PermissionSuggestion, SessionTask, 
 import type { CompactionMarker, ProjectGroup } from '../../shared/sessions'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
-import type { EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
+import type { CluiApi, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
+import type { BrowserEvent, BrowserPaneState, BrowserState } from '../../shared/browser'
 import { clampEffort, capBlocksUltra, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
+import type { Via } from './lib/motion'
 
 /** A tool-permission request awaiting the user's decision. */
 export interface PendingPermission {
@@ -302,7 +304,16 @@ export interface PerSessionState {
   createdMs: number
   /** Wall-clock ms of the last activity (for LRU eviction under the cap). */
   lastActivityMs: number
+  /** Browser for this session; null until it's first turned on. */
+  browser: BrowserState | null
+  /** This session's browser is showing in the right sidebar. Its size is the app-wide `browserPaneFull`. */
+  browserOpen: boolean
+  /** The user asked for the browser while work was running; it turns on when the session is clear. */
+  browserPending: boolean
 }
+
+/** What the sign-in Gates send back to main. Never stored in the slice: it can carry a password. */
+export type BrowserLoginVerdict = Parameters<CluiApi['browserLoginVerdict']>[2]
 
 /**
  * Max concurrent live `claude` processes. Unlike terminal tabs, each live session
@@ -328,6 +339,8 @@ interface SessionStore {
   activeHandleId: string | null
   /** Transient app-level notice (e.g. a session was evicted by the cap). */
   notice: Notice | null
+  /** Polite announcement from the browser (a login Clui filled), read by the browser pane's live region. */
+  browserAnnounce: string
   /** Effort ceilings from ~/.claude/settings.json (read-only), so the picker/chip show
    *  the effort that will actually run under a `maxEffortLevel` cap. Read via `effortCap`. */
   effortCaps: EffortCaps
@@ -346,10 +359,12 @@ interface SessionStore {
    * its tail. (A workflow trail is always length 1: workflows don't nest this way.)
    */
   subagentTrail: string[]
-  /** The user's size choice for the right sidebar when the Stage can split: false = half, true = full.
-   *  Below SPLIT_MIN an open pane is full regardless. UI-only, never written to disk. */
+  /** The user's size choice for the subagent pane when the Stage can split: false = half, true = full.
+   *  Below SPLIT_MIN an open pane is full regardless, and that never counts as a choice. Persisted. */
   paneFull: boolean
   setPaneFull: (full: boolean) => void
+  /** The same choice for the browser pane, shared by every session. Persisted. */
+  browserPaneFull: boolean
   /** Content sits under the top band or the pane header, the only time their glass shows. Written
    *  on change, never per scroll event. */
   primaryScrolled: boolean
@@ -369,11 +384,11 @@ interface SessionStore {
   /** True when the ⌘⇧F global search overlay is open. */
   globalSearchOpen: boolean
   /**
-   * A jump request for Chat: scroll to + flash the message with this id. `nonce`
-   * makes repeated jumps to the SAME id re-fire (Chat watches the nonce). No need to
+   * A jump request for Chat: scroll to the message with this id, washing it when `flash` is set.
+   * `nonce` makes repeated jumps to the SAME id re-fire (Chat watches the nonce). No need to
    * clear it after consumption, since Chat keys off the nonce change.
    */
-  scrollTarget: { messageId: string; nonce: number; align?: 'start' } | null
+  scrollTarget: { messageId: string; nonce: number; align?: 'start'; flash?: Via } | null
   /** The prompt whose reply is at the top of the transcript, shown in the top band's middle
    *  slot; null while that prompt is itself the top row, or while no transcript is mounted. */
   currentTurn: CurrentTurn | null
@@ -404,8 +419,8 @@ interface SessionStore {
   setFindOpen: (open: boolean) => void
   /** Open/close the ⌘⇧F global search overlay. */
   setGlobalSearchOpen: (open: boolean) => void
-  /** Request Chat scroll to + flash a message by id (from a find or a global hit). */
-  requestScrollTo: (messageId: string, opts?: { align?: 'start' }) => void
+  /** Request Chat scroll to a message by id; `flash` marks where the reader landed. */
+  requestScrollTo: (messageId: string, opts?: { align?: 'start'; flash?: Via }) => void
 
   /** Start a NEW session in `cwd` and make it active. */
   startSession: (
@@ -497,6 +512,20 @@ interface SessionStore {
   gotoSubagentDepth: (depth: number) => void
   /** Close the transcript view entirely, returning to the chat (clears the trail). */
   closeSubagentView: () => void
+  /** Route one browser event from main into its session's slice. */
+  applyBrowserEvent: (handleId: string, e: BrowserEvent) => void
+  /** Answer a sign-in Gate. The verdict goes straight to main. */
+  respondBrowserLogin: (requestId: string, verdict: BrowserLoginVerdict) => Promise<void>
+  /** Set the active session's browser pane. Opening it replaces a subagent view. Half or full is an
+   *  explicit size choice and is saved for every session. */
+  setBrowserPane: (next: BrowserPaneState) => void
+  /** Show or hide the active session's browser, turning it on first if needed. `apply` makes the
+   *  pane change, so a pointer caller can wrap it in a transition. */
+  toggleBrowser: (apply?: (next: BrowserPaneState) => void) => Promise<void>
+  /** Detach the browser tools from the active session and close its page. */
+  turnOffBrowser: () => Promise<void>
+  /** Stop also interrupts the running turn. */
+  browserDrive: (action: 'stop' | 'handback' | 'takeover' | 'reset') => Promise<void>
 }
 
 /**
@@ -558,6 +587,9 @@ export function useActive<T>(selector: (slice: PerSessionState | null) => T): T 
 /** Stable empty fallbacks for array selectors (see the useActive note above). */
 export const EMPTY_MESSAGES: ChatMessage[] = []
 export const EMPTY_PENDING: PendingPermission[] = []
+
+/** The session's browser pane is open, at half or full. */
+export const selectBrowserOpen = (s: PerSessionState | null): boolean => !!s?.browserOpen
 export const EMPTY_STRINGS: string[] = []
 /** Stable empty ref for the queued-messages list (zustand-v5 selector safety). */
 export const EMPTY_QUEUED: QueuedMessage[] = []
@@ -659,7 +691,7 @@ let knownModelIds: string[] = []
  */
 const modelPrefsBySessionId = new Map<
   string,
-  { model?: ModelChoice; effort?: EffortChoice; ultracode?: boolean }
+  { model?: ModelChoice; effort?: EffortChoice; ultracode?: boolean; browser?: boolean }
 >()
 
 /** Remember a session's model/effort/ultracode (in-memory + sidecar). Merges fields. */
@@ -674,7 +706,9 @@ function rememberModelPrefs(
     effort: prefs.effort ?? cur.effort,
     ultracode: prefs.ultracode ?? cur.ultracode
   }
-  modelPrefsBySessionId.set(sessionId, next)
+  // Main owns the browser flag on disk (it writes it when the tools attach), so it's kept here
+  // for a resume but never sent back, where a stale copy could overwrite a newer toggle.
+  modelPrefsBySessionId.set(sessionId, { ...cur, ...next })
   void window.clui.setSessionModel(sessionId, next)
 }
 
@@ -702,7 +736,7 @@ export function ensureModelPrefsLoaded(): Promise<void> {
             prefs.effort && (EFFORT_CHOICES as string[]).includes(prefs.effort)
               ? (prefs.effort as EffortChoice)
               : undefined
-          modelPrefsBySessionId.set(sid, { model: prefs.model, effort, ultracode: prefs.ultracode })
+          modelPrefsBySessionId.set(sid, { model: prefs.model, effort, ultracode: prefs.ultracode, browser: prefs.browser })
         }
       } catch {
         // best-effort: resume just falls back to the Settings default model/effort
@@ -720,6 +754,9 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
     // After a turn ends, prune changed-files that were deleted this turn (incl. by
     // the agent via Bash rm, which surfaces no file_path). Fire-and-forget.
     if (event.type === 'result') void useSession.getState().pruneChangedFiles(handleId)
+    const slice = useSession.getState().sessions[handleId]
+    if (slice?.browserPending && !workRunning(slice))
+      void enableBrowser(handleId, () => useSession.setState((st) => patchSlice(st, handleId, { browserOpen: true })))
   })
 }
 
@@ -915,8 +952,14 @@ async function beginSession(
     lastError: null,
     exited: false,
     createdMs: now,
-    lastActivityMs: now
+    lastActivityMs: now,
+    browser: null,
+    browserOpen: false,
+    browserPending: false
   })
+  // The tools were on when this session last ran. Main refuses a Quick session, and a refusal
+  // leaves the browser off.
+  if (remembered?.browser && !opts.ephemeral) void enableBrowser(handleId, null)
 }
 
 /** In-flight resume ids: a reservation so two concurrent resumes of the SAME durable
@@ -984,6 +1027,70 @@ function evictIfOverCap(
     }
   })
 }
+
+/** Attaching or detaching the browser respawns the CLI, and SIGTERM on the child also ends its
+ *  background shells and subagents, so it waits until none of them is running. */
+function workRunning(s: PerSessionState): boolean {
+  return (
+    s.busy ||
+    s.interrupting ||
+    Object.values(s.backgroundTasks).some((t) => t.status === 'running') ||
+    Object.values(s.workflows).some((w) => w.endedStatus === null)
+  )
+}
+
+const CONNECTING_BROWSER: BrowserState = {
+  enabled: false,
+  url: 'about:blank',
+  title: '',
+  loading: false,
+  canBack: false,
+  canForward: false,
+  drive: 'idle',
+  suspended: false,
+  still: null,
+  loginWall: null
+}
+
+/** Turn the browser on for a session, or defer it while work is running. With `open`, the pane
+ *  opens at once, before the tools attach, and the toolbar reads Connecting until they do. */
+async function enableBrowser(handleId: string, open: ((next: BrowserPaneState) => void) | null): Promise<boolean> {
+  const s = useSession.getState().sessions[handleId]
+  if (!s) return false
+  if (workRunning(s)) {
+    useSession.setState((st) => ({
+      ...patchSlice(st, handleId, { browserPending: true }),
+      notice: { message: 'Browser turns on when the running work finishes.', tone: 'warn' }
+    }))
+    return false
+  }
+  // Set before the await, so a second event landing meanwhile doesn't enable twice.
+  useSession.setState((st) => patchSlice(st, handleId, { browserPending: false, browser: CONNECTING_BROWSER }))
+  open?.(useSession.getState().browserPaneFull ? 'full' : 'half')
+  const ok = await window.clui.browserSetEnabled(handleId, true).catch(() => false)
+  if (!ok) {
+    const wasOpen = !!useSession.getState().sessions[handleId]?.browserOpen
+    useSession.setState((st) => ({
+      ...patchSlice(st, handleId, { browser: null, browserOpen: false }),
+      notice: { message: "Couldn't turn on the browser.", tone: 'error' }
+    }))
+    // The pane that held focus is gone.
+    if (wasOpen && useSession.getState().activeHandleId === handleId)
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="browser-toggle"]')?.focus())
+    return false
+  }
+  // Main sends enabled: true once the CLI has the tools, which is when Connecting clears.
+  noteBrowserPref(s.sessionId, true)
+  return true
+}
+
+/** Keeps the in-memory resume flag in step with a toggle; main has already written the file. */
+function noteBrowserPref(sessionId: string | null, on: boolean): void {
+  if (!sessionId) return
+  modelPrefsBySessionId.set(sessionId, { ...modelPrefsBySessionId.get(sessionId), browser: on })
+}
+
+let announceSeq = 0
 
 function basename(p: string): string {
   const parts = p.replace(/\/+$/, '').split('/')
@@ -1110,10 +1217,12 @@ export const useSession = create<SessionStore>((set, get) => ({
   sessions: {},
   activeHandleId: null,
   notice: null,
+  browserAnnounce: '',
   effortCaps: {},
   viewingSubagent: null,
   subagentTrail: [],
   paneFull: false,
+  browserPaneFull: false,
   primaryScrolled: false,
   primaryScrolledFor: null,
   secondaryScrolled: false,
@@ -1455,6 +1564,9 @@ export const useSession = create<SessionStore>((set, get) => ({
       }))
       return
     }
+    // A new prompt hands a stopped browser back to Claude. It runs before the queue check because the
+    // prompt after a Stop usually queues behind the interrupted turn.
+    if (active.browser?.drive === 'stopped') void window.clui.browserDrive(active.handleId, 'reset')
     // Composed while a turn is running (or interrupting, or with messages already queued) →
     // HOLD it renderer-side (editable/cancelable, rendered at the tail) instead of dispatching
     // now. It's sent FIFO at the next turn boundary (see the `result` handler). Queuing while
@@ -1644,6 +1756,19 @@ export const useSession = create<SessionStore>((set, get) => ({
   respondPermission: async (verdict) => {
     const active = activeSlice(get())
     if (!active) return
+    // Browser Gates are raised by Clui's own MCP server, not the CLI, so their answer goes to main.
+    const req = active.pendingPermissions.find((p) => p.requestId === verdict.requestId)
+    if (req?.toolName === 'BrowserSite' || req?.toolName === 'BrowserLogin') {
+      set((s) =>
+        patchSlice(s, active.handleId, {
+          pendingPermissions: active.pendingPermissions.filter((p) => p.requestId !== verdict.requestId)
+        })
+      )
+      if (req.toolName === 'BrowserSite')
+        await window.clui.browserSiteVerdict(active.handleId, verdict.requestId, verdict.behavior === 'allow')
+      else await window.clui.browserLoginVerdict(active.handleId, verdict.requestId, { action: 'decline' })
+      return
+    }
     // Optimistically dequeue the request being answered.
     set((s) =>
       patchSlice(s, active.handleId, {
@@ -1854,6 +1979,9 @@ export const useSession = create<SessionStore>((set, get) => ({
           ) {
             patch.compactDismissedAtRunway = null
           }
+          break
+        case 'reconnected':
+          clearNotice = true
           break
         case 'slash-commands':
           // The CLI's live command list from the initialize response. Stored raw;
@@ -2278,7 +2406,11 @@ export const useSession = create<SessionStore>((set, get) => ({
       return { subagentTrail: trail, viewingSubagent: trail[trail.length - 1] ?? null }
     }),
   closeSubagentView: () => set(() => ({ viewingSubagent: null, subagentTrail: [], currentTurn: null })),
-  setPaneFull: (full) => set(() => ({ paneFull: full })),
+  setPaneFull: (full) => {
+    if (get().paneFull === full) return
+    set({ paneFull: full })
+    void window.clui.updateSettings({ subagentPaneFull: full })
+  },
   setPrimaryScrolled: (scrolled) =>
     set((s) =>
       s.primaryScrolled === scrolled && s.primaryScrolledFor === s.activeHandleId
@@ -2295,6 +2427,126 @@ export const useSession = create<SessionStore>((set, get) => ({
   setFindActiveId: (id) => set(() => ({ findActiveId: id })),
   setGlobalSearchOpen: (open) => set(() => ({ globalSearchOpen: open })),
   requestScrollTo: (messageId, opts) =>
-    set((s) => ({ scrollTarget: { messageId, nonce: (s.scrollTarget?.nonce ?? 0) + 1, align: opts?.align } })),
-  setCurrentTurn: (v) => set({ currentTurn: v })
+    set((s) => ({ scrollTarget: { messageId, nonce: (s.scrollTarget?.nonce ?? 0) + 1, align: opts?.align, flash: opts?.flash } })),
+  setCurrentTurn: (v) => set({ currentTurn: v }),
+
+  applyBrowserEvent: (handleId, e) => {
+    switch (e.type) {
+      case 'state':
+        // A late event for a browser already turned off must not bring it back.
+        set((s) => {
+          const cur = s.sessions[handleId]?.browser
+          if (!cur) return {}
+          const next = patchSlice(s, handleId, { browser: { ...cur, ...e.patch } })
+          // The wall hides the page mid-drive, so it has to be said as well as shown.
+          if (e.patch.loginWall !== 'hardware' || cur.loginWall === 'hardware') return next
+          const text = 'This sign-in needs a hardware key or passkey. Open it in your regular browser.'
+          return { ...next, browserAnnounce: `${text}${'\u200b'.repeat(++announceSeq % 2)}` }
+        })
+        break
+      case 'site-request':
+        set((s) => {
+          const cur = s.sessions[handleId]
+          if (!cur) return {}
+          return patchSlice(s, handleId, {
+            pendingPermissions: [
+              ...cur.pendingPermissions,
+              {
+                requestId: e.requestId,
+                toolName: 'BrowserSite',
+                displayName: e.site,
+                description:
+                  e.cause === 'page' ? 'This page wants to open this site in the browser pane.' : 'Claude wants to open this site in the browser pane.',
+                input: { site: e.site, cause: e.cause, from: e.from }
+              }
+            ]
+          })
+        })
+        break
+      case 'login-request':
+        set((s) => {
+          const cur = s.sessions[handleId]
+          if (!cur) return {}
+          return patchSlice(s, handleId, {
+            pendingPermissions: [
+              ...cur.pendingPermissions,
+              { requestId: e.requestId, toolName: 'BrowserLogin', displayName: e.request.site, input: e.request }
+            ]
+          })
+        })
+        break
+      case 'filled':
+        // The toggling zero-width space makes a repeat fill a text change, which is what gets announced.
+        set(() => ({
+          browserAnnounce: `Clui filled your saved login for ${e.site}.${'\u200b'.repeat(++announceSeq % 2)}`
+        }))
+        break
+    }
+  },
+
+  respondBrowserLogin: async (requestId, verdict) => {
+    const active = activeSlice(get())
+    if (!active) return
+    set((s) =>
+      patchSlice(s, active.handleId, {
+        pendingPermissions: active.pendingPermissions.filter((p) => p.requestId !== requestId)
+      })
+    )
+    await window.clui.browserLoginVerdict(active.handleId, requestId, verdict)
+  },
+
+  setBrowserPane: (next) => {
+    const s = get()
+    const active = activeSlice(s)
+    // No page to show until the browser is on; an empty pane would have no view behind it.
+    if (!active || (next !== 'collapsed' && !active.browser)) return
+    const open = next !== 'collapsed'
+    const full = open ? next === 'full' : s.browserPaneFull
+    // The subagent pane outranks the browser in the Stage, so opening the browser closes it.
+    const closeSubagent = open && !!s.viewingSubagent
+    set({
+      ...patchSlice(s, active.handleId, { browserOpen: open }),
+      browserPaneFull: full,
+      ...(closeSubagent ? { viewingSubagent: null, subagentTrail: [], currentTurn: null } : {})
+    })
+    if (full !== s.browserPaneFull) void window.clui.updateSettings({ browserPaneFull: full })
+  },
+
+  toggleBrowser: async (apply) => {
+    const active = activeSlice(get())
+    if (!active || active.ephemeral) return
+    const show = apply ?? get().setBrowserPane
+    if (!active.browser) {
+      await enableBrowser(active.handleId, show)
+      return
+    }
+    const st = get()
+    const shown = !st.viewingSubagent && active.browserOpen
+    // A narrow Stage renders half as full, and keeps the user's choice for when it grows back.
+    show(shown ? 'collapsed' : st.browserPaneFull ? 'full' : 'half')
+  },
+
+  turnOffBrowser: async () => {
+    const active = activeSlice(get())
+    if (!active?.browser) return
+    if (workRunning(active)) {
+      get().setNotice('Wait for the running work to finish, then turn the browser off.', 'warn')
+      return
+    }
+    const ok = await window.clui.browserSetEnabled(active.handleId, false).catch(() => false)
+    if (!ok) {
+      get().setNotice("Couldn't turn off the browser.", 'error')
+      return
+    }
+    noteBrowserPref(active.sessionId, false)
+    set((s) => patchSlice(s, active.handleId, { browser: null, browserOpen: false }))
+  },
+
+  browserDrive: async (action) => {
+    const active = activeSlice(get())
+    if (!active?.browser) return
+    await window.clui.browserDrive(active.handleId, action)
+    // Halt the turn too, or Claude reads the stop text and tries another route.
+    if (action === 'stop') await get().interrupt()
+  }
 }))

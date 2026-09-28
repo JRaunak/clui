@@ -55,6 +55,10 @@ export interface CluiSettings {
   /** Expanded sidebar width in px. Applied clamped to the live window, so a width saved on a wide
    *  monitor still fits a laptop. Persisted like `sidebarCollapsed`. */
   sidebarWidth: number
+  /** The right sidebar's size when the Stage can split, false = half: one choice for the subagent
+   *  pane and one for the browser, app-wide. Persisted like `sidebarCollapsed`. */
+  subagentPaneFull: boolean
+  browserPaneFull: boolean
   /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
    *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
@@ -456,6 +460,8 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   onboarded: false,
   sidebarCollapsed: false,
   sidebarWidth: 288,
+  subagentPaneFull: false,
+  browserPaneFull: false,
   enableTaskTools: false,
   // Empty → resolves to ~/.clui in main (getChatDir).
   defaultChatDir: '',

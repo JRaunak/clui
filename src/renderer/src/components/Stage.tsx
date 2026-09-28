@@ -10,11 +10,12 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import { useActive, useSession, EMPTY_PENDING } from '../store'
+import { useActive, useSession, EMPTY_PENDING, selectBrowserOpen } from '../store'
 import { Chat } from './Chat'
 import { Composer } from './Composer'
 import { ChangedFiles } from './ChangedFiles'
 import { SubagentView } from './SubagentView'
+import { BrowserPane } from './BrowserPane'
 import { TopBand } from './TopBand'
 import { StatusBar } from './StatusBar'
 import { Notice } from './Notice'
@@ -111,8 +112,11 @@ export function Stage({
   const wide = useAtLeast(ref, SPLIT_MIN)
   const [focusInSecondary, setFocusInSecondary] = useState(false)
 
-  const kind: 'subagent' | null = cwd && viewingSubagent ? 'subagent' : null
-  const state: PaneState = !kind ? 'collapsed' : wide && !paneFull ? 'half' : 'full'
+  const browserOpen = useActive(selectBrowserOpen)
+  const browserPaneFull = useSession((s) => s.browserPaneFull)
+  const kind: 'subagent' | 'browser' | null = cwd && viewingSubagent ? 'subagent' : cwd && browserOpen ? 'browser' : null
+  const full = kind === 'browser' ? browserPaneFull : paneFull
+  const state: PaneState = !kind ? 'collapsed' : wide && !full ? 'half' : 'full'
   useEffect(() => {
     if (!kind) setFocusInSecondary(false)
   }, [kind])
@@ -122,9 +126,10 @@ export function Stage({
       state,
       canToggleSize: wide,
       toggleSize: () => {
-        const goingFull = !paneFull
+        const goingFull = !full
         const fromTranscript = !!document.activeElement?.closest('[data-ui="pane-primary"]')
-        setPaneFull(goingFull)
+        if (kind === 'browser') useSession.getState().setBrowserPane(goingFull ? 'full' : 'half')
+        else setPaneFull(goingFull)
         // Going full unmounts the transcript, so focus that was in it moves to the pane's title.
         if (goingFull && fromTranscript)
           requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="pane-title"]')?.focus())
@@ -132,13 +137,14 @@ export function Stage({
       close: closeSubagentView,
       needsYou: state === 'full' && gatePending,
       resolveNeedsYou: () => {
-        if (wide) setPaneFull(false)
+        if (kind === 'browser') useSession.getState().setBrowserPane(wide ? 'half' : 'collapsed')
+        else if (wide) setPaneFull(false)
         else closeSubagentView()
         requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="gate"]')?.focus())
       },
       escapeActive: state === 'full' || focusInSecondary
     }),
-    [state, wide, paneFull, gatePending, focusInSecondary, closeSubagentView, setPaneFull]
+    [state, wide, full, kind, gatePending, focusInSecondary, closeSubagentView, setPaneFull]
   )
 
   return (
@@ -167,8 +173,14 @@ export function Stage({
           <div className="relative flex min-h-0 flex-1">
             {state !== 'full' && <PrimaryPane split={state === 'half'} />}
             {kind && (
-              <SecondaryPane key={kind} split={state === 'half'} onFocusWithin={setFocusInSecondary}>
-                <SubagentView />
+              <SecondaryPane
+                key={kind}
+                id={kind === 'browser' ? 'browser-pane-region' : undefined}
+                label={kind === 'browser' ? 'Browser' : 'Detail pane'}
+                split={state === 'half'}
+                onFocusWithin={setFocusInSecondary}
+              >
+                {kind === 'browser' ? <BrowserPane /> : <SubagentView />}
               </SecondaryPane>
             )}
           </div>
@@ -262,10 +274,14 @@ function PrimaryPane({ split }: { split: boolean }): JSX.Element {
 /** The right sidebar. Its scrollers clear the band and its own header (--top-h 80px), and it hands
  *  focus to its title on open and back to the opener on close. */
 function SecondaryPane({
+  id,
+  label,
   split,
   onFocusWithin,
   children
 }: {
+  id?: string
+  label: string
   split: boolean
   onFocusWithin: (inside: boolean) => void
   children: ReactNode
@@ -293,7 +309,7 @@ function SecondaryPane({
   }, [setSecondaryScrolled])
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null
-    document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-ui="pane-title"]')?.focus()
+    document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-pane-title]')?.focus()
     return () => {
       if (opener && document.contains(opener)) opener.focus()
       else document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
@@ -302,9 +318,10 @@ function SecondaryPane({
   return (
     <section
       ref={ref}
+      id={id}
       data-ui="pane-secondary"
-      aria-label="Detail pane"
-      className={`relative flex min-h-0 flex-1 flex-col [--dock-h:0px] [--top-h:80px] ${
+      aria-label={label}
+      className={`relative flex min-h-0 flex-1 flex-col bg-bg [--dock-h:0px] [--top-h:80px] ${
         split ? 'min-w-[440px] border-l border-border' : 'min-w-0'
       }`}
       onFocus={() => onFocusWithin(true)}
@@ -317,7 +334,7 @@ function SecondaryPane({
   )
 }
 
-const PANE_BTN =
+export const PANE_BTN =
   'toggle-press flex h-7 w-7 items-center justify-center rounded-md text-dim transition-colors focus-visible:-outline-offset-2 pointer-fine:hover:bg-[var(--glass-row-hover)] pointer-fine:hover:text-content'
 
 /**
@@ -328,10 +345,13 @@ const PANE_BTN =
 export function PaneHeader({
   kind,
   status,
+  trailing,
   children
 }: {
   kind: string
   status?: ReactNode
+  /** Replaces the Close button: the browser hides rather than closes, so it keeps its page. */
+  trailing?: ReactNode
   children: ReactNode
 }): JSX.Element {
   const pane = usePane()
@@ -348,11 +368,16 @@ export function PaneHeader({
         data-ui="pane-header-glass"
         className="glass-bar pointer-events-none absolute inset-0 -z-10 opacity-0 transition-opacity duration-fast ease-in group-data-[scrolled]/pane:opacity-100 group-data-[scrolled]/pane:ease-out contrast-more:opacity-100 motion-reduce:transition-none"
       />
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div data-ui="pane-head-title" className="flex min-w-0 flex-1 items-center gap-2">
         {children}
         <span className="shrink-0 text-meta text-dim">{kind}</span>
+        {status && (
+          <>
+            <span aria-hidden="true" className="shrink-0 text-meta text-dim">·</span>
+            {status}
+          </>
+        )}
       </div>
-      {status}
       {pane.needsYou && (
         <button
           type="button"
@@ -364,7 +389,7 @@ export function PaneHeader({
           Needs you
         </button>
       )}
-      <div className="flex shrink-0 items-center gap-0.5">
+      <div data-ui="pane-head-controls" className="flex shrink-0 items-center gap-0.5">
         {pane.canToggleSize && (
           <button
             type="button"
@@ -378,16 +403,18 @@ export function PaneHeader({
             {full ? <IconRestore className="h-4 w-4" /> : <IconMaximize className="h-4 w-4" />}
           </button>
         )}
-        <button
-          type="button"
-          data-ui="pane-close"
-          onClick={(e) => diveOut(viaOf(e))}
-          aria-label="Close pane"
-          title="Close (Esc)"
-          className={PANE_BTN}
-        >
-          <IconClose className="h-4 w-4" />
-        </button>
+        {trailing ?? (
+          <button
+            type="button"
+            data-ui="pane-close"
+            onClick={(e) => diveOut(viaOf(e))}
+            aria-label="Close pane"
+            title="Close (Esc)"
+            className={PANE_BTN}
+          >
+            <IconClose className="h-4 w-4" />
+          </button>
+        )}
       </div>
     </div>
   )

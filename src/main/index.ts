@@ -44,12 +44,19 @@ import {
 } from './settings/store'
 import { readCliSettings } from './settings/cli-settings'
 import { listModels } from './models/list'
+import { BrowserManager } from './browser/manager'
+import { BrowserMcpServer } from './browser/mcp'
+import { WORLD } from './browser/cursor'
+import { listSites, removeSite } from './browser/sites'
+import { listLogins, removeLogin, saveLogin, vaultAvailable } from './browser/vault'
+import type { ClearBrowsingData, PaneBounds } from '../shared/browser'
 import type { CluiSettings, SettingsKey } from '../shared/settings'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 let mainWindow: BrowserWindow | null = null
 let sessionManager: SessionManager | null = null
+let browserManager: BrowserManager | null = null
 
 // Backstop: a window-teardown race can throw "Object has been destroyed" from an
 // async child-stdout callback AFTER the window is gone. That's benign (there's
@@ -133,6 +140,8 @@ function buildMenu(): void {
         { label: 'Close Session', accelerator: 'CmdOrCtrl+W', click: () => send('close-session') },
         // A native accelerator, not a DOM key, so it still fires while focus sits inside a native view.
         { label: 'Expand or Split Pane', accelerator: 'Alt+CmdOrCtrl+B', click: () => send('toggle-pane-size') },
+        { label: 'Show Browser', accelerator: 'CmdOrCtrl+Shift+B', click: () => send('browser-toggle') },
+        { label: 'Stop Browser Agent', accelerator: 'CmdOrCtrl+.', click: () => send('browser-stop') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
         { type: 'separator' },
         ...(isMac ? ([{ role: 'close' }] as MenuItemConstructorOptions[]) : ([{ role: 'quit' }] as MenuItemConstructorOptions[]))
@@ -235,7 +244,35 @@ function createWindow(): void {
 }
 
 function registerIpc(): void {
+  const browser = new BrowserManager(() => mainWindow, () => THEME_BG[resolveTheme()])
+  const mcp = new BrowserMcpServer(browser)
+  browserManager = browser
+  const disposeBrowser = (handleId: string): void => {
+    browser.dispose(handleId)
+    mcp.revoke(handleId)
+  }
+  const persistBrowser = (handleId: string, on: boolean): void => {
+    const sid = manager.sessionIdOf(handleId)
+    if (sid) void setSessionModel(sid, { browser: on }).catch(() => {})
+  }
+  if (process.env.CLUI_TEST_HOOKS === '1') {
+    // For the harness only, from Playwright's app.evaluate; the shipped app never sets this variable.
+    Object.assign(globalThis, {
+      __cluiBrowser: {
+        endpoint: (handleId: string) => mcp.endpoint(handleId),
+        callTool: (handleId: string, name: string, args: Record<string, unknown> = {}) => mcp.callTool(handleId, name, args),
+        evalInPage: (handleId: string, code: string) =>
+          browser.page(handleId)?.wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]) ?? Promise.resolve(null),
+        clearData: (what: ClearBrowsingData) => browser.clearData(what)
+      }
+    })
+  }
+
   const manager = new SessionManager((handleId, event) => {
+    browser.onSessionEvent(handleId, event)
+    if (event.type === 'process-exit') disposeBrowser(handleId)
+    else if (event.type === 'session-init' && browser.isEnabled(handleId)) persistBrowser(handleId, true)
+    else if (event.type === 'reconnected') browser.attached(handleId)
     // A `claude` child's stdout can arrive WHILE the window is tearing down. When the
     // BrowserWindow itself is destroyed, even READING `mainWindow.webContents` throws
     // "Object has been destroyed" (the getter throws), so we must check
@@ -379,7 +416,49 @@ function registerIpc(): void {
 
   handle(IpcChannels.stopSession, async (_e, handleId: string) => {
     manager.stop(handleId)
+    disposeBrowser(handleId)
   })
+
+  handle(IpcChannels.browserSetEnabled, async (_e, handleId: string, on: boolean) => {
+    if (on) {
+      const attach = manager.setBrowserMcp(handleId, await mcp.configFor(handleId))
+      if (!attach) {
+        mcp.revoke(handleId)
+        return false
+      }
+      browser.enable(handleId, attach === 'ready')
+    } else {
+      manager.setBrowserMcp(handleId, undefined)
+      disposeBrowser(handleId)
+    }
+    persistBrowser(handleId, on)
+    return true
+  })
+  ipcMain.on(IpcChannels.browserSetBounds, (e, handleId: string, b: PaneBounds | null) => {
+    if (fromTrustedFrame(e)) browser.setBounds(handleId, b)
+  })
+  handle(IpcChannels.browserSetVisible, (_e, handleId: string, visible: boolean) => browser.setVisible(handleId, visible))
+  handle(IpcChannels.browserNavigate, (_e, handleId: string, url: string) => browser.navigate(handleId, url, 'user'))
+  handle(IpcChannels.browserNav, (_e, handleId: string, action: 'back' | 'forward' | 'reload' | 'stop') => browser.nav(handleId, action))
+  handle(IpcChannels.browserDrive, (_e, handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset') =>
+    browser.drive(handleId, action)
+  )
+  handle(IpcChannels.browserSiteVerdict, (_e, handleId: string, requestId: string, allow: boolean) =>
+    browser.siteVerdict(handleId, requestId, allow)
+  )
+  handle(IpcChannels.browserLoginVerdict, (_e, handleId: string, requestId: string, verdict: Parameters<BrowserManager['loginVerdict']>[2]) =>
+    browser.loginVerdict(handleId, requestId, verdict)
+  )
+  handle(IpcChannels.browserListSites, () => listSites())
+  handle(IpcChannels.browserRemoveSite, (_e, site: string) => removeSite(site))
+  handle(IpcChannels.browserListLogins, () => listLogins())
+  handle(IpcChannels.browserSaveLogin, (_e, input: Parameters<typeof saveLogin>[0]) => saveLogin(input))
+  handle(IpcChannels.browserRemoveLogin, (_e, id: string) => removeLogin(id))
+  handle(IpcChannels.browserVaultAvailable, () => vaultAvailable())
+  handle(IpcChannels.browserDataInfo, () => browser.dataInfo())
+  handle(IpcChannels.browserClearData, (_e, what: ClearBrowsingData) =>
+    browser.clearData({ cookies: what?.cookies === true, cache: what?.cache === true, history: what?.history === true })
+  )
 
   ipcMain.handle(
     IpcChannels.respondPermission,
@@ -528,8 +607,14 @@ function registerIpc(): void {
 
   ipcMain.handle(
     IpcChannels.updateSettings,
-    async (_e, patch: Partial<CluiSettings>, clear?: SettingsKey[]) =>
-      updateSettings(patch, clear ?? [])
+    async (_e, patch: Partial<CluiSettings>, clear?: SettingsKey[]) => {
+      const next = await updateSettings(patch, clear ?? [])
+      if ('theme' in patch || clear?.includes('theme')) {
+        mainWindow?.setBackgroundColor(THEME_BG[resolveTheme()])
+        browser.repaint()
+      }
+      return next
+    }
   )
 
   handle(IpcChannels.detectCliAt, async (_e, path: string) => detectCli(path || null))
@@ -553,6 +638,7 @@ function registerIpc(): void {
     }
     if (getSettingsSync().theme === 'system') {
       mainWindow?.setBackgroundColor(THEME_BG[resolveTheme()])
+      browser.repaint()
     }
   })
 
@@ -576,6 +662,10 @@ function registerIpc(): void {
 // makes a 2nd launch hand off to the already-running instance (which focuses its
 // window) and quit. Must run BEFORE whenReady. (The intra-Clui double-spawn case is
 // already guarded in the store; this closes the cross-instance case at ~zero cost.)
+// The fuses close --inspect, but Chromium's remote debugging port would still let another local
+// process drive Clui's pages, the signed-in browser pane among them.
+if (app.isPackaged && app.commandLine.hasSwitch('remote-debugging-port')) app.exit(1)
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
@@ -607,6 +697,8 @@ if (!gotSingleInstanceLock) {
 
 app.on('window-all-closed', () => {
   sessionManager?.stopAll()
+  // Stopped sessions emit no exit event, so their pages would outlive the window.
+  browserManager?.disposeAll()
   if (process.platform !== 'darwin') app.quit()
 })
 

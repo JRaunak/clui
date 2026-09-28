@@ -13,6 +13,10 @@ export function reducedMotion(): boolean {
 
 const inflight = new WeakMap<Document | HTMLElement, ViewTransition>()
 
+/** Called before each View Transition starts; a returned cleanup runs when it finishes. The browser
+ *  pane uses this to swap its native view, which paints above all DOM, for a still. */
+export const transitionHooks = new Set<() => (() => void) | void>()
+
 /**
  * Every View Transition in Clui starts here. Keyboard-initiated changes, reduced motion, and a host
  * without startViewTransition apply the update synchronously with no transition.
@@ -33,6 +37,7 @@ export function runTransition(o: {
     return null
   }
   inflight.get(host)?.skipTransition()
+  const cleanups = [...transitionHooks].map((h) => h())
   const t = host.startViewTransition({
     update: () => {
       flushSync(o.update)
@@ -41,7 +46,10 @@ export function runTransition(o: {
     types: o.types ?? []
   })
   inflight.set(host, t)
-  t.finished.finally(() => { if (inflight.get(host) === t) inflight.delete(host) })
+  t.finished.finally(() => {
+    cleanups.forEach((c) => c?.())
+    if (inflight.get(host) === t) inflight.delete(host)
+  })
   return t
 }
 

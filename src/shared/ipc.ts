@@ -14,6 +14,7 @@ import type {
   WorkspaceOption
 } from './sessions'
 import type { ConfigBundle } from './config'
+import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, PaneBounds, SavedLoginInfo } from './browser'
 import type {
   CluiSettings,
   EffortChoice,
@@ -193,7 +194,7 @@ export interface CluiApi {
   /** Load the per-session model+effort map (sessionId → {model,effort}). Passed as
    *  --model/--effort on resume so a mid-session switch survives (the CLI otherwise
    *  reverts to the settings.json default on --resume). */
-  getSessionModels: () => Promise<Record<string, { model?: string; effort?: string; ultracode?: boolean }>>
+  getSessionModels: () => Promise<Record<string, { model?: string; effort?: string; ultracode?: boolean; browser?: boolean }>>
   /** Persist one session's model/effort (merges provided fields). */
   setSessionModel: (sessionId: string, prefs: { model?: string; effort?: string; ultracode?: boolean }) => Promise<void>
   /** Remove one session's persisted model/effort (on permanent delete). */
@@ -266,6 +267,36 @@ export interface CluiApi {
   /** macOS "Reduce transparency", read from nativeTheme so the solid fallback doesn't rely on Chromium's media query. */
   getReducedTransparency: () => Promise<boolean>
   onReducedTransparencyChanged: (cb: (on: boolean) => void) => () => void
+  browserSetEnabled: (handleId: string, on: boolean) => Promise<boolean>
+  /** Fire-and-forget: sent at most once per animation frame. */
+  browserSetBounds: (handleId: string, b: PaneBounds | null) => void
+  /** Resolves to a fresh still (data URL) captured just before hiding, or null. */
+  browserSetVisible: (handleId: string, visible: boolean) => Promise<string | null>
+  /** Resolves to an error text when the URL is refused (non-http(s)), else null. */
+  browserNavigate: (handleId: string, url: string) => Promise<string | null>
+  browserNav: (handleId: string, action: 'back' | 'forward' | 'reload' | 'stop') => Promise<void>
+  browserDrive: (handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset') => Promise<void>
+  browserSiteVerdict: (handleId: string, requestId: string, allow: boolean) => Promise<void>
+  /** choose: `loginId`; save: the user's fields (the password crosses IPC only here); decline: neither. */
+  browserLoginVerdict: (
+    handleId: string,
+    requestId: string,
+    verdict:
+      | { action: 'fill'; loginId: string }
+      | { action: 'save'; username: string; password: string; totpSeed?: string }
+      | { action: 'decline' }
+      | { action: 'self' }
+  ) => Promise<void>
+  browserListSites: () => Promise<ApprovedSite[]>
+  browserRemoveSite: (site: string) => Promise<void>
+  browserListLogins: () => Promise<SavedLoginInfo[]>
+  browserSaveLogin: (input: { id?: string; site: string; username: string; password?: string; totpSeed?: string }) => Promise<SavedLoginInfo>
+  browserRemoveLogin: (id: string) => Promise<void>
+  browserVaultAvailable: () => Promise<boolean>
+  browserDataInfo: () => Promise<BrowsingDataInfo>
+  /** Rejects while Claude drives any page; approved sites and saved logins are never touched. */
+  browserClearData: (what: ClearBrowsingData) => Promise<void>
+  onBrowserEvent: (cb: (handleId: string, e: BrowserEvent) => void) => () => void
 }
 
 /** Actions emitted by the native application menu. */
@@ -282,6 +313,8 @@ export type MenuAction =
   | 'find-prev'
   | 'search-global'
   | 'toggle-pane-size'
+  | 'browser-stop'
+  | 'browser-toggle'
 
 /** IPC channel names (single source of truth). */
 export const IpcChannels = {
@@ -339,5 +372,22 @@ export const IpcChannels = {
   menuAction: 'clui:menuAction',
   getReducedTransparency: 'clui:getReducedTransparency',
   reducedTransparencyChanged: 'clui:reducedTransparencyChanged',
-  fullscreenChanged: 'clui:fullscreenChanged'
+  fullscreenChanged: 'clui:fullscreenChanged',
+  browserEvent: 'clui:browserEvent',
+  browserSetEnabled: 'clui:browserSetEnabled',
+  browserSetBounds: 'clui:browserSetBounds',
+  browserSetVisible: 'clui:browserSetVisible',
+  browserNavigate: 'clui:browserNavigate',
+  browserNav: 'clui:browserNav',
+  browserDrive: 'clui:browserDrive',
+  browserSiteVerdict: 'clui:browserSiteVerdict',
+  browserLoginVerdict: 'clui:browserLoginVerdict',
+  browserListSites: 'clui:browserListSites',
+  browserRemoveSite: 'clui:browserRemoveSite',
+  browserListLogins: 'clui:browserListLogins',
+  browserSaveLogin: 'clui:browserSaveLogin',
+  browserRemoveLogin: 'clui:browserRemoveLogin',
+  browserVaultAvailable: 'clui:browserVaultAvailable',
+  browserDataInfo: 'clui:browserDataInfo',
+  browserClearData: 'clui:browserClearData'
 } as const

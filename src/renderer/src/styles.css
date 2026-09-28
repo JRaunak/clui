@@ -139,6 +139,8 @@
   --color-control-danger-hover: color-mix(in oklab, var(--color-err) 14%, #121213);
   /* Menu-row hover for the composer cards. In dark it lifts; in light there's nothing brighter than the white surface, so it's a soft darken. Scoped to these cards. */
   --color-row-hover: var(--color-bg-raised);
+  /* The message you navigated to: the jump wash, and the active find match's fill. The light theme's accent label on it is the tightest pair (4.56:1), so it can't get lighter here or darker in light. */
+  --color-flash: #262627;
   --color-content: var(--paper-100);
   --color-dim: var(--paper-400);
   --color-faint: var(--paper-500);
@@ -270,6 +272,7 @@
   --color-control-hover: color-mix(in oklab, #000 4%, var(--color-bg-elev));
   --color-control-danger-hover: color-mix(in oklab, var(--color-err) 10%, #ffffff);
   --color-row-hover: color-mix(in oklab, #000 5%, var(--color-bg-elev));
+  --color-flash: #f5f5f6;
 
   /* Text: neutral near-black ramp (17.4 / 8.9 / 7.2 :1 on the white surface). */
   --color-content: #1a1a1a;
@@ -661,6 +664,11 @@ body {
     transform: none;
   }
 
+  /* The neutralizer would play the fade's fill to its last frame at once and the wash would never show. */
+  .turn-flash {
+    animation: none !important;
+  }
+
   .ultra-star-glow::after {
     animation: none !important;
     opacity: 0.7;
@@ -895,6 +903,18 @@ body {
   animation: row-body-in var(--dur-fast) var(--ease-out);
 }
 
+/* Held for --dur-stage, faded over --dur-slow, then unmounted by Chat (FLASH_MS). A keyboard jump
+   keeps it static for the same time. */
+.turn-flash {
+  background-color: var(--color-flash);
+}
+.turn-flash[data-via='pointer'] {
+  animation: turn-flash-out var(--dur-slow) var(--ease-in) var(--dur-stage) both;
+}
+@keyframes turn-flash-out {
+  to { opacity: 0; }
+}
+
 /* The top slot's content fades in; the band itself never changes size. */
 @keyframes slot-in {
   from {
@@ -1089,37 +1109,44 @@ body {
 [data-ui='stage'][data-vt^='undive']::view-transition-group(dive) {
   animation-duration: var(--dur-slow);
 }
-/* A 32px row and a full-height pane have different aspect ratios; cover-crop from the top-left
-   instead of stretching text. */
+/* A 32px row and a full-height pane have different aspect ratios. Both snapshots stay at natural size,
+   cropped from the top-left by the group's clip: any fit that scales would change its scale factor
+   partway through the morph and the text would zoom unevenly. */
 [data-ui='stage'][data-vt]::view-transition-old(dive),
 [data-ui='stage'][data-vt]::view-transition-new(dive) {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: none;
   object-position: left top;
 }
 [data-ui='stage'][data-vt^='dive']::view-transition-old(dive) {
-  animation: vt-fade-out 100ms var(--ease-in) both;
+  animation: vt-fade-out var(--dur-instant) var(--ease-in) both;
 }
 [data-ui='stage'][data-vt^='dive']::view-transition-new(dive) {
-  animation: vt-fade-in 160ms var(--ease-out) both;
+  animation: vt-fade-in var(--dur-fast) var(--ease-out) both;
 }
+/* The pane is gone before the transcript comes back: two full-bleed text layers crossing read as noise. */
 [data-ui='stage'][data-vt^='undive']::view-transition-old(dive) {
-  animation: vt-fade-out var(--dur-fast) var(--ease-in) both;
+  animation: vt-fade-out var(--dur-instant) var(--ease-in) both;
 }
 /* The growing pane is transparent, so fill it or the transcript beneath shows through its edge. */
 [data-ui='stage'][data-vt='dive-split']::view-transition-group(dive) {
   background-color: var(--color-bg);
 }
 [data-ui='stage'][data-vt^='undive']::view-transition-new(dive) {
-  animation: vt-fade-in 100ms var(--ease-out) both;
+  animation: vt-fade-in var(--dur-instant) var(--ease-out) both;
+}
+/* The transcript scrolls under the glass band, but its snapshot paints above the band's, so without
+   this the rows under the band show sharp through it for the length of the transition. */
+[data-ui='stage']::view-transition-image-pair(stage-content) {
+  clip-path: inset(var(--top-h, 0px) 0 0 0);
 }
 /* Dive to full: the transcript recedes behind the arriving pane and comes forward on the way out. */
 [data-ui='stage'][data-vt='dive']::view-transition-old(stage-content) {
   animation: vt-recede var(--dur-base) var(--ease-out) both;
 }
 [data-ui='stage'][data-vt='undive']::view-transition-new(stage-content) {
-  animation: vt-return var(--dur-slow) var(--ease-out) both;
+  animation: vt-return var(--dur-base) var(--ease-out) var(--dur-instant) both;
 }
 /* Half (split): the transcript's group morphs to the new width while both snapshots stay at
    natural size, cropped from the top-left, so text never stretches. */
@@ -1161,19 +1188,37 @@ body {
 }
 /* Half ↔ full: the pane morphs its rect; the transcript fades out going full and back in going half. */
 [data-ui='stage'][data-vt='pane-full']::view-transition-group(pane),
-[data-ui='stage'][data-vt='pane-half']::view-transition-group(pane) {
+[data-ui='stage'][data-vt='pane-half']::view-transition-group(pane),
+[data-ui='stage'][data-vt='pane-full']::view-transition-group(pane-head),
+[data-ui='stage'][data-vt='pane-half']::view-transition-group(pane-head),
+[data-ui='stage'][data-vt='pane-full']::view-transition-group(pane-head-title),
+[data-ui='stage'][data-vt='pane-half']::view-transition-group(pane-head-title) {
   overflow: clip;
   animation-duration: var(--dur-slow);
   animation-timing-function: var(--ease-snap);
 }
+/* The body and the header's title are left-aligned, so they ride the moving left edge instead of being cropped mid-line. */
 [data-ui='stage'][data-vt='pane-full']::view-transition-old(pane),
 [data-ui='stage'][data-vt='pane-full']::view-transition-new(pane),
 [data-ui='stage'][data-vt='pane-half']::view-transition-old(pane),
-[data-ui='stage'][data-vt='pane-half']::view-transition-new(pane) {
+[data-ui='stage'][data-vt='pane-half']::view-transition-new(pane),
+[data-ui='stage'][data-vt='pane-full']::view-transition-old(pane-head-title),
+[data-ui='stage'][data-vt='pane-full']::view-transition-new(pane-head-title),
+[data-ui='stage'][data-vt='pane-half']::view-transition-old(pane-head-title),
+[data-ui='stage'][data-vt='pane-half']::view-transition-new(pane-head-title) {
   width: 100%;
   height: 100%;
   object-fit: none;
-  /* The pane's right edge never moves, so anchoring there keeps its header controls still. */
+  object-position: left top;
+}
+/* The pane's right edge never moves, so anchoring the controls there keeps them still. */
+[data-ui='stage'][data-vt='pane-full']::view-transition-old(pane-head),
+[data-ui='stage'][data-vt='pane-full']::view-transition-new(pane-head),
+[data-ui='stage'][data-vt='pane-half']::view-transition-old(pane-head),
+[data-ui='stage'][data-vt='pane-half']::view-transition-new(pane-head) {
+  width: 100%;
+  height: 100%;
+  object-fit: none;
   object-position: right top;
 }
 /* Snapshots at two widths can't crossfade into alignment, so the new one shows at once over the old,
@@ -1183,7 +1228,11 @@ body {
 [data-ui='stage'][data-vt='pane-open']::view-transition-old(stage-content),
 [data-ui='stage'][data-vt='pane-hide']::view-transition-old(stage-content),
 [data-ui='stage'][data-vt='pane-full']::view-transition-old(pane),
-[data-ui='stage'][data-vt='pane-half']::view-transition-old(pane) {
+[data-ui='stage'][data-vt='pane-half']::view-transition-old(pane),
+[data-ui='stage'][data-vt='pane-full']::view-transition-old(pane-head),
+[data-ui='stage'][data-vt='pane-half']::view-transition-old(pane-head),
+[data-ui='stage'][data-vt='pane-full']::view-transition-old(pane-head-title),
+[data-ui='stage'][data-vt='pane-half']::view-transition-old(pane-head-title) {
   mix-blend-mode: normal;
   animation: vt-fade-out var(--dur-instant) var(--ease-out) both;
 }
@@ -1191,7 +1240,11 @@ body {
 [data-ui='stage'][data-vt='pane-open']::view-transition-new(stage-content),
 [data-ui='stage'][data-vt='pane-hide']::view-transition-new(stage-content),
 [data-ui='stage'][data-vt='pane-full']::view-transition-new(pane),
-[data-ui='stage'][data-vt='pane-half']::view-transition-new(pane) {
+[data-ui='stage'][data-vt='pane-half']::view-transition-new(pane),
+[data-ui='stage'][data-vt='pane-full']::view-transition-new(pane-head),
+[data-ui='stage'][data-vt='pane-half']::view-transition-new(pane-head),
+[data-ui='stage'][data-vt='pane-full']::view-transition-new(pane-head-title),
+[data-ui='stage'][data-vt='pane-half']::view-transition-new(pane-head-title) {
   mix-blend-mode: normal;
   animation: none;
 }

@@ -86,6 +86,9 @@ export type DomainEvent =
    *  Includes TUI-only commands the renderer filters out (the CLI carries no
    *  headless-safe flag, so see `isHeadlessSafeCommand`). */
   | { type: 'slash-commands'; commands: SlashCommandInfo[] }
+  /** A respawn finished its handshake. A session that hasn't run a turn emits no init, so this
+   *  is what ends a respawn's "Reconnecting…" notice. */
+  | { type: 'reconnected' }
   | { type: 'message-start' }
   /** A streamed chunk of assistant-visible text. */
   | { type: 'text-delta'; text: string }

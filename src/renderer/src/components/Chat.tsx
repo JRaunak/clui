@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Virtuoso, type StateSnapshot, type VirtuosoHandle } from 'react-virtuoso'
 import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
 import { MessageView } from './MessageView'
 import { WorkingStatus } from './WorkingStatus'
@@ -9,6 +9,15 @@ import { IconChevron, IconClose, IconEdit, IconCheck, IconFile } from './Icon'
 import { deriveModelInfo } from '../../../shared/settings'
 import { TURN_LINE_PX, currentTurnAt } from '../lib/instrument'
 import type { PermissionModeChoice } from '../../../shared/ipc'
+import type { Via } from '../lib/motion'
+
+// --dur-stage hold plus the --dur-slow fade of .turn-flash in styles.css.
+const FLASH_MS = 720
+
+// A full pane unmounts the transcript. These outlive it, so the transcript comes back where the reader
+// left it, and a jump already handled isn't replayed on the next mount.
+let parked: { handleId: string; snapshot: StateSnapshot } | null = null
+let seenTarget: object | null = null
 
 /** Quick-session permission phrase, keyed to the four modes Settings scopes quick sessions to.
  *  Anything else falls back to the System Default phrasing. */
@@ -39,6 +48,8 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const resumed = useActive((s) => s?.resumed ?? false)
   const historyCount = useActive((s) => s?.historyCount ?? 0)
   const activeHandleId = useActive((s) => s?.handleId ?? null)
+  const activeHandleIdRef = useRef(activeHandleId)
+  activeHandleIdRef.current = activeHandleId
   const tasks = useActive((s) => s?.tasks ?? EMPTY_TASKS)
   // Empty-state copy varies by session shape: quick (ephemeral), directoryless, or folder-bound.
   const cwd = useActive((s) => s?.cwd ?? null)
@@ -61,14 +72,20 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const tasksDone = tasks.filter((t) => t.status === 'completed').length
 
   const scrollTarget = useSession((s) => s.scrollTarget)
-  const findOpen = useSession((s) => s.findOpen)
   // Persistent "you are here" for the current find match (moves on Enter/⇧Enter, cleared
-  // when find closes). Distinct from `flashId`, the transient highlight a global-search jump
-  // leaves when the find bar is closed.
+  // when find closes). Distinct from `flash`, the transient wash a pointer or keyboard jump leaves.
   const activeMatchId = useSession((s) => s.findActiveId)
-  const [flashId, setFlashId] = useState<string | null>(null)
+  const [flash, setFlash] = useState<{ id: string; via: Via; nonce: number } | null>(null)
 
   const virtuosoRef = useRef<VirtuosoHandle>(null)
+  // The first Virtuoso restores the parked position with its measured row sizes, so a transition that
+  // reveals the transcript captures it already in place instead of scrolling there afterwards. Null
+  // starts at the bottom.
+  const restore = useRef<StateSnapshot | null | undefined>(undefined)
+  if (restore.current === undefined) {
+    restore.current = parked?.handleId === useSession.getState().activeHandleId ? parked.snapshot : null
+    parked = null
+  }
   const setCurrentTurn = useSession((s) => s.setCurrentTurn)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
@@ -78,7 +95,9 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const syncTurn = useCallback(() => {
     const sc = scrollerEl.current
     if (!sc) return
-    const line = sc.getBoundingClientRect().top + TURN_LINE_PX + 1
+    // scrollTop is whole pixels and rows sit at fractional offsets, so a jump to a prompt lands it up
+    // to about 1.5px past the line; the slack keeps the reply above it from reading as visible.
+    const line = sc.getBoundingClientRect().top + TURN_LINE_PX + 2
     let top = -1
     for (const el of sc.querySelectorAll<HTMLElement>('[data-testid="virtuoso-item-list"] > [data-index]')) {
       if (el.getBoundingClientRect().bottom > line) {
@@ -117,6 +136,19 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const followingRef = useRef(true)
   // Set while a smooth jump is in flight, so a resize doesn't cut it to an instant one.
   const smoothJumpRef = useRef(false)
+
+  // Park only a reader who had left the tail; one who was following comes back to the bottom. Layout
+  // cleanup, because Virtuoso's handle is gone by the time a passive one runs.
+  useLayoutEffect(
+    () => () => {
+      const handleId = activeHandleIdRef.current
+      if (followingRef.current || !handleId) return
+      virtuosoRef.current?.getState((snapshot) => {
+        parked = { handleId, snapshot }
+      })
+    },
+    []
+  )
 
   const onAtBottom = useCallback((b: boolean) => {
     atBottomRef.current = b
@@ -168,8 +200,9 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   }, [repin])
   useEffect(() => {
     const sc = scrollerEl.current
+    followingRef.current = !restore.current
+    restore.current = null
     if (!sc) return
-    followingRef.current = true
     smoothJumpRef.current = false
     let raf = 0
     let lastTop = sc.scrollTop
@@ -202,12 +235,19 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
     const onPointer = (e: PointerEvent): void => {
       if (e.target === sc) detach()
     }
+    // A click on a row is the reader settling on it. A disclosure grows or shrinks the list under that
+    // row and a re-pin would carry it off by the body's height; an Agent row is where its pane morphs
+    // back to on close. This runs before React's root handler acts on the click.
+    const onClick = (e: MouseEvent): void => {
+      if (e.target instanceof Element && e.target.closest('[aria-expanded], [data-ui="row-open-transcript"]')) detach()
+    }
     sc.addEventListener('scroll', onScroll, { passive: true })
     sc.addEventListener('scrollend', onScrollEnd)
     sc.addEventListener('wheel', onWheel, { passive: true })
     sc.addEventListener('touchmove', detach, { passive: true })
     sc.addEventListener('keydown', onKey)
     sc.addEventListener('pointerdown', onPointer)
+    sc.addEventListener('click', onClick)
     // Rows re-measured after landing move the top row without a scroll event, and a streaming message
     // grows the list. Re-pin here outside the rAF: the observer runs after layout and before paint, so
     // a new line never paints under the dock. The scroller itself is observed for a shrinking viewport.
@@ -225,6 +265,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
       sc.removeEventListener('touchmove', detach)
       sc.removeEventListener('keydown', onKey)
       sc.removeEventListener('pointerdown', onPointer)
+      sc.removeEventListener('click', onClick)
       ro.disconnect()
       cancelAnimationFrame(raf)
     }
@@ -238,31 +279,29 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   }, [toLatest])
 
   // Keyed on nonce so repeated jumps to the same id re-fire. Detaches so a streaming reply doesn't
-  // pull the view back to the bottom. The active find match carries its own persistent marker (via
-  // FindBar), so only a global-search jump (find bar closed) flashes.
-  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // pull the view back to the bottom. The caller decides whether the landing is marked.
+  const flashTimer = useRef<ReturnType<typeof setTimeout>>()
+  useEffect(() => () => clearTimeout(flashTimer.current), [])
   useEffect(() => {
-    if (!scrollTarget) return
+    if (!scrollTarget || scrollTarget === seenTarget) return
+    seenTarget = scrollTarget
     const idx = messages.findIndex((m) => m.id === scrollTarget.messageId)
     if (idx < 0) return
     followingRef.current = false
+    const id = scrollTarget.messageId
     if (scrollTarget.align === 'start') {
       // Instant, because a smooth scroll to a far unrendered index lands short in react-virtuoso.
       virtuosoRef.current?.scrollToIndex({ index: idx, align: 'start', offset: -TURN_LINE_PX, behavior: 'auto' })
-      const id = scrollTarget.messageId
       requestAnimationFrame(() =>
         requestAnimationFrame(() => document.getElementById(`msg-${id}`)?.focus({ preventScroll: true }))
       )
-      return
+    } else {
+      virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center', behavior })
     }
-    virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center', behavior })
-    if (findOpen) return
-    setFlashId(scrollTarget.messageId)
-    if (flashTimer.current) clearTimeout(flashTimer.current)
-    // Color-only fade, so reduced-motion flattens it safely.
-    flashTimer.current = setTimeout(() => setFlashId(null), 1600)
-    return () => {
-      if (flashTimer.current) clearTimeout(flashTimer.current)
+    if (scrollTarget.flash) {
+      setFlash({ id, via: scrollTarget.flash, nonce: scrollTarget.nonce })
+      clearTimeout(flashTimer.current)
+      flashTimer.current = setTimeout(() => setFlash(null), FLASH_MS)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollTarget?.nonce])
@@ -327,17 +366,26 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
                 <span className="h-px flex-1 bg-border" />
               </div>
             )}
-            {/* Active find match gets a persistent left-anchor + tint; a global-search jump gets
-                a transient color-only ring (reduced-motion safe). */}
-            <div
-              className={
-                activeMatchId === m.id
-                  ? 'rounded-lg border-l-2 border-accent bg-accent-surface'
-                  : flashId === m.id
-                    ? 'rounded-lg border-l-2 border-transparent ring-2 ring-accent/60 transition-shadow duration-700'
-                    : 'rounded-lg border-l-2 border-transparent ring-0 ring-transparent transition-shadow duration-700'
-              }
-            >
+            <div className="relative isolate">
+              {/* Drawn behind the message like the jump wash, so marking a match never shifts the text. */}
+              {activeMatchId === m.id && (
+                <span
+                  aria-hidden="true"
+                  data-ui="find-match"
+                  className="pointer-events-none absolute -left-6 -right-3 -inset-y-2 -z-10 rounded-lg bg-flash before:absolute before:inset-y-2.5 before:left-[1.0625rem] before:w-0.5 before:rounded-full before:bg-dim"
+                />
+              )}
+              {/* Behind the message inside its isolate, so bubbles and cards keep their own fills and
+                  only the floor around them washes. The key restarts the fade on a repeat jump. */}
+              {flash?.id === m.id && (
+                <span
+                  key={flash.nonce}
+                  aria-hidden="true"
+                  data-ui="turn-flash"
+                  data-via={flash.via}
+                  className="turn-flash pointer-events-none absolute -left-6 -right-3 -inset-y-2 -z-10 rounded-lg"
+                />
+              )}
               <MessageView message={m} hideThinking={thinkingLive && index === messages.length - 1} />
             </div>
           </div>
@@ -349,7 +397,8 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         itemsRendered={syncTurn}
         atTopStateChange={(atTop) => setPrimaryScrolled(!atTop)}
         atBottomThreshold={80}
-        initialTopMostItemIndex={Math.max(0, messages.length - 1)}
+        // Both props feed Virtuoso's initial location, and the index would win over the restore.
+        {...(restore.current ? { restoreStateFrom: restore.current } : { initialTopMostItemIndex: Math.max(0, messages.length - 1) })}
         increaseViewportBy={{ top: 600, bottom: 600 }}
       />
       {/* Puck (at bottom) and JumpToLatest (scrolled up) are mutually exclusive. When scrolled

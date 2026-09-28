@@ -15,6 +15,7 @@ import {
   type WireAttachment
 } from '../shared/ipc'
 import type { CluiSettings, EffortChoice, ModelChoice, SettingsKey } from '../shared/settings'
+import type { BrowserEvent } from '../shared/browser'
 
 const api: CluiApi = {
   pickWorkspace: () => ipcRenderer.invoke(IpcChannels.pickWorkspace),
@@ -108,6 +109,29 @@ const api: CluiApi = {
     const listener = (_e: unknown, on: boolean): void => cb(on)
     ipcRenderer.on(IpcChannels.reducedTransparencyChanged, listener)
     return () => ipcRenderer.removeListener(IpcChannels.reducedTransparencyChanged, listener)
+  },
+  browserSetEnabled: (handleId, on) => ipcRenderer.invoke(IpcChannels.browserSetEnabled, handleId, on),
+  browserSetBounds: (handleId, b) => ipcRenderer.send(IpcChannels.browserSetBounds, handleId, b),
+  browserSetVisible: (handleId, visible) => ipcRenderer.invoke(IpcChannels.browserSetVisible, handleId, visible),
+  browserNavigate: (handleId, url) => ipcRenderer.invoke(IpcChannels.browserNavigate, handleId, url),
+  browserNav: (handleId, action) => ipcRenderer.invoke(IpcChannels.browserNav, handleId, action),
+  browserDrive: (handleId, action) => ipcRenderer.invoke(IpcChannels.browserDrive, handleId, action),
+  browserSiteVerdict: (handleId, requestId, allow) =>
+    ipcRenderer.invoke(IpcChannels.browserSiteVerdict, handleId, requestId, allow),
+  browserLoginVerdict: (handleId, requestId, verdict) =>
+    ipcRenderer.invoke(IpcChannels.browserLoginVerdict, handleId, requestId, verdict),
+  browserListSites: () => ipcRenderer.invoke(IpcChannels.browserListSites),
+  browserRemoveSite: (site) => ipcRenderer.invoke(IpcChannels.browserRemoveSite, site),
+  browserListLogins: () => ipcRenderer.invoke(IpcChannels.browserListLogins),
+  browserSaveLogin: (input) => ipcRenderer.invoke(IpcChannels.browserSaveLogin, input),
+  browserRemoveLogin: (id) => ipcRenderer.invoke(IpcChannels.browserRemoveLogin, id),
+  browserVaultAvailable: () => ipcRenderer.invoke(IpcChannels.browserVaultAvailable),
+  browserDataInfo: () => ipcRenderer.invoke(IpcChannels.browserDataInfo),
+  browserClearData: (what) => ipcRenderer.invoke(IpcChannels.browserClearData, what),
+  onBrowserEvent: (cb: (handleId: string, e: BrowserEvent) => void) => {
+    const listener = (_e: unknown, handleId: string, ev: BrowserEvent): void => cb(handleId, ev)
+    ipcRenderer.on(IpcChannels.browserEvent, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.browserEvent, listener)
   }
 }
 

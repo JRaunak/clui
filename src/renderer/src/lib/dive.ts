@@ -1,6 +1,7 @@
 import { runTagged, type Via } from './motion'
 import { getStage } from './stage'
-import { useSession } from '../store'
+import { activeSlice, useSession } from '../store'
+import type { BrowserPaneState } from '../../../shared/browser'
 
 function openButtonFor(toolId: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(
@@ -21,9 +22,8 @@ function focusPaneTitle(): void {
   document.querySelector<HTMLElement>('[data-ui="pane-title"]')?.focus({ preventScroll: true })
 }
 
-/** Back on the transcript, return focus to the row that opened the pane. After full the
- *  transcript remounts at the bottom, so the row may not be rendered yet: bring its message to
- *  the top of the viewport and retry once, then fall back to the composer. */
+/** Back on the transcript, return focus to the row that opened the pane. If the row isn't rendered,
+ *  bring its message to the top of the viewport and retry once, then fall back to the composer. */
 function focusOpener(toolId: string): void {
   const btn = openButtonFor(toolId)
   if (btn) return btn.focus({ preventScroll: true })
@@ -31,7 +31,6 @@ function focusOpener(toolId: string): void {
   const slice = st.activeHandleId ? st.sessions[st.activeHandleId] : null
   const msg = slice?.messages.find((m) => m.tools.some((t) => t.id === toolId))
   if (!msg) return void document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
-  // align: 'start' is the plain scroll; the default path also flashes the message.
   st.requestScrollTo(msg.id, { align: 'start' })
   setTimeout(() => {
     ;(openButtonFor(toolId) ?? document.querySelector<HTMLElement>('[data-composer-input]'))?.focus()
@@ -100,18 +99,77 @@ export function diveOut(via: Via): void {
  *  transcript, so focus inside it moves to the pane title. */
 export function resizePane(full: boolean, via: Via): void {
   const p = pane()
+  // The header's controls sit at the pane's fixed right edge and its title reads from the moving left
+  // edge, so each needs its own snapshot anchored to its own side.
+  const head = p?.querySelector<HTMLElement>('[data-ui="pane-head-controls"]') ?? null
+  const title = p?.querySelector<HTMLElement>('[data-ui="pane-head-title"]') ?? null
   const fromTranscript = !!document.activeElement?.closest('[data-ui="pane-primary"]')
   p?.style.setProperty('view-transition-name', 'pane')
+  head?.style.setProperty('view-transition-name', 'pane-head')
+  title?.style.setProperty('view-transition-name', 'pane-head-title')
   const t = runTagged(full ? 'pane-full' : 'pane-half', {
     via,
     scope: getStage(),
-    update: () => useSession.getState().setPaneFull(full),
+    update: () => {
+      // The subagent pane outranks the browser in the Stage, so whichever is showing is resized.
+      const st = useSession.getState()
+      if (st.viewingSubagent) st.setPaneFull(full)
+      else st.setBrowserPane(full ? 'full' : 'half')
+    },
     after: () => {
       if (full && fromTranscript) focusPaneTitle()
     }
   })
   const clear = (): void => {
     p?.style.removeProperty('view-transition-name')
+    head?.style.removeProperty('view-transition-name')
+    title?.style.removeProperty('view-transition-name')
+  }
+  if (t) t.finished.finally(clear)
+  else clear()
+}
+
+/** Open, hide or resize the browser pane. Opening slides it in from the right edge (and the
+ *  transcript recedes when it opens to full); hiding slides it out and returns focus to the
+ *  top-band toggle. Half and full go through resizePane. */
+export function setBrowserPaneVia(next: BrowserPaneState, via: Via): void {
+  const st = useSession.getState()
+  const cur = activeSlice(st)
+  if (!cur) return
+  const from: BrowserPaneState = st.viewingSubagent || !cur.browserOpen ? 'collapsed' : st.browserPaneFull ? 'full' : 'half'
+  if (from === next) return
+  if (from !== 'collapsed' && next !== 'collapsed') return resizePane(next === 'full', via)
+  const stage = getStage()
+  const update = (): void => useSession.getState().setBrowserPane(next)
+  if (next === 'collapsed') {
+    const p = pane()
+    p?.style.setProperty('view-transition-name', 'pane')
+    const t = runTagged('pane-hide', {
+      via,
+      scope: stage,
+      update,
+      after: () => document.querySelector<HTMLElement>('[data-ui="browser-toggle"]')?.focus()
+    })
+    const clear = (): void => {
+      p?.style.removeProperty('view-transition-name')
+    }
+    if (t) t.finished.finally(clear)
+    else clear()
+    return
+  }
+  const t = runTagged('pane-open', {
+    via,
+    scope: stage,
+    update,
+    after: () => {
+      // Half or full is only known once the Stage has laid the pane out; the pseudo tree is built
+      // after this callback, so the retag still picks the right CSS.
+      if (stage?.dataset.vt === 'pane-open' && !primaryShown()) stage.dataset.vt = 'pane-open-full'
+      pane()?.style.setProperty('view-transition-name', 'pane')
+    }
+  })
+  const clear = (): void => {
+    pane()?.style.removeProperty('view-transition-name')
   }
   if (t) t.finished.finally(clear)
   else clear()

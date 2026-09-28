@@ -20,6 +20,8 @@ export interface SessionModelPrefs {
   model?: string
   effort?: string
   ultracode?: boolean
+  /** The browser tools were on, so a resume re-attaches them. */
+  browser?: boolean
 }
 
 const modelsPath = (): string => join(app.getPath('userData'), 'session-models.json')
@@ -38,7 +40,8 @@ export async function readSessionModels(): Promise<Record<string, SessionModelPr
         if (typeof rec.model === 'string') prefs.model = rec.model
         if (typeof rec.effort === 'string') prefs.effort = rec.effort
         if (typeof rec.ultracode === 'boolean') prefs.ultracode = rec.ultracode
-        if (prefs.model || prefs.effort || prefs.ultracode !== undefined) out[k] = prefs
+        if (typeof rec.browser === 'boolean') prefs.browser = rec.browser
+        if (prefs.model || prefs.effort || prefs.ultracode !== undefined || prefs.browser !== undefined) out[k] = prefs
       }
     }
     return out
@@ -70,7 +73,8 @@ export async function setSessionModel(sessionId: string, prefs: SessionModelPref
     map[sessionId] = {
       model: prefs.model ?? cur.model,
       effort: prefs.effort ?? cur.effort,
-      ultracode: prefs.ultracode ?? cur.ultracode
+      ultracode: prefs.ultracode ?? cur.ultracode,
+      browser: prefs.browser ?? cur.browser
     }
     await writeSessionModels(map)
   })

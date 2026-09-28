@@ -1,5 +1,6 @@
 import { useSession } from '../store'
 import { IconArrowUp } from './Icon'
+import { viaOf } from '../lib/motion'
 
 /** One-line "you asked" reminder for a long reply, on the top band's glass. Its parent keys it by
  *  prompt id, so each new turn fades in once. */
@@ -15,7 +16,7 @@ export function CurrentTurnHeader(): JSX.Element | null {
       className="slot-in group flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left [-webkit-app-region:no-drag] focus-visible:outline-offset-[-2px] pointer-fine:hover:bg-[var(--glass-row-hover)]"
       title={ct.text}
       aria-label={`Jump to your prompt, turn ${ct.turn}: ${line}`}
-      onClick={() => requestScrollTo(ct.messageId, { align: 'start' })}
+      onClick={(e) => requestScrollTo(ct.messageId, { align: 'start', flash: viaOf(e) })}
     >
       <span className="shrink-0 text-meta text-dim">You</span>
       <span className="min-w-0 truncate text-ui text-content">{line}</span>

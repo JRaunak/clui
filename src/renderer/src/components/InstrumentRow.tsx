@@ -1,19 +1,22 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { useActive, useSession, type ToolCall } from '../store'
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { activeSlice, useActive, useSession, type ToolCall } from '../store'
 import { Lumen } from './Lumen'
 import { lumenSiteOf } from '../lib/lumen'
 import { viaOf } from '../lib/motion'
-import { diveInto } from '../lib/dive'
+import { diveInto, setBrowserPaneVia } from '../lib/dive'
 import {
   STATE_TEXT,
+  browserLabel,
   isBackgroundedTool,
+  isBrowserTool,
   needsYouToolIdOf,
   rowState,
   summarizeInput,
+  TURN_LINE_PX,
   worstState,
   type RowState
 } from '../lib/instrument'
-import { IconCheck, IconChevron, IconCopy, IconOpenPane, IconSendToTray, IconWarn } from './Icon'
+import { IconAgentBrowser, IconCheck, IconChevron, IconCopy, IconOpenPane, IconSendToTray, IconWarn } from './Icon'
 
 type Placement = 'spine' | 'inline'
 type Seg = 'through' | 'end'
@@ -96,7 +99,8 @@ export function InstrumentRow({
   const [open, setOpen] = useState(false)
   // A pointer-opened body animates in; a keyboard toggle is instant.
   const [animateBody, setAnimateBody] = useState(false)
-  const summary = summarizeInput(tool.input)
+  const browser = isBrowserTool(tool.name)
+  const summary = browser ? browserLabel(tool.name, tool.input) : summarizeInput(tool.input)
   // The header already shows the summary, so Input starts collapsed when there is one.
   const [inputOpen, setInputOpen] = useState(() => !summary)
   const [copied, setCopied] = useState(false)
@@ -105,6 +109,21 @@ export function InstrumentRow({
     if (copyTimer.current) clearTimeout(copyTimer.current)
   }, [])
   const bodyId = useId()
+  const bodyRef = useRef<HTMLDivElement>(null)
+  // A body opened under the dock scrolls up by its overflow, never so far that the row's own top goes under the band.
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!open || !animateBody || !body) return
+    const sc = body.closest<HTMLElement>('[data-testid="virtuoso-scroller"]')
+    const row = body.closest<HTMLElement>('[data-ui="instrument-row"]')
+    if (!sc || !row) return
+    // The row's box, not the body's: the body is mid enter transform when this runs.
+    const s = sc.getBoundingClientRect()
+    const r = row.getBoundingClientRect()
+    const dock = parseFloat(getComputedStyle(sc).getPropertyValue('--dock-h')) || 0
+    const by = Math.min(r.bottom - (s.bottom - dock), r.top - (s.top + TURN_LINE_PX))
+    if (by > 0) sc.scrollBy({ top: by, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  }, [open, animateBody])
   const sendToBackground = useSession((s) => s.backgroundTask)
   // Boolean selectors: a streaming token re-runs them but only re-renders the row whose answer flips.
   const needsYou = useActive((s) => needsYouToolIdOf(s) === tool.id)
@@ -117,11 +136,23 @@ export function InstrumentRow({
   // Task was renamed Agent in CLI 2.1.63; both mean a subagent.
   const isSubagent = tool.name === 'Task' || tool.name === 'Agent'
   const subType = subagentType(tool.input)
-  const name = isSubagent ? 'Agent' : tool.name
+  const name = isSubagent ? 'Agent' : browser ? 'Browser' : tool.name
+  const lastOpen = useSession((s) => (activeSlice(s)?.browser ? (s.browserPaneFull ? 'full' : 'half') : null))
   // Only a foreground Bash is worth moving; other tools finish too fast to bother.
   const canSendToBackground = tool.result === undefined && !isBackgroundedTool(tool) && tool.name === 'Bash'
-  const actions = isSubagent || canSendToBackground
+  const actions = isSubagent || canSendToBackground || (browser && !!lastOpen)
   const errLine = tool.isError ? firstLine(tool.result ?? '') : ''
+  const toggleBody = (e: MouseEvent): void => {
+    setAnimateBody(viaOf(e) === 'pointer')
+    setOpen((o) => !o)
+  }
+  const chevron = (
+    <IconChevron
+      className={`h-4 w-4 transition-transform [transition-duration:var(--dur-fast)] [transition-timing-function:var(--ease-out)] ${
+        open ? 'rotate-90' : ''
+      }`}
+    />
+  )
   const onCopy = (): void => {
     void navigator.clipboard.writeText(tool.result ?? '')
     setCopied(true)
@@ -137,22 +168,34 @@ export function InstrumentRow({
       data-seg={placement === 'spine' ? seg : undefined}
     >
       {placement === 'spine' && <Bead state={state} lit={lit} placement="spine" />}
-      <div className={CARD}>
+      {/* On an Agent row the fill means "opens the transcript", so it stays off while the pointer is on the
+          chevron, which only discloses the result. */}
+      <div className={isSubagent ? `${CARD} group/row pointer-fine:has-[[data-ui=row-disclose]:hover]:bg-tool` : CARD}>
         <div className="relative">
-          {/* The whole header is one disclosure button laid under the visible grid, so the action
-              buttons can sit inside the row without nesting a button in a button. */}
-          <button
-            type="button"
-            className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
-            aria-expanded={open}
-            aria-controls={bodyId}
-            aria-label={`${name}${summary ? ` ${summary}` : ''}, ${STATE_TEXT[state]}`}
-            title={summary || undefined}
-            onClick={(e) => {
-              setAnimateBody(viaOf(e) === 'pointer')
-              setOpen((o) => !o)
-            }}
-          />
+          {/* The whole header is one button laid under the visible grid, so the action buttons can sit
+              inside the row without nesting a button in a button. An Agent row's opens its transcript;
+              every other row's is the disclosure. */}
+          {isSubagent ? (
+            <button
+              type="button"
+              data-ui="row-open-transcript"
+              data-tool-id={tool.id}
+              className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
+              aria-label={`${name}${summary ? ` ${summary}` : ''}, ${STATE_TEXT[state]}, open transcript`}
+              title={summary ? `${summary}\nOpen transcript` : 'Open transcript'}
+              onClick={(e) => diveInto(tool.id, viaOf(e))}
+            />
+          ) : (
+            <button
+              type="button"
+              className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
+              aria-expanded={open}
+              aria-controls={bodyId}
+              aria-label={`${name}${summary ? ` ${summary}` : ''}, ${STATE_TEXT[state]}`}
+              title={summary || undefined}
+              onClick={toggleBody}
+            />
+          )}
           <div
             className="pointer-events-none relative grid h-8 items-center gap-2 px-2.5"
             style={{ gridTemplateColumns: gridCols(placement, actions) }}
@@ -170,7 +213,13 @@ export function InstrumentRow({
             <span className="text-meta">
               <StatusText state={state} startMs={tool.startMs} />
             </span>
-            {actions && (
+            {isSubagent ? (
+              // Not a button: a click here falls through to the row. It's the one sign that this row
+              // opens a pane where every other row expands in place.
+              <span className="flex h-7 w-7 items-center justify-center">
+                <IconOpenPane className="h-4 w-4 text-dim transition-colors pointer-fine:group-hover/row:text-content pointer-fine:group-has-[[data-ui=row-disclose]:hover]/row:text-dim" />
+              </span>
+            ) : actions && (
               <span className="pointer-events-auto relative flex items-center gap-0.5">
                 {canSendToBackground && (
                   <button
@@ -183,28 +232,38 @@ export function InstrumentRow({
                     <IconSendToTray className="h-3.5 w-3.5" />
                   </button>
                 )}
-                {isSubagent && (
+                {browser && lastOpen && (
                   <button
                     type="button"
-                    data-ui="row-open-transcript"
-                    data-tool-id={tool.id}
-                    onClick={(e) => diveInto(tool.id, viaOf(e))}
+                    data-ui="row-open-browser"
+                    onClick={(e) => setBrowserPaneVia(lastOpen, viaOf(e))}
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px]"
-                    title="Open transcript"
-                    aria-label="Open transcript"
+                    title="Show in browser"
+                    aria-label="Show in browser"
                   >
-                    <IconOpenPane className="h-4 w-4" />
+                    <IconAgentBrowser className="h-4 w-4" />
                   </button>
                 )}
               </span>
             )}
-            <span className="flex h-6 w-6 items-center justify-center text-faint" aria-hidden="true">
-              <IconChevron
-                className={`h-4 w-4 transition-transform [transition-duration:var(--dur-fast)] [transition-timing-function:var(--ease-out)] ${
-                  open ? 'rotate-90' : ''
-                }`}
-              />
-            </span>
+            {isSubagent ? (
+              <button
+                type="button"
+                data-ui="row-disclose"
+                aria-expanded={open}
+                aria-controls={bodyId}
+                aria-label="Agent result"
+                title={open ? 'Hide result' : 'Show result'}
+                onClick={toggleBody}
+                className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded text-faint transition-colors pointer-fine:hover:text-content focus-visible:text-content focus-visible:outline-offset-[-2px]"
+              >
+                {chevron}
+              </button>
+            ) : (
+              <span className="flex h-6 w-6 items-center justify-center text-faint" aria-hidden="true">
+                {chevron}
+              </span>
+            )}
           </div>
         </div>
         {/* A collapsed failure keeps its reason visible. err text on the tool fill has the least
@@ -218,7 +277,7 @@ export function InstrumentRow({
           </div>
         )}
         {open && (
-          <div id={bodyId} className={`${animateBody ? 'row-body-in ' : ''}max-h-80 overflow-auto border-t border-border p-2.5`}>
+          <div ref={bodyRef} id={bodyId} className={`${animateBody ? 'row-body-in ' : ''}max-h-80 overflow-auto border-t border-border p-2.5`}>
             <div className="mb-1.5 flex items-center gap-2">
               <span className="text-caps uppercase text-faint">Output</span>
               <button
@@ -295,7 +354,9 @@ export function AggregateRow({
       : states.includes('launching')
         ? { text: 'launching…', cls: 'text-info' }
         : null
-  const names = [...new Set(tools.map((t) => (t.name === 'Task' || t.name === 'Agent' ? 'Agent' : t.name)))].join(', ')
+  const names = [
+    ...new Set(tools.map((t) => (t.name === 'Task' || t.name === 'Agent' ? 'Agent' : isBrowserTool(t.name) ? 'Browser' : t.name)))
+  ].join(', ')
   // Collapsed, only what still matters shows: failures pinned first, then anything unresolved.
   const visible =
     collapse && !expanded
@@ -383,7 +444,7 @@ export function AggregateRow({
 }
 
 /** Text updates once a second; nothing animates. */
-function RunningTimer({ startMs }: { startMs: number }): JSX.Element {
+export function RunningTimer({ startMs }: { startMs: number }): JSX.Element {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)

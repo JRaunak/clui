@@ -18,7 +18,7 @@
  * safety guarantee against hijacking typing.
  */
 import { useEffect } from 'react'
-import { useSession } from '../store'
+import { activeSlice, useSession } from '../store'
 import type { PaletteMode } from '../components/CommandPalette'
 
 /**
@@ -96,6 +96,23 @@ export function useKeyboardShortcuts(opts: {
         case 'toggle-pane-size':
           document.querySelector<HTMLElement>('[data-ui="pane-expand"]')?.click()
           break
+        case 'browser-toggle': {
+          // A menu accelerator is a keyboard path, so the pane changes without a transition. With
+          // focus in the native page the renderer's document doesn't have it, and a hidden page
+          // can't keep it, so it goes to the composer.
+          const fromPage = !document.hasFocus()
+          void store.toggleBrowser().then(() => {
+            const s = useSession.getState()
+            if (fromPage && !activeSlice(s)?.browserOpen)
+              document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
+          })
+          break
+        }
+        case 'browser-stop': {
+          const d = activeSlice(store)?.browser?.drive
+          if (d === 'driving' || d === 'user') void store.browserDrive('stop')
+          break
+        }
       }
     })
 
@@ -125,7 +142,7 @@ export function useKeyboardShortcuts(opts: {
         const targets = [
           document.querySelector<HTMLElement>('#app-sidebar [data-new-session]'),
           document.querySelector<HTMLElement>('[data-ui="pane-primary"] [data-composer-input]'),
-          document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-ui="pane-title"]')
+          document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-pane-title]')
         ].filter((el): el is HTMLElement => !!el && !el.closest('[inert]'))
         if (targets.length < 2) return
         e.preventDefault()

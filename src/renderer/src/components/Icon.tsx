@@ -409,3 +409,54 @@ export function IconRestore(p: IconProps): JSX.Element {
     </Svg>
   )
 }
+
+/** A page with Claude's pointer in its open corner: the browser Claude drives. Not a globe, which reads as web search. */
+export function IconAgentBrowser(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M12 19H5.5A2.5 2.5 0 0 1 3 16.5v-10A2.5 2.5 0 0 1 5.5 4h13A2.5 2.5 0 0 1 21 6.5V11" />
+      <path d="M3 8.5h18" />
+      <path d="M14 13l6.5 2.4-2.9 1.1-1.1 2.9Z" />
+    </Svg>
+  )
+}
+
+export function IconEye(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </Svg>
+  )
+}
+
+export function IconEyeOff(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M9.15 5.47C10.02 5.17 10.97 5 12 5C18.5 5 22 12 22 12C22 12 21.08 13.84 19.31 15.63" />
+      <path d="M14.85 18.53C13.98 18.83 13.03 19 12 19C5.5 19 2 12 2 12C2 12 2.92 10.16 4.69 8.37" />
+      <path d="m4 4 16 16" />
+    </Svg>
+  )
+}
+
+export function IconCookie(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M21 12a9 9 0 1 1-9-9 3 3 0 0 0 3 3 3 3 0 0 0 3 3 3 3 0 0 0 3 3Z" />
+      <circle cx="8.5" cy="10" r="1" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="15.5" r="1" fill="currentColor" stroke="none" />
+      <circle cx="14" cy="14" r="1" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}
+
+export function IconHistory(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M3 12a9 9 0 1 0 2.6-6.4L3 8.2" />
+      <path d="M3 3.5v4.7h4.7" />
+      <path d="M12 7.5V12l3 2" />
+    </Svg>
+  )
+}

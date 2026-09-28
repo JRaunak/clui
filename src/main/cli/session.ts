@@ -12,7 +12,9 @@
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { DomainEvent } from '../../shared/events'
 import type { WireAttachment } from '../../shared/ipc'
@@ -63,6 +65,8 @@ export interface ClaudeSessionOptions {
   fork?: boolean
   /** Session title → `-n` (see buildArgs). */
   name?: string
+  /** In-app browser MCP config JSON (from BrowserMcpServer), or undefined when the browser is off. */
+  browserMcp?: string
   /** Extra env for the child (merged over process.env). */
   env?: Record<string, string>
 }
@@ -131,10 +135,13 @@ export class ClaudeSession extends EventEmitter {
   /** True between ending the old child's stdin and the replacement's init ACK, so a
    *  send in that window is queued (not written to an ended stream). */
   private reconnecting = false
+  private respawned = false
   /** User messages queued until the handshake completes (gated mode only). */
   private pendingSends: UserTurn[] = []
-  /** True while an effort-driven respawn is in progress (suppresses exit event). */
+  /** True while a respawn (effort fallback or browser tools) is in progress (suppresses exit event). */
   private respawning = false
+  /** Holds the browser tools' MCP config for the spawn that hasn't reported init yet. */
+  private mcpDir: string | null = null
   /** Partial trailing stderr line held until its newline arrives, so classification
    *  runs per complete line, not per arbitrary transport chunk. */
   private stderrBuf = ''
@@ -202,6 +209,11 @@ export class ClaudeSession extends EventEmitter {
       // following flag (--resume) or the end of the bare args terminates the list.
       args.push('--disallowedTools', ...EPHEMERAL_DISALLOWED_TOOLS)
     }
+    if (this.opts.browserMcp) {
+      // Both flags are variadic; the --resume that follows (or the end of args) closes each list.
+      args.push('--mcp-config', this.writeMcpConfig(this.opts.browserMcp))
+      args.push('--allowedTools', 'mcp__clui-browser')
+    }
     if (this.opts.resumeSessionId) {
       args.push('--resume', this.opts.resumeSessionId)
       // Fork branches the resumed session to a new id (original untouched). Only
@@ -209,6 +221,21 @@ export class ClaudeSession extends EventEmitter {
       if (this.opts.fork) args.push('--fork-session')
     }
     return args
+  }
+
+  /** The config carries the tools' bearer token, and argv is readable by other processes, so it goes
+   *  in a file only this user can read. The CLI has loaded it by the time its init arrives. */
+  private writeMcpConfig(json: string): string {
+    this.dropMcpConfig()
+    this.mcpDir = mkdtempSync(join(tmpdir(), 'clui-mcp-'))
+    const file = join(this.mcpDir, 'config.json')
+    writeFileSync(file, json, { mode: 0o600 })
+    return file
+  }
+
+  private dropMcpConfig(): void {
+    if (this.mcpDir) rmSync(this.mcpDir, { recursive: true, force: true })
+    this.mcpDir = null
   }
 
   start(): void {
@@ -326,12 +353,12 @@ export class ClaudeSession extends EventEmitter {
       if (gen !== this.generation && !this.respawning) return
       // A real stop() ran (closed=true): never respawn, even mid-effort-respawn. This
       // guard MUST precede the respawning branch, else a stop()/stopAll() that lands in
-      // the window between respawnForEffort's SIGTERM and this 'close' would take the
+      // the window between respawnWith's SIGTERM and this 'close' would take the
       // respawning branch and spawnChild() a NEW orphaned process after the handle was
       // already deleted from the manager. (Mirrors the 'error' handler, which already
       // guards on both flags.)
       if (this.closed) return
-      // An effort change respawns the process; swallow this exit and relaunch.
+      // A respawn is in flight; swallow this exit and relaunch.
       if (this.respawning) {
         this.respawning = false
         this.child = null
@@ -353,6 +380,7 @@ export class ClaudeSession extends EventEmitter {
       clearTimeout(this.initTimer)
       this.initTimer = null
     }
+    this.dropMcpConfig()
     if (this.stderrBuf.trim()) this.classifyStderrLine(this.stderrBuf)
     this.stderrBuf = ''
     for (const raw of this.parser.flush()) {
@@ -369,6 +397,7 @@ export class ClaudeSession extends EventEmitter {
       if (this.opts.gated) this.handleControlEnvelope(raw)
       for (const ev of this.mapper.map(raw)) {
         if (ev.type === 'session-init' && ev.sessionId) this.sessionId = ev.sessionId
+        if (ev.type === 'session-init') this.dropMcpConfig()
         this.emitEvent(ev)
       }
     }
@@ -456,6 +485,10 @@ export class ClaudeSession extends EventEmitter {
             aliases: Array.isArray(c.aliases) ? c.aliases.filter((a) => typeof a === 'string') : undefined
           }))
         if (commands.length) this.emitEvent({ type: 'slash-commands', commands })
+      }
+      if (this.respawned) {
+        this.respawned = false
+        this.emitEvent({ type: 'reconnected' })
       }
       const queued = this.pendingSends
       this.pendingSends = []
@@ -624,7 +657,7 @@ export class ClaudeSession extends EventEmitter {
     const ok = await this.sendControl('apply_flag_settings', { settings: { effortLevel: effort } })
     if (!ok) {
       this.emitEvent({ type: 'error', severity: 'info', message: `Live effort change unavailable. Reconnecting to apply "${effort}"…` })
-      this.respawnForEffort()
+      this.respawnWith('effort')
     }
   }
 
@@ -641,12 +674,26 @@ export class ClaudeSession extends EventEmitter {
     return ok
   }
 
-  /** Fallback: respawn with `--effort <effort> --resume <sessionId>`, used only when the
-   *  live `apply_flag_settings` path fails. */
-  private respawnForEffort(): void {
+  /** Attach or detach the browser tools. MCP servers are fixed at process start, so this
+   *  respawns with --resume (history intact); the renderer only calls it between turns. `respawning`
+   *  means the tools are live only once the new process answers initialize (its `reconnected`). */
+  setBrowserMcp(json: string | undefined): 'ready' | 'respawning' | null {
+    // A Quick session writes no transcript, so the --resume respawn would lose its history.
+    if (this.opts.ephemeral) return null
+    if (this.opts.browserMcp === json) return 'ready'
+    this.opts = { ...this.opts, browserMcp: json }
+    if (!this.child) return 'ready'
+    this.respawnWith('browser')
+    return 'respawning'
+  }
+
+  /** Respawn with `--resume <sessionId>` and the current opts: the effort fallback when the
+   *  live `apply_flag_settings` path fails, and attaching or detaching the browser tools. */
+  private respawnWith(_reason: 'effort' | 'browser'): void {
     if (!this.child) return
     this.respawning = true
     this.reconnecting = true
+    this.respawned = true
     this.initAcked = false
     // Resume the CURRENT confirmed id (not one snapshotted before init arrived); never
     // re-fork. Keep `name`: the idempotent `-n` preserves the peer name / mirror.
@@ -717,10 +764,11 @@ export class ClaudeSession extends EventEmitter {
 
   stop(): void {
     // Cancel any in-flight effort-respawn: without this, a 'close' still pending from
-    // respawnForEffort's SIGTERM would resurrect the child even though we're tearing it
+    // respawnWith's SIGTERM would resurrect the child even though we're tearing it
     // down for good. (The 'close' handler also guards on `closed` first; this is the
     // belt to that suspenders, since a pending respawn must not survive an explicit stop.)
     this.respawning = false
+    this.dropMcpConfig()
     // Resolve any awaited control_requests as failed + clear their timers.
     for (const [, p] of this.pendingControl) {
       clearTimeout(p.timer)

@@ -1,12 +1,13 @@
 /** The foreground "working" line: the bead that carries the Lumen, a label, and an elapsed timer. The label is a
- *  randomized verb, "Thinking" with a live token estimate, or "Compacting context…". It lives at the transcript tail
- *  where the next output appears, and is absent during background work.
+ *  randomized verb, "Thinking" with a live token estimate, "N agents running" while tools run in parallel, or
+ *  "Compacting context…". It lives at the transcript tail where the next output appears, and is absent during
+ *  background work.
  *  The verb rotates every few seconds so a long turn never reads as frozen. When the task puck is present, the verb
  *  is dropped because the puck's in_progress activeForm already narrates the work; the compacting label still shows. */
 import { useEffect, useState } from 'react'
 import { useActive } from '../store'
 import { Lumen } from './Lumen'
-import { useLumenSite } from '../lib/lumen'
+import { runningCountOf, useLumenSite } from '../lib/lumen'
 import { randomWorkingVerb } from '../lib/workingVerbs'
 import { fmtTokens } from '../lib/formatTokens'
 
@@ -16,7 +17,10 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
   const startMs = useActive((s) => s?.turnStartMs ?? null)
   const thinkingTokens = useActive((s) => s?.thinkingTokens ?? null)
   const compacting = useActive((s) => s?.compacting ?? false)
-  // The tail lights only while text or thinking streams; a running tool's own bead takes the light.
+  const parallel = useActive((s) => runningCountOf(s).n)
+  const agents = useActive((s) => runningCountOf(s).agents)
+  const count = parallel >= 2 ? `${parallel} ${agents ? 'agents' : 'tools'} running` : null
+  // The tail lights while text or thinking streams, or while tools run in parallel; one running tool's own bead takes the light.
   const lit = useLumenSite()?.kind === 'tail'
   const [elapsed, setElapsed] = useState(() => (startMs ? Math.floor((Date.now() - startMs) / 1000) : 0))
   const [verb, setVerb] = useState(randomWorkingVerb)
@@ -44,10 +48,10 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
         <span className="text-content">Compacting context…</span>
       ) : (
         !taskMerged && (
-          <span className="font-medium text-content">{thinkingTokens !== null ? 'Thinking' : `${verb}…`}</span>
+          <span className="font-medium text-content">{count ?? (thinkingTokens !== null ? 'Thinking' : `${verb}…`)}</span>
         )
       )}
-      {!compacting && thinkingTokens !== null && (
+      {!compacting && !count && thinkingTokens !== null && (
         <span aria-hidden="true" className="font-mono tabular-nums text-dim">
           <span className="inline-block min-w-[6ch] text-right">~{fmtTokens(thinkingTokens)}</span>{' '}
           {thinkingTokens === 1 ? 'token' : 'tokens'}

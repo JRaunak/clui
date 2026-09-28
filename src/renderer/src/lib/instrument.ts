@@ -41,9 +41,11 @@ export function needsYouToolIdOf(slice: PerSessionState | null): string | null {
   if (!req) return null
   const last = slice.messages[slice.messages.length - 1]
   if (!last || last.role !== 'assistant') return null
+  // Clui's own browser Gates are named for what they ask, not for the tool call waiting on them.
+  const browserGate = req.toolName === 'BrowserSite' || req.toolName === 'BrowserLogin'
   for (let i = last.tools.length - 1; i >= 0; i--) {
     const t = last.tools[i]
-    if (t.result === undefined && t.name === req.toolName) return t.id
+    if (t.result === undefined && (browserGate ? isBrowserTool(t.name) : t.name === req.toolName)) return t.id
   }
   return null
 }
@@ -96,4 +98,18 @@ export function currentTurnAt(messages: ChatMessage[], startIndex: number): Curr
     return { messageId: messages[i].id, text: promptPreview(messages[i].text), turn: turnNumberOf(messages, i) }
   }
   return null
+}
+
+const BROWSER_PREFIX = 'mcp__clui-browser__'
+export function isBrowserTool(name: string): boolean {
+  return name.startsWith(BROWSER_PREFIX)
+}
+/** "navigate github.com/org/repo", "click 12", "autofill_login", for the row's primary arg. */
+export function browserLabel(name: string, input: unknown): string {
+  const action = name.slice(BROWSER_PREFIX.length)
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  if (action === 'navigate' && typeof o.url === 'string') return `navigate ${o.url.replace(/^https?:\/\//, '')}`
+  if ((action === 'click' || action === 'type') && typeof o.ref === 'number') return `${action} ${o.ref}`
+  if (action === 'scroll' && typeof o.dy === 'number') return `scroll ${o.dy}`
+  return action
 }

@@ -10,11 +10,11 @@ import { mkdir, writeFile, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-export async function atomicWriteFile(path: string, data: string): Promise<void> {
+export async function atomicWriteFile(path: string, data: string | Uint8Array): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   const tmp = `${path}.${randomUUID()}.tmp`
   try {
-    await writeFile(tmp, data, 'utf8')
+    await writeFile(tmp, data)
     await rename(tmp, path)
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => {})

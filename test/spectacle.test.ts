@@ -1,7 +1,7 @@
 // Boundary: the input-modality split that decides whether a view change animates, and the Lumen's site rules,
 // including the idle guard an interrupted turn needs.
 import { viaOf } from '../src/renderer/src/lib/motion.ts'
-import { lumenKeyOf, lumenSiteOf } from '../src/renderer/src/lib/lumen.ts'
+import { lumenKeyOf, lumenSiteOf, runningCountOf } from '../src/renderer/src/lib/lumen.ts'
 import type { PerSessionState, ToolCall } from '../src/renderer/src/store.ts'
 import { equal } from './support/harness.mjs'
 
@@ -20,7 +20,10 @@ equal(lumenKeyOf(slice({})), '', 'lumen: idle, no light')
 equal(lumenKeyOf(slice({ busy: true })), 'tail', 'lumen: streaming with no tool lights the tail')
 equal(lumenKeyOf(slice({ compacting: true })), 'tail', 'lumen: compacting lights the tail')
 equal(lumenKeyOf(slice({ busy: true, messages: [asst([tool('t1', { result: 'ok' }), tool('t2')])] as never })), 'tool:t2', 'lumen: the running tool holds the light')
-equal(lumenKeyOf(slice({ busy: true, messages: [asst([tool('t1'), tool('t2')])] as never })), 'tool:t2', 'lumen: the last running tool wins')
+equal(lumenKeyOf(slice({ busy: true, messages: [asst([tool('t1'), tool('t2')])] as never })), 'tail', 'lumen: tools running in parallel hand the light to the tail')
+equal(runningCountOf(slice({ busy: true, messages: [asst([tool('a', { name: 'Agent' }), tool('b', { name: 'Task' })])] as never })).agents, true, 'runningCountOf: all subagents read as agents')
+equal(runningCountOf(slice({ busy: true, messages: [asst([tool('a', { name: 'Agent' }), tool('b'), tool('c', { result: 'ok' })])] as never })).n, 2, 'runningCountOf: counts only unresolved tools')
+equal(runningCountOf(slice({ busy: true, messages: [asst([tool('a', { name: 'Agent' }), tool('b')])] as never })).agents, false, 'runningCountOf: a mix reads as tools')
 equal(lumenKeyOf(slice({ busy: true, messages: [asst([tool('bg', { input: { command: 'x', run_in_background: true } })])] as never })), 'tail', 'lumen: a backgrounded tool never holds the light')
 equal(lumenKeyOf(slice({ busy: true, messages: [asst([tool('w', { name: 'Workflow' })])] as never })), 'tail', 'lumen: a workflow launch never holds the light')
 equal(lumenKeyOf(slice({ busy: false, messages: [asst([tool('dangling')])] as never })), '', 'lumen: an interrupted turn with a result-less tool stays dark')

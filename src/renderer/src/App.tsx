@@ -15,6 +15,8 @@ import { applyTheme } from './lib/theme'
 import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
 import { useGuardedAsync } from './lib/useGuardedAsync'
 import { useSidebarResize, SIDEBAR_DEFAULT } from './lib/useSidebarResize'
+import { useBrowserEvents } from './lib/useBrowserEvents'
+import { useOccludeWhile } from './lib/browserOcclusion'
 import type { CliInfo } from '../../shared/ipc'
 
 /** Shown on the new-session controls while the CLI can't start a session. */
@@ -94,6 +96,7 @@ export function App(): JSX.Element {
       setOnboarded(values.onboarded)
       setSidebarCollapsed(values.sidebarCollapsed)
       setSidebarWidth(values.sidebarWidth)
+      useSession.setState({ paneFull: values.subagentPaneFull, browserPaneFull: values.browserPaneFull })
     })
   }, [])
 
@@ -202,6 +205,11 @@ export function App(): JSX.Element {
     setWidth: persistWidth,
     collapsed: sidebarCollapsed
   })
+
+  // Modal overlays cover the window, and a sidebar drag moves the pane edge every frame; the native
+  // browser view would paint over both, so it gives way to its still.
+  useOccludeWhile(anyOverlayOpen || sidebarResize.dragging)
+  useBrowserEvents()
 
   useKeyboardShortcuts({
     onNewSession: startNew,

@@ -134,6 +134,15 @@ export class SessionManager {
     return this.sessions.get(handleId)?.setUltracode(on) ?? Promise.resolve(false)
   }
 
+  /** Null when the session isn't live or can't take the browser tools. */
+  setBrowserMcp(handleId: string, json: string | undefined): 'ready' | 'respawning' | null {
+    return this.sessions.get(handleId)?.setBrowserMcp(json) ?? null
+  }
+
+  sessionIdOf(handleId: string): string | null {
+    return this.sessions.get(handleId)?.getSessionId() ?? null
+  }
+
   respondPermission(handleId: string, verdict: PermissionVerdict): void {
     const session = this.sessions.get(handleId)
     if (!session) return
