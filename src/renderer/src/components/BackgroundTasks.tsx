@@ -127,22 +127,31 @@ export function BackgroundTasks(): JSX.Element | null {
     <div className="relative" ref={ref}>
       <button
         ref={triggerRef}
-        className="-my-1 flex items-center gap-1.5 rounded py-1 text-info transition-colors hover:brightness-110"
+        data-ui="bg-tasks"
+        className="flex h-6 items-center gap-1.5 rounded-full bg-control px-2 text-meta text-info transition-colors hover:bg-control-hover"
         onClick={() => setOpen((v) => !v)}
-        title="Background tasks"
+        title={running.length > 0 ? `${running.length} background task${running.length > 1 ? 's' : ''}` : 'Background tasks'}
         aria-expanded={open}
       >
         <span
           className={`h-1.5 w-1.5 rounded-full ${failed > 0 ? 'bg-err' : 'bg-info'}`}
           aria-hidden="true"
         />
-        {running.length > 0
-          ? `${running.length} background task${running.length > 1 ? 's' : ''}`
-          : 'Background tasks'}
+        {running.length > 0 ? (
+          <>
+            <span>{running.length}</span>
+            <span className="@max-[560px]:sr-only"> background task{running.length > 1 ? 's' : ''}</span>
+          </>
+        ) : (
+          'Background tasks'
+        )}
       </button>
 
       {open && (
-        <div className="absolute bottom-full right-0 mb-1.5 w-[min(420px,90vw)] overflow-hidden rounded-lg border border-border bg-bg-elev shadow-lg">
+        <div
+          className="absolute right-0 z-50 w-[min(420px,90vw)] overflow-hidden rounded-lg border border-border bg-bg-elev shadow-lg"
+          style={{ bottom: 'calc(100% + var(--dock-lift, 0px) + 8px)' }}
+        >
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <span className="text-xs font-semibold text-content">Background tasks</span>
             {/* Failed sits in its own err-toned segment so an outcome isn't folded into the

@@ -345,6 +345,19 @@ interface SessionStore {
    * its tail. (A workflow trail is always length 1: workflows don't nest this way.)
    */
   subagentTrail: string[]
+  /** The user's size choice for the right sidebar when the Stage can split: false = half, true = full.
+   *  Below SPLIT_MIN an open pane is full regardless. UI-only, never written to disk. */
+  paneFull: boolean
+  setPaneFull: (full: boolean) => void
+  /** Content sits under the top band or the pane header, the only time their glass shows. Written
+   *  on change, never per scroll event. */
+  primaryScrolled: boolean
+  /** The handle whose transcript last reported primaryScrolled. The band holds its fade until the
+   *  report for the open session lands, so a session that opens scrolled shows its tint at once. */
+  primaryScrolledFor: string | null
+  setPrimaryScrolled: (scrolled: boolean) => void
+  secondaryScrolled: boolean
+  setSecondaryScrolled: (scrolled: boolean) => void
 
   // ── Search UI state (app-level) ─────────────────────────────────────────────
   /** True when the ⌘F in-transcript find bar is open (find-in-current-conversation). */
@@ -1092,6 +1105,10 @@ export const useSession = create<SessionStore>((set, get) => ({
   effortCaps: {},
   viewingSubagent: null,
   subagentTrail: [],
+  paneFull: false,
+  primaryScrolled: false,
+  primaryScrolledFor: null,
+  secondaryScrolled: false,
   findOpen: false,
   globalSearchOpen: false,
   scrollTarget: null,
@@ -2250,6 +2267,15 @@ export const useSession = create<SessionStore>((set, get) => ({
       return { subagentTrail: trail, viewingSubagent: trail[trail.length - 1] ?? null }
     }),
   closeSubagentView: () => set(() => ({ viewingSubagent: null, subagentTrail: [] })),
+  setPaneFull: (full) => set(() => ({ paneFull: full })),
+  setPrimaryScrolled: (scrolled) =>
+    set((s) =>
+      s.primaryScrolled === scrolled && s.primaryScrolledFor === s.activeHandleId
+        ? s
+        : { primaryScrolled: scrolled, primaryScrolledFor: s.activeHandleId }
+    ),
+  setSecondaryScrolled: (scrolled) =>
+    set((s) => (s.secondaryScrolled === scrolled ? s : { secondaryScrolled: scrolled })),
 
   // Search UI. Find-in-conversation only makes sense over the live Virtuoso
   // transcript, so opening it is a no-op while viewing a subagent transcript.

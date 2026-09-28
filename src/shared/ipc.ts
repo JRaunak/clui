@@ -281,6 +281,7 @@ export type MenuAction =
   | 'find-next'
   | 'find-prev'
   | 'search-global'
+  | 'toggle-pane-size'
 
 /** IPC channel names (single source of truth). */
 export const IpcChannels = {

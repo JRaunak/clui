@@ -158,11 +158,12 @@ export function ModelEffortPicker(): JSX.Element {
   const curLabel = deriveModelInfo(modelChoice).label
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative min-w-0">
       <button
         ref={triggerRef}
         type="button"
-        className={`flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs text-content transition-colors ${
+        title={`${curLabel} · ${EFFORT_LABELS[runningEffort]}`}
+        className={`flex h-8 min-w-0 items-center gap-1.5 rounded-full px-2.5 text-xs text-content transition-colors ${
           open ? 'bg-control-hover' : 'bg-control hover:bg-control-hover'
         }`}
         onClick={() => {
@@ -170,13 +171,13 @@ export function ModelEffortPicker(): JSX.Element {
           setHover(null)
         }}
       >
-        <IconSliders className="h-3.5 w-3.5 shrink-0 text-dim" />
-        <span className="font-medium">{curLabel}</span>
+        <IconSliders className="h-3.5 w-3.5 shrink-0 text-dim @max-[480px]/composer:hidden" />
+        <span className="min-w-0 truncate whitespace-nowrap font-medium">{curLabel}</span>
         {/* Effort readout. Shows the level that will actually run: Ultra locks it to X-High
             (Ultra purple), and a CLI `maxEffortLevel` cap floors it lower. A lock glyph marks
             either lock, so the chip is honest without hiding the value. */}
         <span
-          className={`flex items-center gap-1 font-medium ${
+          className={`flex shrink-0 items-center gap-1 whitespace-nowrap font-medium ${
             ultraEngaged ? 'text-effort-ultra' : EFFORT_COLORS[runningEffort]
           }`}
           title={
@@ -192,7 +193,7 @@ export function ModelEffortPicker(): JSX.Element {
         </span>
         <svg
           viewBox="0 0 12 12"
-          className={`h-3 w-3 text-dim transition-transform ${open ? '' : 'rotate-180'}`}
+          className={`h-3 w-3 shrink-0 text-dim transition-transform ${open ? '' : 'rotate-180'}`}
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"

@@ -52,7 +52,7 @@ export function UltracodeToggle(): JSX.Element | null {
         onClick={handleClick}
         aria-pressed={on}
         aria-disabled={!ultraEngageable}
-        className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
+        className={`flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors @max-[560px]/composer:px-2 ${
           !ultraEngageable
             ? 'cursor-default border-border text-faint opacity-60'
             : on
@@ -72,7 +72,7 @@ export function UltracodeToggle(): JSX.Element | null {
           >
             ✦
           </span>
-          Ultra
+          <span className="@max-[560px]/composer:sr-only">Ultra</span>
         </span>
       </button>
     </Tooltip>

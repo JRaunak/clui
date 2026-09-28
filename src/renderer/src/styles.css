@@ -111,6 +111,8 @@
   --ease-snap: cubic-bezier(0.2, 0, 0, 1);
   /* The Lumen loop only. */
   --ease-breathe: cubic-bezier(0.37, 0, 0.63, 1);
+  /* Shared by the working-state loops: the Lumen and the sidebar ring. */
+  --loop-period: 2.8s;
   --transition-duration-instant: var(--dur-instant);
   --transition-duration-fast: var(--dur-fast);
   --transition-duration-base: var(--dur-base);
@@ -518,7 +520,7 @@
     rgb(var(--lumen-rgb) / var(--lumen-a1)) 35%,
     rgb(var(--lumen-rgb) / 0) 70%
   );
-  animation: lumen-breathe 2.8s var(--ease-breathe) infinite;
+  animation: lumen-breathe var(--loop-period) var(--ease-breathe) infinite;
 }
 .lumen-out {
   animation: lumen-out var(--dur-fast) var(--ease-in) both;
@@ -812,4 +814,35 @@ body {
 }
 .hljs-addition {
   color: var(--color-ok);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Shell: state overlays on the top band and pane header glass.
+   ───────────────────────────────────────────────────────────────────────── */
+/* A pressed or expanded toggle on glass is a thin state overlay, never a second glass layer. */
+.toggle-press[aria-pressed='true'],
+.toggle-press[aria-expanded='true'] {
+  background: rgb(255 255 255 / 0.08);
+  color: var(--color-content);
+}
+:root[data-theme='light'] .toggle-press[aria-pressed='true'],
+:root[data-theme='light'] .toggle-press[aria-expanded='true'] {
+  background: rgb(0 0 0 / 0.06);
+}
+
+/* The sidebar's working ring. Unlayered so the transparent top edge beats the border colour utility. */
+.mark-spin {
+  border-top-color: transparent;
+  animation: mark-spin var(--loop-period) linear infinite;
+}
+@keyframes mark-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mark-spin {
+    animation: none;
+    border-top-color: var(--color-dim);
+  }
 }

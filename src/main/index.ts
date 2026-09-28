@@ -131,6 +131,8 @@ function buildMenu(): void {
         { label: 'Quick Switcher…', accelerator: 'CmdOrCtrl+K', click: () => send('open-palette') },
         { label: 'Command Palette…', accelerator: 'CmdOrCtrl+Shift+K', click: () => send('open-command-palette') },
         { label: 'Close Session', accelerator: 'CmdOrCtrl+W', click: () => send('close-session') },
+        // A native accelerator, not a DOM key, so it still fires while focus sits inside a native view.
+        { label: 'Expand or Split Pane', accelerator: 'Alt+CmdOrCtrl+B', click: () => send('toggle-pane-size') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
         { type: 'separator' },
         ...(isMac ? ([{ role: 'close' }] as MenuItemConstructorOptions[]) : ([{ role: 'quit' }] as MenuItemConstructorOptions[]))

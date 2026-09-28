@@ -5,7 +5,6 @@ import { PermissionGate } from './gates/PermissionGate'
 import { PlanGate } from './gates/PlanGate'
 import { QuestionGate } from './gates/QuestionGate'
 import { focusComposer, type GateCount } from './gates/GateFrame'
-import { IconShield } from './Icon'
 
 const cssVar = (name: string): string => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 const cssMs = (name: string): number => parseFloat(cssVar(name)) || 0
@@ -178,24 +177,5 @@ export function GateAnnouncer(): JSX.Element {
     <div className="sr-only" aria-live="assertive">
       {head && <span key={head.requestId}>{announcementOf(head)}</span>}
     </div>
-  )
-}
-
-/** A Gate is inside the composer, which a full-pane subagent view unmounts. This returns you to it. */
-export function NeedsYouButton(): JSX.Element | null {
-  const waiting = useActive((s) => (s?.pendingPermissions ?? EMPTY_PENDING).length > 0)
-  const close = useSession((s) => s.closeSubagentView)
-  if (!waiting) return null
-  return (
-    <button
-      type="button"
-      data-ui="pane-needs-you"
-      onClick={close}
-      title="Claude is waiting on you in the chat"
-      className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-label font-medium text-warn transition-colors hover:bg-bg-raised"
-    >
-      <IconShield className="h-3.5 w-3.5" />
-      Needs you
-    </button>
   )
 }

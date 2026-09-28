@@ -1,6 +1,6 @@
-/** Maximized transcript view. When a subagent's "view transcript" is clicked, this replaces the main region;
- *  the sessions sidebar persists. Full-width by design. Esc returns to the conversation.
- *  Renders `subagentMessages[parentToolUseId]` in stream order. The launching Agent tool call supplies the header. */
+/** A subagent's or workflow's transcript in the Stage's right pane, beside the conversation (half) or
+ *  over it (full). Renders `subagentMessages[parentToolUseId]` in stream order. The launching Agent
+ *  tool call supplies the header. */
 import { useEffect, useState } from 'react'
 import {
   useActive,
@@ -16,8 +16,8 @@ import {
 import { useEscape } from '../lib/useEscape'
 import { Markdown } from './Markdown'
 import { ToolGroup } from './MessageView'
-import { IconClose, IconWarn } from './Icon'
-import { NeedsYouButton } from './Gate'
+import { IconWarn } from './Icon'
+import { PaneHeader, usePane } from './Stage'
 import type { HistoryMessage } from '../../../shared/sessions'
 import type { SubagentMessage } from '../store'
 import { deriveModelInfo, EFFORT_LABELS, isEffortChoice } from '../../../shared/settings'
@@ -108,7 +108,31 @@ function agentStatus(state: string): { cls: string; label: string } {
   if (/fail|error/i.test(state)) return { cls: 'bg-err', label: 'failed' }
   if (/done|complete|success/i.test(state)) return { cls: 'bg-ok', label: 'done' }
   if (/queue/i.test(state)) return { cls: 'bg-faint', label: 'queued' }
-  return { cls: 'bg-warn', label: 'running' }
+  return { cls: 'bg-accent', label: 'running' }
+}
+
+type RunState = 'running' | 'launched' | 'done' | 'failed' | 'stopped'
+
+/** A bead plus a word, so the state reads without colour. Running is never amber (amber means Claude
+ *  needs you), and faint and err never appear as text on the header's glass. */
+function StatusMark({ state }: { state: RunState }): JSX.Element {
+  const mark =
+    state === 'running'
+      ? 'bg-accent'
+      : state === 'launched'
+        ? 'bg-info'
+        : state === 'failed'
+          ? 'bg-err'
+          : state === 'stopped'
+            ? 'border-[1.5px] border-dashed border-faint'
+            : 'border-[1.5px] border-faint'
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-meta">
+      <span className={`h-2 w-2 rounded-full ${mark}`} aria-hidden="true" />
+      {state === 'failed' && <IconWarn className="h-3.5 w-3.5 text-err" />}
+      <span className={state === 'failed' ? 'text-content' : 'text-dim'}>{state}</span>
+    </span>
+  )
 }
 
 /** The selected workflow-agent's full transcript, read from its on-disk `agent-<agentId>.jsonl`.
@@ -141,7 +165,7 @@ function WorkflowAgentDetail({ agent }: { agent: WorkflowAgent }): JSX.Element {
   return (
     <div className="max-w-3xl">
       <div className="mb-4 flex items-center gap-2.5">
-        <span className="font-mono text-ui font-semibold text-accent">{agent.label}</span>
+        <span className="font-mono text-ui font-semibold text-content">{agent.label}</span>
         <span className="flex items-center gap-1.5 font-mono text-meta">
           <span className={`h-1.5 w-1.5 rounded-full ${status.cls}`} aria-hidden="true" />
           <span className="text-dim">{status.label}</span>
@@ -192,7 +216,7 @@ function HistoryBlock({
       ))}
       {tools.map((t) => (
         <div key={t.id} className="my-1.5 rounded-md border border-border bg-tool px-3 py-1.5 font-mono text-meta">
-          <span className="font-semibold text-accent">{t.name}</span>
+          <span className="font-semibold text-content">{t.name}</span>
           {toolSummary(t.input) && <span className="ml-2 text-dim">{toolSummary(t.input)}</span>}
         </div>
       ))}
@@ -226,43 +250,48 @@ function WorkflowTreeView({
   const running = workflow.agents.length - done - failed
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-label">
-        <button className="font-semibold text-accent hover:brightness-110" onClick={onClose}>
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <PaneHeader
+        kind="Workflow"
+        status={
+          <span className="flex shrink-0 items-center gap-2 font-mono text-meta text-dim">
+            <span>{done} done</span>
+            <span aria-hidden="true">·</span>
+            <span>{running} running</span>
+            {failed > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="flex items-center gap-1 text-content">
+                  <IconWarn className="h-3.5 w-3.5 text-err" />
+                  {failed} failed
+                </span>
+              </>
+            )}
+            {workflow.endedStatus && <span>· ended</span>}
+          </span>
+        }
+      >
+        <button type="button" className="shrink-0 font-semibold text-content hover:text-dim" onClick={onClose}>
           ← Chat
         </button>
-        <span className="text-faint">·</span>
-        <span className="text-info">◆</span>
-        <span className="font-mono text-content">{workflow.name}</span>
-        <span className="ml-auto flex items-center gap-2 font-mono text-meta">
-          <span className="text-ok">{done} done</span>
-          <span className="text-faint">·</span>
-          <span className="text-warn">{running} running</span>
-          {failed > 0 && (
-            <>
-              <span className="text-faint">·</span>
-              {/* text-err on the plain header strip is 4.66:1; an err/15 tint drops it to 3.93:1. */}
-              <span className="flex items-center gap-1 font-semibold text-err">
-                <IconWarn className="h-3.5 w-3.5" aria-hidden="true" />
-                {failed} failed
-              </span>
-            </>
-          )}
-          {workflow.endedStatus && <span className="ml-1 text-faint">· ended</span>}
-        </span>
-        <NeedsYouButton />
-        <button
-          className="ml-1 rounded-md p-1 text-dim hover:bg-bg-raised hover:text-content"
-          onClick={onClose}
-          title="Close (Esc)"
+        <span className="text-dim" aria-hidden="true">·</span>
+        <span
+          data-ui="pane-title"
+          data-pane-title
+          tabIndex={-1}
+          className="min-w-0 truncate font-mono text-ui font-medium text-content"
         >
-          <IconClose className="h-4 w-4" />
-        </button>
-      </div>
+          {workflow.name}
+        </span>
+      </PaneHeader>
 
       <div className="flex min-h-0 flex-1">
-        {/* Phase tree rail */}
-        <div className="w-64 shrink-0 overflow-y-auto border-r border-border bg-bg-elev p-2">
+        {/* Phase tree rail. It starts below the header, since a filled column under the transparent header
+            would show through at rest. */}
+        <div
+          data-beside-header
+          className="mt-[calc(var(--bar-h,44px)+36px)] w-64 shrink-0 overflow-y-auto border-r border-border bg-bg-elev px-2 pt-2 pb-2"
+        >
           <div className="px-2 pb-2 pt-1 text-meta text-faint">{workflow.description}</div>
           {workflow.phases.map((ph) => {
             const inPhase = workflow.agents.filter((a) => a.phaseIndex === ph.index)
@@ -298,7 +327,8 @@ function WorkflowTreeView({
         </div>
 
         {/* Detail pane for the selected agent: its full transcript. */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+        <div className="scroll-edge min-h-0 flex-1 overflow-y-auto px-8 py-6">
+          <div aria-hidden="true" style={{ height: 'calc(var(--bar-h, 44px) + 36px)' }} />
           {sel ? (
             <WorkflowAgentDetail key={sel.index} agent={sel} />
           ) : workflow.agents.length > 0 ? (
@@ -344,7 +374,7 @@ function NestedAgentCard({
       onClick={onOpen}
       title="Open this nested subagent's transcript"
     >
-      <span className="font-mono text-xs font-semibold text-accent">{label}</span>
+      <span className="font-mono text-xs font-semibold text-content">{label}</span>
       {child.description && (
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-dim" title={child.description}>
           {child.description}
@@ -442,6 +472,7 @@ export function SubagentView(): JSX.Element | null {
   const popSubagent = useSession((s) => s.popSubagent)
   const gotoSubagentDepth = useSession((s) => s.gotoSubagentDepth)
   const pushSubagent = useSession((s) => s.pushSubagent)
+  const pane = usePane()
   const messages = useActive((s) => s?.messages ?? EMPTY_MESSAGES)
   const workflow = useActive((s) => (parentId ? (s?.workflows[parentId] ?? null) : null))
   const subMsgs = useActive((s) =>
@@ -518,8 +549,9 @@ export function SubagentView(): JSX.Element | null {
     }
   }, [parentId])
 
-  // Esc pops one level, closing the view at the root. LIFO stack.
-  useEscape(parentId !== null, popSubagent)
+  // Esc pops one level, closing the view at the root. Beside the transcript it only fires while the
+  // pane holds focus, so an Esc in the composer (autocomplete, a Gate) stays the composer's.
+  useEscape(parentId !== null && pane.escapeActive, popSubagent)
 
   if (!parentId) return null
   // A dynamic workflow gets the phase-tree view; a plain subagent gets the transcript.
@@ -559,10 +591,6 @@ export function SubagentView(): JSX.Element | null {
       ? (meta.tool.isError ?? false)
       : (nestedTool?.isError ?? false)
   const stopped = bgTask?.status === 'killed'
-  const terminalLabel = stopped ? 'stopped' : failed ? 'failed' : 'done'
-  // Full class literals: Tailwind scans source text, so an interpolated `bg-${tone}` would only work by accident.
-  const terminalDot = stopped ? 'bg-faint' : failed ? 'bg-err' : 'bg-ok'
-  const terminalText = stopped ? 'text-faint' : failed ? 'text-err' : 'text-ok'
   const atRoot = subagentTrail.length <= 1
 
   // Resume seeds `subagentChildren` empty, so a resumed subagent's nested agents would render as inert history rows.
@@ -583,31 +611,47 @@ export function SubagentView(): JSX.Element | null {
   const shownChildren = children.length ? children : diskChildren
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* Breadcrumb (clickable to jump up). Back button pops one level. */}
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-label">
-        <button
-          className="font-semibold text-accent hover:brightness-110"
-          onClick={popSubagent}
-          title={atRoot ? 'Back to chat' : 'Back to the parent subagent'}
-        >
-          {atRoot ? '← Chat' : '← Back'}
-        </button>
-        {/* Breadcrumb: Agent › Agent › … (each ancestor clickable). */}
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* At the root of a split the transcript is already beside the pane, so there's no Back and
+          Close is the way out. */}
+      <PaneHeader
+        kind={name}
+        status={<StatusMark state={running ? (bgTask ? 'launched' : 'running') : stopped ? 'stopped' : failed ? 'failed' : 'done'} />}
+      >
+        {!(atRoot && pane.state === 'half') && (
+          <button
+            type="button"
+            className="shrink-0 font-semibold text-content hover:text-dim"
+            onClick={popSubagent}
+            title={atRoot ? 'Back to chat' : 'Back to the parent subagent'}
+          >
+            {atRoot ? '← Chat' : '← Back'}
+          </button>
+        )}
         {subagentTrail.map((id, i) => {
           const m = resolveAgentMeta(id, messages, childrenByParent)
           const isLast = i === subagentTrail.length - 1
-          // Ancestors carry the task name (desc) so a deep trail reads its work, not "Agent · Agent".
           const crumb = m.desc.trim() || m.subtype || 'Agent'
           const short = crumb.length > 24 ? `${crumb.slice(0, 23)}…` : crumb
           return (
-            <span key={id} className="flex items-center gap-2">
-              <span className="text-faint">·</span>
+            <span key={id} className="flex min-w-0 items-center gap-2">
+              {(i > 0 || !(atRoot && pane.state === 'half')) && (
+                <span className="text-dim" aria-hidden="true">·</span>
+              )}
               {isLast ? (
-                <span className="font-mono text-content">{m.name}</span>
+                <span
+                  data-ui="pane-title"
+                  data-pane-title
+                  tabIndex={-1}
+                  className="min-w-0 truncate text-ui font-medium text-content"
+                  title={crumb}
+                >
+                  {crumb}
+                </span>
               ) : (
                 <button
-                  className="font-mono text-dim hover:text-content"
+                  type="button"
+                  className="shrink-0 font-mono text-dim hover:text-content"
                   onClick={() => gotoSubagentDepth(i)}
                   title={crumb}
                 >
@@ -618,49 +662,21 @@ export function SubagentView(): JSX.Element | null {
           )
         })}
         {subtype && (
-          <span className="rounded bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-faint">
-            {subtype}
-          </span>
+          <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-dim">{subtype}</span>
         )}
         {modelLabel && (
           <span
-            className="shrink-0 whitespace-nowrap rounded bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-faint"
+            className="shrink-0 whitespace-nowrap rounded bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-dim"
             title={`Ran on ${modelLabel}${effortLabel ? ` at ${effortLabel} effort` : ''}`}
           >
             {modelLabel}
             {effortLabel && <>{' · '}{effortLabel}</>}
           </span>
         )}
-        <span className="ml-auto flex items-center gap-2 font-mono text-meta">
-          {running ? (
-            <>
-              {/* A backgrounded subagent reads ambient info-blue "launched" (its Agent tool fired);
-                  a foreground one is mid-tool-call and reads live amber "running". */}
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${bgTask ? 'bg-info' : 'bg-warn'}`}
-                aria-hidden="true"
-              />
-              <span className={bgTask ? 'text-info' : 'text-warn'}>{bgTask ? 'launched' : 'running'}</span>
-            </>
-          ) : (
-            <>
-              <span className={`h-1.5 w-1.5 rounded-full ${terminalDot}`} aria-hidden="true" />
-              <span className={terminalText}>{terminalLabel}</span>
-            </>
-          )}
-        </span>
-        <NeedsYouButton />
-        <button
-          className="ml-1 rounded-md p-1 text-dim transition-colors hover:bg-bg-raised hover:text-content"
-          onClick={close}
-          title="Close (Esc)"
-        >
-          <IconClose className="h-4 w-4" />
-        </button>
-      </div>
+      </PaneHeader>
 
-      {/* Transcript: full width. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+      <div className="scroll-edge min-h-0 flex-1 overflow-y-auto px-8 py-6">
+        <div aria-hidden="true" style={{ height: 'calc(var(--bar-h, 44px) + 36px)' }} />
         {desc && (
           <div className="mb-5 max-w-3xl font-mono text-code text-faint">
             {desc}

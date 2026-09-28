@@ -47,6 +47,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const modeChoice = useActive((s) => s?.modeChoice ?? 'inherit')
   const modelChoice = useActive((s) => s?.modelChoice ?? '')
   const chatDir = useSession((s) => s.chatDir)
+  const setPrimaryScrolled = useSession((s) => s.setPrimaryScrolled)
   const isDirectoryless = !!cwd && cwd === chatDir
 
   // Task puck: local UI state (open/pinned), reset when the session switches. The gate
@@ -169,6 +170,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         className="scroll-edge flex flex-1 flex-col overflow-y-auto px-7 py-6"
         style={{ paddingBottom: 'calc(var(--dock-h, 0px) + 1.5rem)' }}
       >
+        <div aria-hidden="true" className="shrink-0" style={{ height: 'calc(var(--bar-h, 44px) + var(--notice-h, 0px))' }} />
         {/* A failed transcript read collapses to empty history, indistinguishable from a session
             with nothing saved. So the resumed copy claims context (which the CLI holds) without
             asserting what was saved. */}
@@ -227,10 +229,11 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
             </div>
           </div>
         )}
-        components={{ Footer: ChatFooter }}
+        components={{ Header: TopSpacer, Footer: ChatFooter }}
         context={footerContext}
         followOutput={followOutput}
         atBottomStateChange={onAtBottom}
+        atTopStateChange={(atTop) => setPrimaryScrolled(!atTop)}
         atBottomThreshold={80}
         initialTopMostItemIndex={Math.max(0, messages.length - 1)}
         increaseViewportBy={{ top: 600, bottom: 600 }}
@@ -259,6 +262,12 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
       <FindBar onActiveMatch={setActiveMatchId} />
     </div>
   )
+}
+
+/** Reserves the top band's and any notice's height, so the first message starts below them. A Virtuoso
+ *  Header, not scroller padding, because Virtuoso mis-measures a padded scroller. */
+function TopSpacer(): JSX.Element {
+  return <div aria-hidden="true" style={{ height: 'calc(var(--bar-h, 44px) + var(--notice-h, 0px))' }} />
 }
 
 interface FooterContext {

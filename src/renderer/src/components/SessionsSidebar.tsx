@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { SessionSummary } from '../../../shared/sessions'
 import { useSession, forgetSessionModel, sessionDisplayTitle } from '../store'
+import { sessionStatusOf, statusKey, statusText, type SessionStatus } from '../lib/sessionStatus'
 import {
   IconRefresh,
   IconChevron,
@@ -13,10 +14,10 @@ import {
   IconGitFork,
   IconPlus,
   IconHand,
-  IconHalfRing,
+  IconWarn,
+  IconSendToTray,
   IconGhost
 } from './Icon'
-import { TypingDots } from './TypingDots'
 import { ToastStack } from './Toast'
 import { useEscape } from '../lib/useEscape'
 import { useClickOutside } from '../lib/useClickOutside'
@@ -46,6 +47,8 @@ interface MergedSession {
   pendingCount: number
   /** Running background tasks on this session. Badged when not the active view. */
   bgCount: number
+  /** The session's state for its mark and line 2; null for a dormant (on-disk only) row. */
+  status: SessionStatus | null
 }
 
 interface MergedGroup {
@@ -202,14 +205,25 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     useShallow((s) =>
       Object.values(s.sessions).map(
         (v) =>
-          `${v.handleId} ${v.sessionId ?? ''} ${v.cwd} ${v.busy ? 1 : 0} ${v.exited ? 1 : 0} ${v.pendingPermissions.length} ${Object.values(v.backgroundTasks).filter((t) => t.status === 'running').length} ${v.createdMs} ${v.title ?? ''}`
+          `${v.handleId} ${v.sessionId ?? ''} ${v.cwd} ${v.busy ? 1 : 0} ${v.exited ? 1 : 0} ${v.pendingPermissions.length} ${Object.values(v.backgroundTasks).filter((t) => t.status === 'running').length} ${v.createdMs} ${v.title ?? ''} ${statusKey(v)}`
       )
     )
   )
-  // Count only genuinely-live sessions (a spawn-failed or exited slice lingers in the store to keep its
-  // transcript, but must not count as live). Derived directly from the store so it handles cwds with spaces.
-  const liveCount = useSession(
-    (s) => Object.values(s.sessions).filter((v) => !v.exited).length
+  // A tuple through useShallow, so the header summary re-renders only when a count moves.
+  const [liveCount, workingCount, needsCount] = useSession(
+    useShallow((s) => {
+      let live = 0
+      let working = 0
+      let needs = 0
+      for (const v of Object.values(s.sessions)) {
+        if (v.exited) continue
+        live++
+        const k = sessionStatusOf(v).kind
+        if (k === 'working') working++
+        else if (k === 'needs') needs++
+      }
+      return [live, working, needs]
+    })
   )
   // Narrow key of persisted live session ids: changes only when the set of on-disk-visible live sessions changes.
   const liveIdsKey = useSession((s) =>
@@ -300,7 +314,8 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
           pendingCount: liveMatch?.pendingPermissions.length ?? 0,
           bgCount: liveMatch
             ? Object.values(liveMatch.backgroundTasks).filter((t) => t.status === 'running').length
-            : 0
+            : 0,
+          status: stillLive ? sessionStatusOf(liveMatch!) : null
         })
       }
     }
@@ -324,7 +339,8 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
         ephemeral: s.ephemeral,
         busy: s.busy,
         pendingCount: s.pendingPermissions.length,
-        bgCount: Object.values(s.backgroundTasks).filter((t) => t.status === 'running').length
+        bgCount: Object.values(s.backgroundTasks).filter((t) => t.status === 'running').length,
+        status: sessionStatusOf(s)
       })
     }
 
@@ -387,24 +403,46 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center justify-between px-1 pb-2">
-          <span className="flex items-center gap-1.5 text-caps uppercase text-dim">
-            Sessions
-            {/* No tint behind the label: text-ok on a bg-ok/15 pill is 3.73:1 in light, below AA. */}
-            {liveCount > 0 && (
-              <span className="inline-flex items-center gap-1 text-badge text-ok" data-ui="live-count">
+        <div className="flex flex-col gap-1 px-1 pb-2">
+          <div className="flex items-center justify-between">
+            <span className="text-caps uppercase text-dim">Sessions</span>
+            <button
+              className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content"
+              onClick={() => void refreshSessions()}
+              title="Refresh sessions"
+            >
+              <IconRefresh className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {/* Plain text, not a live region: it changes every turn, and announcing that would chatter. */}
+          {liveCount > 0 && (
+            <div data-ui="sidebar-summary" className="flex flex-wrap items-center gap-x-1.5 text-meta text-dim">
+              <span data-ui="live-count" className="inline-flex items-center gap-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
                 {liveCount} live
               </span>
-            )}
-          </span>
-          <button
-            className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content"
-            onClick={() => void refreshSessions()}
-            title="Refresh sessions"
-          >
-            <IconRefresh className="h-3.5 w-3.5" />
-          </button>
+              {workingCount > 0 && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="flex h-1.5 w-1.5 items-center justify-center rounded-full border border-dim" aria-hidden="true">
+                      <span className="h-0.5 w-0.5 rounded-full bg-accent" />
+                    </span>
+                    {workingCount} working
+                  </span>
+                </>
+              )}
+              {needsCount > 0 && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="inline-flex items-center gap-1 text-warn">
+                    <IconHand className="h-3 w-3" />
+                    {needsCount} needs you
+                  </span>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <div className="-mr-1 min-h-0 flex-1 overflow-y-auto pr-1">
           {loading && merged.length === 0 && (
@@ -423,7 +461,8 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
           )}
           {merged.map((g) => {
             const isCollapsed = collapsed.has(g.cwd)
-            const groupLive = g.sessions.filter((s) => s.live).length
+            const groupNeeds = g.sessions.filter((s) => s.status?.kind === 'needs').length
+            const groupFailed = g.sessions.filter((s) => s.status?.kind === 'failed').length
             return (
               <div key={g.cwd} className="mb-1.5">
                 <div className="group/hdr flex w-full items-center gap-1.5 rounded px-1" title={g.cwd}>
@@ -436,11 +475,22 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
                       className={`h-3 w-3 shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
                     />
                     <span className="truncate">{g.label}</span>
-                    {groupLive > 0 && (
-                      /* Full opacity: bg-ok/70 was 2.89:1 in light (below the 3:1 non-text floor). */
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" title={`${groupLive} live here`} />
-                    )}
                   </button>
+                  {/* The group header counts only the states that need attention. */}
+                  {groupNeeds > 0 && (
+                    <span className="flex shrink-0 items-center gap-0.5 text-badge text-warn" title={`${groupNeeds} waiting on you`}>
+                      <IconHand className="h-3 w-3" />
+                      {groupNeeds}
+                      <span className="sr-only"> waiting on you</span>
+                    </span>
+                  )}
+                  {groupFailed > 0 && (
+                    <span className="flex shrink-0 items-center gap-0.5 text-badge text-err" title={`${groupFailed} with a failed turn`}>
+                      <IconWarn className="h-3 w-3" />
+                      {groupFailed}
+                      <span className="sr-only"> with a failed turn</span>
+                    </span>
+                  )}
                   {/* Fixed slot reserved so the count stays put when the "+" fades in. Only for a live
                       project cwd; the directoryless group has no "+" (the New session button covers it). */}
                   <div className="flex h-6 w-6 shrink-0 items-center justify-center">
@@ -527,6 +577,7 @@ function SessionRow({
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(session.title)
   const titleBtnRef = useRef<HTMLButtonElement>(null)
+  const lineId = useId()
   // Return focus to the title after a keyboard commit/cancel (Enter/Esc drop focus to body);
   // a mouse blur-commit leaves focus on whatever was clicked, so don't steal it back.
   const wasEditing = useRef(false)
@@ -558,109 +609,92 @@ function SessionRow({
   // Rename lives in the kebab menu for on-disk sessions only.
   const onRename = session.onDisk ? startRename : undefined
 
-  // Two-tier: live/active reads full-strength, dormant reads dimmer. Uses `dim` (6.65:1), not `faint` (3.7:1, fails AA).
+  // Dormant titles are `dim` (6.65:1), not `faint`.
   const titleTone = active || session.live ? 'text-content' : 'text-dim'
+  const st = session.status
 
   return (
     <div
-      className={`group relative flex items-center gap-2 rounded-md py-1.5 pl-3 pr-1.5 transition-colors ${
-        active
-          ? 'bg-accent-surface'
-          : session.live
-            ? 'hover:bg-bg-raised'
-            : 'hover:bg-bg-raised/60'
-      }`}
+      data-ui="sidebar-row"
+      className={`group relative flex gap-2 rounded-md py-1.5 pl-3 pr-1.5 transition-colors ${
+        st ? 'min-h-11 items-start' : 'items-center'
+      } ${active ? 'bg-accent-surface' : 'hover:bg-bg-raised'}`}
     >
-      {/* R2 active anchor */}
-      {active && (
-        <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-accent" aria-hidden="true" />
-      )}
+      {active && <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-accent" aria-hidden="true" />}
 
-      {/* Three dots for a busy session, one for a live idle one, so the two differ by shape */}
-      <span className="flex w-3.5 shrink-0 items-center justify-center">
-        {session.live &&
-          (session.busy ? (
-            <TypingDots className="scale-[0.7] text-ok" />
-          ) : (
-            <span
-              className="inline-block h-1.5 w-1.5 rounded-full bg-ok"
-              title="Live (running)"
-            />
-          ))}
+      {/* The mark's shape carries the state, so it never rests on colour alone. */}
+      <span className="flex h-[18px] min-w-3.5 shrink-0 items-center justify-center gap-0.5">
+        {st && <RowMark status={st} spin={!active} />}
       </span>
 
-      {editing ? (
-        <input
-          className="min-w-0 flex-1 rounded border border-accent bg-bg px-1.5 py-0.5 text-xs text-content outline-none"
-          value={name}
-          autoFocus
-          onChange={(e) => setName(e.target.value)}
-          onBlur={() => void commitRename()}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void commitRename()
-            if (e.key === 'Escape') {
-              setName(session.title)
-              setEditing(false)
-            }
-          }}
-        />
-      ) : (
-        <button
-          ref={titleBtnRef}
-          className={`min-w-0 flex-1 truncate rounded text-left text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 ${titleTone}`}
-          // Single-click uniformly opens/resumes on every row. Rename is the kebab or F2, never
-          // the title click, which on a dormant row would resume it instead of renaming.
-          onClick={onOpen}
-          onKeyDown={(e) => {
-            if (e.key === 'F2' && onRename) {
-              e.preventDefault()
-              onRename()
-            }
-          }}
-          title={`${session.title}${session.live ? '\n(live: click to view, no reload)' : '\n(click to resume)'}`}
-        >
-          {session.title}
-        </button>
-      )}
-
-      {/* Not-saved marker for a quick session: neutral, word + glyph (never color alone). */}
-      {session.ephemeral && !editing && (
-        <span
-          className="flex shrink-0 items-center gap-1 text-meta text-faint"
-          title="Not saved · discarded when closed"
-        >
-          <IconGhost className="h-3 w-3" aria-hidden="true" />
-          Not saved
-        </span>
-      )}
-
-      {/* Pending-permission badge. Hand glyph + count so it reads apart from the bg badge in grayscale, not by hue alone. */}
-      {session.pendingCount > 0 && !editing && (
-        <span
-          className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded-full bg-warn px-1 text-badge text-on-warn shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-warn)_28%,transparent)]"
-          title={`${session.pendingCount} permission request${session.pendingCount > 1 ? 's' : ''} awaiting your approval`}
-        >
-          <IconHand className="h-2.5 w-2.5" aria-hidden="true" />
-          {session.pendingCount}
-        </span>
-      )}
-
-      {/* Background-task badge (blue), only on non-active sessions; the active session shows its bg tasks in the bottom info bar.
-          Static half-ring glyph, not rotation: reduced-motion would erase a motion-only cue. */}
-      {session.bgCount > 0 && !active && !editing && (
-        <span
-          className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded-full bg-info px-1 text-badge text-on-info shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-info)_28%,transparent)]"
-          title={`${session.bgCount} background task${session.bgCount > 1 ? 's' : ''} running`}
-        >
-          <IconHalfRing className="h-2.5 w-2.5" aria-hidden="true" />
-          {session.bgCount}
-        </span>
-      )}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 items-center gap-1">
+          {session.ephemeral && !editing && <IconGhost className="h-3 w-3 shrink-0 text-dim" />}
+          {editing ? (
+            <input
+              className="min-w-0 flex-1 rounded border border-accent bg-bg px-1.5 py-0.5 text-xs text-content outline-none"
+              value={name}
+              autoFocus
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => void commitRename()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void commitRename()
+                if (e.key === 'Escape') {
+                  setName(session.title)
+                  setEditing(false)
+                }
+              }}
+            />
+          ) : (
+            <button
+              ref={titleBtnRef}
+              className={`min-w-0 flex-1 truncate rounded text-left text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 ${titleTone}`}
+              // Rename is the kebab or F2, never a title click: on a dormant row the click resumes.
+              onClick={onOpen}
+              onKeyDown={(e) => {
+                if (e.key === 'F2' && onRename) {
+                  e.preventDefault()
+                  onRename()
+                }
+              }}
+              aria-describedby={st ? lineId : undefined}
+              title={`${session.title}${session.live ? '\n(live: click to view, no reload)' : '\n(click to resume)'}`}
+            >
+              {session.title}
+            </button>
+          )}
+        </div>
+        {st && !editing && (
+          <div className="flex min-w-0 items-center gap-2 text-meta">
+            <span
+              id={lineId}
+              className="min-w-0 flex-1 truncate"
+              title={`${statusText(st)}${session.ephemeral ? ' · Not saved' : ''}`}
+            >
+              <StatusLine status={st} />
+              {session.ephemeral && <span className="text-dim"> · Not saved</span>}
+            </span>
+            {session.bgCount > 0 && (
+              <span
+                className="flex shrink-0 items-center gap-0.5 text-badge text-info"
+                title={`${session.bgCount} background task${session.bgCount > 1 ? 's' : ''} running`}
+              >
+                <IconSendToTray className="h-3 w-3" />
+                {session.bgCount}
+                <span className="sr-only"> background</span>
+              </span>
+            )}
+          </div>
+        )}
+      </div>
 
       {!editing && (
-        // Frequency-split: Close stays a direct inline icon; the rare trio + fork collapse into a kebab, the only way to
-        // fit 44px targets + text labels in a 288px row. Hover-revealed via opacity, not display:none.
-        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+        // Hidden with opacity, not display:none, so keyboard focus can still reach them.
+        <div
+          className={`flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 ${
+            st ? '-mt-[3px]' : ''
+          }`}
+        >
           {onClose && (
             <button
               className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -700,6 +734,53 @@ function SessionRow({
   )
 }
 
+/** A working session that isn't the one on screen spins its ring, since nothing else in view shows
+ *  that it's working. */
+function RowMark({ status, spin }: { status: SessionStatus; spin: boolean }): JSX.Element {
+  switch (status.kind) {
+    case 'needs':
+      return (
+        <>
+          <IconHand className="h-3.5 w-3.5 text-warn" />
+          {status.count > 1 && <span className="text-badge text-warn">{status.count}</span>}
+        </>
+      )
+    case 'failed':
+      return <IconWarn className="h-3.5 w-3.5 text-err" />
+    case 'working':
+      return (
+        <span
+          className={`flex h-2.5 w-2.5 items-center justify-center rounded-full border-[1.5px] border-dim ${spin ? 'mark-spin' : ''}`}
+          aria-hidden="true"
+        >
+          <span className="h-1 w-1 rounded-full bg-accent" />
+        </span>
+      )
+    case 'idle':
+      return <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
+  }
+}
+
+/** Line 2: "Needs you: Allow Write", "Last turn failed", the now-line in mono, or "Idle". */
+function StatusLine({ status }: { status: SessionStatus }): JSX.Element {
+  if (status.kind === 'needs')
+    return (
+      <>
+        <span className="text-warn">{status.lead}</span>
+        {status.rest && <span className="text-dim">: {status.rest}</span>}
+      </>
+    )
+  if (status.kind === 'working')
+    return (
+      <span className="font-mono text-dim">
+        <span className="sr-only">Working: </span>
+        {status.lead}
+        {status.rest && <span className="ml-2">{status.rest}</span>}
+      </span>
+    )
+  return <span className="text-dim">{status.lead}</span>
+}
+
 /** A 2-char session monogram for the collapsed rail: first char of the first word + first char of the
  *  next word that isn't a version token; a single word gives its first two chars. Uppercased. */
 function monogram(title: string): string {
@@ -711,8 +792,9 @@ function monogram(title: string): string {
   return first.slice(0, 2).toUpperCase()
 }
 
-/** Collapsed-rail tile for one session. A 30px monogram button carrying the whole state grammar
- *  that the expanded row spreads across dots and badges. The aria-label carries the real title + project. */
+/** Collapsed-rail tile for one session. The corner badge is the row mark reduced to a shape (hand →
+ *  diamond, alert → triangle); the aria-label and tooltip carry the full text. The badge's ring is the
+ *  rail's surface colour (bg-bg), which cuts the badge out of the tile. */
 function SessionMonogram({
   session,
   active,
@@ -722,20 +804,26 @@ function SessionMonogram({
   active: boolean
   onOpen: () => void
 }): JSX.Element {
-  const pending = session.pendingCount > 0
+  const st = session.status
   const project = basename(session.cwd)
   let label = `${session.title}, ${project}`
-  if (pending)
-    label += `, ${session.pendingCount} permission request${session.pendingCount > 1 ? 's' : ''} awaiting approval`
-  if (session.bgCount > 0 && !active)
+  if (st)
+    label += `, ${
+      st.kind === 'needs'
+        ? 'needs you'
+        : st.kind === 'failed'
+          ? 'last turn failed'
+          : st.kind === 'working'
+            ? `working: ${statusText(st)}`
+            : 'idle'
+    }`
+  if (session.bgCount > 0)
     label += `, ${session.bgCount} background task${session.bgCount > 1 ? 's' : ''} running`
 
-  const tone = active || session.busy || pending ? 'text-content' : session.live ? 'text-dim' : 'text-faint'
-  const fill = active
-    ? 'bg-accent-surface'
-    : session.busy || pending
-      ? 'bg-bg-raised'
-      : 'border border-border'
+  const working = st?.kind === 'working'
+  const needs = st?.kind === 'needs'
+  const tone = active || working || needs ? 'text-content' : session.live ? 'text-dim' : 'text-faint'
+  const fill = active ? 'bg-accent-surface' : working || needs ? 'bg-bg-raised' : 'border border-border'
 
   return (
     <div className="relative flex shrink-0 items-center justify-center">
@@ -743,23 +831,43 @@ function SessionMonogram({
         <span className="absolute -left-[7px] top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full bg-accent" aria-hidden="true" />
       )}
       <button
-        className={`relative flex h-[30px] w-[30px] items-center justify-center rounded-lg text-badge transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${fill} ${tone} ${!active && !session.busy && !pending ? 'hover:bg-bg-raised' : ''}`}
+        data-ui="sidebar-row"
+        className={`relative flex h-7 w-7 items-center justify-center rounded-lg text-badge transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${fill} ${tone} ${
+          !active && !working && !needs ? 'hover:bg-bg-raised' : ''
+        }`}
         aria-label={label}
-        title={session.title}
+        title={label}
         onClick={onOpen}
       >
         {monogram(session.title)}
-        {/* Pending permission is the blocking state, so its amber count-badge wins the corner. */}
-        {pending ? (
-          <span className="absolute -right-1.5 -top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-warn px-1 text-badge leading-none text-on-warn ring-[1.5px] ring-bg-sidebar">
-            {session.pendingCount}
-          </span>
-        ) : session.live ? (
+        {st?.kind === 'needs' && (
+          <span className="absolute -right-1 -top-1 h-2 w-2 rotate-45 rounded-[1px] bg-warn ring-2 ring-bg" aria-hidden="true" />
+        )}
+        {st?.kind === 'failed' && (
+          <svg className="absolute -right-1.5 -top-1.5 h-[13px] w-[13px]" viewBox="0 0 13 13" aria-hidden="true">
+            <path
+              d="M6.5 2 L11.5 11 H1.5 Z"
+              fill="var(--color-err)"
+              stroke="var(--color-bg)"
+              strokeWidth="2"
+              strokeLinejoin="round"
+              paintOrder="stroke"
+            />
+          </svg>
+        )}
+        {st?.kind === 'working' && (
           <span
-            className={`absolute -right-0.5 -top-0.5 h-[7px] w-[7px] rounded-full bg-ok ring-[1.5px] ${session.busy ? 'ring-bg-raised' : 'ring-bg-sidebar'}`}
+            className={`absolute -right-1 -top-1 flex h-2 w-2 items-center justify-center rounded-full border-[1.5px] border-dim bg-bg ring-2 ring-bg ${
+              active ? '' : 'mark-spin'
+            }`}
             aria-hidden="true"
-          />
-        ) : null}
+          >
+            <span className="h-[3px] w-[3px] rounded-full bg-accent" />
+          </span>
+        )}
+        {st?.kind === 'idle' && (
+          <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-ok ring-2 ring-bg" aria-hidden="true" />
+        )}
       </button>
     </div>
   )

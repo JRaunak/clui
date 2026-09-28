@@ -41,7 +41,9 @@ export function Dropdown<T extends string>({
   variant = 'default',
   checkTone = 'accent',
   icon,
-  ariaLabel
+  ariaLabel,
+  labelClassName,
+  chevronClassName
 }: {
   value: T
   options: DropdownOption<T>[]
@@ -65,6 +67,8 @@ export function Dropdown<T extends string>({
   checkTone?: 'accent' | 'neutral'
   /** Optional leading icon. */
   icon?: React.ReactNode
+  labelClassName?: string
+  chevronClassName?: string
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -118,7 +122,7 @@ export function Dropdown<T extends string>({
               isPill
                 ? `${open ? 'text-content' : 'text-dim'} group-hover:text-content`
                 : (current?.color ?? 'text-content')
-            }`}
+            } ${labelClassName ?? ''}`}
           >
             {current?.label ?? value}
           </span>
@@ -127,7 +131,7 @@ export function Dropdown<T extends string>({
           viewBox="0 0 12 12"
           className={`h-3 w-3 shrink-0 text-dim transition-transform ${
             (direction === 'up') !== open ? 'rotate-180' : ''
-          }`}
+          } ${chevronClassName ?? ''}`}
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"

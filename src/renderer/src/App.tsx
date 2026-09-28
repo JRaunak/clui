@@ -1,71 +1,29 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { useActive, useSession, ensureModelPrefsLoaded, sessionDisplayTitle, type NoticeTone } from './store'
-import { Chat } from './components/Chat'
-import { Composer } from './components/Composer'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useActive, useSession, ensureModelPrefsLoaded } from './store'
 import { SessionsSidebar } from './components/SessionsSidebar'
 import { GateAnnouncer } from './components/Gate'
 import { Customizations } from './components/Customizations'
-import { ChangedFiles } from './components/ChangedFiles'
 import { Settings } from './components/Settings'
 import { CommandPalette, type PaletteMode } from './components/CommandPalette'
 import { GlobalSearch } from './components/GlobalSearch'
-import { BackgroundTasks } from './components/BackgroundTasks'
-import { SubagentView } from './components/SubagentView'
-import { WorkflowTray } from './components/WorkflowTray'
+import { Stage } from './components/Stage'
 import { Button } from './components/Button'
 import { SplitNewSession } from './components/SplitNewSession'
 import { Onboarding, cliHealth } from './components/Onboarding'
-import {
-  IconSettings,
-  IconPlus,
-  IconSidebar,
-  IconCheck,
-  IconWarn,
-  IconNoEntry,
-  IconClose,
-  IconFolder
-} from './components/Icon'
+import { IconSettings, IconPlus, IconSidebar } from './components/Icon'
 import { applyTheme } from './lib/theme'
-import { formatCost } from './lib/formatCost'
 import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
 import { useGuardedAsync } from './lib/useGuardedAsync'
 import { useSidebarResize, SIDEBAR_DEFAULT } from './lib/useSidebarResize'
 import type { CliInfo } from '../../shared/ipc'
-
-/** Per-tone notice styling. Message text stays text-content in the render, not the tone color:
- *  content on any 10% tint clears 4.5:1, a colored body would not. */
-const NOTICE_STYLES: Record<
-  NoticeTone,
-  { cls: string; Icon: (p: { className?: string }) => JSX.Element; tint: string }
-> = {
-  success: { cls: 'border-ok/40 bg-ok/10', Icon: IconCheck, tint: 'text-ok' },
-  warn: { cls: 'border-warn/40 bg-warn/10', Icon: IconWarn, tint: 'text-warn' },
-  error: { cls: 'border-err/40 bg-err/10', Icon: IconNoEntry, tint: 'text-err' }
-}
 
 /** Shown on the new-session controls while the CLI can't start a session. */
 const NEW_SESSION_DISABLED_HINT = 'Claude CLI unavailable. Set the path in Settings.'
 
 export function App(): JSX.Element {
   const cwd = useActive((s) => s?.cwd ?? null)
-  const sessionId = useActive((s) => s?.sessionId ?? null)
-  const costUsd = useActive((s) => s?.costUsd ?? null)
-  const sessionGroups = useSession((s) => s.sessionGroups)
-  const sliceTitle = useActive((s) => sessionDisplayTitle(s))
-  const activeTitle = useActive((s) => s?.title ?? null)
-  // Live title wins so a rename shows instantly; else the on-disk resolved title so the footer
-  // matches the sidebar row; else the slice's own title before the jsonl lands.
-  const displayTitle =
-    activeTitle ??
-    sessionGroups.flatMap((g) => g.sessions).find((s) => s.id === sessionId)?.title ??
-    sliceTitle
-  // "Untitled" is a placeholder, not a name; hide it (and any absent id/cwd) rather than show junk.
-  const showTitle = !!displayTitle && displayTitle !== 'Untitled'
   const startSession = useSession((s) => s.startSession)
   const chatDir = useSession((s) => s.chatDir)
-  const notice = useSession((s) => s.notice)
-  const viewingSubagent = useSession((s) => s.viewingSubagent)
-  const dismissNotice = useSession((s) => s.dismissNotice)
   const [cliInfo, setCliInfo] = useState<CliInfo | null>(null)
   // No workable CLI, so nothing can start; the new-session controls go inert below.
   const cliUnavailable = cliHealth(cliInfo) !== 'ok'
@@ -77,8 +35,6 @@ export function App(): JSX.Element {
   const [showCustomizations, setShowCustomizations] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [palette, setPalette] = useState<{ mode: PaletteMode; seq: number } | null>(null)
-  const [dockH, setDockH] = useState(0)
-  const [sbW, setSbW] = useState(0)
   const globalSearchOpen = useSession((s) => s.globalSearchOpen)
 
   // Native `inert` on the background regions contains focus and hides them from AT while a
@@ -92,26 +48,7 @@ export function App(): JSX.Element {
   const lastBgFocusRef = useRef<HTMLElement | null>(null)
   // Holds the previous overlay state so the restore below skips the initial mount.
   const wasOverlayOpenRef = useRef(false)
-  // Measured so --dock-h can give the transcript bottom clearance and lift the bottom-right pills.
-  const dockRef = useRef<HTMLDivElement>(null)
   const anyOverlayOpen = showSettings || showCustomizations || !!palette || globalSearchOpen
-
-  // Track the floating dock's height (composer grows, ChangedFiles toggles). rAF-coalesced
-  // to dodge the ResizeObserver-loop warning; re-armed when the transcript view mounts.
-  useEffect(() => {
-    const el = dockRef.current
-    if (!el) return
-    let raf = 0
-    const ro = new ResizeObserver(() => {
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => setDockH(el.offsetHeight))
-    })
-    ro.observe(el)
-    return () => {
-      ro.disconnect()
-      cancelAnimationFrame(raf)
-    }
-  }, [cwd, viewingSubagent])
 
   useEffect(() => {
     const onFocusIn = (e: FocusEvent): void => {
@@ -275,6 +212,40 @@ export function App(): JSX.Element {
     onToggleSidebar: toggleSidebar
   })
 
+  const emptyPane =
+    onboarded !== null && (cliHealth(cliInfo) !== 'ok' || !onboarded) ? (
+      <Onboarding
+        cliInfo={cliInfo}
+        onboarded={onboarded}
+        onOpenSettings={openSettings}
+        onRecheck={recheckCli}
+        onPickWorkspace={startInDir}
+        onDismissIntro={dismissIntro}
+      />
+    ) : (
+      <div className="m-auto flex max-w-md flex-col items-center px-6 text-center">
+        <div className="mb-6 flex items-baseline gap-2.5">
+          <span className="font-serif text-5xl font-semibold tracking-tight text-content">Clui</span>
+          <span className="h-2.5 w-2.5 translate-y-[-6px] rounded-full bg-accent" aria-hidden="true" />
+        </div>
+        <p className="font-serif text-xl italic leading-snug text-dim">
+          Drive Claude Code, visually.
+        </p>
+        <p className="mt-3 text-sm leading-relaxed text-faint">
+          A local window onto the <span className="font-mono text-dim">claude</span> CLI: your
+          sessions, permissions, and tools, running side by side.
+        </p>
+        <Button variant="primary" size="lg" className="mt-7" onClick={startNew} busy={spawnPending}>
+          <IconPlus className="h-4 w-4" />
+          New session
+        </Button>
+        {/* Ghost, so the New session button above stays the only accent button on this screen. */}
+        <Button variant="ghost" size="md" className="mt-2" onClick={startInDir} busy={spawnPending}>
+          New session in a directory…
+        </Button>
+      </div>
+    )
+
   return (
     <div className="relative flex h-screen overflow-hidden">
       {/* One class-swapped node: two keyed branches would remount SessionsSidebar and blank the list. */}
@@ -353,6 +324,7 @@ export function App(): JSX.Element {
           // Always h-8 so list height stays steady; border-t only with a session, to line up
           // with main's info bar.
           <div
+            data-ui="sidebar-footer"
             className={`flex h-8 w-full shrink-0 items-center justify-center ${cwd ? 'border-t border-border' : ''}`}
           >
             <button
@@ -366,7 +338,7 @@ export function App(): JSX.Element {
           </div>
         ) : (
           // Gear is absolute so it doesn't pull the centered CLI status off-center.
-          <div className="relative flex h-8 shrink-0 items-center justify-center border-t border-border bg-bg-sidebar px-3 text-meta text-dim">
+          <div data-ui="sidebar-footer" className="relative flex h-8 shrink-0 items-center justify-center border-t border-border bg-bg-sidebar px-3 text-meta text-dim">
             {cliInfo?.path ? (
               <span className="truncate font-mono" title={cliInfo.path}>
                 claude {cliInfo.version ?? ''}
@@ -406,134 +378,9 @@ export function App(): JSX.Element {
       </aside>
 
       <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* No in-app top bar: the sidebar's drag band spans the window top; Settings lives in the sidebar. */}
-        {/* Title-height band at the top of both collapse states so the transcript never shifts when the
-            sidebar toggles. Collapsed hosts the window-drag region; expanded drags from the sidebar. */}
-        {sidebarCollapsed ? (
-          <div className="ml-20 h-11 shrink-0 [-webkit-app-region:drag]" aria-hidden="true" />
-        ) : (
-          <div className="h-11 shrink-0" aria-hidden="true" />
-        )}
-        {/* No divider when collapsed: the rail is bg-bg like main, so border-l would draw
-            through one uniform surface. */}
-        <div
-          className={`flex min-h-0 flex-1 flex-col ${sidebarCollapsed ? '' : 'border-l border-border'}`}
-        >
-        {notice && (() => {
-          const { cls, Icon, tint } = NOTICE_STYLES[notice.tone]
-          return (
-            <div className={`flex items-center gap-2 border-b px-4 py-1.5 text-label text-content ${cls}`}>
-              <Icon className={`h-3.5 w-3.5 shrink-0 ${tint}`} />
-              <span className="flex-1">{notice.message}</span>
-              <button className="text-dim hover:text-content" onClick={dismissNotice} aria-label="Dismiss" title="Dismiss">
-                <IconClose className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )
-        })()}
-
-        {cwd && viewingSubagent ? (
-          // Maximized transcript view takes over the main region (sidebar persists).
-          <SubagentView />
-        ) : cwd ? (
-          <>
-            {/* The composer stack floats over the transcript so content scrolls under its
-                rounded top; --dock-h publishes its height to the transcript and pills below. */}
-            <div
-              className="relative mb-2 flex min-h-0 flex-1 flex-col"
-              style={{ '--dock-h': `${dockH}px`, '--sb-w': `${sbW}px` } as CSSProperties}
-            >
-              <Chat onScrollbarWidth={setSbW} />
-              {/* The transcript reserves a stable scrollbar gutter; the dock pads its right by the
-                  same width so the composer column lines up with the message column. */}
-              <div
-                ref={dockRef}
-                className="absolute inset-x-0 bottom-0"
-                style={{ paddingRight: 'var(--sb-w, 0px)' }}
-              >
-                <ChangedFiles />
-                <Composer />
-              </div>
-            </div>
-            {/* Bottom-left workspace/session info. Same h-8 as the sidebar footer
-                so their divider lines align across the two columns. */}
-            <div className="flex h-8 items-center gap-3 border-t border-border px-4 text-meta text-dim">
-              {showTitle && (
-                <span className="min-w-0 truncate text-dim" title={displayTitle}>
-                  {displayTitle}
-                </span>
-              )}
-              {sessionId && (
-                <>
-                  {showTitle && <span className="shrink-0 text-faint">·</span>}
-                  <span className="shrink-0 font-mono text-faint" title={sessionId}>
-                    {sessionId.slice(0, 8)}
-                  </span>
-                </>
-              )}
-              {costUsd !== null && (
-                <>
-                  {(showTitle || sessionId) && <span className="shrink-0 text-faint">·</span>}
-                  <span
-                    className="shrink-0 font-mono text-dim"
-                    title="Cumulative session cost (from the CLI result event)"
-                  >
-                    {formatCost(costUsd)}
-                  </span>
-                </>
-              )}
-              <span className="flex-1" aria-hidden="true" />
-              <BackgroundTasksSlot />
-              <WorkflowTray />
-              {/* Directoryless sessions run in ~/.clui; hide that internal path. This is now the only
-                  surface for the cwd (the composer no longer repeats it), so text-dim, not faint. */}
-              {cwd && cwd !== chatDir && (
-                <span
-                  className="flex shrink-0 items-center gap-1 text-dim"
-                  title={cwd}
-                  aria-label={`Working directory: ${cwd}`}
-                >
-                  <IconFolder className="h-3.5 w-3.5 shrink-0" />
-                  <span className="max-w-[20ch] truncate">{basename(cwd)}</span>
-                </span>
-              )}
-            </div>
-          </>
-        ) : // Onboarding takes the empty pane when the CLI is unhealthy or first-run isn't done.
-        // Wait for `onboarded` to load (null) so the intro never flashes; healthy+onboarded returns null.
-        onboarded !== null && (cliHealth(cliInfo) !== 'ok' || !onboarded) ? (
-          <Onboarding
-            cliInfo={cliInfo}
-            onboarded={onboarded}
-            onOpenSettings={openSettings}
-            onRecheck={recheckCli}
-            onPickWorkspace={startInDir}
-            onDismissIntro={dismissIntro}
-          />
-        ) : (
-          <div className="m-auto flex max-w-md flex-col items-center px-6 text-center">
-            <div className="mb-6 flex items-baseline gap-2.5">
-              <span className="font-serif text-5xl font-semibold tracking-tight text-content">Clui</span>
-              <span className="h-2.5 w-2.5 translate-y-[-6px] rounded-full bg-accent" aria-hidden="true" />
-            </div>
-            <p className="font-serif text-xl italic leading-snug text-dim">
-              Drive Claude Code, visually.
-            </p>
-            <p className="mt-3 text-sm leading-relaxed text-faint">
-              A local window onto the <span className="font-mono text-dim">claude</span> CLI: your
-              sessions, permissions, and tools, running side by side.
-            </p>
-            <Button variant="primary" size="lg" className="mt-7" onClick={startNew} busy={spawnPending}>
-              <IconPlus className="h-4 w-4" />
-              New session
-            </Button>
-            {/* Ghost, not a second accent: the hero's boldness is spent on the primary. */}
-            <Button variant="ghost" size="md" className="mt-2" onClick={startInDir} busy={spawnPending}>
-              New session in a directory…
-            </Button>
-          </div>
-        )}
-        </div>
+        {/* Collapsed and windowed, the traffic lights and the sidebar toggle sit over the Stage's
+            top-left, so the band's content starts after them. */}
+        <Stage leftInset={sidebarCollapsed && !isFullscreen ? 76 : 16} bordered={!sidebarCollapsed} empty={emptyPane} />
       </main>
 
       {/* Sits on drag-free pixels: a no-drag button nested in a drag band doesn't reliably carve back out. */}
@@ -589,18 +436,3 @@ export function App(): JSX.Element {
     </div>
   )
 }
-
-function basename(p: string): string {
-  const parts = p.replace(/\/+$/, '').split('/')
-  return parts[parts.length - 1] || p
-}
-
-/** Returns null rather than an empty node so the info bar's flex gap reserves no space
- *  when the session has no background tasks. */
-function BackgroundTasksSlot(): JSX.Element | null {
-  const hasTasks = useActive((s) => Object.keys(s?.backgroundTasks ?? {}).length > 0)
-  if (!hasTasks) return null
-  return <BackgroundTasks />
-}
-
-

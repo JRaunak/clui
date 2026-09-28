@@ -119,7 +119,10 @@ export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null)
 
   const count = matches.length
   return (
-    <div className="absolute right-5 top-3 z-30 flex items-center gap-1.5 rounded-lg border border-border-strong bg-bg-elev px-2 py-1.5 shadow-lg">
+    <div
+      className="absolute right-5 z-30 flex items-center gap-1.5 rounded-lg border border-border-strong bg-bg-elev px-2 py-1.5 shadow-lg"
+      style={{ top: 'calc(var(--bar-h, 44px) + var(--notice-h, 0px) + 12px)' }}
+    >
       <IconSearch className="h-3.5 w-3.5 shrink-0 text-dim" />
       <input
         ref={inputRef}

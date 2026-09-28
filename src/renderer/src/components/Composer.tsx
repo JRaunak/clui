@@ -323,151 +323,155 @@ export function Composer(): JSX.Element {
   }))
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-7">
-      <div
-        data-ui="composer-dock"
-        className={`dock-fade-both relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 ${
-          dragOver ? 'border-accent' : 'border-border has-[textarea:focus]:border-accent'
-        }`}
-        onDrop={onDrop}
-        onDragEnter={onDragEnter}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-      >
-        <GateHost />
-        {/* Drag-to-attach overlay: accent is legit here (a live, transient state cue). */}
-        {dragOver && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg-elev/85">
-            <div className="flex items-center gap-2 text-sm font-medium text-accent">
-              <IconPlus className="h-5 w-5" />
-              Drop to attach · images inline, other files as @references
+    <div className="@container/composer w-full">
+      <div className="mx-auto w-full max-w-5xl px-7">
+        <div
+          data-ui="composer-dock"
+          className={`dock-fade-both relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 ${
+            dragOver ? 'border-accent' : 'border-border has-[textarea:focus]:border-accent'
+          }`}
+          onDrop={onDrop}
+          onDragEnter={onDragEnter}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+        >
+          <GateHost />
+          {/* Drag-to-attach overlay: accent is legit here (a live, transient state cue). */}
+          {dragOver && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg-elev/85">
+              <div className="flex items-center gap-2 text-sm font-medium text-accent">
+                <IconPlus className="h-5 w-5" />
+                Drop to attach · images inline, other files as @references
+              </div>
             </div>
-          </div>
-        )}
-        {/* Attachment thumbnails: a strip above the textarea, neutral surfaces. */}
-        {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-1 pt-1">
-            {attachments.map((a) => (
-              <AttachmentPill key={a.id} att={a} onRemove={() => removeAttachment(a.id)} />
-            ))}
-          </div>
-        )}
-        <div className="relative">
-          {ac.render()}
-          <textarea
-            ref={textareaRef}
-            data-composer-input
-            className="max-h-48 min-h-[52px] w-full resize-none bg-transparent px-2 pt-1.5 text-sm leading-normal text-content outline-none placeholder:text-dim focus-visible:outline-none"
-            placeholder="Message Claude…"
-            aria-label="Message Claude"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-expanded={ac.open}
-            aria-controls={ac.listboxId}
-            aria-activedescendant={ac.activeId}
-            value={text}
-            onChange={(e) => {
-              if (handleId) setDraftText(handleId, e.target.value)
-              setCaret(e.target.selectionStart ?? e.target.value.length)
-            }}
-            onKeyDown={onKeyDown}
-            onKeyUp={syncCaret}
-            onClick={syncCaret}
-            onPaste={onPaste}
-            rows={2}
-          />
-        </div>
-        <div className="flex items-center">
-           {/* Attach-file button (keyboard/a11y affordance for paste + drop). */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={onPickFiles}
-            tabIndex={-1}
-            aria-hidden="true"
-          />
-          <button
-            type="button"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-control text-dim transition-colors hover:bg-control-hover hover:text-content disabled:cursor-default disabled:opacity-50"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={!hasSession}
-            title="Attach an image or file"
-            aria-label="Attach an image or file"
-          >
-            <IconPlus className="h-4 w-4" />
-          </button>
-          <div className="ml-3 flex items-center gap-1.5">
-            {ephemeral ? (
-              <>
-                {/* A quick session trims the control row to its contract: not saved. */}
-                <span
-                  className="flex h-8 items-center gap-1.5 px-1 text-xs text-dim"
-                  title="Not saved · discarded when you close it"
-                >
-                  <IconGhost className="h-3.5 w-3.5 shrink-0" />
-                  Not saved
-                </span>
-                {modeChoice === 'bypassPermissions' && (
-                  <span
-                    className="flex h-8 items-center gap-1.5 px-1 text-xs text-err"
-                    title="Autonomous · runs tools without asking · change in Settings → Quick sessions"
-                  >
-                    <IconShieldOff className="h-3.5 w-3.5 shrink-0" />
-                    runs without asking
-                  </span>
-                )}
-              </>
-            ) : (
-              <>
-                <ModelEffortPicker />
-                <Dropdown<PermissionModeChoice>
-                  value={displayMode}
-                  options={permOptions}
-                  onChange={(m) => void setPermissionMode(m)}
-                  title="Change permissions"
-                  direction="up"
-                  variant="pill"
-                  menuClassName="w-72"
-                  icon={<PermissionIcon mode={displayMode} />}
-                />
-                <UltracodeToggle />
-                <DirectoryChip
-                  directoryless={isDirectoryless}
-                  editable={noMessages}
-                  cwd={cwd}
-                  value={isDirectoryless ? DIR_NONE : (cwd ?? DIR_NONE)}
-                  options={dirOptions}
-                  onSelect={onSelectDir}
-                />
-              </>
-            )}
-          </div>
-          <div className="ml-auto flex items-center gap-4 pr-[2px]">
-            <ContextRing
-              percent={contextPercent}
-              usedTokens={contextTokens}
-              contextWindow={contextWindow}
+          )}
+          {/* Attachment thumbnails: a strip above the textarea, neutral surfaces. */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-1 pt-1">
+              {attachments.map((a) => (
+                <AttachmentPill key={a.id} att={a} onRemove={() => removeAttachment(a.id)} />
+              ))}
+            </div>
+          )}
+          <div className="relative">
+            {ac.render()}
+            <textarea
+              ref={textareaRef}
+              data-composer-input
+              className="max-h-48 min-h-[52px] w-full resize-none bg-transparent px-2 pt-1.5 text-sm leading-normal text-content outline-none placeholder:text-dim focus-visible:outline-none"
+              placeholder="Message Claude…"
+              aria-label="Message Claude"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={ac.open}
+              aria-controls={ac.listboxId}
+              aria-activedescendant={ac.activeId}
+              value={text}
+              onChange={(e) => {
+                if (handleId) setDraftText(handleId, e.target.value)
+                setCaret(e.target.selectionStart ?? e.target.value.length)
+              }}
+              onKeyDown={onKeyDown}
+              onKeyUp={syncCaret}
+              onClick={syncCaret}
+              onPaste={onPaste}
+              rows={2}
             />
-            {busy ? (
-              <button
-                className="flex h-[28px] w-[28px] items-center justify-center rounded-full bg-err text-on-err transition-transform active:scale-95"
-                onClick={() => void interrupt()}
-                title="Stop"
-              >
-                <IconStop className="h-3 w-3" />
-              </button>
-            ) : (
-              <button
-                className="flex h-[28px] w-[28px] items-center justify-center rounded-full bg-accent text-on-accent transition-[background-color,transform] hover:bg-accent-hover active:scale-95 disabled:cursor-default disabled:bg-border disabled:text-faint"
-                onClick={() => void submit()}
-                disabled={!text.trim() && attachments.length === 0}
-                title="Send"
-              >
-                <IconArrowUp className="h-3 w-3 translate-y-[0.5px]" />
-              </button>
-            )}
+          </div>
+          <div className="flex min-w-0 items-center">
+             {/* Attach-file button (keyboard/a11y affordance for paste + drop). */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={onPickFiles}
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+            <button
+              type="button"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-control text-dim transition-colors hover:bg-control-hover hover:text-content disabled:cursor-default disabled:opacity-50"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!hasSession}
+              title="Attach an image or file"
+              aria-label="Attach an image or file"
+            >
+              <IconPlus className="h-4 w-4" />
+            </button>
+            <div className="ml-3 flex min-w-0 items-center gap-1.5 @max-[560px]/composer:ml-2">
+              {ephemeral ? (
+                <>
+                  {/* A quick session trims the control row to its contract: not saved. */}
+                  <span
+                    className="flex h-8 items-center gap-1.5 whitespace-nowrap px-1 text-xs text-dim"
+                    title="Not saved · discarded when you close it"
+                  >
+                    <IconGhost className="h-3.5 w-3.5 shrink-0" />
+                    Not saved
+                  </span>
+                  {modeChoice === 'bypassPermissions' && (
+                    <span
+                      className="flex h-8 items-center gap-1.5 whitespace-nowrap px-1 text-xs text-err"
+                      title="Autonomous · runs tools without asking · change in Settings → Quick sessions"
+                    >
+                      <IconShieldOff className="h-3.5 w-3.5 shrink-0" />
+                      runs without asking
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <ModelEffortPicker />
+                  <Dropdown<PermissionModeChoice>
+                    value={displayMode}
+                    options={permOptions}
+                    onChange={(m) => void setPermissionMode(m)}
+                    title={`Permissions: ${permOptions.find((o) => o.value === displayMode)?.label ?? displayMode}`}
+                    direction="up"
+                    variant="pill"
+                    menuClassName="w-72"
+                    labelClassName="@max-[660px]/composer:sr-only"
+                    chevronClassName="@max-[480px]/composer:hidden"
+                    icon={<PermissionIcon mode={displayMode} />}
+                  />
+                  <UltracodeToggle />
+                  <DirectoryChip
+                    directoryless={isDirectoryless}
+                    editable={noMessages}
+                    cwd={cwd}
+                    value={isDirectoryless ? DIR_NONE : (cwd ?? DIR_NONE)}
+                    options={dirOptions}
+                    onSelect={onSelectDir}
+                  />
+                </>
+              )}
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-4 pl-2 pr-[2px] @max-[560px]/composer:gap-2">
+              <ContextRing
+                percent={contextPercent}
+                usedTokens={contextTokens}
+                contextWindow={contextWindow}
+              />
+              {busy ? (
+                <button
+                  className="flex h-[28px] w-[28px] items-center justify-center rounded-full bg-err text-on-err transition-transform active:scale-95"
+                  onClick={() => void interrupt()}
+                  title="Stop"
+                >
+                  <IconStop className="h-3 w-3" />
+                </button>
+              ) : (
+                <button
+                  className="flex h-[28px] w-[28px] items-center justify-center rounded-full bg-accent text-on-accent transition-[background-color,transform] hover:bg-accent-hover active:scale-95 disabled:cursor-default disabled:bg-border disabled:text-faint"
+                  onClick={() => void submit()}
+                  disabled={!text.trim() && attachments.length === 0}
+                  title="Send"
+                >
+                  <IconArrowUp className="h-3 w-3 translate-y-[0.5px]" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -510,12 +514,14 @@ function DirectoryChip({
       value={value}
       options={options}
       onChange={onSelect}
-      ariaLabel="Session directory"
+      ariaLabel={`Session directory: ${options.find((o) => o.value === value)?.label ?? value}`}
       title={directoryless ? undefined : (cwd ?? undefined)}
       direction="up"
       variant="pill"
       checkTone="neutral"
       menuClassName="w-64"
+      labelClassName="@max-[800px]/composer:sr-only"
+      chevronClassName="@max-[480px]/composer:hidden"
       icon={
         directoryless ? (
           <IconFolderOpen className="h-3.5 w-3.5 shrink-0 text-dim" />

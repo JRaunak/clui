@@ -65,31 +65,45 @@ export function WorkflowTray(): JSX.Element | null {
       : `${ended.length} workflows`
 
   const anyFailed = !hasRunning && ended.some((w) => /fail|error/i.test(w.endedStatus ?? ''))
+  const full = hasRunning
+    ? agents.length > 0
+      ? `${label} · ${done}✓ ${active} running${failed ? ` ${failed}✗` : ''}`
+      : label
+    : `${label} · ${anyFailed ? 'failed' : 'done'}`
 
   return (
     <button
-      className={`flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-meta transition-[filter] hover:brightness-125 ${
-        hasRunning ? 'bg-info/15 text-info' : anyFailed ? 'bg-err/10 text-err' : 'text-dim'
+      data-ui="workflow-tray"
+      className={`flex h-6 min-w-0 items-center gap-1.5 rounded-full bg-control px-2 font-mono text-meta transition-colors hover:bg-control-hover ${
+        hasRunning ? 'text-info' : anyFailed ? 'text-content' : 'text-dim'
       }`}
       onClick={() => {
         viewWorkflow(target.taskId)
         clearCompleted('workflow') // opening = "seen" → clear the lingering done state.
       }}
-      title={hasRunning ? "Open the workflow's live phase tree" : 'Workflow finished. Open its phase tree'}
+      title={full}
     >
+      {/* A failed workflow reads by its dot and the word, not by tinting the whole pill red. */}
+      {anyFailed && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-err" aria-hidden="true" />}
       <span className="text-badge">◆</span>
-      <span>{label}</span>
+      <span className="min-w-0 max-w-[16ch] truncate @max-[560px]:sr-only">{label}</span>
       {hasRunning ? (
         agents.length > 0 && (
           /* Full-strength info (not /70): the count is the payload of this chip, and
              at 70% opacity on the blue tint it fell to 2.97:1 (below AA). The leading
              "·" already separates it from the name; contrast shouldn't. */
           <span className="text-info">
-            · {done}✓ {active} running{failed ? ` ${failed}✗` : ''}
+            <span className="@max-[560px]:sr-only">· {done}✓ </span>
+            {active}
+            <span className="@max-[560px]:sr-only"> running</span>
+            {failed ? ` ${failed}✗` : ''}
           </span>
         )
       ) : (
-        <span className="text-dim">· {anyFailed ? 'failed' : 'done'}</span>
+        <span className="text-dim">
+          <span className="@max-[560px]:sr-only">· </span>
+          {anyFailed ? 'failed' : 'done'}
+        </span>
       )}
     </button>
   )

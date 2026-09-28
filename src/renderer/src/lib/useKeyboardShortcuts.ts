@@ -10,10 +10,12 @@
  *       ⌃Tab / ⌃⇧Tab  — cycle to the next / previous live session
  *       ⌃C            — interrupt the active turn WHILE it is streaming
  *       ⌘B            — collapse / expand the session sidebar (no menu collision)
+ *       F6 / ⇧F6      — move focus between the sidebar, the transcript and the detail pane
  *
- * All bindings use modifiers, so they stay active even while the composer
- * textarea is focused (the macOS convention: ⌘/⌃ shortcuts are global). We never
- * bind a plain key, which is the actual safety guarantee against hijacking typing.
+ * Every binding but F6 uses a modifier, so they stay active even while the
+ * composer textarea is focused (the macOS convention: ⌘/⌃ shortcuts are global).
+ * F6 types nothing either. No binding is a printable key, which is the actual
+ * safety guarantee against hijacking typing.
  */
 import { useEffect } from 'react'
 import { useSession } from '../store'
@@ -89,6 +91,11 @@ export function useKeyboardShortcuts(opts: {
         case 'search-global':
           store.setGlobalSearchOpen(true)
           break
+        // Clicking the pane's own button reuses its focus rule, and it only exists when the Stage is
+        // wide enough to split, so a narrow window or a closed pane makes this a no-op.
+        case 'toggle-pane-size':
+          document.querySelector<HTMLElement>('[data-ui="pane-expand"]')?.click()
+          break
       }
     })
 
@@ -109,6 +116,24 @@ export function useKeyboardShortcuts(opts: {
       if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault()
         onToggleSidebar()
+        return
+      }
+
+      // Each region lands on its main control.
+      if (e.key === 'F6' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const REGIONS = '#app-sidebar, [data-ui="pane-primary"], [data-ui="pane-secondary"]'
+        const targets = [
+          document.querySelector<HTMLElement>('#app-sidebar [data-new-session]'),
+          document.querySelector<HTMLElement>('[data-ui="pane-primary"] [data-composer-input]'),
+          document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-ui="pane-title"]')
+        ].filter((el): el is HTMLElement => !!el && !el.closest('[inert]'))
+        if (targets.length < 2) return
+        e.preventDefault()
+        const here = document.activeElement?.closest(REGIONS) ?? null
+        const at = targets.findIndex((el) => el.closest(REGIONS) === here)
+        const step = e.shiftKey ? -1 : 1
+        const next = at < 0 ? (e.shiftKey ? targets.length - 1 : 0) : (at + step + targets.length) % targets.length
+        targets[next].focus()
         return
       }
 
