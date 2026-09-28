@@ -263,6 +263,9 @@ export interface CluiApi {
   onMenuAction: (cb: (action: MenuAction) => void) => () => void
   /** Subscribe to fullscreen enter/leave. Returns an unsubscribe fn. */
   onFullscreenChanged: (cb: (isFullscreen: boolean) => void) => () => void
+  /** macOS "Reduce transparency", read from nativeTheme so the solid fallback doesn't rely on Chromium's media query. */
+  getReducedTransparency: () => Promise<boolean>
+  onReducedTransparencyChanged: (cb: (on: boolean) => void) => () => void
 }
 
 /** Actions emitted by the native application menu. */
@@ -333,5 +336,7 @@ export const IpcChannels = {
   sessionEvent: 'clui:sessionEvent',
   /** main → renderer push channel for native application-menu actions */
   menuAction: 'clui:menuAction',
+  getReducedTransparency: 'clui:getReducedTransparency',
+  reducedTransparencyChanged: 'clui:reducedTransparencyChanged',
   fullscreenChanged: 'clui:fullscreenChanged'
 } as const

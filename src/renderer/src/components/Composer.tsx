@@ -47,8 +47,8 @@ const DIR_PICK = '__clui_pick__'
 
 /**
  * Message textarea on top, a control row below: model/effort + permission chips on the left,
- * context gauge + send/stop on the right. The dock edge pulses while a turn streams (the
- * verb+timer itself lives in the chat footer, see WorkingStatus).
+ * context gauge + send/stop on the right. A running turn's light and timer live at the transcript
+ * tail (WorkingStatus), not on the dock.
  */
 export function Composer(): JSX.Element {
   // Draft (text + attachments) lives in the session slice, not local state, so it survives
@@ -325,13 +325,8 @@ export function Composer(): JSX.Element {
     <div className="mx-auto w-full max-w-5xl px-7">
       <div
         className={`dock-fade-both relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 transition-colors ${
-          dragOver
-            ? 'border-accent'
-            : busy
-              ? 'border-accent/40'
-              : 'border-border focus-within:border-accent'
+          dragOver ? 'border-accent' : 'border-border focus-within:border-accent'
         }`}
-        style={busy ? { animation: 'var(--animate-dock-pulse)' } : undefined}
         onDrop={onDrop}
         onDragEnter={onDragEnter}
         onDragOver={onDragOver}

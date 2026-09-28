@@ -7,6 +7,7 @@ import { Markdown } from './Markdown'
 import { IconChevron, IconCheck, IconClose, IconCopy, IconFile, IconChecklist, IconMessage, IconSendToTray, IconShieldOff } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
 import { formatCost } from '../lib/formatCost'
+import { isBackgroundedTool } from '../lib/lumen'
 import type { PermissionDenial, TurnUsage } from '../../../shared/events'
 
 /** Non-image attachments render as a file chip matching the composer pill's language. */
@@ -603,11 +604,7 @@ function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean })
   // asynchronously (tracked in the tray), so its terminal state reads "launched", not "done".
   // Two cases: Bash run_in_background, and the dynamic Workflow tool (it returns immediately,
   // then the workflow runs via task_progress).
-  const isBackgrounded =
-    tool.name === 'Workflow' ||
-    Boolean(tool.sentToBackground) ||
-    Boolean(tool.input && typeof tool.input === 'object' &&
-      (tool.input as { run_in_background?: unknown }).run_in_background === true)
+  const isBackgrounded = isBackgroundedTool(tool)
   // Only a foreground Bash is worth moving: run_in_background / Workflow tools are already
   // tray-bound, and other tools finish too fast to bother.
   const canSendToBackground = running && !isBackgrounded && tool.name === 'Bash'

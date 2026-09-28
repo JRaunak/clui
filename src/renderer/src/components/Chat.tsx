@@ -166,7 +166,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
     const familyWord = family.charAt(0).toUpperCase() + family.slice(1)
     return (
       <div
-        className="flex flex-1 flex-col overflow-y-auto px-7 py-6"
+        className="scroll-edge flex flex-1 flex-col overflow-y-auto px-7 py-6"
         style={{ paddingBottom: 'calc(var(--dock-h, 0px) + 1.5rem)' }}
       >
         {/* A failed transcript read collapses to empty history, indistinguishable from a session
@@ -192,7 +192,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
       <Virtuoso
         ref={virtuosoRef}
         key={activeHandleId ?? 'none'}
-        className="h-full [scrollbar-gutter:stable]"
+        className="scroll-edge h-full [scrollbar-gutter:stable]"
         // Report the reserved gutter width so the composer dock can pad to match this column.
         scrollerRef={(el) => {
           const node = el as HTMLElement | null
@@ -321,11 +321,7 @@ function QueuedMessages(): JSX.Element | null {
   return (
     <div className="mt-4 flex flex-col gap-2" role="list" aria-label="Queued messages">
       <div className="flex items-center gap-1.5 text-caps uppercase text-info">
-        <span
-          className="h-1.5 w-1.5 rounded-full bg-info"
-          style={{ animation: 'var(--animate-breathe)' }}
-          aria-hidden="true"
-        />
+        <span className="h-1.5 w-1.5 rounded-full bg-info" aria-hidden="true" />
         Queued · sends when the current turn finishes
       </div>
       {queued.map((q) => (

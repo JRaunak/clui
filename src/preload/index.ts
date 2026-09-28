@@ -21,6 +21,7 @@ const api: CluiApi = {
   getChatDir: () => ipcRenderer.invoke(IpcChannels.getChatDir),
   getCliInfo: () => ipcRenderer.invoke(IpcChannels.getCliInfo),
   getFullscreen: () => ipcRenderer.invoke(IpcChannels.getFullscreen),
+  getReducedTransparency: () => ipcRenderer.invoke(IpcChannels.getReducedTransparency),
   startSession: (opts: StartSessionOptions) =>
     ipcRenderer.invoke(IpcChannels.startSession, opts),
   sendMessage: (handleId: string, text: string, attachments?: WireAttachment[]) =>
@@ -102,6 +103,11 @@ const api: CluiApi = {
     const listener = (_e: unknown, isFullscreen: boolean): void => cb(isFullscreen)
     ipcRenderer.on(IpcChannels.fullscreenChanged, listener)
     return () => ipcRenderer.removeListener(IpcChannels.fullscreenChanged, listener)
+  },
+  onReducedTransparencyChanged: (cb: (on: boolean) => void) => {
+    const listener = (_e: unknown, on: boolean): void => cb(on)
+    ipcRenderer.on(IpcChannels.reducedTransparencyChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.reducedTransparencyChanged, listener)
   }
 }
 

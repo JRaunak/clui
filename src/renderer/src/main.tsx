@@ -2,6 +2,7 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { useSession, activeSlice, type PerSessionState } from './store'
+import { trackReducedTransparency } from './lib/theme'
 import './styles.css'
 
 // E2E hook: lets the Playwright driver drive the store directly (the workspace
@@ -14,6 +15,8 @@ const w = window as unknown as {
 w.__cluiStore = useSession
 // The active session's slice (state is keyed per session under keep-sessions-alive).
 w.__cluiActive = () => activeSlice(useSession.getState())
+
+trackReducedTransparency()
 
 const container = document.getElementById('root')
 if (!container) throw new Error('#root not found')

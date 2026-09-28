@@ -96,13 +96,26 @@
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.28);
   --shadow-md: 0 4px 12px rgb(0 0 0 / 0.32);
   --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.42);
-  --shadow-glow: 0 0 0 1px color-mix(in oklab, var(--terra-500) 40%, transparent),
-    0 4px 20px color-mix(in oklab, var(--terra-500) 22%, transparent);
 
-  --duration-fast: 150ms;
-  --duration-normal: 200ms;
-  --duration-slow: 320ms;
+  /* The whole duration and easing scale. Exits use the next step down. */
+  --dur-instant: 90ms;
+  --dur-fast: 150ms;
+  --dur-base: 220ms;
+  --dur-slow: 320ms;
+  --dur-stage: 400ms;
+}
+
+@theme static {
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.5, 0, 0.75, 0);
+  --ease-snap: cubic-bezier(0.2, 0, 0, 1);
+  /* The Lumen loop only. */
+  --ease-breathe: cubic-bezier(0.37, 0, 0.63, 1);
+  --transition-duration-instant: var(--dur-instant);
+  --transition-duration-fast: var(--dur-fast);
+  --transition-duration-base: var(--dur-base);
+  --transition-duration-slow: var(--dur-slow);
+  --transition-duration-stage: var(--dur-stage);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -192,12 +205,44 @@
   --text-badge--letter-spacing: 0;
   --text-badge--font-weight: 600;
 
-  /* Signature motion: a gentle "breathe" for the live-session dot, and a soft dock-edge pulse while a turn streams. Both restrained and disabled under prefers-reduced-motion. */
-  --animate-breathe: breathe 2.8s var(--ease-out) infinite;
-  --animate-dock-pulse: dock-pulse 2s ease-in-out infinite;
-  /* Ultra: a one-shot arm sweep + an infinite "engaged" glow. */
+  /* Ultra: a one-shot arm sweep when the mode is armed. */
   --animate-ultra-ripple: ultra-ripple 620ms linear 1 both;
-  --animate-ultra-glow: ultra-glow 2.4s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   LAYER 3: MATERIAL + LIGHT. Dark values here, light re-maps below.
+   Glass values are prototypes, validated only by their contrast ratios over the worst-case backdrop.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --control-material: glass;
+  --specular: rgb(255 255 255 / 0.05);
+  --shadow-content: none;
+  --glass-tint-edge: rgb(30 30 31 / 0.76);
+  --glass-tint-thick: rgb(30 30 31 / 0.92);
+  --glass-blur-edge: 16px;
+  --glass-blur-thick: 20px;
+  --glass-sat: 1.15;
+  --glass-edge: rgb(255 255 255 / 0.05);
+  --glass-edge-top: rgb(255 255 255 / 0.12);
+  --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.35), 0 12px 32px -12px rgb(0 0 0 / 0.6);
+  --solid-edge: #1c1c1d;
+  --solid-thick: #1e1e1f;
+  --edge-mask: 0.35;
+  --edge-ramp: 24px;
+  --scrim: rgb(0 0 0 / 0.5);
+  --lumen-rgb: 222 115 86;
+  --lumen-rgb-neutral: 230 230 230;
+  --lumen-size: 32px;
+  --lumen-a0: 0.55;
+  --lumen-a1: 0.22;
+  --lumen-blend: plus-lighter;
+  --lumen-min: 0.55;
+  --lumen-scale-min: 0.86;
+  /* A thin state overlay for hover on glass, never a second glass layer. */
+  --glass-row-hover: rgb(255 255 255 / 0.06);
+  /* Height of the glass above a scroller. Zero until a top bar publishes it, which keeps the scroll-edge mask valid. */
+  --top-h: 0px;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -268,6 +313,29 @@
   --syntax-attr: #1d4ed8;
   --syntax-comment: #6b6b6b;
   /* Shadows are Tailwind's own black-low-alpha utilities, which already read correctly on paper. */
+  --specular: transparent;
+  --shadow-content: 0 1px 2px rgb(0 0 0 / 0.04);
+  --glass-tint-edge: rgb(255 255 255 / 0.68);
+  --glass-tint-thick: rgb(255 255 255 / 0.94);
+  --glass-sat: 1.1;
+  --glass-edge: rgb(0 0 0 / 0.08);
+  --glass-edge-top: rgb(0 0 0 / 0.06);
+  /* A white lip reads on translucent white over darker content. */
+  --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --shadow-float: 0 1px 3px rgb(0 0 0 / 0.06), 0 12px 32px -12px rgb(0 0 0 / 0.16);
+  --solid-edge: #ffffff;
+  --solid-thick: #ffffff;
+  --scrim: rgb(0 0 0 / 0.24);
+  --lumen-rgb: 184 80 46;
+  --lumen-rgb-neutral: 74 74 74;
+  --lumen-size: 28px;
+  --lumen-a0: 0.26;
+  --lumen-a1: 0.1;
+  /* Light on paper reads as tint, not glow. */
+  --lumen-blend: normal;
+  --lumen-min: 0.6;
+  --lumen-scale-min: 0.9;
+  --glass-row-hover: rgb(0 0 0 / 0.05);
 }
 
 /* bg-raised is a fixed near-white gray, so hover:bg-bg-raised lands ~7 CIELAB L* below the white main area (a strong,
@@ -285,24 +353,12 @@
    the 3:1 non-text gate and never reflows. Light only; dark's pills already darken 30% on hover. */
 :root[data-theme='light'] .bg-control {
   transition:
-    color var(--duration-fast) var(--ease-out),
-    background-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out);
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 :root[data-theme='light'] .bg-control:hover {
   box-shadow: inset 0 0 0 1px var(--color-control-edge);
-}
-
-/* The live-dot "breath" is carried by scale only; opacity stays at 1. Dipping opacity dropped the dot below the
-   3:1 non-text floor. A pure size pulse still reads clearly as "breathing" while the color holds full contrast. */
-@keyframes breathe {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(0.66);
-  }
 }
 
 /* Opacity-only: the transform/opacity-only motion rule forbids animating the width, so it snaps and only the incoming content fades. */
@@ -316,12 +372,12 @@
 }
 
 .sidebar-fade {
-  animation: sidebar-fade 180ms cubic-bezier(0.2, 0, 0, 1) both;
+  animation: sidebar-fade var(--dur-fast) var(--ease-snap) both;
 }
 
 /* Exception to the transform/opacity-only motion rule: the push rail reflows the chat, so it can't be a pure transform. */
 .sidebar-anim {
-  transition: width 220ms cubic-bezier(0.2, 0, 0, 1);
+  transition: width var(--dur-base) var(--ease-snap);
 }
 
 /* bg-colored box-shadow so transcript content dissolves under a dock card's rounded edge instead of hard-clipping. */
@@ -346,16 +402,6 @@
     0 6px 8px 2px var(--color-bg);
 }
 
-@keyframes dock-pulse {
-  0%,
-  100% {
-    border-color: color-mix(in oklab, var(--color-accent) 55%, var(--color-border));
-  }
-  50% {
-    border-color: color-mix(in oklab, var(--color-accent) 12%, var(--color-border));
-  }
-}
-
 /* Ultra arm flourish: a one-shot RIPPLE_RAMP sweep (deep-purple #3E1676 → violet #8C50F0) traveling across the "✦ Ultra"
    label via background-clip:text when the mode is armed. Paint-only so it never reflows; fires once and settles to flat purple. */
 @keyframes ultra-ripple {
@@ -364,22 +410,6 @@
   }
   to {
     background-position: -20% 0;
-  }
-}
-
-/* Ultra "engaged" cue: while an ultracode turn is running, the leading star's halo breathes. Opacity-floor high (never dips out)
-   and no transform/scale, so it reads as "energized," not "loading". Sits below the dock-pulse + typing dots. */
-@keyframes ultra-glow {
-  0%,
-  100% {
-    text-shadow:
-      0 0 3px color-mix(in oklab, var(--color-effort-ultra) 55%, transparent),
-      0 0 7px color-mix(in oklab, var(--color-effort-ultra) 30%, transparent);
-  }
-  50% {
-    text-shadow:
-      0 0 6px var(--color-effort-ultra),
-      0 0 13px color-mix(in oklab, var(--color-effort-ultra) 60%, transparent);
   }
 }
 
@@ -409,59 +439,45 @@
   color: transparent;
   animation: var(--animate-ultra-ripple);
 }
+/* Ultra "engaged" cue while an ultracode turn runs: a copy of the star carries a fixed text-shadow halo, and only
+   that copy's opacity moves, so nothing repaints per frame. */
 .ultra-star-glow {
-  animation: var(--animate-ultra-glow);
+  position: relative;
+}
+.ultra-star-glow::after {
+  content: '\2726';
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  text-shadow:
+    0 0 6px var(--color-effort-ultra),
+    0 0 13px color-mix(in oklab, var(--color-effort-ultra) 60%, transparent);
+  pointer-events: none;
+  animation: ultra-halo 2.4s var(--ease-breathe) infinite;
+}
+@keyframes ultra-halo {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* Toast countdown: a hairline that drains full→empty over the undo window, so the auto-dismiss timer is visible. */
 @keyframes toast-drain {
   from {
-    width: 100%;
+    transform: scaleX(1);
   }
   to {
-    width: 0%;
+    transform: scaleX(0);
   }
 }
 
-/* Typing indicator: 3 dots bouncing in sequence (chat-app convention). A learned, honestly-indeterminate "working" signal. */
-/* Bounce via translateY only, no opacity dip. The resting 0.5 opacity dropped the light-theme dots below the 3:1 non-text floor.
-   Full opacity throughout keeps them legible; the vertical wave still reads as "typing". */
-@keyframes typing-bounce {
-  0%,
-  60%,
-  100% {
-    transform: translateY(0);
-  }
-  30% {
-    transform: translateY(-3px);
-  }
-}
-
-/* Peer placeholder ellipsis. Sibling of TypingDots (same 1.2s / 0.16s stagger) but an opacity fade instead of the translateY bounce,
-   so "…messaging" reads distinct from "Claude thinking". The dots are decorative and aria-hidden, so opacity may go fully to 0. */
-@keyframes peer-ellipsis {
-  0% {
-    opacity: 0;
-  }
-  30% {
-    opacity: 1;
-  }
-  80% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
+/* Peer placeholder ellipsis, a resting "...". Static: a pending peer that never resolves would otherwise loop at idle. */
 .peer-ellipsis b {
   font-weight: inherit;
-  animation: peer-ellipsis 1.2s ease-in-out infinite both;
-}
-.peer-ellipsis b:nth-child(2) {
-  animation-delay: 0.16s;
-}
-.peer-ellipsis b:nth-child(3) {
-  animation-delay: 0.32s;
 }
 
 /* Backfill: fade the resolved peer header in over one normal duration. The slot is reserved from the placeholder, so nothing below shifts. */
@@ -474,7 +490,65 @@
   }
 }
 .peer-head-in {
-  animation: peer-head-in var(--duration-normal) var(--ease-out);
+  animation: peer-head-in var(--dur-base) var(--ease-out);
+}
+
+/* The Lumen. The element fades in once and carries the blend; its ::before holds the pre-painted gradient and
+   breathes on opacity and transform only, so the loop stays on the compositor. */
+.lumen {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--lumen-size);
+  height: var(--lumen-size);
+  translate: -50% -50%;
+  border-radius: 50%;
+  pointer-events: none;
+  mix-blend-mode: var(--lumen-blend);
+  animation: lumen-in var(--dur-base) var(--ease-out) both;
+}
+.lumen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgb(var(--lumen-rgb) / var(--lumen-a0)) 0%,
+    rgb(var(--lumen-rgb) / var(--lumen-a1)) 35%,
+    rgb(var(--lumen-rgb) / 0) 70%
+  );
+  animation: lumen-breathe 2.8s var(--ease-breathe) infinite;
+}
+.lumen-out {
+  animation: lumen-out var(--dur-fast) var(--ease-in) both;
+}
+@keyframes lumen-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes lumen-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes lumen-breathe {
+  0%,
+  100% {
+    opacity: var(--lumen-min);
+    transform: scale(var(--lumen-scale-min));
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -574,10 +648,16 @@ body {
     scroll-behavior: auto !important;
   }
 
-  /* Pin the peer ellipsis on (a resting "..."). Without this the neutralizer freezes the `both`-filled dots at the 100% frame (opacity:0). */
-  .peer-ellipsis b {
+  /* Static at peak: the global neutralizer would otherwise leave the breathe at an arbitrary frame. */
+  .lumen::before {
     animation: none !important;
-    opacity: 1 !important;
+    opacity: 1;
+    transform: none;
+  }
+
+  .ultra-star-glow::after {
+    animation: none !important;
+    opacity: 0.7;
   }
 }
 
@@ -592,9 +672,81 @@ body {
   font-size: var(--text-label);
   font-weight: 600;
   color: var(--color-on-accent);
-  transition: background-color var(--duration-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-out);
   &:hover {
     background: var(--color-accent-hover);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Materials. Components never hand-roll tints, blurs, rims or shadows.
+   Glass sits on the element itself, never on a ::before: a backdrop-filter inside an ancestor that has opacity,
+   clip-path, mask or filter samples nothing, so a pseudo layer would lose its blur during every fade. On the
+   element itself it survives its own opacity and clip-path animations (pixel-tested in Electron 43).
+   backdrop-filter never touches the element's children, so text and the focus ring stay crisp.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Content plane: rows, cards, previews. The caller picks the fill (bg-tool, bg-bg-elev). */
+@utility surface-content {
+  border: 1px solid var(--color-border);
+  box-shadow: inset 0 1px 0 var(--specular), var(--shadow-content);
+}
+
+/* Liquid Glass, Edge variant, bar form (the top band, the pane header, the browser toolbar): bottom edge only and
+   no shadow, because the scroll-edge does the separating. */
+@utility glass-bar {
+  background: if(style(--control-material: solid): var(--solid-edge); else: var(--glass-tint-edge));
+  backdrop-filter: if(style(--control-material: solid): none; else: blur(var(--glass-blur-edge)) saturate(var(--glass-sat)));
+  border-bottom: 1px solid var(--glass-edge);
+}
+
+/* Thick variant: floats over unprotected content (popovers, menus, toasts, tooltips, palette, search). */
+@utility glass-thick {
+  background: if(style(--control-material: solid): var(--solid-thick); else: var(--glass-tint-thick));
+  backdrop-filter: if(style(--control-material: solid): none; else: blur(var(--glass-blur-thick)) saturate(var(--glass-sat)));
+  border: 1px solid var(--glass-edge);
+  border-top-color: var(--glass-edge-top);
+  box-shadow: var(--glass-highlight), var(--shadow-float);
+}
+
+/* Mandatory under the palette and Global Search: their glass contrast ratios were computed through it. */
+@utility scrim {
+  background: var(--scrim);
+}
+
+/* Content fades to --edge-mask as it passes under the top glass, which caps the luminance the glass has to read
+   over. Top only: the solid dock dissolves what's beneath it with its own bg-coloured halo. The second layer keeps
+   the scrollbar column fully opaque. */
+@utility scroll-edge {
+  mask:
+    linear-gradient(
+      to bottom,
+      rgb(0 0 0 / var(--edge-mask)) 0,
+      rgb(0 0 0 / var(--edge-mask)) var(--top-h),
+      #000 calc(var(--top-h) + var(--edge-ramp)),
+      #000 100%
+    ),
+    linear-gradient(#000 0 0) right / var(--sb-w, 0px) 100% no-repeat;
+  mask-composite: add;
+}
+
+/* The solid fallback: the same surfaces, opaque. Reduced transparency asks for it outright, and increased
+   contrast also needs a boundary that clears 3:1. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --control-material: solid;
+  }
+}
+:root[data-reduce-transparency] {
+  --control-material: solid;
+}
+/* Both selectors: the light theme sets --glass-edge on :root[data-theme='light'], which would outrank a bare :root. */
+@media (prefers-contrast: more) {
+  :root,
+  :root[data-theme='light'] {
+    --control-material: solid;
+    --glass-edge: var(--color-control-edge);
+    --glass-edge-top: var(--color-control-edge);
   }
 }
 

@@ -392,8 +392,8 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
             Sessions
             {/* No tint behind the label: text-ok on a bg-ok/15 pill is 3.73:1 in light, below AA. */}
             {liveCount > 0 && (
-              <span className="inline-flex items-center gap-1 text-badge text-ok">
-                <span className="h-1.5 w-1.5 rounded-full bg-ok" style={{ animation: 'var(--animate-breathe)' }} />
+              <span className="inline-flex items-center gap-1 text-badge text-ok" data-ui="live-count">
+                <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
                 {liveCount} live
               </span>
             )}
@@ -410,7 +410,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
           {loading && merged.length === 0 && (
             <div className="flex flex-col gap-1.5 px-1 py-2">
               {[0, 1, 2].map((i) => (
-                <div key={i} className="h-7 animate-pulse rounded-md bg-bg-raised/60" />
+                <div key={i} className="h-7 rounded-md bg-bg-raised/60" />
               ))}
             </div>
           )}
@@ -576,7 +576,7 @@ function SessionRow({
         <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-accent" aria-hidden="true" />
       )}
 
-      {/* R1 live presence: bouncing dots follow the typing-indicator convention */}
+      {/* Three dots for a busy session, one for a live idle one, so the two differ by shape */}
       <span className="flex w-3.5 shrink-0 items-center justify-center">
         {session.live &&
           (session.busy ? (
@@ -744,7 +744,6 @@ function SessionMonogram({
       )}
       <button
         className={`relative flex h-[30px] w-[30px] items-center justify-center rounded-lg text-badge transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${fill} ${tone} ${!active && !session.busy && !pending ? 'hover:bg-bg-raised' : ''}`}
-        style={session.busy ? { animation: 'var(--animate-breathe)' } : undefined}
         aria-label={label}
         title={session.title}
         onClick={onOpen}

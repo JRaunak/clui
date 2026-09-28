@@ -40,3 +40,13 @@ export function applyTheme(pref: ThemeChoice): void {
     media.addEventListener('change', systemListener)
   }
 }
+
+/** Mirrors macOS "Reduce transparency" onto <html>, where styles.css flips the control layer to solid. */
+export function trackReducedTransparency(): void {
+  const set = (on: boolean): void => {
+    if (on) document.documentElement.setAttribute('data-reduce-transparency', '')
+    else document.documentElement.removeAttribute('data-reduce-transparency')
+  }
+  void window.clui.getReducedTransparency().then(set)
+  window.clui.onReducedTransparencyChanged(set)
+}

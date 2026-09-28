@@ -27,6 +27,7 @@ export const Toast = forwardRef<HTMLDivElement, ToastCardProps>(function Toast(
     <div
       ref={ref}
       data-toast-id={toastId}
+      data-ui="toast"
       className={`relative inline-flex min-w-[min(300px,calc(100vw-2rem))] max-w-[min(360px,calc(100vw-2rem))] items-center gap-3 overflow-hidden rounded-lg border border-border bg-bg-raised px-3.5 py-1 text-xs shadow-md transition-[translate,opacity] ${
         exiting
           ? 'pointer-events-none duration-[180ms] ease-in'
@@ -49,7 +50,7 @@ export const Toast = forwardRef<HTMLDivElement, ToastCardProps>(function Toast(
           card so a re-mounted drain can't flash back to full behind the fade. */}
       {!exiting && (
         <div
-          className="absolute bottom-0 left-0 h-px bg-content/20 motion-reduce:hidden"
+          className="absolute bottom-0 left-0 h-px w-full origin-left bg-content/20 motion-reduce:hidden"
           style={{ animation: `toast-drain ${durationMs}ms linear forwards` }}
         />
       )}

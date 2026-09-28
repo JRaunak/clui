@@ -48,6 +48,7 @@ export function UltracodeToggle(): JSX.Element | null {
     <Tooltip content={tipCopy} placement="top">
       <button
         type="button"
+        data-ui="ultra-toggle"
         onClick={handleClick}
         aria-pressed={on}
         aria-disabled={!ultraEngageable}

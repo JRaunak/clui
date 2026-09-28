@@ -134,7 +134,6 @@ export function BackgroundTasks(): JSX.Element | null {
       >
         <span
           className={`h-1.5 w-1.5 rounded-full ${failed > 0 ? 'bg-err' : 'bg-info'}`}
-          style={running.length > 0 && failed === 0 ? { animation: 'var(--animate-breathe)' } : undefined}
           aria-hidden="true"
         />
         {running.length > 0

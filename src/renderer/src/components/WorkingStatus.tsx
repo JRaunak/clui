@@ -1,13 +1,12 @@
-/** The foreground "working" indicator: 3 bouncing dots, a label, and an elapsed timer. The label is a
- *  randomized verb, "Thinking" with a live token estimate, or "Compacting context…".
- *  Lives at the tail of the chat transcript where the next output appears. The single animated element of a
- *  foreground turn. Absent during background work.
- *  The verb rotates every few seconds so a long turn never reads as frozen. When the task puck is present,
- *  the verb is dropped because the puck's in_progress activeForm already narrates the work; the compacting
- *  label still shows. */
+/** The foreground "working" line: the bead that carries the Lumen, a label, and an elapsed timer. The label is a
+ *  randomized verb, "Thinking" with a live token estimate, or "Compacting context…". It lives at the transcript tail
+ *  where the next output appears, and is absent during background work.
+ *  The verb rotates every few seconds so a long turn never reads as frozen. When the task puck is present, the verb
+ *  is dropped because the puck's in_progress activeForm already narrates the work; the compacting label still shows. */
 import { useEffect, useState } from 'react'
 import { useActive } from '../store'
-import { TypingDots } from './TypingDots'
+import { Lumen } from './Lumen'
+import { useLumenSite } from '../lib/lumen'
 import { randomWorkingVerb } from '../lib/workingVerbs'
 import { fmtTokens } from '../lib/formatTokens'
 
@@ -17,6 +16,8 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
   const startMs = useActive((s) => s?.turnStartMs ?? null)
   const thinkingTokens = useActive((s) => s?.thinkingTokens ?? null)
   const compacting = useActive((s) => s?.compacting ?? false)
+  // Tool rows carry no bead of their own, so the tail stands in for a running tool and any site lights it.
+  const lit = useLumenSite() !== null
   const [elapsed, setElapsed] = useState(() => (startMs ? Math.floor((Date.now() - startMs) / 1000) : 0))
   const [verb, setVerb] = useState(randomWorkingVerb)
   useEffect(() => {
@@ -32,8 +33,13 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
     }
   }, [startMs])
   return (
-    <span className="flex items-center gap-2 text-label">
-      <TypingDots className="text-ok" />
+    <span className="flex items-center gap-2 text-label" data-ui="working-status">
+      {/* mr-1 keeps the first glyph 16px from the bead's centre, clear of the light's 11px reach. */}
+      <span className="relative mr-1 flex h-2 w-2 shrink-0" role="status" aria-label="Working">
+        {/* The light goes first so the bead, the later positioned sibling, paints over its additive blend. */}
+        <Lumen lit={lit} />
+        <span className="relative h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
+      </span>
       {compacting ? (
         <span className="text-content">Compacting context…</span>
       ) : (

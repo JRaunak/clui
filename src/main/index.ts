@@ -201,6 +201,13 @@ function createWindow(): void {
   mainWindow.on('enter-full-screen', pushFullscreen)
   mainWindow.on('leave-full-screen', pushFullscreen)
 
+  // nativeTheme's `updated` isn't documented to fire for Reduce transparency, so re-send it whenever
+  // the window regains focus, which is where the user returns after changing System Settings.
+  mainWindow.on('focus', () => {
+    const wc = mainWindow?.webContents
+    if (wc && !wc.isDestroyed()) wc.send(IpcChannels.reducedTransparencyChanged, nativeTheme.prefersReducedTransparency)
+  })
+
   // Defense-in-depth against navigation footguns: never let the webview leave the
   // app document. A file dropped outside the composer (or a stray link) must not
   // navigate the window to a file://…/local URL and white-screen the app. The
@@ -287,6 +294,7 @@ function registerIpc(): void {
   })
 
   handle(IpcChannels.getFullscreen, () => mainWindow?.isFullScreen() ?? false)
+  handle(IpcChannels.getReducedTransparency, () => nativeTheme.prefersReducedTransparency)
 
   handle(IpcChannels.startSession, async (_e, opts: StartSessionOptions) => {
     const settings = await getSettings()
@@ -537,6 +545,10 @@ function registerIpc(): void {
   // When following the OS theme, repaint the window chrome background on OS change
   // (the renderer separately re-applies data-theme via its own media listener).
   nativeTheme.on('updated', () => {
+    // isDestroyed() first: reading webContents on a destroyed window throws.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IpcChannels.reducedTransparencyChanged, nativeTheme.prefersReducedTransparency)
+    }
     if (getSettingsSync().theme === 'system') {
       mainWindow?.setBackgroundColor(THEME_BG[resolveTheme()])
     }
