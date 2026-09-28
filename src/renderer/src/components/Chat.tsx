@@ -23,15 +23,14 @@ const QUICK_PERMISSION_PHRASE: Partial<Record<PermissionModeChoice, string>> = {
  * Virtualized transcript. react-virtuoso renders only the visible window, so the full
  * transcript loads while staying fast on thousands of messages.
  * Scroll behaviors:
- *  - Auto-scroll to bottom on new streamed tokens, but only when the user is already at
- *    the bottom (followOutput gated on isAtBottom), so it never yanks a user who scrolled
- *    up to read history mid-stream.
+ *  - Follow the tail while streaming until the reader scrolls up, and resume once they
+ *    return to the bottom, so it never yanks a user reading history mid-stream.
  *  - Sending a new message jumps to bottom (reveal your message + the reply).
  *  - Switching/resuming a session resets to the bottom (key remount + initialTopMostItemIndex).
  *  - The "resumed here" divider renders inside the row at index === historyCount.
  *  - The working indicator / compact suggestion / error live at the transcript tail (Virtuoso Footer).
  *  - A "jump to latest" pill appears when scrolled up, with a "new messages" dot if a turn arrived.
- * Resize: Virtuoso auto-remeasures; we re-pin to bottom on resize only if the user was at bottom.
+ * Resize: Virtuoso auto-remeasures; we re-pin to bottom on resize only while following.
  */
 export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => void }): JSX.Element {
   const messages = useActive((s) => s?.messages ?? EMPTY_MESSAGES)
@@ -96,26 +95,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   const empty = messages.length === 0 && !busy
   // Leaving this transcript (session switch, full pane, empty state) must not strand a header.
   useEffect(() => () => setCurrentTurn(null), [activeHandleId, empty, setCurrentTurn])
-  useEffect(() => {
-    const sc = scrollerEl.current
-    if (!sc) return
-    let raf = 0
-    const onScroll = (): void => {
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(syncTurn)
-    }
-    sc.addEventListener('scroll', onScroll, { passive: true })
-    // Rows re-measured after landing move the top row without a scroll event.
-    const list = sc.querySelector('[data-testid="virtuoso-item-list"]')
-    const ro = new ResizeObserver(onScroll)
-    if (list) ro.observe(list, { box: 'border-box' })
-    return () => {
-      sc.removeEventListener('scroll', onScroll)
-      ro.disconnect()
-      cancelAnimationFrame(raf)
-    }
-  }, [activeHandleId, empty, syncTurn])
-  // atBottom lives in a ref (read by streaming/resize logic without re-subscribing) and
+  // atBottom lives in a ref (read by the new-message effect without re-subscribing) and
   // state (drives the jump-to-latest pill's visibility).
   const atBottomRef = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
@@ -129,12 +109,14 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const behavior: 'smooth' | 'auto' = reduce ? 'auto' : 'smooth'
 
-  // Pin to bottom on new content only when already at bottom; intra-message token growth is
-  // handled by Virtuoso's own bottom-stick.
-  const followOutput = useCallback(
-    (isAtBottom: boolean): 'smooth' | 'auto' | false => (isAtBottom ? behavior : false),
-    [behavior]
-  )
+  // Following the tail is the reader's intent, not a distance from the bottom: a reader scrolling up in
+  // small steps stays inside any threshold and would be snapped back on every streamed line. An upward
+  // input detaches; reaching the bottom, jump-to-latest or a send re-attaches. The pin is a plain
+  // scrollTo because Virtuoso's followOutput and scrollToIndex('LAST') retry on every resize while
+  // text streams, and nothing outside Virtuoso can cancel that retry.
+  const followingRef = useRef(true)
+  // Set while a smooth jump is in flight, so a resize doesn't cut it to an instant one.
+  const smoothJumpRef = useRef(false)
 
   const onAtBottom = useCallback((b: boolean) => {
     atBottomRef.current = b
@@ -142,49 +124,128 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
     if (b) setHasNew(false) // caught up, so clear the "new messages" mark
   }, [])
 
-  // A new message arrived. If it's the user's own send, force-jump to bottom (reveal it).
-  // If a turn arrived while the user was scrolled up, flag "new messages" instead of yanking.
+  // scrollTo the true bottom, not the last item's edge: the Footer sits below it.
+  const repin = useCallback(() => {
+    if (!followingRef.current || smoothJumpRef.current) return
+    virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: 'auto' })
+  }, [])
+
+  const smoothTimer = useRef(0)
+  useEffect(() => () => clearTimeout(smoothTimer.current), [])
+  const toLatest = useCallback(() => {
+    followingRef.current = true
+    const sc = scrollerEl.current
+    // No scrollend fires for a scroll that doesn't move, so only a real smooth trip waits for one.
+    smoothJumpRef.current = behavior === 'smooth' && !!sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 2
+    virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior })
+    // A trip cut off with no scrollend (the transcript hidden mid-trip) must not leave pinning off.
+    clearTimeout(smoothTimer.current)
+    if (smoothJumpRef.current) {
+      smoothTimer.current = window.setTimeout(() => {
+        if (!smoothJumpRef.current) return
+        smoothJumpRef.current = false
+        repin()
+      }, 800)
+    }
+  }, [behavior, repin])
+
+  // A send re-attaches and jumps even when scrolled up; any other arrival while scrolled up only
+  // sets the "new messages" mark.
   useEffect(() => {
     const grew = messages.length > prevLen.current
     const last = messages[messages.length - 1]
     if (grew && last?.role === 'user') {
-      virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior })
+      toLatest()
     } else if (grew && !atBottomRef.current) {
       setHasNew(true)
     }
     prevLen.current = messages.length
-  }, [messages, behavior])
+  }, [messages, toLatest])
 
-  // Re-pin to bottom after a reflow only if the user was already there. followOutput re-pins
-  // on item-count change but not on Footer growth (WorkingStatus, a queued draft), which would
-  // otherwise leave the new tail below the fold.
-  const repinIfAtBottom = useCallback(() => {
-    if (atBottomRef.current) {
-      // scrollTo true bottom, not the last item's edge: the Footer sits below it, so
-      // scrollToIndex('LAST') would leave the footer under the fold.
-      virtuosoRef.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: 'auto' })
-    }
-  }, [])
   useEffect(() => {
-    window.addEventListener('resize', repinIfAtBottom)
-    return () => window.removeEventListener('resize', repinIfAtBottom)
-  }, [repinIfAtBottom])
+    window.addEventListener('resize', repin)
+    return () => window.removeEventListener('resize', repin)
+  }, [repin])
+  useEffect(() => {
+    const sc = scrollerEl.current
+    if (!sc) return
+    followingRef.current = true
+    smoothJumpRef.current = false
+    let raf = 0
+    let lastTop = sc.scrollTop
+    const onScroll = (): void => {
+      // A trackpad gesture's first 1px steps upward still land inside the band, so only a downward
+      // scroll may re-attach.
+      const down = sc.scrollTop > lastTop
+      lastTop = sc.scrollTop
+      if (down && sc.scrollHeight - sc.scrollTop - sc.clientHeight <= 2) followingRef.current = true
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(syncTurn)
+    }
+    const onScrollEnd = (): void => {
+      if (!smoothJumpRef.current) return
+      // Rows measured on the way down can leave a smooth trip short of the new bottom.
+      smoothJumpRef.current = false
+      repin()
+    }
+    const detach = (): void => {
+      followingRef.current = false
+    }
+    const onWheel = (e: WheelEvent): void => {
+      if (e.deltaY < 0) detach()
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home' || (e.key === ' ' && e.shiftKey)) detach()
+    }
+    // Rows cover the content area, so a press on the scroller itself is on its scrollbar, where a drag
+    // can go either way.
+    const onPointer = (e: PointerEvent): void => {
+      if (e.target === sc) detach()
+    }
+    sc.addEventListener('scroll', onScroll, { passive: true })
+    sc.addEventListener('scrollend', onScrollEnd)
+    sc.addEventListener('wheel', onWheel, { passive: true })
+    sc.addEventListener('touchmove', detach, { passive: true })
+    sc.addEventListener('keydown', onKey)
+    sc.addEventListener('pointerdown', onPointer)
+    // Rows re-measured after landing move the top row without a scroll event, and a streaming message
+    // grows the list. Re-pin here outside the rAF: the observer runs after layout and before paint, so
+    // a new line never paints under the dock. The scroller itself is observed for a shrinking viewport.
+    const list = sc.querySelector('[data-testid="virtuoso-item-list"]')
+    const ro = new ResizeObserver(() => {
+      repin()
+      onScroll()
+    })
+    if (list) ro.observe(list, { box: 'border-box' })
+    ro.observe(sc)
+    return () => {
+      sc.removeEventListener('scroll', onScroll)
+      sc.removeEventListener('scrollend', onScrollEnd)
+      sc.removeEventListener('wheel', onWheel)
+      sc.removeEventListener('touchmove', detach)
+      sc.removeEventListener('keydown', onKey)
+      sc.removeEventListener('pointerdown', onPointer)
+      ro.disconnect()
+      cancelAnimationFrame(raf)
+    }
+  }, [activeHandleId, empty, syncTurn, repin])
   // Memoized so the Footer's resize effect isn't rebuilt on every render.
-  const footerContext = useMemo(() => ({ repin: repinIfAtBottom }), [repinIfAtBottom])
+  const footerContext = useMemo(() => ({ repin }), [repin])
 
   const jumpToLatest = useCallback(() => {
-    virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior })
+    toLatest()
     setHasNew(false)
-  }, [behavior])
+  }, [toLatest])
 
-  // Consume a scroll-to-message request: scroll it to center. Keyed on nonce so repeated jumps
-  // to the same id re-fire; does not touch atBottom/follow. The active find match carries its own
-  // persistent marker (via FindBar), so only a global-search jump (find bar closed) flashes.
+  // Keyed on nonce so repeated jumps to the same id re-fire. Detaches so a streaming reply doesn't
+  // pull the view back to the bottom. The active find match carries its own persistent marker (via
+  // FindBar), so only a global-search jump (find bar closed) flashes.
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!scrollTarget) return
     const idx = messages.findIndex((m) => m.id === scrollTarget.messageId)
     if (idx < 0) return
+    followingRef.current = false
     if (scrollTarget.align === 'start') {
       // Instant, because a smooth scroll to a far unrendered index lands short in react-virtuoso.
       virtuosoRef.current?.scrollToIndex({ index: idx, align: 'start', offset: -TURN_LINE_PX, behavior: 'auto' })
@@ -283,7 +344,6 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         )}
         components={{ Header: TopSpacer, Footer: ChatFooter }}
         context={footerContext}
-        followOutput={followOutput}
         atBottomStateChange={onAtBottom}
         // After the rows commit, so a re-window or streamed rows re-read the top row from fresh DOM.
         itemsRendered={syncTurn}
@@ -337,8 +397,8 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
   // compete. Gated on the same condition as the puck, so they stay in lockstep.
   const tasks = useActive((s) => s?.tasks ?? EMPTY_TASKS)
   const taskMerged = useTaskUiActive(tasks, busy)
-  // The Footer grows for non-list-items (WorkingStatus, a queued draft) that followOutput won't
-  // re-pin for, so observe our height and ask Chat to re-stick. rAF sidesteps the ResizeObserver-loop warning.
+  // The Footer grows for non-list-items (WorkingStatus, a queued draft) that Chat's list observer
+  // can't see, so observe our height and ask Chat to re-pin. rAF sidesteps the ResizeObserver-loop warning.
   const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = rootRef.current
