@@ -174,7 +174,7 @@ export function QuestionGate({ request, count }: { request: PendingPermission; c
           <QuestionFooter onCancel={cancel} onChat={chatInstead} submitDisabled onSubmit={submit} answeredCount={0} total={0} />
         }
       >
-        <p className="pb-1 text-sm text-dim">Claude asked a question, but it couldn’t be parsed.</p>
+        <p className="pb-1 text-ui text-dim">Claude asked a question, but it couldn’t be parsed.</p>
       </GateFrame>
     )
   }
@@ -217,7 +217,7 @@ export function QuestionGate({ request, count }: { request: PendingPermission; c
             value={freeText[qi] ?? ''}
             onChange={(e) => setFreeText((p) => ({ ...p, [qi]: e.target.value }))}
             placeholder="Type your answer…"
-            className="min-w-0 flex-1 bg-transparent text-sm text-content outline-none placeholder:text-dim"
+            className="min-w-0 flex-1 bg-transparent text-ui text-content outline-none placeholder:text-dim"
           />
           <IconCheck className="h-3.5 w-3.5 shrink-0 text-content" />
         </div>
@@ -256,7 +256,7 @@ export function QuestionGate({ request, count }: { request: PendingPermission; c
                 aria-selected={i === tab}
                 tabIndex={i === tab ? 0 : -1}
                 onClick={() => setTab(i)}
-                className={`flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
+                className={`flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-2.5 text-label transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
                   i === tab ? 'border-content font-medium text-content' : 'border-transparent text-dim hover:text-content'
                 }`}
               >
@@ -296,7 +296,7 @@ export function QuestionGate({ request, count }: { request: PendingPermission; c
               value={note[qi] ?? ''}
               onChange={(e) => setNote((p) => ({ ...p, [qi]: e.target.value }))}
               placeholder="Add a note for Claude…"
-              className="rounded-md border border-border bg-tool px-3 py-2 text-sm text-content outline-none placeholder:text-dim focus:border-accent"
+              className="rounded-md border border-border bg-tool px-3 py-2 text-ui text-content outline-none placeholder:text-dim focus:border-accent"
             />
           </label>
         )}
@@ -332,8 +332,8 @@ function OptionRow({
     >
       <span className="mt-0.5 w-4 shrink-0 text-center font-mono text-meta text-dim">{index}</span>
       <span className="min-w-0 flex-1">
-        <span className="block text-sm text-content">{label}</span>
-        {description && <span className="mt-0.5 block text-xs text-dim">{description}</span>}
+        <span className="block text-ui text-content">{label}</span>
+        {description && <span className="mt-0.5 block text-label text-dim">{description}</span>}
       </span>
       {selected && <IconCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-content" />}
     </button>
@@ -350,16 +350,16 @@ function PreviewPane({ text, selectedLabel }: { text: string; selectedLabel: str
         {selectedLabel && <span className="min-w-0 truncate text-meta text-dim">{selectedLabel}</span>}
       </div>
       {selectedLabel === null ? (
-        <div className="flex flex-1 items-center justify-center px-3 py-2.5 text-center text-sm text-dim">
+        <div className="flex flex-1 items-center justify-center px-3 py-2.5 text-center text-ui text-dim">
           Select an option to preview it.
         </div>
       ) : text ? (
-        <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-xs text-content">
+        <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-words px-3 py-2.5 font-mono text-code text-content">
           {text}
         </pre>
       ) : (
         // This option carries no preview; say so rather than showing an empty box.
-        <div className="px-3 py-2.5 text-xs text-dim">No preview for this option.</div>
+        <div className="px-3 py-2.5 text-meta text-dim">No preview for this option.</div>
       )}
     </div>
   )
@@ -388,7 +388,7 @@ function QuestionFooter({
       <div className="ml-auto flex items-center gap-3">
         {/* Doubles as a submit-scope cue and announces progress so the disabled Submit isn't a dead end for AT. */}
         {total > 0 && (
-          <span aria-live="polite" className="text-xs text-dim">
+          <span aria-live="polite" className="text-meta text-dim">
             {answeredCount} of {total} answered
           </span>
         )}

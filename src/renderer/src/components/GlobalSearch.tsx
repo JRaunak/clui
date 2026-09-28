@@ -142,7 +142,7 @@ export function GlobalSearch(): JSX.Element | null {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 px-4 pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center scrim px-4 pt-[12vh]"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) close()
       }}
@@ -151,7 +151,8 @@ export function GlobalSearch(): JSX.Element | null {
         role="dialog"
         aria-modal="true"
         aria-label="Search all conversations"
-        className="flex max-h-[70vh] w-[min(680px,100%)] flex-col overflow-hidden rounded-xl border border-border-strong bg-bg-elev shadow-2xl"
+        data-ui="global-search"
+        className="flex max-h-[70vh] w-[min(680px,100%)] flex-col overflow-hidden glass-thick rounded-xl"
       >
         <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
           <IconSearch className="h-4 w-4 shrink-0 text-dim" />
@@ -161,7 +162,7 @@ export function GlobalSearch(): JSX.Element | null {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search all conversations"
             aria-label="Search all conversations"
-            className="flex-1 bg-transparent text-base text-content placeholder:text-faint focus:outline-none"
+            className="flex-1 bg-transparent text-base text-content placeholder:text-dim focus:outline-none"
           />
           <button
             type="button"
@@ -180,7 +181,7 @@ export function GlobalSearch(): JSX.Element | null {
         {q.length >= MIN_QUERY && (
           <div className="flex items-center gap-4 border-b border-border px-4 py-2">
             <div className="flex items-center gap-2">
-              <span className="text-caps uppercase text-faint">Scope</span>
+              <span className="text-caps uppercase text-dim">Scope</span>
               <Dropdown<string>
                 value={scope}
                 options={[
@@ -192,6 +193,7 @@ export function GlobalSearch(): JSX.Element | null {
                 ]}
                 onChange={setScope}
                 className="min-w-[11rem]"
+                solid
               />
             </div>
             <button
@@ -200,7 +202,7 @@ export function GlobalSearch(): JSX.Element | null {
               aria-pressed={userOnly}
               className={`flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors ${
                 userOnly
-                  ? 'border-border-strong bg-bg-raised text-content'
+                  ? 'border-border-strong bg-[var(--glass-row-hover)] text-content'
                   : 'border-border text-dim hover:text-content hover:border-border-strong'
               }`}
             >
@@ -215,18 +217,18 @@ export function GlobalSearch(): JSX.Element | null {
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {q.length < MIN_QUERY ? (
-            <p className="px-4 py-8 text-center text-sm text-faint">
+            <p className="px-4 py-8 text-center text-sm text-dim">
               Search across all your conversations. Try a word or phrase.
             </p>
           ) : loading && groups.length === 0 ? (
-            <p className="px-4 py-8 text-center text-sm text-faint">Searching…</p>
+            <p className="px-4 py-8 text-center text-sm text-dim">Searching…</p>
           ) : groups.length === 0 ? (
-            <p className="px-4 py-8 text-center text-sm text-faint">
+            <p className="px-4 py-8 text-center text-sm text-dim">
               No conversations match “{q}”.
             </p>
           ) : (
             <>
-              <div className="px-4 pb-1 pt-3 text-caps uppercase text-faint">
+              <div className="px-4 pb-1 pt-3 text-caps uppercase text-dim">
                 {totalHits} match{totalHits === 1 ? '' : 'es'} in {groups.length} conversation
                 {groups.length === 1 ? '' : 's'}
               </div>
@@ -239,12 +241,12 @@ export function GlobalSearch(): JSX.Element | null {
                     <span className={`truncate text-sm font-medium ${isLive ? 'text-content' : 'text-dim'}`}>
                       {g.title}
                     </span>
-                    <span className="shrink-0 font-mono text-meta text-faint">{g.label}</span>
+                    <span className="shrink-0 font-mono text-meta text-dim">{g.label}</span>
                     {/* Name the click consequence so the resume cost isn't a surprise. */}
-                    <span className="shrink-0 text-meta text-faint">
+                    <span className="shrink-0 text-meta text-dim">
                       {isLive ? 'live · opens' : 'resumes on open'}
                     </span>
-                    <span className="ml-auto shrink-0 text-meta text-faint">
+                    <span className="ml-auto shrink-0 text-meta text-dim">
                       {g.totalHits} hit{g.totalHits === 1 ? '' : 's'}
                     </span>
                   </div>
@@ -253,15 +255,15 @@ export function GlobalSearch(): JSX.Element | null {
                       key={hit.messageId}
                       type="button"
                       onClick={() => void openHit(hit)}
-                      className="flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-user focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                      className="flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-[var(--glass-row-hover)] focus-visible:outline-offset-[-2px]"
                     >
-                      <span className="text-meta font-medium text-faint">
+                      <span className="text-meta font-medium text-dim">
                         {hit.role === 'user' ? 'You' : 'Claude'}
                       </span>
                       <span className="text-sm leading-snug text-dim">
                         {highlightRuns(hit.snippet, rangesToIndices(hit)).map((run, i) =>
                           run.match ? (
-                            <mark key={i} className="bg-accent/25 text-content">
+                            <mark key={i} className="rounded-sm bg-content/15 font-semibold text-content">
                               {run.text}
                             </mark>
                           ) : (
@@ -272,7 +274,7 @@ export function GlobalSearch(): JSX.Element | null {
                     </button>
                   ))}
                   {g.totalHits > g.hits.length && (
-                    <div className="px-2 py-1 text-meta text-faint">
+                    <div className="px-2 py-1 text-meta text-dim">
                       +{g.totalHits - g.hits.length} more in this conversation
                     </div>
                   )}

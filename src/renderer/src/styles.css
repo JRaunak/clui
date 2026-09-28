@@ -904,3 +904,95 @@ body {
 .slot-in {
   animation: slot-in var(--dur-fast) var(--ease-out);
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Popovers. Top-layer, anchored to their trigger, growing out of it.
+   ───────────────────────────────────────────────────────────────────────── */
+/* The UA [popover] box reset, in the base layer so every utility on the same element (glass,
+   padding, overflow) wins over it. An unlayered rule here would beat those layered utilities and
+   strip every popover of its glass and padding. Author base still beats the UA stylesheet. */
+@layer base {
+  [popover].pop-base {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    inset: auto;
+    background: transparent;
+    color: inherit;
+    overflow: visible;
+  }
+}
+.pop {
+  position-try-fallbacks: flip-block;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out),
+    display var(--dur-fast) allow-discrete,
+    overlay var(--dur-fast) allow-discrete;
+}
+/* The 8px gap from the trigger; flip-block mirrors the margin. A popover placed above the dock
+   (usePopover's `above`) sets its own bottom inset and a zero margin inline. */
+.pop[data-dir='up'] {
+  --pop-dy: 4px;
+  margin-bottom: 8px;
+  transform-origin: var(--pop-ox, 0) 100%;
+}
+.pop[data-dir='down'] {
+  --pop-dy: -4px;
+  margin-top: 8px;
+  transform-origin: var(--pop-ox, 0) 0;
+}
+/* A display utility on a popover (flex) outranks the UA's closed-state display:none, which would leave
+   a closed popover laid out as an invisible fixed box that swallows clicks. */
+.pop:not(:popover-open) {
+  display: none;
+  opacity: 0;
+  transform: scale(0.985);
+  transition-duration: var(--dur-instant);
+  transition-timing-function: var(--ease-in);
+}
+@starting-style {
+  .pop:popover-open {
+    opacity: 0;
+    transform: translateY(var(--pop-dy, 0)) scale(0.97);
+  }
+}
+/* Keyboard-opened and keyboard-closed popovers swap instantly. */
+.pop[data-via='keyboard'] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pop {
+    transition-property: opacity, display, overlay;
+  }
+  @starting-style {
+    .pop:popover-open {
+      transform: none;
+    }
+  }
+}
+
+/* Tooltips fade only; they close by unmounting. */
+.tip {
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    display var(--dur-fast) allow-discrete,
+    overlay var(--dur-fast) allow-discrete;
+}
+@starting-style {
+  .tip:popover-open {
+    opacity: 0;
+  }
+}
+
+/* The toast stack rides 8px above the composer dock and follows it as the Gate grows. With no
+   dock (welcome screen, a full-width pane) the anchor() fallbacks park its first toast just under
+   the 44px top band. */
+.toast-stack {
+  left: anchor(--composer-dock center, 50%);
+  bottom: calc(anchor(--composer-dock top, calc(100% - 96px)) + 8px);
+  translate: -50% 0;
+}

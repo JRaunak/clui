@@ -20,7 +20,7 @@ export function Notice(): JSX.Element | null {
   if (!notice) return null
   const { cls, Icon, tint } = NOTICE_STYLES[notice.tone]
   return (
-    <div className="bg-bg">
+    <div data-ui="notice" className="bg-bg">
       <div className={`flex items-center gap-2 border-b py-1 pl-4 pr-2 text-label text-content ${cls}`}>
         <Icon className={`h-3.5 w-3.5 shrink-0 ${tint}`} />
         <span className="flex-1">{notice.message}</span>

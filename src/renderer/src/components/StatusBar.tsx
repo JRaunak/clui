@@ -61,8 +61,9 @@ export function StatusBar(): JSX.Element {
           <span
             data-ui="session-cost"
             className="font-mono text-meta tabular-nums text-dim @max-[560px]:hidden"
-            title="Cumulative session cost (from the CLI result event)"
+            title="Estimated session cost so far"
           >
+            <span className="sr-only">Estimated session cost so far: </span>
             {cost}
           </span>
         )}

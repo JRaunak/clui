@@ -66,7 +66,7 @@ const TONE_CLASS: Record<Tone, string> = {
   ok: 'text-ok',
   content: 'text-content',
   dim: 'text-dim',
-  faint: 'text-faint'
+  faint: 'text-dim'
 }
 
 /** True when a not-yet-done task is gated by an unfinished dependency. */
@@ -106,7 +106,7 @@ function TaskRing({ done, total, size = 30, stroke = 3 }: { done: number; total:
         strokeWidth={stroke}
         strokeLinecap="round"
         strokeDasharray={`${dash} ${circ}`}
-        style={{ transition: 'stroke-dasharray 0.4s var(--ease-out)' }}
+        style={{ transition: 'stroke-dasharray var(--dur-stage) var(--ease-out)' }}
       />
     </svg>
   )
@@ -117,12 +117,11 @@ function TaskRing({ done, total, size = 30, stroke = 3 }: { done: number; total:
 function ProgressBar({ tasks, done }: { tasks: SessionTask[]; done: number }): JSX.Element {
   const total = tasks.length
   if (total > SEGMENTED_MAX) {
-    const pct = total > 0 ? (done / total) * 100 : 0
     return (
       <div className="h-1 w-full overflow-hidden rounded-full bg-border" aria-hidden="true">
         <div
-          className="h-full rounded-full"
-          style={{ width: `${pct}%`, background: 'var(--color-ok)', transition: 'width 0.4s var(--ease-out)' }}
+          className="h-full w-full origin-left bg-ok"
+          style={{ transform: `scaleX(${done / total})`, transition: 'transform var(--dur-stage) var(--ease-out)' }}
         />
       </div>
     )
@@ -247,7 +246,7 @@ export function TaskPuck({
         <div
           role="region"
           aria-label="Session tasks"
-          className="absolute bottom-full right-0 z-30 mb-1.5 flex flex-col overflow-hidden rounded-xl border border-border-strong bg-bg-elev shadow-lg"
+          className="absolute bottom-full right-0 z-30 mb-1.5 flex flex-col overflow-hidden glass-thick rounded-xl"
           style={panelStyle}
         >
           <div className="flex shrink-0 items-center gap-2.5 px-3 pb-2 pt-2.5">
@@ -298,7 +297,7 @@ export function TaskPuck({
                   <span className="min-w-0 flex-1">
                     <span className={`block text-label leading-snug ${TONE_CLASS[v.text]}`}>{t.subject}</span>
                     {blocked && blockers && (
-                      <span className="mt-0.5 block text-meta leading-tight text-faint">blocked by: {blockers}</span>
+                      <span className="mt-0.5 block text-meta leading-tight text-dim">blocked by: {blockers}</span>
                     )}
                   </span>
                 </li>
@@ -319,7 +318,8 @@ export function TaskPuck({
           onClick={() => onOpenChange(!open)}
           // pl-[3px]: puts the 24px ring's center on the h-8 pill's left-cap center (both
           // 16px in), so the two arcs nest concentrically instead of the ring drifting right.
-          className="flex h-8 items-center gap-2 rounded-full border border-border-strong bg-bg-elev pl-[3px] pr-3 text-dim shadow-md transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          data-ui="task-puck"
+          className="flex h-8 items-center gap-2 glass-thick rounded-full pl-[3px] pr-3 text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           <TaskRing done={done} total={total} size={24} stroke={2.5} />
           <span className="font-mono text-xs tabular-nums">

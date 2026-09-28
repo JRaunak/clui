@@ -1,13 +1,13 @@
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent,
   type ClipboardEvent,
   type DragEvent,
-  type ChangeEvent
+  type ChangeEvent,
+  type CSSProperties
 } from 'react'
 import { useActive, useSession, EMPTY_ATTACHMENTS, type SendAttachment } from '../store'
 import { useComposerAutocomplete } from './ComposerAutocomplete'
@@ -70,6 +70,7 @@ export function Composer(): JSX.Element {
   // drop highlight; only the outermost enter/leave toggles it.
   const dragDepth = useRef(0)
   const busy = useActive((s) => s?.busy ?? false)
+  const turnStartMs = useActive((s) => s?.turnStartMs ?? null)
   const hasSession = useActive((s) => !!s)
   const cwd = useActive((s) => s?.cwd ?? null)
   // Editable only before the first turn: after a message is sent, the CLI has fixed the
@@ -202,29 +203,6 @@ export function Composer(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handleId])
 
-  // Keyed on `text` so it re-measures on programmatic changes too (autocomplete insert, draft
-  // restore, empty-after-send reset), not just typing. The ResizeObserver handles width changes
-  // (a sidebar toggle rewraps the text); guarded to width-only so setting height can't loop it.
-  useLayoutEffect(() => {
-    const ta = textareaRef.current
-    if (!ta) return
-    const measure = (): void => {
-      ta.style.height = 'auto'
-      ta.style.height = `${ta.scrollHeight}px`
-      // 192px = max-h-48; keep in sync.
-      ta.style.overflowY = ta.scrollHeight > 192 ? 'auto' : 'hidden'
-    }
-    measure()
-    let width = ta.clientWidth
-    const ro = new ResizeObserver(() => {
-      if (ta.clientWidth === width) return
-      width = ta.clientWidth
-      measure()
-    })
-    ro.observe(ta)
-    return () => ro.disconnect()
-  }, [text])
-
   // Rebind a still-empty session to `dir`, carrying its draft. The CLI fixes the transcript folder
   // at process-create, so a pre-message dir change must respawn, not set_cwd; the jsonl is lazy, so
   // nothing is lost. A quick session stays ephemeral across the respawn so its "not saved" contract
@@ -330,6 +308,7 @@ export function Composer(): JSX.Element {
           className={`dock-fade-both relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 ${
             dragOver ? 'border-accent' : 'border-border has-[textarea:focus]:border-accent'
           }`}
+          style={{ anchorName: '--composer-dock' } as CSSProperties}
           onDrop={onDrop}
           onDragEnter={onDragEnter}
           onDragOver={onDragOver}
@@ -358,7 +337,7 @@ export function Composer(): JSX.Element {
             <textarea
               ref={textareaRef}
               data-composer-input
-              className="max-h-48 min-h-[52px] w-full resize-none bg-transparent px-2 pt-1.5 text-sm leading-normal text-content outline-none placeholder:text-dim focus-visible:outline-none"
+              className="max-h-48 min-h-[52px] w-full resize-none bg-transparent [field-sizing:content] px-2 pt-1.5 text-sm leading-normal text-content outline-none placeholder:text-dim focus-visible:outline-none"
               placeholder="Message Claude…"
               aria-label="Message Claude"
               role="combobox"
@@ -391,6 +370,7 @@ export function Composer(): JSX.Element {
             />
             <button
               type="button"
+              data-ui="attach-button"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-control text-dim transition-colors hover:bg-control-hover hover:text-content disabled:cursor-default disabled:opacity-50"
               onClick={() => fileInputRef.current?.click()}
               disabled={!hasSession}
@@ -424,6 +404,7 @@ export function Composer(): JSX.Element {
                 <>
                   <ModelEffortPicker />
                   <Dropdown<PermissionModeChoice>
+                    dataUi="permission-chip"
                     value={displayMode}
                     options={permOptions}
                     onChange={(m) => void setPermissionMode(m)}
@@ -453,24 +434,42 @@ export function Composer(): JSX.Element {
                 usedTokens={contextTokens}
                 contextWindow={contextWindow}
               />
-              {busy ? (
-                <button
-                  className="flex h-[28px] w-[28px] items-center justify-center rounded-full bg-err text-on-err transition-transform active:scale-95"
-                  onClick={() => void interrupt()}
-                  title="Stop"
-                >
-                  <IconStop className="h-3 w-3" />
-                </button>
-              ) : (
-                <button
-                  className="flex h-[28px] w-[28px] items-center justify-center rounded-full bg-accent text-on-accent transition-[background-color,transform] hover:bg-accent-hover active:scale-95 disabled:cursor-default disabled:bg-border disabled:text-faint"
-                  onClick={() => void submit()}
-                  disabled={!text.trim() && attachments.length === 0}
-                  title="Send"
-                >
-                  <IconArrowUp className="h-3 w-3 translate-y-[0.5px]" />
-                </button>
-              )}
+              {(() => {
+                const empty = !text.trim() && attachments.length === 0
+                const inert = !busy && empty
+                return (
+                  <button
+                    type="button"
+                    data-ui={busy ? 'stop-button' : 'send-button'}
+                    aria-label={busy ? 'Stop' : 'Send'}
+                    aria-disabled={inert || undefined}
+                    title={busy ? 'Stop  ⌃C' : 'Send  ↵'}
+                    onClick={() => {
+                      if (busy) {
+                        // The second click of a double-click lands here once the first has started the
+                        // turn; ignoring the first 400ms keeps it from stopping the turn it just began.
+                        if (turnStartMs !== null && Date.now() - turnStartMs < 400) return
+                        void interrupt()
+                      } else if (!inert) void submit()
+                    }}
+                    className={`relative flex h-[28px] w-[28px] items-center justify-center rounded-full transition-transform active:scale-95 ${
+                      busy
+                        ? 'bg-err text-on-err'
+                        : inert
+                          ? 'cursor-default bg-border text-faint'
+                          : 'bg-accent text-on-accent hover:bg-accent-hover'
+                    }`}
+                  >
+                    {/* One element for both states so focus survives the turn starting and ending; only the glyph crossfades. */}
+                    <IconArrowUp
+                      className={`absolute h-3 w-3 translate-y-[0.5px] transition-opacity duration-[var(--dur-fast)] ${busy ? 'opacity-0' : 'opacity-100'}`}
+                    />
+                    <IconStop
+                      className={`absolute h-3 w-3 transition-opacity duration-[var(--dur-fast)] ${busy ? 'opacity-100' : 'opacity-0'}`}
+                    />
+                  </button>
+                )
+              })()}
             </div>
           </div>
         </div>
@@ -511,6 +510,7 @@ function DirectoryChip({
   if (!editable) return null
   return (
     <Dropdown<string>
+      dataUi="dir-chip"
       value={value}
       options={options}
       onChange={onSelect}

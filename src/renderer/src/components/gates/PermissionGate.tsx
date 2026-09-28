@@ -112,7 +112,7 @@ export function PermissionGate({
             blockedPath={shownPath(request) ? undefined : request.blockedPath}
           />
         )}
-        {request.description && <p className="mb-3 text-sm text-dim">{request.description}</p>}
+        {request.description && <p className="mb-3 text-ui text-dim">{request.description}</p>}
         <PermissionInput toolName={request.toolName} input={request.input} />
       </div>
     </GateFrame>
@@ -138,7 +138,7 @@ function PermissionReason({
   )
   if (!safetyCheck) {
     return (
-      <div id="permission-reason" className="mb-3 text-sm">
+      <div id="permission-reason" className="mb-3 text-ui">
         <span className="text-dim">Asked because: </span>
         <span className="whitespace-pre-wrap break-words text-content">{reason}</span>
         {path}
@@ -148,8 +148,8 @@ function PermissionReason({
   return (
     <div id="permission-reason" className="mb-3 border-l-2 border-warn/60 pl-3">
       <div className="text-meta font-medium text-warn">Safety check</div>
-      <div className="mt-0.5 whitespace-pre-wrap break-words text-sm text-content">{reason}</div>
-      {bypass && <div className="mt-1 text-xs text-dim">Autonomous mode doesn&apos;t skip safety checks.</div>}
+      <div className="mt-0.5 whitespace-pre-wrap break-words text-ui text-content">{reason}</div>
+      {bypass && <div className="mt-1 text-meta text-dim">Autonomous mode doesn&apos;t skip safety checks.</div>}
       {path}
     </div>
   )
@@ -195,7 +195,7 @@ function PermissionInput({
           {diff.edits.length > 0 ? (
             <DiffBlock edits={diff.edits} />
           ) : (
-            <div className="text-xs text-dim">No diff available for this edit.</div>
+            <div className="text-meta text-dim">No diff available for this edit.</div>
           )}
         </>
       )}
@@ -207,9 +207,9 @@ function PermissionInput({
           </pre>
         </div>
       )}
-      <details className="text-xs">
+      <details className="text-label">
         <summary className="cursor-pointer text-dim">Full input ({toolName})</summary>
-        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-tool p-2 font-mono text-xs text-dim">
+        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-tool p-2 font-mono text-code text-dim">
           {JSON.stringify(input, null, 2)}
         </pre>
       </details>

@@ -7,7 +7,12 @@ import { QuestionGate } from './gates/QuestionGate'
 import { focusComposer, type GateCount } from './gates/GateFrame'
 
 const cssVar = (name: string): string => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-const cssMs = (name: string): number => parseFloat(cssVar(name)) || 0
+// The minifier rewrites 150ms as .15s, so the unit has to be read, not assumed.
+const cssMs = (name: string): number => {
+  const v = cssVar(name)
+  const n = parseFloat(v) || 0
+  return v.endsWith('ms') ? n : v.endsWith('s') ? n * 1000 : n
+}
 
 /**
  * The active session's oldest pending request, rendered as a Gate at the top of the composer dock.

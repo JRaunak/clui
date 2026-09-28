@@ -19,9 +19,9 @@ import {
   IconGhost
 } from './Icon'
 import { ToastStack } from './Toast'
-import { useEscape } from '../lib/useEscape'
-import { useClickOutside } from '../lib/useClickOutside'
 import { useGuardedAsync } from '../lib/useGuardedAsync'
+import { usePopover } from './Popover'
+import { viaOf } from '../lib/motion'
 
 /** A row in the merged sidebar list. On-disk sessions and live sessions are merged by CLI session id;
  *  live-only sessions get synthesized rows so they show up immediately. */
@@ -889,36 +889,15 @@ function RowMenu({
   title: string
   items: RowMenuItem[]
 }): JSX.Element | null {
-  const [open, setOpen] = useState(false)
   const [focusIdx, setFocusIdx] = useState(0)
-  // Which way the menu opens: the list is overflow-y-auto, so an absolute menu clips on a bottom row. Measured at open time.
-  const [up, setUp] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
+  const p = usePopover({ placement: 'down', align: 'end' })
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
-  const dismiss = useCallback(() => {
-    setOpen(false)
-    btnRef.current?.focus()
-  }, [])
-  useEscape(open, dismiss)
-  useClickOutside(ref, open, dismiss)
-
-  // Focus the roving item when the menu opens or index moves.
   useEffect(() => {
-    if (open) itemRefs.current[focusIdx]?.focus()
-  }, [open, focusIdx])
+    if (p.open) itemRefs.current[focusIdx]?.focus()
+  }, [p.open, focusIdx])
 
   if (items.length === 0) return null
-
-  const openMenu = (): void => {
-    setFocusIdx(0)
-    // 34px per item + padding, floored so a 1-item menu still measures sanely.
-    const needed = Math.max(items.length * 34 + 12, 60)
-    const below = window.innerHeight - (btnRef.current?.getBoundingClientRect().bottom ?? 0)
-    setUp(below < needed)
-    setOpen(true)
-  }
 
   const onMenuKey = (e: React.KeyboardEvent): void => {
     if (e.key === 'ArrowDown') {
@@ -934,61 +913,56 @@ function RowMenu({
       e.preventDefault()
       setFocusIdx(items.length - 1)
     } else if (e.key === 'Tab') {
-      setOpen(false)
+      p.close({ via: 'keyboard', returnFocus: false })
     }
   }
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <button
-        ref={btnRef}
-        className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        {...p.triggerProps}
+        className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:opacity-100"
         aria-haspopup="menu"
-        aria-expanded={open}
         aria-label={`More actions for “${title}”`}
         title="More actions"
         onClick={(e) => {
           e.stopPropagation()
-          open ? setOpen(false) : openMenu()
+          setFocusIdx(0)
+          p.triggerProps.onClick(e)
         }}
       >
         <IconMore className="h-4 w-4" />
       </button>
-      {open && (
-        <div
-          role="menu"
-          aria-label={`Actions for “${title}”`}
-          className={`absolute right-0 z-30 min-w-[188px] rounded-lg border border-border bg-bg-elev p-1 shadow-lg ${
-            up ? 'bottom-full mb-1' : 'top-full mt-1'
-          }`}
-          onKeyDown={onMenuKey}
-        >
-          {items.map((it, i) => (
-            <button
-              key={it.key}
-              ref={(el) => (itemRefs.current[i] = el)}
-              role="menuitem"
-              tabIndex={i === focusIdx ? 0 : -1}
-              /* A destructive item reads as danger at rest (err token, divider above) so it can't be mis-hit.
-                 It keeps the global accent focus ring so a keyboard user sees which action Enter fires. */
-              className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-label transition-colors -outline-offset-2 ${
-                it.danger
-                  ? 'mt-1 border-t border-border pt-2 text-err hover:bg-err/10 focus-visible:bg-err/15'
-                  : 'text-content hover:bg-bg-raised focus-visible:bg-bg-raised'
-              }`}
-              onClick={(e) => {
-                e.stopPropagation()
-                setOpen(false)
-                it.onClick()
-              }}
-            >
-              <span className={`shrink-0 ${it.danger ? 'text-err' : 'text-dim'}`}>{it.icon}</span>
-              <span className="min-w-0 flex-1 truncate">{it.label}</span>
-              {it.hint && <span className="shrink-0 text-meta text-faint">{it.hint}</span>}
-            </button>
-          ))}
-        </div>
-      )}
+      <div
+        {...p.popoverProps}
+        role="menu"
+        aria-label={`Actions for “${title}”`}
+        className="pop-base pop glass-thick min-w-[188px] rounded-lg p-1"
+        onKeyDown={onMenuKey}
+      >
+        {items.map((it, i) => (
+          <button
+            key={it.key}
+            ref={(el) => (itemRefs.current[i] = el)}
+            role="menuitem"
+            tabIndex={i === focusIdx ? 0 : -1}
+            className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-label text-content -outline-offset-2 hover:bg-[var(--glass-row-hover)] focus-visible:bg-[var(--glass-row-hover)] ${
+              it.danger ? 'mt-1 border-t border-[var(--glass-edge)] pt-2' : ''
+            }`}
+            onClick={(e) => {
+              e.stopPropagation()
+              p.close({ via: viaOf(e), returnFocus: false })
+              it.onClick()
+            }}
+          >
+            {/* Destructive reads by mark and icon, since err text fails on glass. */}
+            {it.danger && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-err" aria-hidden="true" />}
+            <span className={`shrink-0 ${it.danger ? 'text-err' : 'text-dim'}`}>{it.icon}</span>
+            <span className="min-w-0 flex-1 truncate">{it.label}</span>
+            {it.hint && <span className="shrink-0 text-meta text-dim">{it.hint}</span>}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

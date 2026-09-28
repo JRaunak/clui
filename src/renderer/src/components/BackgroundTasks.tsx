@@ -7,7 +7,7 @@
  * This tray holds backgrounded subagents (taskType 'local_agent') and bg bash shells.
  * A subagent row opens its forwarded transcript, keyed by toolUseId (the parent tool_use id).
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   useActive,
   useSession,
@@ -16,8 +16,7 @@ import {
   type NestedSubagent,
   type SubagentMessage
 } from '../store'
-import { useEscape } from '../lib/useEscape'
-import { useClickOutside } from '../lib/useClickOutside'
+import { usePopover } from './Popover'
 import { IconCheck, IconStop, IconWarn, IconNoEntry } from './Icon'
 
 const EMPTY: Record<string, BackgroundTask> = {}
@@ -34,9 +33,10 @@ export function BackgroundTasks(): JSX.Element | null {
   const stopTask = useSession((s) => s.stopBackgroundTask)
   const viewSubagent = useSession((s) => s.viewSubagent)
   const clearCompleted = useSession((s) => s.clearCompletedBgWork)
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  // Upward from the status bar, clear of the dock; with the pane full there's no dock, so it
+  // opens above its own pill instead.
+  const hasDock = !!document.querySelector('[data-ui="composer-dock"]')
+  const p = usePopover({ placement: 'up', align: 'end', above: hasDock ? '--composer-dock' : undefined })
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const list = Object.values(tasks).sort((a, b) => a.startMs - b.startMs)
@@ -84,7 +84,7 @@ export function BackgroundTasks(): JSX.Element | null {
   const openTranscript = (t: BackgroundTask): (() => void) | undefined =>
     t.taskType === 'local_agent' && t.toolUseId
       ? () => {
-          setOpen(false)
+          p.close({ returnFocus: false })
           viewSubagent(t.toolUseId as string)
           // Opening a completed subagent = "seen", so stop lingering it.
           if (t.status !== 'running') clearCompleted('subagent')
@@ -92,19 +92,6 @@ export function BackgroundTasks(): JSX.Element | null {
       : undefined
   // Lingering = terminal subagent rows kept clickable post-completion.
   const lingering = list.filter((t) => t.taskType === 'local_agent' && t.status !== 'running')
-
-  const dismiss = useCallback(() => setOpen(false), [])
-  useClickOutside(ref, open, dismiss)
-  // Esc returns focus to the trigger, since the focused row unmounts with the popover
-  // and focus would otherwise fall to <body>. An outside click deliberately doesn't,
-  // as it would steal focus from whatever the user just clicked.
-  useEscape(
-    open,
-    useCallback(() => {
-      setOpen(false)
-      triggerRef.current?.focus()
-    }, [])
-  )
 
   // Linger grace timer: arm a ~15s one-shot to clear lingering completed subagents when
   // nothing is running. Timer in a ref (StrictMode-safe). A new running task re-arms on
@@ -124,14 +111,12 @@ export function BackgroundTasks(): JSX.Element | null {
   if (list.length === 0) return null
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <button
-        ref={triggerRef}
+        {...p.triggerProps}
         data-ui="bg-tasks"
         className="flex h-6 items-center gap-1.5 rounded-full bg-control px-2 text-meta text-info transition-colors hover:bg-control-hover"
-        onClick={() => setOpen((v) => !v)}
         title={running.length > 0 ? `${running.length} background task${running.length > 1 ? 's' : ''}` : 'Background tasks'}
-        aria-expanded={open}
       >
         <span
           className={`h-1.5 w-1.5 rounded-full ${failed > 0 ? 'bg-err' : 'bg-info'}`}
@@ -147,22 +132,18 @@ export function BackgroundTasks(): JSX.Element | null {
         )}
       </button>
 
-      {open && (
-        <div
-          className="absolute right-0 z-50 w-[min(420px,90vw)] overflow-hidden rounded-lg border border-border bg-bg-elev shadow-lg"
-          style={{ bottom: 'calc(100% + var(--dock-lift, 0px) + 8px)' }}
-        >
+      <div {...p.popoverProps} aria-label="Background tasks" className="pop-base pop glass-thick w-[min(420px,90vw)] overflow-hidden rounded-lg">
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <span className="text-xs font-semibold text-content">Background tasks</span>
             {/* Failed sits in its own err-toned segment so an outcome isn't folded into the
                 neutral "done" count. */}
-            <span className="ml-auto flex items-center gap-1 font-mono text-meta text-faint">
+            <span className="ml-auto flex items-center gap-1 font-mono text-meta text-dim">
               {running.length} running · {done} done
               {stopped > 0 ? ` · ${stopped} stopped` : ''}
               {failed > 0 && (
-                <span className="flex items-center gap-1 text-err">
+                <span className="flex items-center gap-1 text-content">
                   {' · '}
-                  <IconWarn className="h-3 w-3" aria-hidden="true" />
+                  <IconWarn className="h-3 w-3 text-err" aria-hidden="true" />
                   {failed} failed
                 </span>
               )}
@@ -218,15 +199,14 @@ export function BackgroundTasks(): JSX.Element | null {
               </>
             )}
           </div>
-        </div>
-      )}
+      </div>
     </div>
   )
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }): JSX.Element {
   return (
-    <div className="px-3 pb-1 pt-2 text-caps uppercase text-faint">
+    <div className="px-3 pb-1 pt-2 text-caps uppercase text-dim">
       {children}
     </div>
   )
@@ -264,7 +244,7 @@ function Row({
         // glyph only needs 3:1.
         <IconWarn className="h-3.5 w-3.5 text-err" />
       ) : task.status === 'killed' ? (
-        <IconNoEntry className="h-3.5 w-3.5 text-faint" />
+        <IconNoEntry className="h-3.5 w-3.5 text-dim" />
       ) : (
         <IconCheck className="h-3.5 w-3.5 text-ok" />
       )}
@@ -277,7 +257,7 @@ function Row({
   // accent so a parent/child pair doesn't spend the scarce accent twice.
   const typeLabel = isSubagent && (
     <span
-      className={`shrink-0 font-mono text-meta font-semibold ${nested ? 'text-faint' : 'text-accent'}`}
+      className={`shrink-0 font-mono text-meta font-semibold ${nested ? 'text-dim' : 'text-content'}`}
     >
       Agent
     </span>
@@ -290,7 +270,7 @@ function Row({
       </span>
       {/* Open-transcript affordance, mirroring the inline Agent card's arrow. Inside the button
           so clicking the glyph opens too, with pr-1.5 to clear the inset focus ring. */}
-      {onOpen && <span className="shrink-0 pr-1.5 font-mono text-meta text-faint">→</span>}
+      {onOpen && <span className="shrink-0 pr-1.5 font-mono text-meta text-dim">→</span>}
     </>
   )
 
@@ -301,12 +281,12 @@ function Row({
     <>
       <BgTimer startMs={task.startMs} />
       {task.stopping ? (
-        <span className="text-meta text-faint">stopping…</span>
+        <span className="text-meta text-dim">stopping…</span>
       ) : (
         <button
           // h-6 w-6 is the house pattern for a row's icon button; the 14px glyph alone is an
           // 18px target, under the 24px floor.
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint opacity-0 transition-opacity hover:text-err focus-visible:opacity-100 focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-accent group-hover:opacity-100"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-dim opacity-0 transition-opacity hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-accent group-hover:opacity-100"
           onClick={onStop}
           title="Stop this task"
           aria-label={stopLabel}
@@ -316,7 +296,7 @@ function Row({
       )}
     </>
   ) : (
-    <span className="text-meta text-faint">
+    <span className="text-meta text-dim">
       {task.status === 'killed' ? 'stopped' : task.status === 'failed' ? 'failed' : 'done'}
     </span>
   )
@@ -360,5 +340,5 @@ function BgTimer({ startMs }: { startMs: number }): JSX.Element {
   }, [])
   const s = Math.max(0, Math.floor((now - startMs) / 1000))
   const label = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`
-  return <span className="font-mono tabular-nums text-meta text-faint">{label}</span>
+  return <span className="font-mono tabular-nums text-meta text-dim">{label}</span>
 }

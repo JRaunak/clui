@@ -290,25 +290,26 @@ export function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center scrim pt-[12vh]"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="flex max-h-[70vh] w-[min(640px,92%)] flex-col overflow-hidden rounded-xl border border-border bg-bg-elev shadow-lg"
+        data-ui="palette"
+        className="flex max-h-[70vh] w-[min(640px,92%)] flex-col overflow-hidden glass-thick rounded-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
-          <IconSearch className="h-4 w-4 shrink-0 text-faint" />
+          <IconSearch className="h-4 w-4 shrink-0 text-dim" />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="Search sessions…  (type > for commands)"
-            className="flex-1 bg-transparent text-sm text-content outline-none placeholder:text-faint"
+            className="flex-1 bg-transparent text-sm text-content outline-none placeholder:text-dim"
             spellCheck={false}
             role="combobox"
             aria-autocomplete="list"
@@ -316,7 +317,7 @@ export function CommandPalette({
             aria-expanded={filtered.length > 0}
             aria-activedescendant={filtered.length ? `palette-opt-${sel}` : undefined}
           />
-          <kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-badge text-faint">
+          <kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-badge text-dim">
             esc
           </kbd>
         </div>
@@ -329,7 +330,7 @@ export function CommandPalette({
           className="min-h-0 flex-1 overflow-y-auto py-1.5"
         >
           {filtered.length === 0 ? (
-            <div className="px-4 py-6 text-center text-sm text-faint">
+            <div className="px-4 py-6 text-center text-sm text-dim">
               No matches for “{rawQuery.trim()}”
             </div>
           ) : (
@@ -400,9 +401,9 @@ function Row({
       onClick={onClick}
       /* Keyboard-first surface: the selected row needs a perceivable marker; a ~1.08:1 fill
          alone isn't. Reuse the sidebar's active-item language (a scarce terracotta left-edge
-         bar plus the raised fill) so the eye tracks selection where names are read. */
+         bar plus the row fill) so the eye tracks selection where names are read. */
       className={`relative flex w-full cursor-pointer items-center gap-2.5 px-4 py-2 text-left ${
-        selected ? 'bg-bg-raised' : ''
+        selected ? 'bg-[var(--glass-row-hover)]' : ''
       }`}
     >
       {selected && (
@@ -413,13 +414,13 @@ function Row({
       )}
       {/* Neutral, monochrome leading glyph: anchors the row + aligns with command icons;
           identical for live/dormant (it does not encode state). */}
-      <span className="shrink-0 text-faint">
+      <span className="shrink-0 text-dim">
         {isSession ? <IconMessage className="h-3.5 w-3.5" /> : <CommandIcon label={item.label} />}
       </span>
       <span className={`min-w-0 flex-1 truncate text-sm ${dim ? 'text-dim' : 'text-content'}`}>
         {runs.map((r, i) =>
           r.match ? (
-            <span key={i} className="font-semibold text-accent">
+            <span key={i} className="font-semibold text-content underline decoration-dim underline-offset-2">
               {r.text}
             </span>
           ) : (
@@ -439,7 +440,7 @@ function Row({
         </span>
       ) : (
         item.hint && (
-          <span className="shrink-0 truncate text-meta text-faint">{item.hint}</span>
+          <span className="shrink-0 truncate text-meta text-dim">{item.hint}</span>
         )
       )}
     </div>

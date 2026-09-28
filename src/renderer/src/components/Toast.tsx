@@ -17,21 +17,21 @@ export const Toast = forwardRef<HTMLDivElement, ToastCardProps>(function Toast(
 
   const motion = exiting
     ? flipped
-      ? '-translate-y-1.5 opacity-0'
+      ? 'translate-y-1.5 opacity-0'
       : 'translate-y-0 opacity-100'
     : flipped
       ? 'translate-y-0 opacity-100'
-      : '-translate-y-2 opacity-0'
+      : 'translate-y-2 opacity-0'
 
   return (
     <div
       ref={ref}
       data-toast-id={toastId}
       data-ui="toast"
-      className={`relative inline-flex min-w-[min(300px,calc(100vw-2rem))] max-w-[min(360px,calc(100vw-2rem))] items-center gap-3 overflow-hidden rounded-lg border border-border bg-bg-raised px-3.5 py-1 text-xs shadow-md transition-[translate,opacity] ${
+      className={`relative inline-flex min-w-[min(300px,calc(100vw-2rem))] max-w-[min(360px,calc(100vw-2rem))] items-center gap-3 overflow-hidden glass-thick rounded-lg px-3.5 py-1.5 text-xs transition-[translate,opacity] ${
         exiting
-          ? 'pointer-events-none duration-[180ms] ease-in'
-          : 'pointer-events-auto duration-200 ease-out'
+          ? 'pointer-events-none duration-fast ease-in'
+          : 'pointer-events-auto duration-base ease-out'
       } ${motion}`}
     >
       <span className="flex min-w-0 flex-1 items-baseline gap-1">
@@ -39,7 +39,7 @@ export const Toast = forwardRef<HTMLDivElement, ToastCardProps>(function Toast(
         {suffix && <span className="shrink-0 text-dim">{suffix}</span>}
       </span>
       <button
-        className="shrink-0 rounded px-2 py-1.5 font-semibold text-accent transition-colors hover:text-accent-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-label font-semibold text-on-accent transition-colors hover:bg-accent-hover"
         onClick={onAction}
         tabIndex={exiting ? -1 : undefined}
       >
@@ -50,7 +50,7 @@ export const Toast = forwardRef<HTMLDivElement, ToastCardProps>(function Toast(
           card so a re-mounted drain can't flash back to full behind the fade. */}
       {!exiting && (
         <div
-          className="absolute bottom-0 left-0 h-px w-full origin-left bg-content/20 motion-reduce:hidden"
+          className="absolute bottom-0 left-0 h-0.5 w-full origin-left bg-dim motion-reduce:hidden"
           style={{ animation: `toast-drain ${durationMs}ms linear forwards` }}
         />
       )}
@@ -81,10 +81,11 @@ export interface StackToast {
 interface ExitingToast extends StackToast {
   /** Viewport top of the slot the card occupied when it left the stack; pins the Layer-B overlay. */
   top: number
+  left: number
 }
 
 // EXIT_MS matches the card's exit CSS so the unmount waits out the fade; REFLOW_MS is the survivor glide.
-const EXIT_MS = 180
+const EXIT_MS = 150
 const REFLOW_MS = 220
 
 /**
@@ -107,12 +108,18 @@ export function ToastStack({
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const cardRefs = useRef<Map<string, HTMLElement>>(new Map())
-  const prevTops = useRef<Map<string, number>>(new Map())
+  const prevTops = useRef<Map<string, { top: number; left: number }>>(new Map())
   const prevItems = useRef<StackToast[]>([])
   // The toast that currently holds focus.
   const focusedId = useRef<string | null>(null)
   const exitTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [exiting, setExiting] = useState<ExitingToast[]>([])
+
+  // A shown manual popover lives in the top layer, where anchoring to the dock is always valid.
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (el && !el.matches(':popover-open')) el.showPopover()
+  }, [])
 
   useLayoutEffect(() => {
     const curIds = new Set(items.map((i) => i.id))
@@ -123,7 +130,7 @@ export function ToastStack({
       setExiting((ex) => {
         const add = removed
           .filter((r) => !ex.some((e) => e.id === r.id))
-          .map((r) => ({ ...r, top: prevTops.current.get(r.id) ?? 0 }))
+          .map((r) => ({ ...r, top: prevTops.current.get(r.id)?.top ?? 0, left: prevTops.current.get(r.id)?.left ?? 0 }))
         return add.length ? [...ex, ...add] : ex
       })
       for (const r of removed) {
@@ -158,10 +165,13 @@ export function ToastStack({
     }
 
     // Measure the settled positions.
-    const tops = new Map<string, number>()
+    const tops = new Map<string, { top: number; left: number }>()
     for (const item of items) {
       const el = cardRefs.current.get(item.id)
-      if (el) tops.set(item.id, el.getBoundingClientRect().top)
+      if (el) {
+        const r = el.getBoundingClientRect()
+        tops.set(item.id, { top: r.top, left: r.left })
+      }
     }
 
     // Invert each moved survivor to its old top, then play to zero next frame. Never cancel the play rAF:
@@ -169,9 +179,9 @@ export function ToastStack({
     for (const item of items) {
       const el = cardRefs.current.get(item.id)
       if (!el) continue
-      const oldTop = prevTops.current.get(item.id)
+      const oldTop = prevTops.current.get(item.id)?.top
       if (oldTop == null) continue
-      const newTop = tops.get(item.id)!
+      const newTop = tops.get(item.id)!.top
       if (oldTop === newTop) {
         el.style.transition = ''
         continue
@@ -211,7 +221,8 @@ export function ToastStack({
           const card = (e.target as HTMLElement).closest('[data-toast-id]')
           if (card) focusedId.current = card.getAttribute('data-toast-id')
         }}
-        className="pointer-events-none fixed inset-x-0 top-5 z-[60] flex flex-col items-center gap-2 px-4 outline-none"
+        popover="manual"
+        className="pop-base toast-stack pointer-events-none flex w-max flex-col items-center gap-2 outline-none"
       >
         <div aria-live="polite" className="sr-only">
           {announce}
@@ -230,11 +241,7 @@ export function ToastStack({
         ))}
       </div>
       {exiting.map((e) => (
-        <div
-          key={e.id}
-          className="pointer-events-none fixed inset-x-0 z-[60] flex justify-center px-4"
-          style={{ top: e.top }}
-        >
+        <div key={e.id} className="pointer-events-none fixed z-[60]" style={{ top: e.top, left: e.left }}>
           <Toast
             title={e.title}
             suffix={e.suffix}

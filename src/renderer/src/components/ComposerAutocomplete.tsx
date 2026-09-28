@@ -256,12 +256,28 @@ export function useComposerAutocomplete(
   useEffect(() => setDismissed(false), [trigger?.query, trigger?.char, trigger?.start])
   const visible = open && !dismissed
 
+  // Shown the moment it mounts; it has no enter animation because it appears as you type.
+  const popRef = useCallback((el: HTMLDivElement | null) => {
+    if (el && !el.matches(':popover-open')) el.showPopover()
+  }, [])
   const render = useCallback((): JSX.Element | null => {
     if (!visible) return null
     return (
-      <div className="absolute bottom-full left-0 z-50 mb-2 flex w-[min(640px,calc(100%-1.5rem))] flex-col rounded-lg border border-border bg-bg-elev shadow-lg">
+      <div
+        ref={popRef}
+        popover="manual"
+        className="pop-base glass-thick flex flex-col rounded-lg"
+        style={
+          {
+            positionAnchor: '--composer-dock',
+            positionArea: 'top span-right',
+            marginBottom: '8px',
+            width: 'min(640px, calc(anchor-size(width) - 24px))'
+          } as React.CSSProperties
+        }
+      >
         <div id={listboxId} ref={listRef} className="max-h-72 overflow-y-auto py-1" role="listbox">
-          <div className="flex items-center gap-2 px-3 py-1.5 text-meta text-faint">
+          <div className="flex items-center gap-2 px-3 py-1.5 text-meta text-dim">
             {trigger?.char === '@' && <IconSearch className="h-3 w-3" />}
             {trigger?.char === '/' ? 'Commands & skills' : 'Agents & files'}
           </div>
@@ -276,12 +292,12 @@ export function useComposerAutocomplete(
                 aria-selected={i === sel}
                 onMouseMove={() => setSel(i)}
                 onClick={() => pick(i)}
-                className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left ${i === sel ? 'bg-bg-raised' : ''}`}
+                className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left ${i === sel ? 'bg-[var(--glass-row-hover)]' : ''}`}
               >
                 <span className="max-w-[45%] shrink-0 truncate font-mono text-xs text-content">
                   {runs.map((run, j) =>
                     run.match ? (
-                      <span key={j} className="font-semibold text-accent">
+                      <span key={j} className="font-semibold text-content underline decoration-dim underline-offset-2">
                         {run.text}
                       </span>
                     ) : (
@@ -290,12 +306,12 @@ export function useComposerAutocomplete(
                   )}
                 </span>
                 {r.it.args && (
-                  <span className="max-w-[30%] shrink-0 truncate font-mono text-meta text-faint" title={r.it.args}>
+                  <span className="max-w-[30%] shrink-0 truncate font-mono text-meta text-dim" title={r.it.args}>
                     {r.it.args}
                   </span>
                 )}
                 {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
-                  <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 text-badge text-faint">
+                  <span className="shrink-0 rounded bg-[var(--glass-row-hover)] px-1.5 py-0.5 text-badge text-dim">
                     {r.it.kind}
                   </span>
                 )}

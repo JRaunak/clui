@@ -363,6 +363,9 @@ interface SessionStore {
   // ── Search UI state (app-level) ─────────────────────────────────────────────
   /** True when the ⌘F in-transcript find bar is open (find-in-current-conversation). */
   findOpen: boolean
+  /** The message the find bar's current match points at, for the transcript's persistent marker. */
+  findActiveId: string | null
+  setFindActiveId: (id: string | null) => void
   /** True when the ⌘⇧F global search overlay is open. */
   globalSearchOpen: boolean
   /**
@@ -1115,6 +1118,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   primaryScrolledFor: null,
   secondaryScrolled: false,
   findOpen: false,
+  findActiveId: null,
   globalSearchOpen: false,
   scrollTarget: null,
   currentTurn: null,
@@ -2287,7 +2291,8 @@ export const useSession = create<SessionStore>((set, get) => ({
   // Search UI. Find-in-conversation only makes sense over the live Virtuoso
   // transcript, so opening it is a no-op while viewing a subagent transcript.
   setFindOpen: (open) =>
-    set((s) => (open && s.viewingSubagent ? {} : { findOpen: open })),
+    set((s) => (open && s.viewingSubagent ? {} : open ? { findOpen: true } : { findOpen: false, findActiveId: null })),
+  setFindActiveId: (id) => set(() => ({ findActiveId: id })),
   setGlobalSearchOpen: (open) => set(() => ({ globalSearchOpen: open })),
   requestScrollTo: (messageId, opts) =>
     set((s) => ({ scrollTarget: { messageId, nonce: (s.scrollTarget?.nonce ?? 0) + 1, align: opts?.align } })),

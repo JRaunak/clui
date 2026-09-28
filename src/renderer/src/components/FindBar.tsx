@@ -1,13 +1,13 @@
 /**
- * ⌘F find-in-conversation. A thin bar docked top-right of the transcript (no scrim; the
- * chat scrolls live underneath, since it belongs to the current conversation, unlike the
+ * ⌘F find-in-conversation. It takes the top band's middle slot, on the band's glass (no scrim;
+ * the chat scrolls live underneath, since it belongs to the current conversation, unlike the
  * ⌘⇧F global overlay). Operates entirely on the active session's messages already in
  * renderer memory: no disk read, no IPC, instant.
  *
  * Matches are per-message (a message either contains the query or not). Enter / ⇧Enter
  * (and the ⌘G / ⌘⇧G menu fallbacks) step between matching messages; each step requests
- * Chat scroll to that message and marks it as the active match (`onActiveMatch`). "N of M"
- * shows the position. Inline term-highlight inside rendered markdown is deferred.
+ * Chat scroll to that message and marks it as the active match (`findActiveId` in the store).
+ * "N of M" shows the position. Terms aren't highlighted inside rendered markdown.
  */
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useActive, useSession, EMPTY_MESSAGES } from '../store'
@@ -32,8 +32,9 @@ function messageText(m: {
   return parts.join('\n')
 }
 
-export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null) => void }): JSX.Element | null {
+export function FindBar(): JSX.Element | null {
   const open = useSession((s) => s.findOpen)
+  const setFindActiveId = useSession((s) => s.setFindActiveId)
   const setFindOpen = useSession((s) => s.setFindOpen)
   const requestScrollTo = useSession((s) => s.requestScrollTo)
   const messages = useActive((s) => s?.messages ?? EMPTY_MESSAGES)
@@ -73,9 +74,9 @@ export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null)
       const n = ((idx % matches.length) + matches.length) % matches.length
       setCurrent(n)
       requestScrollTo(matches[n])
-      onActiveMatch?.(matches[n])
+      setFindActiveId(matches[n])
     },
-    [matches, requestScrollTo, onActiveMatch]
+    [matches, requestScrollTo]
   )
 
   // On a real query change, jump to the last match rather than the first: it sits nearest
@@ -88,10 +89,10 @@ export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null)
       const last = matches.length - 1
       setCurrent(last)
       requestScrollTo(matches[last])
-      onActiveMatch?.(matches[last])
+      setFindActiveId(matches[last])
     } else {
       setCurrent(0)
-      onActiveMatch?.(null)
+      setFindActiveId(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deferredQuery])
@@ -119,10 +120,7 @@ export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null)
 
   const count = matches.length
   return (
-    <div
-      className="absolute right-5 z-30 flex items-center gap-1.5 rounded-lg border border-border-strong bg-bg-elev px-2 py-1.5 shadow-lg"
-      style={{ top: 'calc(var(--bar-h, 44px) + var(--notice-h, 0px) + 12px)' }}
-    >
+    <div data-ui="find-bar" className="flex h-8 w-full min-w-0 items-center gap-1.5 px-2 [-webkit-app-region:no-drag]">
       <IconSearch className="h-3.5 w-3.5 shrink-0 text-dim" />
       <input
         ref={inputRef}
@@ -140,7 +138,7 @@ export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null)
         }}
         placeholder="Find in conversation"
         aria-label="Find in conversation"
-        className="w-52 bg-transparent text-sm text-content placeholder:text-faint focus:outline-none"
+        className="h-7 min-w-0 flex-1 rounded-md bg-control px-2 text-ui text-content placeholder:text-dim focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-[-2px]"
       />
       <span
         className="min-w-[3.5rem] shrink-0 text-right font-mono text-meta tabular-nums text-dim"
@@ -159,7 +157,7 @@ export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null)
           onClick={prev}
           disabled={count === 0}
           aria-label="Previous match"
-          className="rounded p-1 text-dim transition-colors hover:text-content disabled:opacity-40"
+          className="flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:text-content disabled:opacity-40"
         >
           <IconChevron className="h-3.5 w-3.5 -rotate-90" />
         </button>
@@ -168,7 +166,7 @@ export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null)
           onClick={next}
           disabled={count === 0}
           aria-label="Next match"
-          className="rounded p-1 text-dim transition-colors hover:text-content disabled:opacity-40"
+          className="flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:text-content disabled:opacity-40"
         >
           <IconChevron className="h-3.5 w-3.5 rotate-90" />
         </button>
@@ -176,7 +174,7 @@ export function FindBar({ onActiveMatch }: { onActiveMatch?: (id: string | null)
           type="button"
           onClick={close}
           aria-label="Close find"
-          className="rounded p-1 text-dim transition-colors hover:text-content"
+          className="flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:text-content"
         >
           <IconClose className="h-3.5 w-3.5" />
         </button>

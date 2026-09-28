@@ -183,6 +183,7 @@ function PrimaryPane({ split }: { split: boolean }): JSX.Element {
   const [dockH, setDockH] = useState(0)
   const [sbW, setSbW] = useState(0)
   const [noticeH, setNoticeH] = useState(0)
+  const activeHandleId = useSession((s) => s.activeHandleId)
   const paneRef = useRef<HTMLDivElement>(null)
   const dockRef = useRef<HTMLDivElement>(null)
   const noticeRef = useRef<HTMLDivElement>(null)
@@ -209,6 +210,16 @@ function PrimaryPane({ split }: { split: boolean }): JSX.Element {
     }
   }, [])
 
+  // The dock and the top band's header overlay both clear the transcript's scrollbar gutter.
+  useLayoutEffect(() => {
+    const stage = getStage()
+    if (!stage) return
+    stage.style.setProperty('--sb-w', `${sbW}px`)
+    return () => {
+      stage.style.removeProperty('--sb-w')
+    }
+  }, [sbW])
+
   // The status bar's tray popovers open above the whole dock: its height plus the 8px (mb-2) gap
   // between the dock and the bar.
   useLayoutEffect(() => {
@@ -225,7 +236,7 @@ function PrimaryPane({ split }: { split: boolean }): JSX.Element {
       ref={paneRef}
       data-ui="pane-primary"
       className={`relative mb-2 flex min-h-0 flex-1 flex-col ${split ? 'min-w-[520px]' : 'min-w-0'}`}
-      style={{ '--dock-h': `${dockH}px`, '--sb-w': `${sbW}px`, '--notice-h': `${noticeH}px` } as CSSProperties}
+      style={{ '--dock-h': `${dockH}px`, '--notice-h': `${noticeH}px` } as CSSProperties}
     >
       <div ref={noticeRef} className="absolute inset-x-0 z-30" style={{ top: 'var(--bar-h, 44px)' }}>
         <Notice />
@@ -233,8 +244,8 @@ function PrimaryPane({ split }: { split: boolean }): JSX.Element {
       <Chat onScrollbarWidth={setSbW} />
       {/* The transcript reserves a stable scrollbar gutter; the dock pads its right by the same
           width so the composer column lines up with the message column. */}
-      <div ref={dockRef} className="absolute inset-x-0 bottom-0" style={{ paddingRight: 'var(--sb-w, 0px)' }}>
-        <ChangedFiles />
+      <div ref={dockRef} className="group/dock absolute inset-x-0 bottom-0" style={{ paddingRight: 'var(--sb-w, 0px)' }}>
+        <ChangedFiles key={activeHandleId ?? 'none'} />
         <Composer />
       </div>
     </div>

@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useActive, useSession, effortCap } from '../store'
 import { useEscape } from '../lib/useEscape'
-import { useClickOutside } from '../lib/useClickOutside'
-import { IconSliders, IconRefresh, IconLock, IconWarn } from './Icon'
+import { IconSliders, IconRefresh, IconLock, IconWarn, IconCheck } from './Icon'
+import { usePopover } from './Popover'
+import { viaOf } from '../lib/motion'
 import {
   deriveModelInfo,
   groupModels,
@@ -71,22 +71,32 @@ export function ModelEffortPicker(): JSX.Element {
   const setModel = useSession((s) => s.setModel)
   const setEffort = useSession((s) => s.setEffort)
   const setUltracode = useSession((s) => s.setUltracode)
-  const [open, setOpen] = useState(false)
   const [models, setModels] = useState<ModelInfo[]>([])
   // Per-call, not app state: only a SUCCESSFUL list is cached in main, so a later call
   // (or the refresh button) can go live again.
   const [live, setLive] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [hover, setHover] = useState<ModelChoice | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearHoverTimer = (): void => {
+    if (hoverTimer.current) {
+      clearTimeout(hoverTimer.current)
+      hoverTimer.current = null
+    }
+  }
+  const chevronRef = useRef<HTMLButtonElement | null>(null)
+  const p = usePopover({
+    placement: 'up',
+    above: '--composer-dock',
+    onOpenChange: (o) => {
+      if (!o) {
+        clearHoverTimer()
+        setHover(null)
+      }
+    }
+  })
+  const open = p.open
   const checkedRef = useRef<HTMLButtonElement>(null)
-  // The currently-hovered row, so the portaled flyout can anchor to its rect.
-  const rowRef = useRef<HTMLDivElement>(null)
-  // The portaled effort flyout lives under <body>, outside `ref`, so click-outside must treat it as
-  // inside too; otherwise a mousedown on the slider reads as an outside click and collapses the picker.
-  const flyoutRef = useRef<HTMLDivElement>(null)
 
   // Load the live model list once the popover first opens.
   useEffect(() => {
@@ -114,28 +124,6 @@ export function ModelEffortPicker(): JSX.Element {
     }
   }
 
-  const dismiss = useCallback(() => setOpen(false), [])
-  // Stable across renders (refs never change identity), so the listener binds once.
-  const dismissRefs = useMemo(() => [ref, flyoutRef], [ref, flyoutRef])
-  useClickOutside(dismissRefs, open, dismiss)
-  // Esc closes via the shared escape-stack (nesting-aware) and hands focus back to the
-  // trigger, since the focused row unmounts with the popover and would otherwise leave
-  // focus on <body>. An outside click deliberately doesn't: it would steal focus from
-  // whatever the user just clicked.
-  useEscape(
-    open,
-    useCallback(() => {
-      setOpen(false)
-      triggerRef.current?.focus()
-    }, [])
-  )
-
-  const clearHoverTimer = (): void => {
-    if (hoverTimer.current) {
-      clearTimeout(hoverTimer.current)
-      hoverTimer.current = null
-    }
-  }
   // Open a row's flyout after a delay (cancel if the pointer moves on quickly).
   const scheduleHover = (m: ModelChoice): void => {
     clearHoverTimer()
@@ -158,18 +146,20 @@ export function ModelEffortPicker(): JSX.Element {
   const curLabel = deriveModelInfo(modelChoice).label
 
   return (
-    <div ref={ref} className="relative min-w-0">
+    <div className="relative min-w-0">
       <button
-        ref={triggerRef}
         type="button"
+        data-ui="model-chip"
+        {...p.triggerProps}
+        aria-haspopup="dialog"
         title={`${curLabel} · ${EFFORT_LABELS[runningEffort]}`}
+        onClick={(e) => {
+          p.triggerProps.onClick(e)
+          setHover(null)
+        }}
         className={`flex h-8 min-w-0 items-center gap-1.5 rounded-full px-2.5 text-xs text-content transition-colors ${
           open ? 'bg-control-hover' : 'bg-control hover:bg-control-hover'
         }`}
-        onClick={() => {
-          setOpen((o) => !o)
-          setHover(null)
-        }}
       >
         <IconSliders className="h-3.5 w-3.5 shrink-0 text-dim @max-[480px]/composer:hidden" />
         <span className="min-w-0 truncate whitespace-nowrap font-medium">{curLabel}</span>
@@ -204,11 +194,12 @@ export function ModelEffortPicker(): JSX.Element {
         </svg>
       </button>
 
-      {open && (
-        <div
-          className="absolute bottom-full left-0 mb-1.5 flex max-h-[min(60vh,calc(100vh-24px))] w-[196px] flex-col rounded-xl bg-bg-elev py-1 text-xs shadow-lg"
-          onMouseLeave={scheduleHide}
-        >
+      <div
+        {...p.popoverProps}
+        aria-label="Model and effort"
+        className="pop-base pop glass-thick flex max-h-[min(60vh,calc(100vh-24px))] w-[196px] flex-col rounded-xl py-1 text-xs"
+        onMouseLeave={scheduleHide}
+      >
           <div className="flex shrink-0 items-center justify-between px-3 py-1 text-caps uppercase text-dim">
             <span>{ultracode ? 'Model · Ultra needs X-High' : 'Model'}</span>
             <button
@@ -245,7 +236,7 @@ export function ModelEffortPicker(): JSX.Element {
               {/* One subtle section header per family; skip when there's a single group
                   (no grouping value if everything is one family). */}
               {groupModels(models).length > 1 && (
-                <div className="px-3 pb-0.5 pt-1.5 text-caps uppercase text-faint">
+                <div className="px-3 pb-0.5 pt-1.5 text-caps uppercase text-dim">
                   {group.label}
                 </div>
               )}
@@ -260,11 +251,11 @@ export function ModelEffortPicker(): JSX.Element {
                   key={info.id}
                   aria-disabled="true"
                   title="Ultra needs a model with X-High reasoning"
-                  className="flex w-full cursor-default items-center gap-2 px-3 py-2 text-left text-faint opacity-60"
+                  className="flex w-full cursor-default items-center gap-2 px-3 py-2 text-left text-dim opacity-60"
                 >
-                  <span className="w-3 shrink-0">{info.id === modelChoice ? '✓' : ''}</span>
+                  <span className="w-3 shrink-0">{info.id === modelChoice && <IconCheck className="h-3 w-3 text-dim" />}</span>
                   <span className="min-w-0 flex-1 truncate">{info.label}</span>
-                  <span className="shrink-0 text-meta text-faint">Needs X-High</span>
+                  <span className="shrink-0 text-meta text-dim">Needs X-High</span>
                 </div>
               )
             }
@@ -274,7 +265,7 @@ export function ModelEffortPicker(): JSX.Element {
             return (
               <div
                 key={info.id}
-                ref={hover === info.id ? rowRef : null}
+                style={hover === info.id ? ({ anchorName: '--effort-row' } as React.CSSProperties) : undefined}
                 className="relative"
                 onMouseEnter={() => effortSelectable && scheduleHover(info.id)}
               >
@@ -289,18 +280,13 @@ export function ModelEffortPicker(): JSX.Element {
                     type="button"
                     ref={info.id === modelChoice ? checkedRef : undefined}
                     className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                    onClick={() => {
+                    onClick={(e) => {
                       if (info.id !== modelChoice) void setModel(info.id)
                       clearHoverTimer()
-                      setOpen(false)
-                      // The clicked row unmounts with the menu; hand focus back to the
-                      // trigger so keyboard order isn't dropped to <body>.
-                      triggerRef.current?.focus()
+                      p.close({ via: viaOf(e) })
                     }}
                   >
-                    <span className="w-3 shrink-0 text-accent">
-                      {info.id === modelChoice ? '✓' : ''}
-                    </span>
+                    <span className="w-3 shrink-0">{info.id === modelChoice && <IconCheck className="h-3 w-3 text-content" />}</span>
                     <span className="flex-1 truncate">{info.label}</span>
                     {/* No size for 'unknown' families (policy selectors, unrecognized ids):
                         they assert no context window. */}
@@ -318,6 +304,8 @@ export function ModelEffortPicker(): JSX.Element {
                   {effortSelectable && (
                     <button
                       type="button"
+                      ref={hover === info.id ? chevronRef : undefined}
+                      aria-expanded={hover === info.id}
                       className="flex shrink-0 items-center py-2 pr-3 pl-1 text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                       title={`Adjust effort · ${info.label}`}
                       aria-label={`Adjust effort for ${info.label}`}
@@ -345,20 +333,21 @@ export function ModelEffortPicker(): JSX.Element {
                 {effortSelectable && hover === info.id && (
                   <EffortFlyout
                     info={info}
-                    anchorRef={rowRef}
-                    flyoutRef={flyoutRef}
                     cap={effortCap(info.id)}
                     current={cappedEffort(info.id, effortChoice, effortCap(info.id))}
                     onEnter={clearHoverTimer}
                     onLeave={scheduleHide}
+                    onClose={() => {
+                      setHover(null)
+                      chevronRef.current?.focus()
+                    }}
                     onPick={(ef) => {
                       if (info.id !== modelChoice) void setModel(info.id)
                       // Explicitly picking an effort while Ultra is on means the user
                       // wants that reasoning level → turn Ultra OFF (it forces xhigh).
                       if (ultracode) void setUltracode(false)
                       void setEffort(ef)
-                      setOpen(false)
-                      triggerRef.current?.focus()
+                      p.close({ via: 'pointer' })
                     }}
                   />
                 )}
@@ -368,74 +357,64 @@ export function ModelEffortPicker(): JSX.Element {
             </div>
           ))}
           </div>
-        </div>
-      )}
+      </div>
     </div>
   )
 }
 
 function EffortFlyout({
   info,
-  anchorRef,
-  flyoutRef,
   cap,
   current,
   onEnter,
   onLeave,
-  onPick
+  onPick,
+  onClose
 }: {
   info: ModelInfo
-  anchorRef: React.RefObject<HTMLElement>
-  flyoutRef: React.RefObject<HTMLDivElement>
   cap?: EffortChoice
   current: EffortChoice
   onEnter: () => void
   onLeave: () => void
   onPick: (e: EffortChoice) => void
+  onClose: () => void
 }): JSX.Element {
   const levels = info.efforts
   const idx = Math.max(0, levels.indexOf(current))
   const [preview, setPreview] = useState(idx)
   const value = levels[preview] ?? levels[idx]
-  // Highest reachable tick under the CLI cap (no cap → the top of this model's range). The
-  // track keeps its full width; ticks past this index are shown unreachable, not removed.
+  // Highest reachable tick under the CLI cap (no cap → the top of this model's range).
   const capIdx = cap ? levels.indexOf(clampEffort(info.id, cap)) : levels.length - 1
   const capLabel = cap ? EFFORT_LABELS[levels[capIdx]] : ''
+  const ref = useRef<HTMLDivElement>(null)
 
-  // Portaled to <body> so vertical scroll on the model list can't clip it (a scroll
-  // container's overflow-x computes to auto, hiding this right-side flyout). Positioned
-  // fixed from the row's rect and clamped to the viewport; measured once on open.
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+  // A manual popover nested in the picker's DOM: it escapes the picker's scroll clip through the
+  // top layer, and light dismiss skips it when walking up from a click, so the picker stays open.
   useLayoutEffect(() => {
-    // The flyout is a descendant of its anchor row, so on the opening commit the row's ref
-    // isn't attached yet when this runs (child layout effects fire before the parent ref).
-    // Defer a frame to measure it; the visibility gate below hides the pre-measure paint.
-    const raf = requestAnimationFrame(() => {
-      const anchor = anchorRef.current
-      const el = flyoutRef.current
-      if (!anchor || !el) return
-      const r = anchor.getBoundingClientRect()
-      const fw = el.offsetWidth
-      const fh = el.offsetHeight
-      const margin = 8
-      // Prefer the right of the row; flip left if it'd overrun the viewport.
-      let left = r.right + 4
-      if (left + fw > window.innerWidth - margin) left = r.left - fw - 4
-      left = Math.max(margin, Math.min(left, window.innerWidth - fw - margin))
-      let top = r.top + r.height / 2 - fh / 2
-      top = Math.max(margin, Math.min(top, window.innerHeight - fh - margin))
-      setPos({ top, left })
-    })
-    return () => cancelAnimationFrame(raf)
-  }, [anchorRef])
+    const el = ref.current
+    if (el && !el.matches(':popover-open')) el.showPopover()
+  }, [])
+  useEscape(true, onClose)
 
-  return createPortal(
+  // Err text fails on glass, so Max reads as content text plus an err mark.
+  const valueTone = value === 'max' ? 'text-content' : EFFORT_COLORS[value]
+
+  return (
     <div
-      ref={flyoutRef}
+      ref={ref}
+      popover="manual"
+      data-ui="effort-flyout"
       role="group"
       aria-label={`Effort for ${info.label}, currently ${EFFORT_LABELS[current]}`}
-      className="fixed z-50 w-56 rounded-lg bg-bg-elev p-3 shadow-lg"
-      style={{ top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? 'visible' : 'hidden' }}
+      className="pop-base glass-thick w-56 rounded-lg p-3"
+      style={
+        {
+          positionAnchor: '--effort-row',
+          positionArea: 'right',
+          positionTryFallbacks: 'flip-inline',
+          marginLeft: '4px'
+        } as React.CSSProperties
+      }
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
     >
@@ -444,7 +423,8 @@ function EffortFlyout({
           <span className="shrink-0 text-caps uppercase text-dim">Effort</span>
           <span className="min-w-0 truncate text-meta text-dim">{info.label}</span>
         </span>
-        <span className={`shrink-0 font-medium ${EFFORT_COLORS[value]}`}>
+        <span className={`flex shrink-0 items-center gap-1 font-medium ${valueTone}`}>
+          {value === 'max' && <span className="h-1.5 w-1.5 rounded-full bg-err" aria-hidden="true" />}
           {EFFORT_LABELS[value]}
         </span>
       </div>
@@ -456,22 +436,17 @@ function EffortFlyout({
         value={preview}
         aria-label={`Reasoning effort for ${info.label}`}
         aria-valuetext={
-          preview === capIdx && cap
-            ? `${EFFORT_LABELS[value]}, capped by your CLI settings.`
-            : EFFORT_LABELS[value]
+          preview === capIdx && cap ? `${EFFORT_LABELS[value]}, capped by your CLI settings.` : EFFORT_LABELS[value]
         }
         onChange={(e) => setPreview(Math.min(Number(e.target.value), capIdx))}
-        onMouseUp={(e) =>
-          onPick(levels[Math.min(Number((e.target as HTMLInputElement).value), capIdx)])
-        }
+        onMouseUp={(e) => onPick(levels[Math.min(Number((e.target as HTMLInputElement).value), capIdx)])}
         onKeyUp={(e) => {
           if (!COMMIT_KEYS.has(e.key)) return
           onPick(levels[Math.min(Number((e.target as HTMLInputElement).value), capIdx)])
         }}
         className="w-full accent-[var(--color-accent)]"
       />
-      {/* Underlined tick = the committed level; the colored top-right pill = the inspected one.
-          Ticks past the cap are dimmed (unreachable), never struck through. */}
+      {/* Underlined tick = the committed level. Ticks past the cap are dimmed, never struck through. */}
       <div className="mt-1 flex justify-between text-meta">
         {levels.map((lv, i) => (
           <span
@@ -480,20 +455,15 @@ function EffortFlyout({
               lv === current
                 ? 'border-b-2 border-content/40 font-medium text-content'
                 : i > capIdx
-                  ? 'text-faint opacity-70'
-                  : 'text-faint'
+                  ? 'text-dim opacity-60'
+                  : 'text-dim'
             }
           >
             {EFFORT_LABELS[lv]}
           </span>
         ))}
       </div>
-      {cap && (
-        <div className="mt-1.5 text-meta text-dim">
-          Effort is capped at {capLabel} in your CLI settings.
-        </div>
-      )}
-    </div>,
-    document.body
+      {cap && <div className="mt-1.5 text-meta text-dim">Effort is capped at {capLabel} in your CLI settings.</div>}
+    </div>
   )
 }

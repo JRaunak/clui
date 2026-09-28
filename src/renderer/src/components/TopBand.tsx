@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSession } from '../store'
 import { CurrentTurnHeader } from './CurrentTurnHeader'
+import { FindBar } from './FindBar'
 
 /**
  * The top band over the Stage's top 44px, which the transcript scrolls beneath. Its glass layer fades
@@ -67,7 +68,7 @@ export function TopBand({
         style={split ? { width: `calc(var(--primary-w, 50%) - ${leftInset}px)` } : { flex: '1 1 0%' }}
       >
         <div data-ui="top-band-drag" aria-hidden="true" className="h-full w-6 shrink-0 [-webkit-app-region:drag]" />
-        <TopSlot />
+        <TopSlot leftInset={leftInset} rightInset={RIGHT_INSET} split={split} />
         <div data-ui="top-band-drag" aria-hidden="true" className="h-full w-6 shrink-0 [-webkit-app-region:drag]" />
       </div>
       {split && (
@@ -80,23 +81,43 @@ export function TopBand({
 }
 
 /**
- * The band's middle slot. Empty, it is itself a drag spacer. Content rendered here replaces the drag
- * div, so it has to flank itself with drag spacers to keep the space around it draggable.
+ * The band's middle slot, which is always a drag spacer. Its content floats in an overlay laid on
+ * the transcript's column box, so "You" lines up with the messages under it rather than with the
+ * spacers around the slot; only the content's own controls take the pointer.
  */
-export function TopSlot(): JSX.Element {
+// The trailing w-2 inset. When actions render at the right, add their width plus an 8px gap, the same
+// gap leftInset keeps past the collapsed toggle, so the header never touches them.
+const RIGHT_INSET = 8
+
+export function TopSlot({
+  leftInset,
+  rightInset,
+  split
+}: {
+  leftInset: number
+  rightInset: number
+  split: boolean
+}): JSX.Element {
   const currentTurn = useSession((s) => s.currentTurn)
+  const findOpen = useSession((s) => s.findOpen && !s.viewingSubagent)
   return (
     <div data-ui="top-slot" className="flex h-full min-w-0 flex-1 items-center">
-      {currentTurn ? (
-        <>
-          <div data-ui="top-band-drag" aria-hidden="true" className="h-full flex-1 [-webkit-app-region:drag]" />
-          <div className="flex min-w-0 flex-[0_1_64rem] items-center px-5">
-            <CurrentTurnHeader key={currentTurn.messageId} />
+      <div data-ui="top-band-drag" aria-hidden="true" className="h-full flex-1 [-webkit-app-region:drag]" />
+      {(findOpen || currentTurn) && (
+        <div
+          className="pointer-events-none absolute inset-y-0 left-0 flex items-center"
+          style={{ width: split ? 'var(--primary-w, 50%)' : '100%', paddingRight: 'var(--sb-w, 0px)' }}
+        >
+          <div
+            className="mx-auto flex w-full min-w-0 max-w-5xl items-center [&>*]:pointer-events-auto"
+            style={{
+              paddingLeft: `max(1.25rem, calc(${leftInset}px - max(0px, (100% - 64rem) / 2)))`,
+              paddingRight: `max(1.25rem, calc(${rightInset}px - max(0px, (100% - 64rem) / 2)))`
+            }}
+          >
+            {findOpen ? <FindBar /> : currentTurn && <CurrentTurnHeader key={currentTurn.messageId} />}
           </div>
-          <div data-ui="top-band-drag" aria-hidden="true" className="h-full flex-1 [-webkit-app-region:drag]" />
-        </>
-      ) : (
-        <div data-ui="top-band-drag" aria-hidden="true" className="h-full flex-1 [-webkit-app-region:drag]" />
+        </div>
       )}
     </div>
   )

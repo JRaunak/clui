@@ -4,7 +4,6 @@ import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type 
 import { MessageView } from './MessageView'
 import { WorkingStatus } from './WorkingStatus'
 import { CompactSuggestion } from './CompactSuggestion'
-import { FindBar } from './FindBar'
 import { TaskPuck, useTaskUiActive } from './TaskPuck'
 import { IconChevron, IconClose, IconEdit, IconCheck, IconFile } from './Icon'
 import { deriveModelInfo } from '../../../shared/settings'
@@ -67,11 +66,8 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   // Persistent "you are here" for the current find match (moves on Enter/⇧Enter, cleared
   // when find closes). Distinct from `flashId`, the transient highlight a global-search jump
   // leaves when the find bar is closed.
-  const [activeMatchId, setActiveMatchId] = useState<string | null>(null)
+  const activeMatchId = useSession((s) => s.findActiveId)
   const [flashId, setFlashId] = useState<string | null>(null)
-  useEffect(() => {
-    if (!findOpen) setActiveMatchId(null)
-  }, [findOpen])
 
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const setCurrentTurn = useSession((s) => s.setCurrentTurn)
@@ -262,7 +258,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         itemContent={(index, m) => (
           // H-padding on the item, never the Virtuoso scroller: scroller padding inflates
           // scrollWidth past clientWidth (a react-virtuoso quirk), producing a spurious h-scrollbar.
-          <div className="mx-auto max-w-5xl px-7 pb-6 [&:first-child]:pt-6">
+          <div className="mx-auto max-w-5xl px-7 py-6">
             {resumed && historyCount > 0 && index === historyCount && (
               <div className="mb-6 flex items-center gap-2 text-caps uppercase text-faint">
                 <span className="h-px flex-1 bg-border" />
@@ -317,7 +313,6 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
           taskCount={taskUiActive ? { done: tasksDone, total: tasks.length } : null}
         />
       )}
-      <FindBar onActiveMatch={setActiveMatchId} />
     </div>
   )
 }
@@ -552,10 +547,11 @@ function JumpToLatest({
   return (
     <button
       type="button"
+      data-ui="jump-latest"
       onClick={onClick}
       aria-label={label + taskLabel}
       style={{ bottom: 'calc(1rem + var(--dock-h, 0px))' }}
-      className={`absolute right-5 z-20 flex h-11 items-center justify-center rounded-full border border-border bg-bg-raised text-dim shadow-md transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+      className={`absolute right-5 z-20 flex h-11 items-center justify-center rounded-full glass-thick text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
         taskCount ? 'gap-1.5 px-3' : 'w-11'
       }`}
     >

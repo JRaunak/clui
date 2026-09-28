@@ -41,7 +41,7 @@ export function PlanGate({ request, count }: { request: PendingPermission; count
         // The safe action comes first in DOM order and Enter isn't bound to the primary, so a
         // reflexive keypress can't start building.
         <div className="ml-auto flex gap-2">
-          <Button data-ui="gate-secondary" variant={plan ? 'control' : 'primary'} size="md" onClick={keepPlanning}>
+          <Button data-ui="gate-secondary" variant="control" size="md" onClick={keepPlanning}>
             Keep planning
           </Button>
           <Button data-ui="gate-primary" variant={plan ? 'primary' : 'control'} size="md" onClick={startBuilding}>
@@ -58,12 +58,12 @@ export function PlanGate({ request, count }: { request: PendingPermission; count
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            <div className="text-sm text-dim">
-              Claude didn’t attach a readable plan. You can start building anyway, or keep planning.
+            <div className="text-ui text-dim">
+              Claude didn’t attach a readable plan. Keep planning to ask for one, or build without a plan.
             </div>
-            <details className="text-xs">
+            <details className="text-label">
               <summary className="cursor-pointer text-dim">Raw request</summary>
-              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-tool p-2 font-mono text-xs text-dim">
+              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-tool p-2 font-mono text-code text-dim">
                 {JSON.stringify(request.input, null, 2)}
               </pre>
             </details>

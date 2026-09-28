@@ -419,14 +419,15 @@ export function Settings({ onClose }: { onClose: () => void }): JSX.Element {
 function Overlay({ children }: { children: React.ReactNode }): JSX.Element {
   const dialogRef = useDialogFocus<HTMLDivElement>()
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
+    <div className="fixed inset-0 z-40 flex items-center justify-center scrim">
       <div
         ref={dialogRef}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="flex max-h-[85vh] w-[min(620px,92%)] flex-col rounded-lg border border-border bg-bg-elev shadow-2xl outline-none"
+        data-ui="settings"
+        className="flex max-h-[85vh] w-[min(620px,92%)] flex-col rounded-lg border border-border bg-bg-elev shadow-[var(--shadow-float)] outline-none"
       >
         {children}
       </div>

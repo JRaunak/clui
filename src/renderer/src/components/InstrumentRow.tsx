@@ -20,7 +20,7 @@ type Seg = 'through' | 'end'
 const BEAD_FILL: Record<RowState, string> = {
   running: 'bg-accent',
   'needs-you': 'bg-warn',
-  failed: 'bg-err',
+  failed: 'border-[1.5px] border-err',
   launched: 'bg-info',
   launching: 'border-[1.5px] border-info',
   done: 'border-[1.5px] border-faint'
@@ -29,7 +29,7 @@ const BEAD_FILL: Record<RowState, string> = {
 /** 8px state mark. On the spine it sits outside the card, centred on the line 15px left of the
  *  card edge; inline (inside an aggregate or an off-spine list) it leads the row's grid. */
 export function Bead({ state, lit, placement }: { state: RowState; lit: boolean; placement: Placement }): JSX.Element {
-  const hollow = state === 'launching' || state === 'done'
+  const hollow = state === 'launching' || state === 'done' || state === 'failed'
   const pos = placement === 'spine' ? 'absolute left-[-19px] top-3' : 'relative'
   // A hollow ring is filled with whatever it sits on, so the spine line doesn't show through it.
   const hole = hollow ? (placement === 'spine' ? 'bg-bg' : 'bg-tool') : ''
@@ -40,6 +40,7 @@ export function Bead({ state, lit, placement }: { state: RowState; lit: boolean;
       aria-hidden="true"
       className={`${pos} block h-2 w-2 shrink-0 rounded-full ${hole} ${BEAD_FILL[state]}`}
     >
+      {state === 'failed' && <span className="absolute inset-px rounded-full bg-err" />}
       <Lumen lit={lit} />
     </span>
   )

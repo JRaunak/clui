@@ -66,7 +66,7 @@ export function ContextRing({
             strokeWidth={stroke}
             strokeLinecap="round"
             strokeDasharray={`${dash} ${circ}`}
-            style={{ transition: 'stroke-dasharray 0.4s var(--ease-out), stroke 0.3s ease' }}
+            style={{ transition: 'stroke-dasharray var(--dur-stage) var(--ease-out), stroke var(--dur-base) var(--ease-out)' }}
           />
         </svg>
         <span

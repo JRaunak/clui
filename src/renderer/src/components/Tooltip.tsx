@@ -1,29 +1,31 @@
 /**
- * Hover/focus tooltip wrapper. Opens after a delay on fine-pointer hover or on
- * keyboard focus, closes immediately (unmount, no exit animation). The delay is a
- * behavior constant, not motion, so reduced-motion doesn't disable it.
+ * Hover/focus tooltip. Opens after a delay on fine-pointer hover or on keyboard focus, closes
+ * immediately. The delay is a behavior constant, not motion, so reduced motion keeps it.
+ * The bubble is a manual top-layer popover: it escapes every clip, and unlike an auto popover it
+ * never closes an open picker.
  */
-import { cloneElement, useEffect, useId, useRef, useState, type ReactElement } from 'react'
+import { cloneElement, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactElement } from 'react'
 
 export function Tooltip({
   content,
   align = 'center',
   openDelay = 550,
   describedBy = true,
+  placement = 'top',
   children
 }: {
   content: string
-  placement?: 'top'
+  placement?: 'top' | 'bottom'
   align?: 'center' | 'end'
   openDelay?: number
   describedBy?: boolean
   children: ReactElement
 }): JSX.Element {
   const [open, setOpen] = useState(false)
-  // Second flag so the bubble mounts at opacity-0 then transitions in (an element can't
-  // transition from its own first paint without a reflow between the two states).
-  const [shown, setShown] = useState(false)
-  const id = useId()
+  const rawId = useId()
+  const id = `tip${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`
+  const anchor = `--${id}`
+  const wrapRef = useRef<HTMLSpanElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout>>()
 
   const arm = (): void => {
@@ -34,30 +36,29 @@ export function Tooltip({
     clearTimeout(timer.current)
     setOpen(false)
   }
-
   useEffect(() => () => clearTimeout(timer.current), [])
 
-  useEffect(() => {
-    if (!open) {
-      setShown(false)
-      return
-    }
-    const raf = requestAnimationFrame(() => setShown(true))
-    return () => cancelAnimationFrame(raf)
-  }, [open])
+  const bubbleRef = useCallback((el: HTMLSpanElement | null) => {
+    if (el && !el.matches(':popover-open')) el.showPopover()
+  }, [])
 
-  const trigger =
-    describedBy && open
-      ? cloneElement(children, { 'aria-describedby': id })
-      : children
+  const trigger = describedBy && open ? cloneElement(children, { 'aria-describedby': id }) : children
 
-  // 'end' pins the bubble's right edge to the trigger (for a trigger at the window's
-  // right edge, where centering would clip); 'center' anchors on the midpoint.
-  const anchor = align === 'end' ? 'right-0' : 'left-1/2 -translate-x-1/2'
+  // A trigger inside the composer dock gets its bubble above the whole dock, never over the textarea.
+  const inDock = open && !!wrapRef.current?.closest('[data-ui="composer-dock"]')
+  const style = {
+    positionAnchor: anchor,
+    ...(placement === 'bottom'
+      ? { top: 'calc(anchor(bottom) + 8px)' }
+      : { bottom: inDock ? 'calc(anchor(--composer-dock top) + 8px)' : 'calc(anchor(top) + 8px)' }),
+    ...(align === 'end' ? { right: 'anchor(right)' } : { left: 'anchor(center)', translate: '-50% 0' })
+  } as CSSProperties
 
   return (
     <span
+      ref={wrapRef}
       className="relative inline-flex"
+      style={{ anchorName: anchor } as CSSProperties}
       onMouseEnter={() => {
         if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) arm()
       }}
@@ -77,11 +78,12 @@ export function Tooltip({
       {trigger}
       {open && (
         <span
+          ref={bubbleRef}
+          popover="manual"
           role="tooltip"
           id={id}
-          className={`pointer-events-none absolute bottom-full ${anchor} z-30 mb-2 w-max max-w-[260px] rounded-md border border-border bg-bg-elev px-2.5 py-1.5 text-xs text-content shadow-md transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none ${
-            shown ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'
-          }`}
+          className="pop-base tip glass-thick w-max max-w-[260px] rounded-md px-2.5 py-1.5 text-xs text-content"
+          style={style}
         >
           {content}
         </span>
