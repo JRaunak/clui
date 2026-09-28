@@ -647,7 +647,10 @@ body {
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    /* 0s, not 0.01ms: transition-property defaults to all, so any nonzero duration gives every
+       element a transition, and Virtuoso's list padding then lands a frame late. The browser
+       clamps scrollTop against the stale height and the transcript loses its bottom anchor. */
+    transition-duration: 0s !important;
     scroll-behavior: auto !important;
   }
 
