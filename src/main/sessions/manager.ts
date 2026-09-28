@@ -3,7 +3,6 @@
  * the CLI's own session id is known). Routes each session's DomainEvents to a sink
  * (the IPC bridge), tagged with the handle so the renderer can demux.
  */
-import { randomUUID } from 'node:crypto'
 import { ClaudeSession, type ClaudeSessionOptions } from '../cli/session'
 import type { DomainEvent } from '../../shared/events'
 import type { PermissionVerdict, WireAttachment } from '../../shared/ipc'
@@ -39,8 +38,7 @@ export class SessionManager {
 
   constructor(private readonly sink: EventSink) {}
 
-  start(opts: ClaudeSessionOptions): string {
-    const handleId = randomUUID()
+  start(handleId: string, opts: ClaudeSessionOptions): void {
     const session = new ClaudeSession(opts)
     session.on('event', (e) => {
       this.sink(handleId, e)
@@ -52,7 +50,6 @@ export class SessionManager {
     })
     this.sessions.set(handleId, session)
     session.start()
-    return handleId
   }
 
   /** Drop all per-handle bookkeeping. Called from BOTH natural exit and explicit stop
@@ -132,11 +129,6 @@ export class SessionManager {
 
   setUltracode(handleId: string, on: boolean): Promise<boolean> {
     return this.sessions.get(handleId)?.setUltracode(on) ?? Promise.resolve(false)
-  }
-
-  /** Null when the session isn't live or can't take the browser tools. */
-  setBrowserMcp(handleId: string, json: string | undefined): 'ready' | 'respawning' | null {
-    return this.sessions.get(handleId)?.setBrowserMcp(json) ?? null
   }
 
   sessionIdOf(handleId: string): string | null {

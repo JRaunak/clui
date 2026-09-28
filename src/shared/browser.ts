@@ -5,8 +5,6 @@ export type DriveState = 'idle' | 'driving' | 'user' | 'stopped' | 'done'
 export type BrowserPaneState = 'collapsed' | 'half' | 'full'
 
 export interface BrowserState {
-  /** Tools are attached to the CLI session. */
-  enabled: boolean
   url: string
   title: string
   loading: boolean

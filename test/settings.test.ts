@@ -123,3 +123,15 @@ ok(capBlocksUltra('max') === false, 'capBlocksUltra: max cap allows ultra')
   const r = await (await fresh()).getResolvedSettings()
   ok(r.values.model === 'claude-opus-4-8[1m]', 'settings: explicit pick in overrides-only file preserved')
 }
+// The browser switch is read at every spawn: off by default, a non-boolean never turns it on,
+// and switching it back off leaves no key behind.
+{
+  writeFileSync(SP, JSON.stringify({ schemaVersion: 1, onboarded: true, browserEnabled: 'yes' }))
+  const m = await fresh()
+  ok((await m.getResolvedSettings()).values.browserEnabled === false, 'settings: invalid browserEnabled falls back to off')
+  await m.updateSettings({ browserEnabled: true })
+  ok(onDisk().browserEnabled === true, 'settings: browserEnabled on is persisted')
+  ok((await (await fresh()).getResolvedSettings()).values.browserEnabled === true, 'settings: browserEnabled survives a reload')
+  await m.updateSettings({ browserEnabled: false })
+  ok(!('browserEnabled' in onDisk()), 'settings: browserEnabled off is pruned to the default')
+}

@@ -17,7 +17,7 @@ export function PermissionGate({
   request: PendingPermission
   count: GateCount
   /** For a request Clui raises itself: its own wording, and no tool input or mode switch to offer. */
-  copy?: { title: ReactNode; description: string; allowLabel: string; note?: string }
+  copy?: { title: ReactNode; description: ReactNode; allowLabel: string; note?: string }
 }): JSX.Element {
   const respond = useSession((s) => s.respondPermission)
   const setPermissionMode = useSession((s) => s.setPermissionMode)

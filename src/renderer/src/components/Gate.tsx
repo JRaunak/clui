@@ -170,6 +170,7 @@ export function GateHost(): JSX.Element | null {
 /** The first time Claude, or a page it drives, opens a site. One approval covers every session, so the copy says so. */
 function SiteGate({ request, count }: { request: PendingPermission; count: GateCount }): JSX.Element {
   const bypass = useActive((s) => s?.permissionMode === 'bypassPermissions')
+  const openSettings = useSession((s) => s.openSettings)
   const site = request.displayName ?? ''
   const input = request.input as { cause?: string; from?: string | null } | null
   const byPage = input?.cause === 'page'
@@ -194,7 +195,19 @@ function SiteGate({ request, count }: { request: PendingPermission; count: GateC
             Allow Claude to open <span className="font-mono">{site}</span>?
           </>
         ),
-        description: `This approves ${site} for every session. You can remove it in Settings → Browser.`,
+        description: (
+          <>
+            This approves {site} for every session. You can remove it in{' '}
+            <button
+              type="button"
+              onClick={() => openSettings('browser')}
+              className="rounded-sm text-content underline decoration-[var(--color-dim)] underline-offset-2 pointer-fine:hover:decoration-[var(--color-content)]"
+            >
+              Browser settings
+            </button>
+            .
+          </>
+        ),
         allowLabel: `Allow ${site}`,
         note: bypass ? "Autonomous mode doesn't skip site approvals." : undefined
       }}

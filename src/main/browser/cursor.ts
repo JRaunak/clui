@@ -23,34 +23,36 @@ const CURSOR_SCRIPT = `(() => {
   };
   const sheet = new CSSStyleSheet();
   sheet.replaceSync(\`
-    .c { position: fixed; left: 0; top: 0; width: 18px; height: 18px; transform: translate(-100px, -100px);
+    .c { position: fixed; left: 0; top: 0; width: 20px; height: 20px; transform: translate(-100px, -100px);
          transition: transform 220ms cubic-bezier(0.2, 0, 0, 1) }
-    .c svg { display: block; overflow: visible }
-    .dot { position: absolute; left: -3px; top: 14px; width: 6px; height: 6px; border-radius: 50%; background: #de7356 }
-    .glow { position: absolute; left: 50%; top: 50%; width: 24px; height: 24px; translate: -50% -50%; border-radius: 50%;
+    .c svg { position: relative; display: block; overflow: visible; margin: -2px 0 0 -2px;
+             filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.35)) }
+    .glow { position: absolute; left: 12.8px; top: 12.4px; width: 24px; height: 24px; translate: -50% -50%; border-radius: 50%;
             background: radial-gradient(circle, rgb(222 115 86 / 0.55) 0%, rgb(222 115 86 / 0.22) 35%, rgb(222 115 86 / 0) 70%);
             animation: b 2.8s cubic-bezier(0.37, 0, 0.63, 1) infinite }
+    .c[data-rest] .glow { animation: none; opacity: 0 }
     @keyframes b { 0%, 100% { opacity: 0.55; transform: scale(0.86) } 50% { opacity: 1; transform: scale(1) } }
     .ring { position: fixed; left: 0; top: 0; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%;
-            border: 2px solid #e6e6e6; box-shadow: 0 0 0 1.5px #161617; opacity: 0 }
+            box-sizing: border-box; border: 2px solid #e6e6e6; box-shadow: 0 0 0 1.5px #161617; opacity: 0 }
     .pill { position: fixed; height: 24px; padding: 0 10px; border-radius: 12px; display: flex; align-items: center; gap: 6px;
-            background: #1e1e1f; border: 1px solid #e6e6e6; color: #e6e6e6; font: 500 12px system-ui; transition: opacity 150ms }
-    .pill svg { color: #4ec9b0 }
-    @media (prefers-reduced-motion: reduce) { .c { transition: none } .glow { animation: none; opacity: 1 } .ring { display: none } .pill { transition: none } }\`);
+            background: #1e1e1f; border: 1px solid #e6e6e6; color: #e6e6e6; font: 500 12px system-ui; transition: opacity 150ms;
+            filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.35)) }
+    .bar { width: 3px; height: 12px; border-radius: 1.5px; background: #de7356; flex: none }
+    @media (prefers-reduced-motion: reduce) { .c { transition: none } .glow { animation: none; opacity: 1 } .pill { transition: none } }\`);
   root.adoptedStyleSheets = [sheet];
-  const arrow = make('svg', { width: '18', height: '18', viewBox: '0 0 18 18' }, [
-    make('path', { d: 'M1 1 L1 15 L5 11 L8 17 L10.5 16 L7.5 10 L13 10 Z', fill: '#e6e6e6', stroke: '#161617', 'stroke-width': '1.5', 'stroke-linejoin': 'round' }, [], NS)
+  // The notched arrowhead of Clui's browser icon, with the icon's bar in the notch. The margin on
+  // the svg puts the tip at (2,2) exactly on the translate point.
+  const arrow = make('svg', { width: '20', height: '20', viewBox: '0 0 20 20' }, [
+    make('path', { d: 'M2 2 19 8.2 11.4 11.1 8.5 18.6Z', fill: '#e6e6e6', stroke: '#161617', 'stroke-width': '1.5', 'stroke-linejoin': 'round' }, [], NS),
+    make('rect', { x: '-1.5', y: '-3.25', width: '3', height: '6.5', rx: '1.5', transform: 'translate(14.8 14.4) rotate(45)', fill: '#de7356', stroke: '#161617', 'stroke-width': '1' }, [], NS)
   ], NS);
-  const c = make('div', { class: 'c' }, [arrow, make('span', { class: 'dot' }, [make('span', { class: 'glow' })])]);
+  const c = make('div', { class: 'c' }, [make('span', { class: 'glow' }), arrow]);
   c.hidden = true;
   const ringEl = make('div', { class: 'ring' });
   root.append(c, ringEl);
   document.documentElement.appendChild(host);
-  const key = () => make('svg', { width: '12', height: '12', viewBox: '0 0 12 12', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round' }, [
-    make('circle', { cx: '4', cy: '6', r: '2.5' }, [], NS),
-    make('path', { d: 'M6.5 6H11M9.5 6v2' }, [], NS)
-  ], NS);
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let ringTimer = 0;
   window.__cluiCursor = {
     move(x, y) {
       c.hidden = false;
@@ -59,11 +61,22 @@ const CURSOR_SCRIPT = `(() => {
     },
     ring(x, y) {
       const at = 'translate(' + x + 'px,' + y + 'px)';
+      if (reduced()) {
+        // A still mark where the click landed, since the expanding ring is motion.
+        ringEl.style.transform = at;
+        ringEl.style.opacity = '0.8';
+        clearTimeout(ringTimer);
+        ringTimer = setTimeout(() => { ringEl.style.opacity = '0'; }, 200);
+        return;
+      }
       ringEl.animate([{ transform: at + ' scale(0.6)' }, { transform: at + ' scale(1.6)' }], { duration: 240, easing: 'cubic-bezier(0, 0, 0.2, 1)' });
-      ringEl.animate([{ opacity: 0.5 }, { opacity: 0 }], { duration: 240, easing: 'linear' });
+      ringEl.animate([{ opacity: 0.8 }, { opacity: 0 }], { duration: 240, easing: 'linear' });
     },
     hide() {
       c.hidden = true;
+    },
+    rest(on) {
+      c.toggleAttribute('data-rest', !!on);
     },
     visible() {
       return !!c.isConnected && !c.hidden;
@@ -72,7 +85,7 @@ const CURSOR_SCRIPT = `(() => {
       const el = typeof target === 'string' ? document.querySelector(target) : target;
       if (!el || !el.getBoundingClientRect) return;
       const r = el.getBoundingClientRect();
-      const p = make('div', { class: 'pill' }, [key(), text]);
+      const p = make('div', { class: 'pill' }, [make('span', { class: 'bar' }), text]);
       p.style.visibility = 'hidden';
       root.appendChild(p);
       const w = p.offsetWidth, H = 24, vw = innerWidth;
@@ -130,6 +143,10 @@ export function clickRing(wc: WebContents, x: number, y: number): Promise<unknow
 
 export function hideCursor(wc: WebContents): Promise<unknown> {
   return run(wc, 'window.__cluiCursor?.hide()')
+}
+
+export function restCursor(wc: WebContents, on: boolean): Promise<unknown> {
+  return run(wc, `window.__cluiCursor?.rest(${on})`)
 }
 
 /** `target` is an expression evaluated in the isolated world, e.g. `document.activeElement`. */

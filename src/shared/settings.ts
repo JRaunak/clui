@@ -59,6 +59,9 @@ export interface CluiSettings {
    *  pane and one for the browser, app-wide. Persisted like `sidebarCollapsed`. */
   subagentPaneFull: boolean
   browserPaneFull: boolean
+  /** Give new and resumed sessions Claude's browser tools. Read once at spawn: a running session
+   *  keeps whatever it started with, because MCP servers are fixed for the life of the process. */
+  browserEnabled: boolean
   /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
    *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
@@ -462,6 +465,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   sidebarWidth: 288,
   subagentPaneFull: false,
   browserPaneFull: false,
+  browserEnabled: false,
   enableTaskTools: false,
   // Empty → resolves to ~/.clui in main (getChatDir).
   defaultChatDir: '',

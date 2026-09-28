@@ -26,6 +26,8 @@ import { clampEffort, capBlocksUltra, reconcileModelChoice, supportsUltracodeTog
 import type { ProcessedAttachment } from './lib/images'
 import type { Via } from './lib/motion'
 
+export type SettingsSection = 'general' | 'sessions' | 'browser'
+
 /** A tool-permission request awaiting the user's decision. */
 export interface PendingPermission {
   requestId: string
@@ -304,12 +306,10 @@ export interface PerSessionState {
   createdMs: number
   /** Wall-clock ms of the last activity (for LRU eviction under the cap). */
   lastActivityMs: number
-  /** Browser for this session; null until it's first turned on. */
+  /** Browser for this session; null when its process started without the browser tools. */
   browser: BrowserState | null
   /** This session's browser is showing in the right sidebar. Its size is the app-wide `browserPaneFull`. */
   browserOpen: boolean
-  /** The user asked for the browser while work was running; it turns on when the session is clear. */
-  browserPending: boolean
 }
 
 /** What the sign-in Gates send back to main. Never stored in the slice: it can carry a password. */
@@ -383,6 +383,8 @@ interface SessionStore {
   setFindActiveId: (id: string | null) => void
   /** True when the ⌘⇧F global search overlay is open. */
   globalSearchOpen: boolean
+  /** The Settings section showing; null while Settings is closed. */
+  settingsSection: SettingsSection | null
   /**
    * A jump request for Chat: scroll to the message with this id, washing it when `flash` is set.
    * `nonce` makes repeated jumps to the SAME id re-fire (Chat watches the nonce). No need to
@@ -419,6 +421,9 @@ interface SessionStore {
   setFindOpen: (open: boolean) => void
   /** Open/close the ⌘⇧F global search overlay. */
   setGlobalSearchOpen: (open: boolean) => void
+  /** Open Settings on a section, or switch to it while open. Without one it opens on General. */
+  openSettings: (section?: SettingsSection) => void
+  closeSettings: () => void
   /** Request Chat scroll to a message by id; `flash` marks where the reader landed. */
   requestScrollTo: (messageId: string, opts?: { align?: 'start'; flash?: Via }) => void
 
@@ -519,11 +524,9 @@ interface SessionStore {
   /** Set the active session's browser pane. Opening it replaces a subagent view. Half or full is an
    *  explicit size choice and is saved for every session. */
   setBrowserPane: (next: BrowserPaneState) => void
-  /** Show or hide the active session's browser, turning it on first if needed. `apply` makes the
-   *  pane change, so a pointer caller can wrap it in a transition. */
-  toggleBrowser: (apply?: (next: BrowserPaneState) => void) => Promise<void>
-  /** Detach the browser tools from the active session and close its page. */
-  turnOffBrowser: () => Promise<void>
+  /** Show or hide the active session's browser. `apply` makes the pane change, so a pointer caller
+   *  can wrap it in a transition. A session without the tools has no browser, so this is a no-op there. */
+  toggleBrowser: (apply?: (next: BrowserPaneState) => void) => void
   /** Stop also interrupts the running turn. */
   browserDrive: (action: 'stop' | 'handback' | 'takeover' | 'reset') => Promise<void>
 }
@@ -691,7 +694,7 @@ let knownModelIds: string[] = []
  */
 const modelPrefsBySessionId = new Map<
   string,
-  { model?: ModelChoice; effort?: EffortChoice; ultracode?: boolean; browser?: boolean }
+  { model?: ModelChoice; effort?: EffortChoice; ultracode?: boolean }
 >()
 
 /** Remember a session's model/effort/ultracode (in-memory + sidecar). Merges fields. */
@@ -706,9 +709,7 @@ function rememberModelPrefs(
     effort: prefs.effort ?? cur.effort,
     ultracode: prefs.ultracode ?? cur.ultracode
   }
-  // Main owns the browser flag on disk (it writes it when the tools attach), so it's kept here
-  // for a resume but never sent back, where a stale copy could overwrite a newer toggle.
-  modelPrefsBySessionId.set(sessionId, { ...cur, ...next })
+  modelPrefsBySessionId.set(sessionId, next)
   void window.clui.setSessionModel(sessionId, next)
 }
 
@@ -736,7 +737,7 @@ export function ensureModelPrefsLoaded(): Promise<void> {
             prefs.effort && (EFFORT_CHOICES as string[]).includes(prefs.effort)
               ? (prefs.effort as EffortChoice)
               : undefined
-          modelPrefsBySessionId.set(sid, { model: prefs.model, effort, ultracode: prefs.ultracode, browser: prefs.browser })
+          modelPrefsBySessionId.set(sid, { model: prefs.model, effort, ultracode: prefs.ultracode })
         }
       } catch {
         // best-effort: resume just falls back to the Settings default model/effort
@@ -754,9 +755,6 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
     // After a turn ends, prune changed-files that were deleted this turn (incl. by
     // the agent via Bash rm, which surfaces no file_path). Fire-and-forget.
     if (event.type === 'result') void useSession.getState().pruneChangedFiles(handleId)
-    const slice = useSession.getState().sessions[handleId]
-    if (slice?.browserPending && !workRunning(slice))
-      void enableBrowser(handleId, () => useSession.setState((st) => patchSlice(st, handleId, { browserOpen: true })))
   })
 }
 
@@ -897,7 +895,7 @@ async function beginSession(
   // values (from the sidecar). Verified: --model/--effort ARE honored on a --resume
   // spawn, and the CLI otherwise reverts to the settings.json default (dropping the
   // user's mid-session switch). On a fresh session they're the Settings default.
-  const { handleId } = await window.clui.startSession({
+  const { handleId, browser } = await window.clui.startSession({
     ...opts,
     permissionMode: choice,
     model: modelChoice,
@@ -953,13 +951,9 @@ async function beginSession(
     exited: false,
     createdMs: now,
     lastActivityMs: now,
-    browser: null,
-    browserOpen: false,
-    browserPending: false
+    browser: browser ? { ...BLANK_BROWSER } : null,
+    browserOpen: false
   })
-  // The tools were on when this session last ran. Main refuses a Quick session, and a refusal
-  // leaves the browser off.
-  if (remembered?.browser && !opts.ephemeral) void enableBrowser(handleId, null)
 }
 
 /** In-flight resume ids: a reservation so two concurrent resumes of the SAME durable
@@ -1028,19 +1022,8 @@ function evictIfOverCap(
   })
 }
 
-/** Attaching or detaching the browser respawns the CLI, and SIGTERM on the child also ends its
- *  background shells and subagents, so it waits until none of them is running. */
-function workRunning(s: PerSessionState): boolean {
-  return (
-    s.busy ||
-    s.interrupting ||
-    Object.values(s.backgroundTasks).some((t) => t.status === 'running') ||
-    Object.values(s.workflows).some((w) => w.endedStatus === null)
-  )
-}
-
-const CONNECTING_BROWSER: BrowserState = {
-  enabled: false,
+/** A session's page before anything has loaded. Its view is created the first time the pane opens. */
+const BLANK_BROWSER: BrowserState = {
   url: 'about:blank',
   title: '',
   loading: false,
@@ -1050,44 +1033,6 @@ const CONNECTING_BROWSER: BrowserState = {
   suspended: false,
   still: null,
   loginWall: null
-}
-
-/** Turn the browser on for a session, or defer it while work is running. With `open`, the pane
- *  opens at once, before the tools attach, and the toolbar reads Connecting until they do. */
-async function enableBrowser(handleId: string, open: ((next: BrowserPaneState) => void) | null): Promise<boolean> {
-  const s = useSession.getState().sessions[handleId]
-  if (!s) return false
-  if (workRunning(s)) {
-    useSession.setState((st) => ({
-      ...patchSlice(st, handleId, { browserPending: true }),
-      notice: { message: 'Browser turns on when the running work finishes.', tone: 'warn' }
-    }))
-    return false
-  }
-  // Set before the await, so a second event landing meanwhile doesn't enable twice.
-  useSession.setState((st) => patchSlice(st, handleId, { browserPending: false, browser: CONNECTING_BROWSER }))
-  open?.(useSession.getState().browserPaneFull ? 'full' : 'half')
-  const ok = await window.clui.browserSetEnabled(handleId, true).catch(() => false)
-  if (!ok) {
-    const wasOpen = !!useSession.getState().sessions[handleId]?.browserOpen
-    useSession.setState((st) => ({
-      ...patchSlice(st, handleId, { browser: null, browserOpen: false }),
-      notice: { message: "Couldn't turn on the browser.", tone: 'error' }
-    }))
-    // The pane that held focus is gone.
-    if (wasOpen && useSession.getState().activeHandleId === handleId)
-      requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="browser-toggle"]')?.focus())
-    return false
-  }
-  // Main sends enabled: true once the CLI has the tools, which is when Connecting clears.
-  noteBrowserPref(s.sessionId, true)
-  return true
-}
-
-/** Keeps the in-memory resume flag in step with a toggle; main has already written the file. */
-function noteBrowserPref(sessionId: string | null, on: boolean): void {
-  if (!sessionId) return
-  modelPrefsBySessionId.set(sessionId, { ...modelPrefsBySessionId.get(sessionId), browser: on })
 }
 
 let announceSeq = 0
@@ -1229,6 +1174,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   findOpen: false,
   findActiveId: null,
   globalSearchOpen: false,
+  settingsSection: null,
   scrollTarget: null,
   currentTurn: null,
   sessionGroups: [],
@@ -2426,6 +2372,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     set((s) => (open && s.viewingSubagent ? {} : open ? { findOpen: true } : { findOpen: false, findActiveId: null })),
   setFindActiveId: (id) => set(() => ({ findActiveId: id })),
   setGlobalSearchOpen: (open) => set(() => ({ globalSearchOpen: open })),
+  openSettings: (section = 'general') => set(() => ({ settingsSection: section })),
+  closeSettings: () => set(() => ({ settingsSection: null })),
   requestScrollTo: (messageId, opts) =>
     set((s) => ({ scrollTarget: { messageId, nonce: (s.scrollTarget?.nonce ?? 0) + 1, align: opts?.align, flash: opts?.flash } })),
   setCurrentTurn: (v) => set({ currentTurn: v }),
@@ -2433,7 +2381,6 @@ export const useSession = create<SessionStore>((set, get) => ({
   applyBrowserEvent: (handleId, e) => {
     switch (e.type) {
       case 'state':
-        // A late event for a browser already turned off must not bring it back.
         set((s) => {
           const cur = s.sessions[handleId]?.browser
           if (!cur) return {}
@@ -2498,7 +2445,6 @@ export const useSession = create<SessionStore>((set, get) => ({
   setBrowserPane: (next) => {
     const s = get()
     const active = activeSlice(s)
-    // No page to show until the browser is on; an empty pane would have no view behind it.
     if (!active || (next !== 'collapsed' && !active.browser)) return
     const open = next !== 'collapsed'
     const full = open ? next === 'full' : s.browserPaneFull
@@ -2512,34 +2458,14 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (full !== s.browserPaneFull) void window.clui.updateSettings({ browserPaneFull: full })
   },
 
-  toggleBrowser: async (apply) => {
+  toggleBrowser: (apply) => {
     const active = activeSlice(get())
-    if (!active || active.ephemeral) return
+    if (!active?.browser) return
     const show = apply ?? get().setBrowserPane
-    if (!active.browser) {
-      await enableBrowser(active.handleId, show)
-      return
-    }
     const st = get()
     const shown = !st.viewingSubagent && active.browserOpen
     // A narrow Stage renders half as full, and keeps the user's choice for when it grows back.
     show(shown ? 'collapsed' : st.browserPaneFull ? 'full' : 'half')
-  },
-
-  turnOffBrowser: async () => {
-    const active = activeSlice(get())
-    if (!active?.browser) return
-    if (workRunning(active)) {
-      get().setNotice('Wait for the running work to finish, then turn the browser off.', 'warn')
-      return
-    }
-    const ok = await window.clui.browserSetEnabled(active.handleId, false).catch(() => false)
-    if (!ok) {
-      get().setNotice("Couldn't turn off the browser.", 'error')
-      return
-    }
-    noteBrowserPref(active.sessionId, false)
-    set((s) => patchSlice(s, active.handleId, { browser: null, browserOpen: false }))
   },
 
   browserDrive: async (action) => {

@@ -110,7 +110,6 @@ const api: CluiApi = {
     ipcRenderer.on(IpcChannels.reducedTransparencyChanged, listener)
     return () => ipcRenderer.removeListener(IpcChannels.reducedTransparencyChanged, listener)
   },
-  browserSetEnabled: (handleId, on) => ipcRenderer.invoke(IpcChannels.browserSetEnabled, handleId, on),
   browserSetBounds: (handleId, b) => ipcRenderer.send(IpcChannels.browserSetBounds, handleId, b),
   browserSetVisible: (handleId, visible) => ipcRenderer.invoke(IpcChannels.browserSetVisible, handleId, visible),
   browserNavigate: (handleId, url) => ipcRenderer.invoke(IpcChannels.browserNavigate, handleId, url),

@@ -3,12 +3,10 @@ import { useActive, useSession } from '../store'
 import { onOcclusion } from '../lib/browserOcclusion'
 import { getStage } from '../lib/stage'
 import { siteKeyOf } from '../../../shared/browser'
-import { viaOf } from '../lib/motion'
-import { usePopover } from './Popover'
 import { PaneHeader, PANE_BTN } from './Stage'
-import { BrowserToolbar } from './BrowserToolbar'
+import { BrowserDriveStrip, BrowserToolbar } from './BrowserToolbar'
 import { Button } from './Button'
-import { IconMore } from './Icon'
+import { IconExternal, IconSettings } from './Icon'
 
 export function BrowserPane(): JSX.Element | null {
   const handleId = useSession((s) => s.activeHandleId)
@@ -28,8 +26,8 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
   const suspended = useActive((s) => s?.browser?.suspended ?? false)
   const wall = useActive((s) => s?.browser?.loginWall === 'hardware')
   const announce = useSession((s) => s.browserAnnounce)
-  // The pane opens before the tools attach, so bounds and visibility are sent again once they do.
-  const enabled = useActive((s) => s?.browser?.enabled ?? false)
+  const openSettings = useSession((s) => s.openSettings)
+  const external = !!siteKeyOf(url)
 
   useEffect(() => {
     const el = areaRef.current
@@ -60,7 +58,7 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
       stage?.removeEventListener('transitionend', schedule)
       cancelAnimationFrame(raf)
     }
-  }, [handleId, enabled])
+  }, [handleId])
 
   const [occluded, setOccluded] = useState(false)
   useEffect(() => onOcclusion(setOccluded), [])
@@ -68,7 +66,7 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
   const visible = !occluded && !suspended && !wall
   useLayoutEffect(() => {
     void window.clui.browserSetVisible(handleId, visible)
-  }, [handleId, visible, enabled])
+  }, [handleId, visible])
   // Collapsing unmounts the pane; the page stays live in main, only off screen.
   useEffect(
     () => () => {
@@ -81,7 +79,33 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
     <div className="relative flex min-h-0 flex-1 flex-col">
       <PaneHeader
         kind="Browser"
-        trailing={<MoreMenu />}
+        actions={
+          <>
+            <button
+              type="button"
+              data-ui="browser-external"
+              aria-label="Open in your browser"
+              title={external ? 'Open in your browser' : 'Open in your browser. Nothing to open yet.'}
+              aria-disabled={!external || undefined}
+              onClick={() => {
+                if (external) void window.clui.openExternal(url)
+              }}
+              className={`${PANE_BTN} aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:pointer-fine:hover:bg-transparent aria-disabled:pointer-fine:hover:text-dim`}
+            >
+              <IconExternal className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              data-ui="browser-settings"
+              aria-label="Browser settings"
+              title="Browser settings"
+              onClick={() => openSettings('browser')}
+              className={PANE_BTN}
+            >
+              <IconSettings className="h-4 w-4" />
+            </button>
+          </>
+        }
       >
         <span
           data-ui="pane-title"
@@ -94,6 +118,7 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
       </PaneHeader>
       <div aria-hidden="true" className="shrink-0" style={{ height: 'var(--top-h, 0px)' }} />
       <BrowserToolbar handleId={handleId} />
+      <BrowserDriveStrip />
       <div data-ui="browser-pane" ref={areaRef} className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-bg">
         {still && <img src={still} alt="" className="absolute inset-0 h-full w-full object-cover object-left-top" />}
         {suspended ? (
@@ -124,7 +149,7 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
                 regular browser, or use a password sign-in if the site offers one.
               </p>
               <Button variant="control" size="sm" data-pane-title="" className="self-start" onClick={() => void window.clui.openExternal(url)}>
-                Open in my browser
+                Open in your browser
               </Button>
             </div>
           </div>
@@ -134,43 +159,5 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
         </span>
       </div>
     </div>
-  )
-}
-
-function MoreMenu(): JSX.Element {
-  const p = usePopover({ placement: 'down', align: 'end' })
-  const itemRef = useRef<HTMLButtonElement>(null)
-  const turnOffBrowser = useSession((s) => s.turnOffBrowser)
-  useEffect(() => {
-    if (p.open) itemRef.current?.focus()
-  }, [p.open])
-  return (
-    <>
-      <button {...p.triggerProps} type="button" aria-haspopup="menu" aria-label="More browser actions" title="More" className={PANE_BTN}>
-        <IconMore className="h-4 w-4" />
-      </button>
-      <div
-        {...p.popoverProps}
-        role="menu"
-        aria-label="Browser actions"
-        className="pop-base pop glass-thick min-w-[188px] rounded-lg p-1"
-        onKeyDown={(e) => {
-          if (e.key === 'Tab') p.close({ via: 'keyboard', returnFocus: false })
-        }}
-      >
-        <button
-          ref={itemRef}
-          type="button"
-          role="menuitem"
-          className="flex w-full items-center rounded-md px-3 py-2 text-left text-label text-content -outline-offset-2 hover:bg-[var(--glass-row-hover)] focus-visible:bg-[var(--glass-row-hover)]"
-          onClick={(e) => {
-            p.close({ via: viaOf(e), returnFocus: false })
-            void turnOffBrowser()
-          }}
-        >
-          Turn off browser for this session
-        </button>
-      </div>
-    </>
   )
 }

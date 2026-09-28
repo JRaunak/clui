@@ -12,6 +12,7 @@ import { dirname } from 'node:path'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import {
   IpcChannels,
   type EffortCaps,
@@ -47,7 +48,7 @@ import { listModels } from './models/list'
 import { BrowserManager } from './browser/manager'
 import { BrowserMcpServer } from './browser/mcp'
 import { WORLD } from './browser/cursor'
-import { listSites, removeSite } from './browser/sites'
+import { approve as approveSite, listSites, removeSite } from './browser/sites'
 import { listLogins, removeLogin, saveLogin, vaultAvailable } from './browser/vault'
 import type { ClearBrowsingData, PaneBounds } from '../shared/browser'
 import type { CluiSettings, SettingsKey } from '../shared/settings'
@@ -251,10 +252,6 @@ function registerIpc(): void {
     browser.dispose(handleId)
     mcp.revoke(handleId)
   }
-  const persistBrowser = (handleId: string, on: boolean): void => {
-    const sid = manager.sessionIdOf(handleId)
-    if (sid) void setSessionModel(sid, { browser: on }).catch(() => {})
-  }
   if (process.env.CLUI_TEST_HOOKS === '1') {
     // For the harness only, from Playwright's app.evaluate; the shipped app never sets this variable.
     Object.assign(globalThis, {
@@ -263,7 +260,13 @@ function registerIpc(): void {
         callTool: (handleId: string, name: string, args: Record<string, unknown> = {}) => mcp.callTool(handleId, name, args),
         evalInPage: (handleId: string, code: string) =>
           browser.page(handleId)?.wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]) ?? Promise.resolve(null),
-        clearData: (what: ClearBrowsingData) => browser.clearData(what)
+        clearData: (what: ClearBrowsingData) => browser.clearData(what),
+        approveSite: (site: string) => approveSite(site),
+        // A fresh blank page for the same session and token, so one scene's page can't leak into the next.
+        resetPage: (handleId: string) => {
+          browser.dispose(handleId)
+          browser.enable(handleId)
+        }
       }
     })
   }
@@ -271,8 +274,6 @@ function registerIpc(): void {
   const manager = new SessionManager((handleId, event) => {
     browser.onSessionEvent(handleId, event)
     if (event.type === 'process-exit') disposeBrowser(handleId)
-    else if (event.type === 'session-init' && browser.isEnabled(handleId)) persistBrowser(handleId, true)
-    else if (event.type === 'reconnected') browser.attached(handleId)
     // A `claude` child's stdout can arrive WHILE the window is tearing down. When the
     // BrowserWindow itself is destroyed, even READING `mainWindow.webContents` throws
     // "Object has been destroyed" (the getter throws), so we must check
@@ -344,7 +345,10 @@ function registerIpc(): void {
     // auth-relevant subset from the login shell (like detect.ts does for PATH) and merge
     // it into the child env. Cached; best-effort (empty → CLI behaves as before).
     const authEnv = await loginShellAuthEnv()
-    const handleId = manager.start({
+    // The token in the config is bound to the handle, so the handle exists before the process does.
+    const handleId = randomUUID()
+    const withBrowser = settings.browserEnabled && !opts.ephemeral
+    manager.start(handleId, {
       cliPath: info.path,
       cwd: opts.cwd,
       resumeSessionId: opts.resumeSessionId,
@@ -362,9 +366,11 @@ function registerIpc(): void {
       gated: true,
       // Per-session override wins over the global default; 'inherit' → no flag
       // (honor ~/.claude/settings.json). Never writes any settings file.
-      permissionMode: modeToFlag(opts.permissionMode ?? settings.permissionMode)
+      permissionMode: modeToFlag(opts.permissionMode ?? settings.permissionMode),
+      browserMcp: withBrowser ? await mcp.configFor(handleId) : undefined
     })
-    return { handleId }
+    if (withBrowser) browser.enable(handleId)
+    return { handleId, browser: withBrowser }
   })
 
   ipcMain.handle(
@@ -419,21 +425,6 @@ function registerIpc(): void {
     disposeBrowser(handleId)
   })
 
-  handle(IpcChannels.browserSetEnabled, async (_e, handleId: string, on: boolean) => {
-    if (on) {
-      const attach = manager.setBrowserMcp(handleId, await mcp.configFor(handleId))
-      if (!attach) {
-        mcp.revoke(handleId)
-        return false
-      }
-      browser.enable(handleId, attach === 'ready')
-    } else {
-      manager.setBrowserMcp(handleId, undefined)
-      disposeBrowser(handleId)
-    }
-    persistBrowser(handleId, on)
-    return true
-  })
   ipcMain.on(IpcChannels.browserSetBounds, (e, handleId: string, b: PaneBounds | null) => {
     if (fromTrustedFrame(e)) browser.setBounds(handleId, b)
   })

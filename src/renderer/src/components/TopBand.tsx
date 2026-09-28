@@ -30,6 +30,7 @@ export function TopBand({
   scrolled: boolean
 }): JSX.Element {
   const reported = useSession((s) => s.activeHandleId !== null && s.primaryScrolledFor === s.activeHandleId)
+  const hasBrowser = useActive((s) => !!s?.browser)
   const [painted, setPainted] = useState(false)
   // The fade arms a frame after the open session's first report, so a session that opens scrolled
   // paints its tint without fading in.
@@ -71,31 +72,33 @@ export function TopBand({
         style={split ? { width: `calc(var(--primary-w, 50%) - ${leftInset}px)` } : { flex: '1 1 0%' }}
       >
         <div data-ui="top-band-drag" aria-hidden="true" className="h-full w-6 shrink-0 [-webkit-app-region:drag]" />
-        <TopSlot leftInset={leftInset} rightInset={split ? SPLIT_RIGHT_INSET : RIGHT_INSET} split={split} />
+        <TopSlot leftInset={leftInset} rightInset={hasBrowser && !split ? RIGHT_INSET : EDGE_INSET} split={split} />
         <div data-ui="top-band-drag" aria-hidden="true" className="h-full w-6 shrink-0 [-webkit-app-region:drag]" />
       </div>
       {split && (
         <div data-ui="top-band-drag" aria-hidden="true" className="h-full min-w-0 flex-1 [-webkit-app-region:drag]" />
       )}
-      <div data-ui="top-band-actions" className="flex shrink-0 items-center gap-1">
-        <BrowserToggle />
-      </div>
+      {hasBrowser && (
+        <div data-ui="top-band-actions" className="flex shrink-0 items-center gap-1">
+          <BrowserToggle />
+        </div>
+      )}
       <div data-ui="top-band-drag" aria-hidden="true" className="h-full w-2 shrink-0 [-webkit-app-region:drag]" />
     </div>
   )
 }
+
+// The trailing w-2 inset, the 28px Browser toggle and an 8px gap, the same gap leftInset keeps past
+// the collapsed toggle, so the header never touches it. In a split the toggle sits over the other pane,
+// past the slot's edge, and a session without the browser has no toggle, so only the inset is left.
+const RIGHT_INSET = 44
+const EDGE_INSET = 8
 
 /**
  * The band's middle slot, which is always a drag spacer. Its content floats in an overlay laid on
  * the transcript's column box, so "You" lines up with the messages under it rather than with the
  * spacers around the slot; only the content's own controls take the pointer.
  */
-// The trailing w-2 inset, the 28px Browser toggle and an 8px gap, the same gap leftInset keeps past
-// the collapsed toggle, so the header never touches it. In a split the toggle sits over the other pane,
-// past the slot's edge, so only the inset is left.
-const RIGHT_INSET = 44
-const SPLIT_RIGHT_INSET = 8
-
 export function TopSlot({
   leftInset,
   rightInset,
@@ -136,23 +139,18 @@ export function TopSlot({
 function BrowserToggle(): JSX.Element {
   const open = useSession((s) => !s.viewingSubagent && selectBrowserOpen(activeSlice(s)))
   const driving = useActive((s) => s?.browser?.drive === 'driving')
-  const connecting = useActive((s) => s?.browser?.enabled === false)
-  const ephemeral = useActive((s) => s?.ephemeral ?? false)
   const toggleBrowser = useSession((s) => s.toggleBrowser)
   return (
     <button
       type="button"
-      title={ephemeral ? "Quick sessions can't use the browser" : open ? 'Hide browser ⌘⇧B' : 'Show browser ⌘⇧B'}
+      title={open ? 'Hide browser ⌘⇧B' : 'Show browser ⌘⇧B'}
       data-ui="browser-toggle"
       aria-label={driving && !open ? 'Browser, Claude is driving' : 'Browser'}
       aria-expanded={open}
       aria-controls={open ? 'browser-pane-region' : undefined}
-      aria-busy={connecting || undefined}
-      aria-disabled={ephemeral || undefined}
       onClick={(e) => {
-        if (ephemeral) return
         const via = viaOf(e)
-        void toggleBrowser((next) => setBrowserPaneVia(next, via))
+        toggleBrowser((next) => setBrowserPaneVia(next, via))
       }}
       className="toggle-press relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim transition-colors pointer-fine:hover:bg-[var(--glass-row-hover)] pointer-fine:hover:text-content"
     >

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { useActive, useSession } from '../store'
 import type { DriveState } from '../../../shared/browser'
 import { IconChevron, IconClose, IconRefresh, IconStop } from './Icon'
@@ -11,6 +11,12 @@ const ANNOUNCE: Partial<Record<DriveState, string>> = {
   user: 'You took over. Claude is paused.',
   stopped: 'Browser control stopped.',
   done: 'Claude finished with the browser.'
+}
+
+const STRIP: Partial<Record<DriveState, { label: string; hint: string }>> = {
+  driving: { label: 'Claude is driving', hint: 'Click the page to take over' },
+  user: { label: "You're driving", hint: 'Claude is paused' },
+  stopped: { label: 'Stopped', hint: 'Send a message to let Claude use the browser again' }
 }
 
 /** A bare host or host:port gets https://; anything with a real scheme goes to main as typed, which
@@ -31,58 +37,34 @@ function splitUrl(url: string): { origin: string; rest: string } {
   }
 }
 
-/** Back, forward, reload, the address and who is driving. */
 export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element {
   const url = useActive((s) => s?.browser?.url ?? '')
   const loading = useActive((s) => s?.browser?.loading ?? false)
   const canBack = useActive((s) => s?.browser?.canBack ?? false)
   const canForward = useActive((s) => s?.browser?.canForward ?? false)
-  const drive = useActive((s) => s?.browser?.drive ?? 'idle')
+  const driving = useActive((s) => s?.browser?.drive === 'driving')
   const suspended = useActive((s) => s?.browser?.suspended ?? false)
   const wall = useActive((s) => s?.browser?.loginWall === 'hardware')
-  const connecting = useActive((s) => s?.browser?.enabled === false)
   const setNotice = useSession((s) => s.setNotice)
-  const browserDrive = useSession((s) => s.browserDrive)
 
   const shown = url === 'about:blank' ? '' : url
   const [focused, setFocused] = useState(false)
   // Null until the user edits, so a navigation while the field has focus still shows the new URL.
   const [draft, setDraft] = useState<string | null>(null)
-  const driving = drive === 'driving'
   const { origin, rest } = splitUrl(shown)
-
-  const [announce, setAnnounce] = useState('')
-  const prevDrive = useRef(drive)
-  const seq = useRef(0)
-  useEffect(() => {
-    const prev = prevDrive.current
-    prevDrive.current = drive
-    if (prev === drive) return
-    const text = drive === 'driving' ? (prev === 'user' ? 'Claude is driving again.' : 'Claude is driving the browser.') : ANNOUNCE[drive]
-    if (text) setAnnounce(`${text}${'\u200b'.repeat(++seq.current % 2)}`)
-  }, [drive])
 
   const navBtn = `${PANE_BTN} disabled:pointer-events-none disabled:opacity-40`
   const nav = (action: 'back' | 'forward' | 'reload' | 'stop'): void => void window.clui.browserNav(handleId, action)
 
-  // An address entered while connecting is sent once the tools attach.
-  const [queued, setQueued] = useState(false)
   const go = async (): Promise<void> => {
     if (!draft?.trim()) return
-    if (connecting) return setQueued(true)
-    setQueued(false)
     const err = await window.clui.browserNavigate(handleId, normalize(draft))
     if (err) setNotice(err, 'warn')
     else setDraft(null)
   }
-  useEffect(() => {
-    if (queued && !connecting) void go()
-    // go is rebuilt every render; only the attach should fire it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queued, connecting])
 
   return (
-    <div className="glass-bar @container flex h-10 shrink-0 items-center gap-1.5 px-2 [--bar-edge:var(--color-border)] contrast-more:[--bar-edge:var(--color-control-edge)]" style={SOLID}>
+    <div className="glass-bar flex h-10 shrink-0 items-center gap-1.5 px-2 [--bar-edge:var(--color-border)] contrast-more:[--bar-edge:var(--color-control-edge)]" style={SOLID}>
       <button type="button" aria-label="Back" disabled={!canBack} onClick={() => nav('back')} className={navBtn}>
         <IconChevron className="h-4 w-4 rotate-180" />
       </button>
@@ -139,58 +121,104 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
         )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
-        {connecting ? (
-          <span className="text-label text-dim">Connecting</span>
-        ) : suspended ? (
-          <span className="text-label text-dim">Paused</span>
-        ) : drive === 'driving' ? (
-          <>
-            <span className="flex items-center">
-              <span className="relative mr-1 h-2 w-2 shrink-0 rounded-full bg-accent" aria-hidden="true" />
-              <span className="text-label text-content">Claude is driving</span>
-            </span>
-            <StopButton onStop={() => void browserDrive('stop')} />
-          </>
-        ) : drive === 'user' ? (
-          <>
-            <span className="text-label text-content">You&apos;re driving</span>
-            <button
-              type="button"
-              data-ui="browser-handback"
-              onClick={() => void browserDrive('handback')}
-              className="btn-primary flex h-7 items-center py-0"
-            >
-              Hand back
-            </button>
-            <StopButton onStop={() => void browserDrive('stop')} />
-          </>
-        ) : drive === 'stopped' ? (
-          <span className="text-label text-dim">Stopped</span>
-        ) : drive === 'done' ? (
-          <span className="text-label text-dim">Done</span>
-        ) : null}
-      </div>
-      <span className="sr-only" aria-live="polite">
-        {announce}
-      </span>
+      {suspended && <span className="shrink-0 text-label text-dim">Page paused</span>}
     </div>
   )
 }
 
-function StopButton({ onStop }: { onStop: () => void }): JSX.Element {
+/**
+ * Who is driving, on its own line between the toolbar and the page. It never animates: the page
+ * under it jumps by the strip's height, and motion would only draw the eye to the jump. The live
+ * region sits outside the strip so it's still mounted to say "finished" once the strip has gone.
+ */
+export function BrowserDriveStrip(): JSX.Element {
+  const drive = useActive((s) => s?.browser?.drive ?? 'idle')
+  const suspended = useActive((s) => s?.browser?.suspended ?? false)
+  const browserDrive = useSession((s) => s.browserDrive)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const state = suspended ? undefined : STRIP[drive]
+
+  const [announce, setAnnounce] = useState('')
+  const prevDrive = useRef(drive)
+  const seq = useRef(0)
+  useEffect(() => {
+    const prev = prevDrive.current
+    prevDrive.current = drive
+    if (prev === drive) return
+    const text = drive === 'driving' ? (prev === 'user' ? 'Claude is driving again.' : 'Claude is driving the browser.') : ANNOUNCE[drive]
+    if (text) setAnnounce(`${text}${'\u200b'.repeat(++seq.current % 2)}`)
+  }, [drive])
+
+  // The pressed button unmounts once main answers, so focus that was in the strip goes to the next
+  // useful control: Stop after Hand back, the address once Claude is stopped.
+  const refocus = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    const target = refocus.current
+    if (!target) return
+    refocus.current = null
+    document.querySelector<HTMLElement>(target)?.focus()
+  }, [drive])
+  const act = (action: 'stop' | 'handback'): void => {
+    if (rootRef.current?.contains(document.activeElement))
+      refocus.current = action === 'stop' ? '[data-ui="browser-url"]' : '[data-ui="browser-stop"]'
+    void browserDrive(action)
+  }
+
   return (
-    <button
-      type="button"
-      data-ui="browser-stop"
-      title="Stop ⌘."
-      aria-label="Stop"
-      aria-keyshortcuts="Meta+Period"
-      onClick={onStop}
-      className="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md bg-bg-raised px-2.5 text-label text-content transition-colors pointer-fine:hover:bg-border active:bg-border-strong @max-[560px]:w-7 @max-[560px]:px-0"
-    >
-      <IconStop className="h-3.5 w-3.5" />
-      <span className="@max-[560px]:hidden">Stop</span>
-    </button>
+    <>
+      {state && (
+        <div
+          ref={rootRef}
+          data-ui="browser-drive-strip"
+          className="@container flex h-9 shrink-0 items-center gap-2 border-b border-border bg-tool pl-2 pr-2"
+        >
+          <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center gap-0.5">
+            {drive === 'driving' ? (
+              <span className="h-2 w-2 rounded-full bg-accent" />
+            ) : drive === 'user' ? (
+              <>
+                <span className="h-2 w-0.5 rounded-[1px] bg-dim" />
+                <span className="h-2 w-0.5 rounded-[1px] bg-dim" />
+              </>
+            ) : (
+              <span className="h-2 w-2 rounded-[1.5px] bg-dim" />
+            )}
+          </span>
+          <span className="whitespace-nowrap text-label font-medium text-content">{state.label}</span>
+          <span title={state.hint} className="min-w-0 flex-1 truncate text-label text-dim @max-[400px]:hidden">
+            {state.hint}
+          </span>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {drive === 'user' && (
+              <button
+                type="button"
+                data-ui="browser-handback"
+                onClick={() => act('handback')}
+                className="btn-primary flex h-7 items-center py-0"
+              >
+                Hand back
+              </button>
+            )}
+            {drive !== 'stopped' && (
+              <button
+                type="button"
+                data-ui="browser-stop"
+                title="Stop ⌘."
+                aria-label="Stop"
+                aria-keyshortcuts="Meta+Period"
+                onClick={() => act('stop')}
+                className="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-control-edge bg-control px-2.5 text-label text-content transition-colors pointer-fine:hover:bg-control-hover active:bg-border-strong @max-[400px]:w-7 @max-[400px]:px-0"
+              >
+                <IconStop className="h-3.5 w-3.5" />
+                <span className="@max-[400px]:hidden">Stop</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      <span className="sr-only" aria-live="polite">
+        {announce}
+      </span>
+    </>
   )
 }

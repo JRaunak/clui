@@ -229,7 +229,7 @@ function SaveLogin({
             aria-describedby={userErr ? userErrId : undefined}
             className={LOGIN_INPUT}
           />
-          {userErr && <FieldError id={userErrId} text="Enter a username" />}
+          {userErr && <FieldError id={userErrId} text="Enter a username." />}
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor={`${id}-pass`} className="text-meta text-dim">
@@ -251,7 +251,7 @@ function SaveLogin({
             />
             <RevealButton pressed={reveal} onToggle={() => setReveal((r) => !r)} />
           </div>
-          {passErr && <FieldError id={passErrId} text="Enter a password" />}
+          {passErr && <FieldError id={passErrId} text="Enter a password." />}
         </div>
         <div className="flex flex-col gap-1">
           <label htmlFor={`${id}-seed`} className="text-meta text-dim">

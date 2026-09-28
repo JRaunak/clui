@@ -16,7 +16,7 @@ import {
 } from '../../shared/browser'
 import type { DomainEvent } from '../../shared/events'
 import { Cdp } from './cdp'
-import { hideCursor, injectCursor } from './cursor'
+import { hideCursor, injectCursor, restCursor } from './cursor'
 import { approve, isApproved, isApprovedCached, listSites } from './sites'
 import { IpcChannels, type CluiApi } from '../../shared/ipc'
 import { saveLogin } from './vault'
@@ -29,6 +29,7 @@ const MAX_LIVE = 3
 const GATE_WAIT_MS = 50_000
 const LOAD_WAIT_MS = 20_000
 const QUIET_MS = 150
+const BOUNDS_WAIT_MS = 300
 
 export const TEXT = {
   refused: 'Only http(s) pages can be opened.',
@@ -67,13 +68,14 @@ interface Entry {
   userSites: Set<string>
   agentActingUntil: number
   stillTimer: ReturnType<typeof setTimeout> | null
+  /** Resolves the wait for the renderer's next bounds report. */
+  onBounds: (() => void) | null
 }
 
 const USER_INPUT = new Set(['mouseDown', 'keyDown', 'rawKeyDown', 'mouseWheel'])
 
 function initialState(): BrowserState {
   return {
-    enabled: true,
     url: 'about:blank',
     title: '',
     loading: false,
@@ -131,17 +133,13 @@ export class BrowserManager {
     this.emit(handleId, { type: 'state', patch })
   }
 
-  isEnabled(handleId: string): boolean {
-    return this.entries.has(handleId)
-  }
-
-  /** `attached`: the CLI already has the tools. Otherwise the renderer reads Connecting until attached() runs. */
-  enable(handleId: string, attached: boolean): void {
+  /** A session that starts with the tools. Its page is created the first time it's shown or driven. */
+  enable(handleId: string): void {
     if (this.entries.has(handleId)) return
-    const e: Entry = {
+    this.entries.set(handleId, {
       view: null,
       cdp: null,
-      state: { ...initialState(), enabled: attached },
+      state: initialState(),
       lastViewedMs: Date.now(),
       bounds: null,
       shown: false,
@@ -149,16 +147,9 @@ export class BrowserManager {
       deniedSites: new Set(),
       userSites: new Set(),
       agentActingUntil: 0,
-      stillTimer: null
-    }
-    this.entries.set(handleId, e)
-    this.ensureView(handleId, e)
-    if (attached) this.patch(handleId, e, { enabled: true })
-  }
-
-  attached(handleId: string): void {
-    const e = this.entries.get(handleId)
-    if (e && !e.state.enabled) this.patch(handleId, e, { enabled: true })
+      stillTimer: null,
+      onBounds: null
+    })
   }
 
   /** Create the view for a new or suspended entry, suspending the stalest page past the cap. */
@@ -316,6 +307,7 @@ export class BrowserManager {
     if (!e) return
     e.bounds = b
     this.sync(e)
+    e.onBounds?.()
     if (b) this.scheduleStill(handleId, e, 300)
   }
 
@@ -324,6 +316,8 @@ export class BrowserManager {
     if (!e) return null
     if (visible) {
       for (const [h, other] of this.entries) if (h !== handleId && other.shown) await this.setVisible(h, false)
+      // A suspended page waits for Reload rather than coming back on its own.
+      if (!e.state.suspended) this.ensureView(handleId, e)
       e.shown = true
       e.lastViewedMs = Date.now()
       this.sync(e)
@@ -432,7 +426,11 @@ export class BrowserManager {
     if (e.deniedSites.has(site)) return TEXT.declined(site)
     if (await isApproved(site)) return null
     const from = cause === 'page' ? siteKeyOf(e.state.url) : null
+    // The cursor's light goes out while the Gate is open; the sprite stays where Claude was.
+    const wc = e.view?.webContents
+    if (wc) void restCursor(wc, true)
     const a = this.ask<boolean>(handleId, `${handleId}\nsite\n${site}`, site, (requestId) => ({ type: 'site-request', requestId, site, cause, from }))
+    if (wc) void a.promise.then(() => restCursor(wc, false))
     const allow = waitMs === null ? await a.promise : await within(a.promise, waitMs)
     if (allow === WAITING) return TEXT.siteWaiting
     if (e.state.drive === 'stopped') return TEXT.stopped
@@ -534,8 +532,25 @@ export class BrowserManager {
       if (now.state.drive === 'user') return TEXT.userDriving
     }
     this.ensureView(handleId, e)
+    const strip = e.state.drive === 'idle' || e.state.drive === 'done'
     this.setDrive(handleId, e, 'driving')
+    // The status strip that comes with driving shortens the page a frame or two later, and a tool
+    // reading the page before then would aim at the old, taller viewport.
+    if (strip && e.shown) await this.nextBounds(e)
     return null
+  }
+
+  private nextBounds(e: Entry): Promise<void> {
+    return new Promise((ok) => {
+      const done = (): void => {
+        clearTimeout(t)
+        if (e.onBounds === done) e.onBounds = null
+        ok()
+      }
+      const t = setTimeout(done, BOUNDS_WAIT_MS)
+      e.onBounds?.()
+      e.onBounds = done
+    })
   }
 
   endTool(handleId: string): void {

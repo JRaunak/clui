@@ -138,7 +138,7 @@ export class ClaudeSession extends EventEmitter {
   private respawned = false
   /** User messages queued until the handshake completes (gated mode only). */
   private pendingSends: UserTurn[] = []
-  /** True while a respawn (effort fallback or browser tools) is in progress (suppresses exit event). */
+  /** True while the effort-fallback respawn is in progress (suppresses exit event). */
   private respawning = false
   /** Holds the browser tools' MCP config for the spawn that hasn't reported init yet. */
   private mcpDir: string | null = null
@@ -657,7 +657,7 @@ export class ClaudeSession extends EventEmitter {
     const ok = await this.sendControl('apply_flag_settings', { settings: { effortLevel: effort } })
     if (!ok) {
       this.emitEvent({ type: 'error', severity: 'info', message: `Live effort change unavailable. Reconnecting to apply "${effort}"…` })
-      this.respawnWith('effort')
+      this.respawnWith()
     }
   }
 
@@ -674,22 +674,9 @@ export class ClaudeSession extends EventEmitter {
     return ok
   }
 
-  /** Attach or detach the browser tools. MCP servers are fixed at process start, so this
-   *  respawns with --resume (history intact); the renderer only calls it between turns. `respawning`
-   *  means the tools are live only once the new process answers initialize (its `reconnected`). */
-  setBrowserMcp(json: string | undefined): 'ready' | 'respawning' | null {
-    // A Quick session writes no transcript, so the --resume respawn would lose its history.
-    if (this.opts.ephemeral) return null
-    if (this.opts.browserMcp === json) return 'ready'
-    this.opts = { ...this.opts, browserMcp: json }
-    if (!this.child) return 'ready'
-    this.respawnWith('browser')
-    return 'respawning'
-  }
-
   /** Respawn with `--resume <sessionId>` and the current opts: the effort fallback when the
-   *  live `apply_flag_settings` path fails, and attaching or detaching the browser tools. */
-  private respawnWith(_reason: 'effort' | 'browser'): void {
+   *  live `apply_flag_settings` path fails. */
+  private respawnWith(): void {
     if (!this.child) return
     this.respawning = true
     this.reconnecting = true

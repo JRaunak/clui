@@ -35,7 +35,8 @@ export function App(): JSX.Element {
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showCustomizations, setShowCustomizations] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
+  const settingsOpen = useSession((s) => s.settingsSection !== null)
+  const openSettingsAt = useSession((s) => s.openSettings)
   const [palette, setPalette] = useState<{ mode: PaletteMode; seq: number } | null>(null)
   const globalSearchOpen = useSession((s) => s.globalSearchOpen)
 
@@ -50,7 +51,7 @@ export function App(): JSX.Element {
   const lastBgFocusRef = useRef<HTMLElement | null>(null)
   // Holds the previous overlay state so the restore below skips the initial mount.
   const wasOverlayOpenRef = useRef(false)
-  const anyOverlayOpen = showSettings || showCustomizations || !!palette || globalSearchOpen
+  const anyOverlayOpen = settingsOpen || showCustomizations || !!palette || globalSearchOpen
 
   useEffect(() => {
     const onFocusIn = (e: FocusEvent): void => {
@@ -107,8 +108,8 @@ export function App(): JSX.Element {
 
   // Refresh CLI info when Settings closes (path may have changed).
   useEffect(() => {
-    if (!showSettings) window.clui.getCliInfo().then(setCliInfo)
-  }, [showSettings])
+    if (!settingsOpen) window.clui.getCliInfo().then(setCliInfo)
+  }, [settingsOpen])
 
   // Persist + clear the first-run intro. Called on Skip (explicit dismiss).
   const dismissIntro = useCallback(() => {
@@ -177,7 +178,7 @@ export function App(): JSX.Element {
 
   // ⌘N new session · ⌘⇧N new session in a directory · ⌘W close · ⌘, settings · ⌘K palette · ⌘⇧K commands
   // (native menu) + ⌃Tab / ⌃C.
-  const openSettings = useCallback(() => setShowSettings(true), [])
+  const openSettings = useCallback(() => openSettingsAt(), [openSettingsAt])
   const openPalette = useCallback(
     (mode: PaletteMode) => setPalette((p) => ({ mode, seq: (p?.seq ?? 0) + 1 })),
     []
@@ -317,7 +318,7 @@ export function App(): JSX.Element {
           >
             <button
               className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-              onClick={() => setShowSettings(true)}
+              onClick={openSettings}
               aria-label="Settings"
               title="Settings ⌘,"
             >
@@ -336,7 +337,7 @@ export function App(): JSX.Element {
             )}
             <button
               className="absolute right-1.5 flex h-7 w-7 items-center justify-center rounded-md text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
-              onClick={() => setShowSettings(true)}
+              onClick={openSettings}
               aria-label="Settings"
               title="Settings ⌘,"
             >
@@ -396,7 +397,7 @@ export function App(): JSX.Element {
         <GateAnnouncer />
         <GlobalSearch />
         {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} />}
-        {showSettings && <Settings onClose={() => setShowSettings(false)} />}
+        {settingsOpen && <Settings />}
         {palette && (
           <CommandPalette
             mode={palette.mode}
@@ -412,7 +413,7 @@ export function App(): JSX.Element {
             }}
             onOpenSettings={() => {
               setPalette(null)
-              setShowSettings(true)
+              openSettings()
             }}
             onOpenCustomizations={() => {
               setPalette(null)

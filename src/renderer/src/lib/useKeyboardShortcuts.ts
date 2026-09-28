@@ -100,12 +100,11 @@ export function useKeyboardShortcuts(opts: {
           // A menu accelerator is a keyboard path, so the pane changes without a transition. With
           // focus in the native page the renderer's document doesn't have it, and a hidden page
           // can't keep it, so it goes to the composer.
+          if (!activeSlice(store)?.browser) break
           const fromPage = !document.hasFocus()
-          void store.toggleBrowser().then(() => {
-            const s = useSession.getState()
-            if (fromPage && !activeSlice(s)?.browserOpen)
-              document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
-          })
+          store.toggleBrowser()
+          if (fromPage && !activeSlice(useSession.getState())?.browserOpen)
+            document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
           break
         }
         case 'browser-stop': {

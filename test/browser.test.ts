@@ -42,7 +42,7 @@ await saveLogin({ site: 'example.com', username: 'c', password: 'x', totpSeed: '
 equal(threw, 'Not a base32 setup key', 'vault: a bad seed is refused without echoing it')
 threw = ''
 await saveLogin({ site: 'file:///etc', username: 'c', password: 'x' }).catch((e) => (threw = e.message))
-equal(threw, 'Enter a site like github.com', 'vault: a site with no key is refused')
+equal(threw, 'Enter a site like github.com.', 'vault: a site with no key is refused')
 await removeLogin(saved.id)
 equal((await listLogins()).length, 0, 'vault: remove')
 await writeFile(join(app.getPath('userData'), 'browser-vault.bin'), 'garbage')

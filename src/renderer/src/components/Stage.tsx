@@ -345,13 +345,14 @@ export const PANE_BTN =
 export function PaneHeader({
   kind,
   status,
-  trailing,
+  actions,
   children
 }: {
   kind: string
   status?: ReactNode
-  /** Replaces the Close button: the browser hides rather than closes, so it keeps its page. */
-  trailing?: ReactNode
+  /** The view's own buttons, before the size toggle. They also replace Close: a view with actions is
+   *  the browser, which hides rather than closes so it keeps its page. */
+  actions?: ReactNode
   children: ReactNode
 }): JSX.Element {
   const pane = usePane()
@@ -390,6 +391,7 @@ export function PaneHeader({
         </button>
       )}
       <div data-ui="pane-head-controls" className="flex shrink-0 items-center gap-0.5">
+        {actions}
         {pane.canToggleSize && (
           <button
             type="button"
@@ -403,7 +405,7 @@ export function PaneHeader({
             {full ? <IconRestore className="h-4 w-4" /> : <IconMaximize className="h-4 w-4" />}
           </button>
         )}
-        {trailing ?? (
+        {!actions && (
           <button
             type="button"
             data-ui="pane-close"

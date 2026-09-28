@@ -91,9 +91,9 @@ export async function saveLogin(input: {
 }): Promise<SavedLoginInfo> {
   const bare = input.site.trim().replace(/^https?:\/\//i, '')
   const site = bare.includes('://') ? null : siteKeyOf('https://' + bare)
-  if (!site) throw new Error('Enter a site like github.com')
+  if (!site) throw new Error('Enter a site like github.com.')
   const username = input.username.trim()
-  if (!username) throw new Error('Enter a username')
+  if (!username) throw new Error('Enter a username.')
   // An empty password or seed on an edit means "unchanged", matching the form's placeholder.
   const password = input.password || undefined
   const seed = input.totpSeed?.trim() || undefined
@@ -108,7 +108,7 @@ export async function saveLogin(input: {
       const next: Entry = { ...cur, site, username, password: password ?? cur.password, totpSeed: seed ?? cur.totpSeed }
       return { entries: entries.map((e, j) => (j === i ? next : e)), result: info(next) }
     }
-    if (!password) throw new Error('Enter a password')
+    if (!password) throw new Error('Enter a password.')
     const entry: Entry = { id: randomUUID(), site, username, password, totpSeed: seed, createdMs: Date.now() }
     return { entries: [...entries, entry], result: info(entry) }
   })
