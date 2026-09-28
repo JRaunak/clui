@@ -4,7 +4,7 @@
 import { summary } from './support/harness.mjs'
 
 let suiteError = false
-for (const name of ['transport', 'mapper', 'settings', 'security', 'store', 'guarded-async', 'spectacle', 'shell']) {
+for (const name of ['transport', 'mapper', 'settings', 'security', 'store', 'guarded-async', 'spectacle', 'shell', 'instrument']) {
   console.log(`\n# ${name}`)
   try {
     await import(`./${name}.test.ts`)

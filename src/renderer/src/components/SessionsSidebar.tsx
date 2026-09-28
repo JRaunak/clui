@@ -616,9 +616,9 @@ function SessionRow({
   return (
     <div
       data-ui="sidebar-row"
-      className={`group relative flex gap-2 rounded-md py-1.5 pl-3 pr-1.5 transition-colors ${
-        st ? 'min-h-11 items-start' : 'items-center'
-      } ${active ? 'bg-accent-surface' : 'hover:bg-bg-raised'}`}
+      className={`group relative flex items-center gap-2 rounded-md py-1.5 pl-3 pr-1.5 transition-colors ${st ? 'min-h-11' : ''} ${
+        active ? 'bg-accent-surface' : 'hover:bg-bg-raised'
+      }`}
     >
       {active && <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-accent" aria-hidden="true" />}
 
@@ -690,11 +690,7 @@ function SessionRow({
 
       {!editing && (
         // Hidden with opacity, not display:none, so keyboard focus can still reach them.
-        <div
-          className={`flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 ${
-            st ? '-mt-[3px]' : ''
-          }`}
-        >
+        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
           {onClose && (
             <button
               className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"

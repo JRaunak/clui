@@ -16,8 +16,8 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
   const startMs = useActive((s) => s?.turnStartMs ?? null)
   const thinkingTokens = useActive((s) => s?.thinkingTokens ?? null)
   const compacting = useActive((s) => s?.compacting ?? false)
-  // Tool rows carry no bead of their own, so the tail stands in for a running tool and any site lights it.
-  const lit = useLumenSite() !== null
+  // The tail lights only while text or thinking streams; a running tool's own bead takes the light.
+  const lit = useLumenSite()?.kind === 'tail'
   const [elapsed, setElapsed] = useState(() => (startMs ? Math.floor((Date.now() - startMs) / 1000) : 0))
   const [verb, setVerb] = useState(randomWorkingVerb)
   useEffect(() => {

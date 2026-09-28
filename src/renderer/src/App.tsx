@@ -380,7 +380,12 @@ export function App(): JSX.Element {
       <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Collapsed and windowed, the traffic lights and the sidebar toggle sit over the Stage's
             top-left, so the band's content starts after them. */}
-        <Stage leftInset={sidebarCollapsed && !isFullscreen ? 76 : 16} bordered={!sidebarCollapsed} empty={emptyPane} />
+        <Stage
+          leftInset={sidebarCollapsed && !isFullscreen ? 76 : 16}
+          bleed={sidebarCollapsed ? 44 : 0}
+          bordered={!sidebarCollapsed}
+          empty={emptyPane}
+        />
       </main>
 
       {/* Sits on drag-free pixels: a no-drag button nested in a drag band doesn't reliably carve back out. */}

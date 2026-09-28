@@ -219,7 +219,8 @@
   --control-material: glass;
   --specular: rgb(255 255 255 / 0.05);
   --shadow-content: none;
-  --glass-tint-edge: rgb(30 30 31 / 0.76);
+  /* --ink-950, the app background, at 76%. */
+  --glass-tint-edge: rgb(22 22 23 / 0.76);
   --glass-tint-thick: rgb(30 30 31 / 0.92);
   --glass-blur-edge: 16px;
   --glass-blur-thick: 20px;
@@ -228,7 +229,8 @@
   --glass-edge-top: rgb(255 255 255 / 0.12);
   --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
   --shadow-float: 0 1px 2px rgb(0 0 0 / 0.35), 0 12px 32px -12px rgb(0 0 0 / 0.6);
-  --solid-edge: #1c1c1d;
+  --solid-edge: var(--color-bg);
+  --bar-edge: transparent;
   --solid-thick: #1e1e1f;
   --edge-mask: 0.35;
   --edge-ramp: 24px;
@@ -325,7 +327,6 @@
   /* A white lip reads on translucent white over darker content. */
   --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
   --shadow-float: 0 1px 3px rgb(0 0 0 / 0.06), 0 12px 32px -12px rgb(0 0 0 / 0.16);
-  --solid-edge: #ffffff;
   --solid-thick: #ffffff;
   --scrim: rgb(0 0 0 / 0.24);
   --lumen-rgb: 184 80 46;
@@ -699,7 +700,8 @@ body {
 @utility glass-bar {
   background: if(style(--control-material: solid): var(--solid-edge); else: var(--glass-tint-edge));
   backdrop-filter: if(style(--control-material: solid): none; else: blur(var(--glass-blur-edge)) saturate(var(--glass-sat)));
-  border-bottom: 1px solid var(--glass-edge);
+  /* The bottom edge draws only under increased contrast; it stays 1px so the geometry never changes. */
+  border-bottom: 1px solid var(--bar-edge);
 }
 
 /* Thick variant: floats over unprotected content (popovers, menus, toasts, tooltips, palette, search). */
@@ -749,6 +751,7 @@ body {
     --control-material: solid;
     --glass-edge: var(--color-control-edge);
     --glass-edge-top: var(--color-control-edge);
+    --bar-edge: var(--color-control-edge);
   }
 }
 
@@ -845,4 +848,56 @@ body {
     animation: none;
     border-top-color: var(--color-dim);
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Transcript spine. Each transcript item draws its own slice of the line so nothing is
+   measured: a slice reaches 8px up to bridge the flex gap above it. The head slice starts at the
+   speaker dot's centre and the end slice stops at its row's bead (16px into the 32px header).
+   ───────────────────────────────────────────────────────────────────────── */
+.spine-seg {
+  position: relative;
+}
+.spine-seg::before {
+  content: '';
+  position: absolute;
+  left: -15.5px;
+  width: 1px;
+  background: var(--color-border);
+  pointer-events: none;
+}
+.spine-seg[data-seg='head']::before {
+  top: 50%;
+  bottom: 0;
+}
+.spine-seg[data-seg='through']::before {
+  top: -8px;
+  bottom: 0;
+}
+.spine-seg[data-seg='end']::before {
+  top: -8px;
+  height: 24px;
+}
+.spine-seg[data-seg='none']::before {
+  display: none;
+}
+
+@keyframes row-body-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.row-body-in {
+  animation: row-body-in var(--dur-fast) var(--ease-out);
+}
+
+/* The top slot's content fades in; the band itself never changes size. */
+@keyframes slot-in {
+  from {
+    opacity: 0;
+  }
+}
+.slot-in {
+  animation: slot-in var(--dur-fast) var(--ease-out);
 }

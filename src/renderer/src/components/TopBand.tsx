@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSession } from '../store'
+import { CurrentTurnHeader } from './CurrentTurnHeader'
 
 /**
  * The top band over the Stage's top 44px, which the transcript scrolls beneath. Its glass layer fades
@@ -9,11 +10,15 @@ import { useSession } from '../store'
  */
 export function TopBand({
   leftInset,
+  bleed,
   session,
   split,
   scrolled
 }: {
   leftInset: number
+  /** How far the glass reaches left past the band, under the collapsed rail's empty top, so the
+   *  increased-contrast hairline runs unbroken to the window edge. */
+  bleed: number
   /** A session is open. Without one the band has nothing to describe, so it's only a drag surface. */
   session: boolean
   /** The right sidebar is beside the transcript, so the slot is bounded to the primary pane. */
@@ -51,6 +56,7 @@ export function TopBand({
       <div
         aria-hidden="true"
         data-ui="top-band-glass"
+        style={{ left: -bleed }}
         className={`glass-bar pointer-events-none absolute inset-0 -z-10 opacity-0 group-data-[scrolled]/band:opacity-100 contrast-more:opacity-100 ${
           settled ? 'transition-opacity duration-fast ease-in group-data-[scrolled]/band:ease-out motion-reduce:transition-none' : ''
         }`}
@@ -78,9 +84,20 @@ export function TopBand({
  * div, so it has to flank itself with drag spacers to keep the space around it draggable.
  */
 export function TopSlot(): JSX.Element {
+  const currentTurn = useSession((s) => s.currentTurn)
   return (
     <div data-ui="top-slot" className="flex h-full min-w-0 flex-1 items-center">
-      <div data-ui="top-band-drag" aria-hidden="true" className="h-full flex-1 [-webkit-app-region:drag]" />
+      {currentTurn ? (
+        <>
+          <div data-ui="top-band-drag" aria-hidden="true" className="h-full flex-1 [-webkit-app-region:drag]" />
+          <div className="flex min-w-0 flex-[0_1_64rem] items-center px-5">
+            <CurrentTurnHeader key={currentTurn.messageId} />
+          </div>
+          <div data-ui="top-band-drag" aria-hidden="true" className="h-full flex-1 [-webkit-app-region:drag]" />
+        </>
+      ) : (
+        <div data-ui="top-band-drag" aria-hidden="true" className="h-full flex-1 [-webkit-app-region:drag]" />
+      )}
     </div>
   )
 }

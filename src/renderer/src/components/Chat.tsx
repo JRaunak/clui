@@ -8,6 +8,7 @@ import { FindBar } from './FindBar'
 import { TaskPuck, useTaskUiActive } from './TaskPuck'
 import { IconChevron, IconClose, IconEdit, IconCheck, IconFile } from './Icon'
 import { deriveModelInfo } from '../../../shared/settings'
+import { TURN_LINE_PX, currentTurnAt } from '../lib/instrument'
 import type { PermissionModeChoice } from '../../../shared/ipc'
 
 /** Quick-session permission phrase, keyed to the four modes Settings scopes quick sessions to.
@@ -73,6 +74,51 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
   }, [findOpen])
 
   const virtuosoRef = useRef<VirtuosoHandle>(null)
+  const setCurrentTurn = useSession((s) => s.setCurrentTurn)
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
+  const scrollerEl = useRef<HTMLElement | null>(null)
+  // The owning row is read from the DOM at the band line: rangeChanged reports the rendered range,
+  // which extends 600px past the viewport, and the band covers the scroller's top.
+  const syncTurn = useCallback(() => {
+    const sc = scrollerEl.current
+    if (!sc) return
+    const line = sc.getBoundingClientRect().top + TURN_LINE_PX + 1
+    let top = -1
+    for (const el of sc.querySelectorAll<HTMLElement>('[data-testid="virtuoso-item-list"] > [data-index]')) {
+      if (el.getBoundingClientRect().bottom > line) {
+        top = Number(el.dataset.index)
+        break
+      }
+    }
+    if (top < 0) return
+    const ct = currentTurnAt(messagesRef.current, top)
+    // The store is the dedupe: scrolling changes nothing until the owning prompt does.
+    if ((ct?.messageId ?? null) === (useSession.getState().currentTurn?.messageId ?? null)) return
+    setCurrentTurn(ct)
+  }, [setCurrentTurn])
+  const empty = messages.length === 0 && !busy
+  // Leaving this transcript (session switch, full pane, empty state) must not strand a header.
+  useEffect(() => () => setCurrentTurn(null), [activeHandleId, empty, setCurrentTurn])
+  useEffect(() => {
+    const sc = scrollerEl.current
+    if (!sc) return
+    let raf = 0
+    const onScroll = (): void => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(syncTurn)
+    }
+    sc.addEventListener('scroll', onScroll, { passive: true })
+    // Rows re-measured after landing move the top row without a scroll event.
+    const list = sc.querySelector('[data-testid="virtuoso-item-list"]')
+    const ro = new ResizeObserver(onScroll)
+    if (list) ro.observe(list, { box: 'border-box' })
+    return () => {
+      sc.removeEventListener('scroll', onScroll)
+      ro.disconnect()
+      cancelAnimationFrame(raf)
+    }
+  }, [activeHandleId, empty, syncTurn])
   // atBottom lives in a ref (read by streaming/resize logic without re-subscribing) and
   // state (drives the jump-to-latest pill's visibility).
   const atBottomRef = useRef(true)
@@ -143,6 +189,15 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
     if (!scrollTarget) return
     const idx = messages.findIndex((m) => m.id === scrollTarget.messageId)
     if (idx < 0) return
+    if (scrollTarget.align === 'start') {
+      // Instant, because a smooth scroll to a far unrendered index lands short in react-virtuoso.
+      virtuosoRef.current?.scrollToIndex({ index: idx, align: 'start', offset: -TURN_LINE_PX, behavior: 'auto' })
+      const id = scrollTarget.messageId
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => document.getElementById(`msg-${id}`)?.focus({ preventScroll: true }))
+      )
+      return
+    }
     virtuosoRef.current?.scrollToIndex({ index: idx, align: 'center', behavior })
     if (findOpen) return
     setFlashId(scrollTarget.messageId)
@@ -198,6 +253,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         // Report the reserved gutter width so the composer dock can pad to match this column.
         scrollerRef={(el) => {
           const node = el as HTMLElement | null
+          scrollerEl.current = node
           if (node && onScrollbarWidth)
             requestAnimationFrame(() => onScrollbarWidth(node.offsetWidth - node.clientWidth))
         }}
@@ -233,6 +289,8 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         context={footerContext}
         followOutput={followOutput}
         atBottomStateChange={onAtBottom}
+        // After the rows commit, so a re-window or streamed rows re-read the top row from fresh DOM.
+        itemsRendered={syncTurn}
         atTopStateChange={(atTop) => setPrimaryScrolled(!atTop)}
         atBottomThreshold={80}
         initialTopMostItemIndex={Math.max(0, messages.length - 1)}

@@ -96,7 +96,7 @@ function SessionIdButton({ id }: { id: string }): JSX.Element {
         onClick={copy}
         title={`Session ${id}. Click to copy.`}
         aria-label={`Copy session id ${id}`}
-        className="flex h-6 min-w-[9ch] shrink-0 items-center justify-center rounded-md px-1.5 font-mono text-meta tabular-nums text-dim transition-colors hover:bg-bg-raised hover:text-content @max-[720px]:hidden"
+        className="-ml-1.5 flex h-6 min-w-[calc(8ch+0.75rem)] shrink-0 items-center justify-start rounded-md px-1.5 font-mono text-meta tabular-nums text-dim transition-colors hover:bg-bg-raised hover:text-content @max-[720px]:hidden"
       >
         {copied ? 'Copied' : id.slice(0, 8)}
       </button>

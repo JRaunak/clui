@@ -1,14 +1,15 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { CompactionMarker } from '../../../shared/sessions'
 import { fmtTokens } from '../lib/formatTokens'
-import { useSession, type ChatMessage, type MessageAttachment, type PeerMessage, type ToolCall } from '../store'
-import { TypingDots } from './TypingDots'
+import { type ChatMessage, type MessageAttachment, type PeerMessage, type ToolCall } from '../store'
 import { Markdown } from './Markdown'
-import { IconChevron, IconCheck, IconClose, IconCopy, IconFile, IconChecklist, IconMessage, IconSendToTray, IconShieldOff } from './Icon'
+import { AggregateRow, InstrumentRow } from './InstrumentRow'
+import { IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconShieldOff } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
 import { formatCost } from '../lib/formatCost'
-import { isBackgroundedTool } from '../lib/lumen'
 import type { PermissionDenial, TurnUsage } from '../../../shared/events'
+
+export { summarizeInput } from '../lib/instrument'
 
 /** Non-image attachments render as a file chip matching the composer pill's language. */
 function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element {
@@ -94,29 +95,35 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
   ) {
     return <PlanModeDivider />
   }
+  const entries = isUser ? [] : spineEntries(message)
+  const hasSpine = lastToolsIndex(entries) >= 0
   return (
-    <div className="flex flex-col gap-2">
+    <div
+      className="flex flex-col gap-2"
+      data-ui={isUser ? 'prompt-row' : hasSpine ? 'spine' : undefined}
+      id={isUser ? `msg-${message.id}` : undefined}
+      tabIndex={isUser ? -1 : undefined}
+    >
       <div
-        className={`flex items-center gap-1.5 text-label font-semibold ${
-          isUser ? 'text-dim' : 'text-accent'
-        }`}
+        className={`relative flex items-center gap-1.5 text-label font-semibold ${isUser ? 'text-dim' : 'text-accent spine-seg'}`}
+        data-seg={isUser ? undefined : hasSpine ? 'head' : 'none'}
       >
-        {!isUser && <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />}
+        {/* The speaker dot is the top of the spine, centred on the line 15px left of the column. */}
+        {!isUser && (
+          <span
+            className="absolute left-[-18.5px] top-1/2 h-[7px] w-[7px] -translate-y-1/2 rounded-full bg-accent"
+            aria-hidden="true"
+          />
+        )}
         {isUser ? 'You' : 'Claude'}
       </div>
-      <div
-        className={
-          isUser
-            ? 'max-w-[80%] self-start rounded-lg rounded-tl-sm bg-user px-3.5 py-2.5'
-            : 'flex flex-col gap-2'
-        }
-      >
+      <div className={isUser ? 'max-w-[80%] self-start rounded-lg rounded-tl-sm bg-user px-3.5 py-2.5' : 'flex flex-col gap-2'}>
         {message.thinking && !(hideThinking && !message.text && message.tools.length === 0) && (
-          <ThinkingBlock text={message.thinking} />
+          <div className={isUser ? undefined : 'spine-seg'} data-seg={isUser ? undefined : hasSpine ? 'through' : 'none'}>
+            <ThinkingBlock text={message.thinking} />
+          </div>
         )}
         {isUser ? (
-          // User input is literal text; render as-is (don't reformat what they typed).
-          // Attachments (image thumbnails / file chips) render above the text.
           <>
             {message.attachments && message.attachments.length > 0 && (
               <div className="flex flex-wrap gap-2">
@@ -126,27 +133,14 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
               </div>
             )}
             {message.text && (
-              <div className="whitespace-pre-wrap text-sm leading-relaxed text-content">
-                {renderUserText(message.text)}
-              </div>
+              <div className="whitespace-pre-wrap text-sm leading-relaxed text-content">{renderUserText(message.text)}</div>
             )}
           </>
-        ) : message.blocks.length > 0 ? (
-          // Live path: render text + tools in true stream order (intro text, tool cards,
-          // closing text), coalescing consecutive tool blocks into one group.
-          <OrderedBlocks blocks={message.blocks} tools={message.tools} />
         ) : (
-          // Fallback (rebuilt-from-disk): text, a plan-mode marker if it was entered, then tools.
-          <>
-            {message.text && <Markdown text={message.text} />}
-            {message.tools.some((t) => isPlanEntry(t.name)) && <PlanModeDivider />}
-            <ToolGroup tools={message.tools.filter((t) => !isTaskListTool(t.name) && !isPlanEntry(t.name))} />
-          </>
+          <SpineItems entries={entries} />
         )}
       </div>
-      {!isUser && message.denials && message.denials.length > 0 && (
-        <BlockedActionsNotice denials={message.denials} />
-      )}
+      {!isUser && message.denials && message.denials.length > 0 && <BlockedActionsNotice denials={message.denials} />}
       {!isUser && message.usage && <TurnUsageTrailer usage={message.usage} id={message.id} />}
     </div>
   )
@@ -442,121 +436,100 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
   )
 }
 
-/** Each maximal run of consecutive tool blocks becomes one ToolGroup, so aggregation still
- *  applies to a fan-out while the true text/tool interleaving is preserved. */
-function OrderedBlocks({
-  blocks,
-  tools
-}: {
-  blocks: import('../store').MessageBlock[]
-  tools: ToolCall[]
-}): JSX.Element {
-  const byId = new Map(tools.map((t) => [t.id, t]))
-  const out: JSX.Element[] = []
-  let i = 0
-  let key = 0
-  while (i < blocks.length) {
-    const b = blocks[i]
-    if (b.kind === 'text') {
-      if (b.text.trim()) out.push(<Markdown key={key++} text={b.text} />)
-      i++
-    } else {
-      // Gather a maximal run of tool blocks for ToolGroup to aggregate. An EnterPlanMode block
-      // interrupts the run to drop the divider at its stream position, between the tool cards.
-      const run: ToolCall[] = []
-      const flush = (): void => {
-        if (run.length) {
-          out.push(<ToolGroup key={key++} tools={[...run]} />)
-          run.length = 0
-        }
-      }
-      while (i < blocks.length && blocks[i].kind === 'tool') {
-        const tc = byId.get((blocks[i] as { id: string }).id)
-        if (tc) {
-          if (isPlanEntry(tc.name)) {
-            flush()
-            out.push(<PlanModeDivider key={key++} />)
-          } else if (!isTaskListTool(tc.name)) {
-            run.push(tc)
-          }
-        }
-        i++
-      }
-      flush()
-    }
+type SpineEntry = { kind: 'text'; text: string } | { kind: 'divider' } | { kind: 'tools'; tools: ToolCall[] }
+
+/** Flattens a message into spine entries in stream order. Consecutive tools coalesce into one run
+ *  (so aggregation applies to a fan-out); entering plan mode breaks the run with a divider. */
+function spineEntries(message: ChatMessage): SpineEntry[] {
+  const out: SpineEntry[] = []
+  if (message.blocks.length === 0) {
+    // Rebuilt from disk: no stream order survives, so text, then the plan marker, then tools.
+    if (message.text) out.push({ kind: 'text', text: message.text })
+    if (message.tools.some((t) => isPlanEntry(t.name))) out.push({ kind: 'divider' })
+    const tools = message.tools.filter((t) => !isTaskListTool(t.name) && !isPlanEntry(t.name))
+    if (tools.length) out.push({ kind: 'tools', tools })
+    return out
   }
-  return <>{out}</>
+  const byId = new Map(message.tools.map((t) => [t.id, t]))
+  let run: ToolCall[] = []
+  const flush = (): void => {
+    if (run.length) out.push({ kind: 'tools', tools: run })
+    run = []
+  }
+  for (const b of message.blocks) {
+    if (b.kind === 'text') {
+      flush()
+      if (b.text.trim()) out.push({ kind: 'text', text: b.text })
+      continue
+    }
+    const tc = byId.get(b.id)
+    if (!tc) continue
+    if (isPlanEntry(tc.name)) {
+      flush()
+      out.push({ kind: 'divider' })
+    } else if (!isTaskListTool(tc.name)) run.push(tc)
+  }
+  flush()
+  return out
+}
+
+function lastToolsIndex(entries: SpineEntry[]): number {
+  for (let i = entries.length - 1; i >= 0; i--) if (entries[i].kind === 'tools') return i
+  return -1
+}
+
+/** Items above the last tool run carry the line down; items after it (closing prose) don't. */
+function SpineItems({ entries }: { entries: SpineEntry[] }): JSX.Element {
+  const last = lastToolsIndex(entries)
+  return (
+    <>
+      {entries.map((e, i) => {
+        if (e.kind === 'tools') return <ToolGroup key={i} tools={e.tools} spine={i === last ? 'end' : 'through'} />
+        return (
+          <div key={i} className="spine-seg" data-seg={i < last ? 'through' : 'none'}>
+            {e.kind === 'text' ? <Markdown text={e.text} /> : <PlanModeDivider />}
+          </div>
+        )
+      })}
+    </>
+  )
 }
 
 /**
- * Aggregation is gated on total tool count, not concurrent-running: the CLI serializes
- * subagent calls in headless mode, so a concurrent-running gate would never fire. The
- * thresholds are AGGREGATE_ABOVE and COLLAPSE_AT; the static header (no spinner) leaves
- * the chat footer owning the single foreground animation.
- *
- * Exported so a subagent's forwarded tool calls inherit the same aggregation.
+ * A run of consecutive tool calls. On the spine, each row's bead sits on the line; 'end' marks the
+ * run that carries the transcript item's last bead. SubagentView keeps the default 'off', which
+ * puts beads inline because its column has no spine gutter.
  */
-export function ToolGroup({ tools }: { tools: ToolCall[] }): JSX.Element | null {
-  const [expanded, setExpanded] = useState(false)
+export function ToolGroup({
+  tools,
+  spine = 'off'
+}: {
+  tools: ToolCall[]
+  spine?: 'off' | 'through' | 'end'
+}): JSX.Element | null {
   if (tools.length === 0) return null
-
-  const running = tools.filter((t) => t.result === undefined).length
-  const errored = tools.filter((t) => t.result !== undefined && t.isError).length
-  const done = tools.length - running - errored
-  const aggregate = tools.length > AGGREGATE_ABOVE
-  const collapse = tools.length >= COLLAPSE_AT
-
-  if (!aggregate) {
-    // Baseline: individual cards with their own dots + timer.
+  const placement = spine === 'off' ? 'inline' : 'spine'
+  if (tools.length <= AGGREGATE_ABOVE) {
     return (
       <>
-        {tools.map((t) => (
-          <ToolCallView key={t.id} tool={t} showDots />
+        {tools.map((t, i) => (
+          <InstrumentRow
+            key={t.id}
+            tool={t}
+            placement={placement}
+            seg={spine === 'end' && i === tools.length - 1 ? 'end' : 'through'}
+          />
         ))}
       </>
     )
   }
-
-  // Which cards to show: when collapsing, only running + failed (failed pinned).
-  const visible =
-    collapse && !expanded
-      ? [...tools.filter((t) => t.result !== undefined && t.isError), ...tools.filter((t) => t.result === undefined)]
-      : tools
-
   return (
-    <div className="flex flex-col gap-1.5">
-      <button
-        className="flex items-center gap-2.5 rounded-md border border-border bg-bg-raised/60 px-3 py-2 text-left"
-        onClick={() => setExpanded((v) => !v)}
-        aria-label={`Subagents and tools: ${done} done, ${running} running${errored ? `, ${errored} failed` : ''}`}
-      >
-        {collapse && (
-          <IconChevron className={`h-3.5 w-3.5 text-faint transition-transform ${expanded ? 'rotate-90' : ''}`} />
-        )}
-        {/* Static dot: the chat footer is the single animated element per turn. */}
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden="true" />
-        <span className="text-xs font-semibold text-content">Tasks</span>
-        <span className="ml-auto flex items-center gap-2 font-mono text-meta">
-          <span className="text-ok">{done} done</span>
-          <span className="text-faint">·</span>
-          <span className="text-warn">{running} running</span>
-          {errored > 0 && (
-            <>
-              <span className="text-faint">·</span>
-              <span className="rounded bg-err/15 px-1.5 py-0.5 font-semibold text-err">{errored} failed</span>
-            </>
-          )}
-        </span>
-      </button>
-      <div className="flex flex-col gap-1.5 pl-3">
-        {collapse && !expanded && done > 0 && (
-          <div className="px-1 text-meta text-faint">{done} completed hidden · click to expand</div>
-        )}
-        {visible.map((t) => (
-          <ToolCallView key={t.id} tool={t} showDots={false} />
-        ))}
-      </div>
-    </div>
+    <AggregateRow
+      tools={tools}
+      placement={placement}
+      seg={spine === 'end' ? 'end' : 'through'}
+      collapse={tools.length >= COLLAPSE_AT}
+    />
   )
 }
 
@@ -582,242 +555,4 @@ function ThinkingBlock({ text }: { text: string }): JSX.Element {
       )}
     </div>
   )
-}
-
-function ToolCallView({ tool, showDots }: { tool: ToolCall; showDots: boolean }): JSX.Element {
-  const [open, setOpen] = useState(false)
-  const summary = summarizeInput(tool.input)
-  // The header already shows the input summary, so start Input collapsed when there is one;
-  // with no summary, open it so the expanded card isn't output-only with a hidden input.
-  const [inputOpen, setInputOpen] = useState(() => !summary)
-  const [copied, setCopied] = useState(false)
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current) }, [])
-  const viewSubagent = useSession((s) => s.viewSubagent)
-  const sendToBackground = useSession((s) => s.backgroundTask)
-  const running = tool.result === undefined
-  // Task (renamed to Agent in CLI 2.1.63; Task kept as alias) both mean "subagent"; show
-  // a friendly label + the subagent_type chip when present.
-  const isSubagent = tool.name === 'Task' || tool.name === 'Agent'
-  const subType = subagentType(tool.input)
-  // A backgrounded tool returns its result at launch while the real work continues
-  // asynchronously (tracked in the tray), so its terminal state reads "launched", not "done".
-  // Two cases: Bash run_in_background, and the dynamic Workflow tool (it returns immediately,
-  // then the workflow runs via task_progress).
-  const isBackgrounded = isBackgroundedTool(tool)
-  // Only a foreground Bash is worth moving: run_in_background / Workflow tools are already
-  // tray-bound, and other tools finish too fast to bother.
-  const canSendToBackground = running && !isBackgrounded && tool.name === 'Bash'
-  const errLine = tool.isError ? firstLine(tool.result ?? '') : ''
-  const onCopy = (): void => {
-    void navigator.clipboard.writeText(tool.result ?? '')
-    setCopied(true)
-    if (copyTimer.current) clearTimeout(copyTimer.current)
-    copyTimer.current = setTimeout(() => setCopied(false), 1500)
-  }
-  return (
-    <div
-      className={`overflow-hidden rounded-md border bg-tool ${
-        tool.isError ? 'border-err/60' : 'border-border'
-      }`}
-    >
-      {/* Head row. For a subagent the card is the actual content, so clicking it opens the
-          maximized transcript view (the inline JSON expand is near-useless for a subagent:
-          its input is a huge prompt, its result one blob). A plain tool keeps the lightweight
-          inline expand (input/output is the right detail; a full-screen takeover for a one-line
-          Bash result would be overkill). */}
-      <div className="flex w-full items-center">
-      <button
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-ui"
-        onClick={() => (isSubagent ? viewSubagent(tool.id) : setOpen((o) => !o))}
-        aria-expanded={isSubagent ? undefined : open}
-      >
-        {/* Subagents navigate (their → sits at the row end); every other tool discloses inline. */}
-        {!isSubagent && (
-          <IconChevron
-            className={`h-3 w-3 shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`}
-            aria-hidden="true"
-          />
-        )}
-        <span className="font-mono text-xs font-semibold text-accent">
-          {isSubagent ? 'Agent' : tool.name}
-        </span>
-        {summary && (
-          <span className="truncate font-mono text-xs text-dim">{summary}</span>
-        )}
-        {isSubagent && subType && (
-          <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint">
-            {subType}
-          </span>
-        )}
-        <span className="ml-auto flex items-center gap-1.5 text-meta">
-          {running && isBackgrounded ? (
-            // A backgrounded tool (Workflow / run_in_background Bash) returns its result almost
-            // immediately, then the real work continues in the tray. In the brief gap before its
-            // result lands, the in-flight state is "launching…", not "running" (+ no elapsed timer,
-            // which wrongly implies you're waiting on this call). Info-blue matches the terminal
-            // "launched" state so it doesn't flip color.
-            <>
-              {showDots ? (
-                <TypingDots className="scale-[0.7] text-info" />
-              ) : (
-                <span className="h-1.5 w-1.5 rounded-full bg-info" aria-hidden="true" />
-              )}
-              <span className="text-info">launching…</span>
-            </>
-          ) : running ? (
-            <>
-              {/* Per-card dots animate only in the baseline (few tools); when the aggregate
-                  header is shown (showDots=false) the dot goes static so the chat footer is
-                  the single moving element. Timer always shown. */}
-              {showDots ? (
-                <TypingDots className="scale-[0.7] text-dim" />
-              ) : (
-                <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden="true" />
-              )}
-              <span className="text-dim">running</span>
-              {/* Elapsed timer: the load-bearing "not frozen" signal for long tool/subagent
-                  calls that emit nothing until they finish. */}
-              {tool.startMs !== undefined && <RunningTimer startMs={tool.startMs} />}
-            </>
-          ) : isBackgrounded && !tool.isError ? (
-            // A run_in_background tool returns its result at launch (the task keeps running in
-            // the bg tray). "done" would wrongly imply the work finished, so label it "launched"
-            // and point at the tray with an info-blue dot.
-            <>
-              <span className="h-1.5 w-1.5 rounded-full bg-info" aria-hidden="true" />
-              <span className="text-info">launched</span>
-            </>
-          ) : (
-            <>
-              <span className={`h-1.5 w-1.5 rounded-full ${tool.isError ? 'bg-err' : 'bg-ok'}`} />
-              <span className={tool.isError ? 'text-err' : 'text-ok'}>
-                {tool.isError ? 'error' : 'done'}
-              </span>
-            </>
-          )}
-        </span>
-        {/* Subagent: a hint that the card opens the transcript (arrow). */}
-        {isSubagent && <span className="ml-2 shrink-0 font-mono text-meta text-faint">→</span>}
-      </button>
-      {/* Sibling of the head button, not nested: button-in-button is invalid. Persistent, not
-          hover-only, so it stays discoverable. */}
-      {canSendToBackground && (
-        <button
-          type="button"
-          onClick={() => void sendToBackground(tool.id)}
-          className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint transition-colors hover:text-content focus-visible:text-content focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-accent"
-          title="Send to background"
-          aria-label="Send to background"
-        >
-          <IconSendToTray className="h-3.5 w-3.5" />
-        </button>
-      )}
-      </div>
-      {/* Collapsed failure keeps its reason visible: the err dot + label carry the state (err
-          on the tool surface is under 4.5:1, so the reason itself is text-dim, not text-err). */}
-      {tool.isError && !open && (
-        <div
-          className="truncate border-t border-border px-3 py-1.5 font-mono text-meta text-dim"
-          title={errLine || undefined}
-        >
-          {errLine || 'View error'}
-        </div>
-      )}
-      {open && !isSubagent && (
-        <div className="border-t border-border px-3 py-2.5">
-          <div className="mb-1.5 flex items-center gap-2">
-            <span className="text-caps uppercase text-faint">Output</span>
-            <button
-              type="button"
-              onClick={onCopy}
-              className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint transition-colors hover:text-content focus-visible:text-content focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-accent"
-              aria-label="Copy output"
-            >
-              {copied ? <IconCheck className="h-4 w-4" /> : <IconCopy className="h-4 w-4" />}
-            </button>
-            <span className="sr-only" role="status" aria-live="polite">{copied ? 'Copied' : ''}</span>
-          </div>
-          {tool.result !== undefined && (
-            <pre className="whitespace-pre-wrap break-words font-mono text-xs text-content">
-              {truncate(tool.result, 4000)}
-            </pre>
-          )}
-          <button
-            type="button"
-            onClick={() => setInputOpen((o) => !o)}
-            aria-expanded={inputOpen}
-            className="mt-2.5 flex min-h-6 items-center gap-1.5 text-caps uppercase text-faint transition-colors hover:text-dim"
-          >
-            <IconChevron
-              className={`h-3 w-3 transition-transform ${inputOpen ? 'rotate-90' : ''}`}
-              aria-hidden="true"
-            />
-            Input
-          </button>
-          {inputOpen && (
-            <pre className="mt-1.5 whitespace-pre-wrap break-words font-mono text-xs text-dim">
-              {JSON.stringify(tool.input, null, 2)}
-            </pre>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-export function summarizeInput(input: unknown): string {
-  if (input && typeof input === 'object') {
-    const o = input as Record<string, unknown>
-    // Task (subagent) calls carry a short human description: surface it so the card reads
-    // "Task  research palette UX" rather than a bare "Task" (showing what is running raises
-    // perceived progress + patience).
-    if (typeof o.description === 'string') return o.description
-    if (typeof o.command === 'string') return o.command
-    if (typeof o.file_path === 'string') return o.file_path
-    if (typeof o.path === 'string') return o.path
-    if (typeof o.pattern === 'string') return o.pattern
-  }
-  return ''
-}
-
-/** Additive parse of the opaque tool input; null when absent. */
-function subagentType(input: unknown): string | null {
-  if (input && typeof input === 'object') {
-    const t = (input as Record<string, unknown>).subagent_type
-    if (typeof t === 'string' && t) return t
-  }
-  return null
-}
-
-/** No verb by design: the TypingDots + this timer are the whole running signal. */
-function RunningTimer({ startMs }: { startMs: number }): JSX.Element {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(t)
-  }, [])
-  return <span className="font-mono tabular-nums text-dim">{formatElapsed(now - startMs)}</span>
-}
-
-function formatElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000))
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
-  const h = Math.floor(m / 60)
-  return `${h}h ${String(m % 60).padStart(2, '0')}m`
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + `\n… (${s.length - n} more chars)` : s
-}
-
-/** First non-empty line of a tool result, for the collapsed-failure preview. */
-function firstLine(s: string): string {
-  for (const line of s.split('\n')) {
-    const t = line.trim()
-    if (t) return t
-  }
-  return ''
 }

@@ -92,6 +92,14 @@ export function IconArrowUp(p: IconProps): JSX.Element {
   )
 }
 
+export function IconOpenPane(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M14 4h6v6M20 4l-8 8M11 5H6a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5" />
+    </Svg>
+  )
+}
+
 export function IconStop(p: IconProps): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" className={p.className ?? 'h-4 w-4'} fill="currentColor" aria-hidden="true">

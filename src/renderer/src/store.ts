@@ -18,6 +18,7 @@
 import { create } from 'zustand'
 import type { DomainEvent, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo, TurnUsage } from '../../shared/events'
 import type { CompactionMarker, ProjectGroup } from '../../shared/sessions'
+import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { clampEffort, capBlocksUltra, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
@@ -369,7 +370,11 @@ interface SessionStore {
    * makes repeated jumps to the SAME id re-fire (Chat watches the nonce). No need to
    * clear it after consumption, since Chat keys off the nonce change.
    */
-  scrollTarget: { messageId: string; nonce: number } | null
+  scrollTarget: { messageId: string; nonce: number; align?: 'start' } | null
+  /** The prompt whose reply is at the top of the transcript, shown in the top band's middle
+   *  slot; null while that prompt is itself the top row, or while no transcript is mounted. */
+  currentTurn: CurrentTurn | null
+  setCurrentTurn: (v: CurrentTurn | null) => void
 
   /** On-disk session list (grouped by project), owned here so both the sidebar and
    *  any store-side trigger read/refresh one copy. Sourced from `listSessions()`. */
@@ -397,7 +402,7 @@ interface SessionStore {
   /** Open/close the ⌘⇧F global search overlay. */
   setGlobalSearchOpen: (open: boolean) => void
   /** Request Chat scroll to + flash a message by id (from a find or a global hit). */
-  requestScrollTo: (messageId: string) => void
+  requestScrollTo: (messageId: string, opts?: { align?: 'start' }) => void
 
   /** Start a NEW session in `cwd` and make it active. */
   startSession: (
@@ -1112,6 +1117,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   findOpen: false,
   globalSearchOpen: false,
   scrollTarget: null,
+  currentTurn: null,
   sessionGroups: [],
   sessionsLoading: true,
   chatDir: null,
@@ -1238,7 +1244,8 @@ export const useSession = create<SessionStore>((set, get) => ({
       // Switching sessions closes any open transcript view (its ids are scoped to
       // the previously-active session's Agent tool_use ids).
       viewingSubagent: null,
-      subagentTrail: []
+      subagentTrail: [],
+      currentTurn: null
     }))
   },
 
@@ -2266,7 +2273,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       const trail = s.subagentTrail.slice(0, Math.max(1, depth + 1))
       return { subagentTrail: trail, viewingSubagent: trail[trail.length - 1] ?? null }
     }),
-  closeSubagentView: () => set(() => ({ viewingSubagent: null, subagentTrail: [] })),
+  closeSubagentView: () => set(() => ({ viewingSubagent: null, subagentTrail: [], currentTurn: null })),
   setPaneFull: (full) => set(() => ({ paneFull: full })),
   setPrimaryScrolled: (scrolled) =>
     set((s) =>
@@ -2282,6 +2289,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   setFindOpen: (open) =>
     set((s) => (open && s.viewingSubagent ? {} : { findOpen: open })),
   setGlobalSearchOpen: (open) => set(() => ({ globalSearchOpen: open })),
-  requestScrollTo: (messageId) =>
-    set((s) => ({ scrollTarget: { messageId, nonce: (s.scrollTarget?.nonce ?? 0) + 1 } }))
+  requestScrollTo: (messageId, opts) =>
+    set((s) => ({ scrollTarget: { messageId, nonce: (s.scrollTarget?.nonce ?? 0) + 1, align: opts?.align } })),
+  setCurrentTurn: (v) => set({ currentTurn: v })
 }))

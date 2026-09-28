@@ -86,10 +86,12 @@ function useObservedHeight(ref: RefObject<HTMLElement>, set: (h: number) => void
 
 export function Stage({
   leftInset,
+  bleed,
   bordered,
   empty
 }: {
   leftInset: number
+  bleed: number
   /** Hairline against the expanded sidebar. The collapsed rail shares the Stage's surface. */
   bordered: boolean
   /** What fills the Stage with no session open: onboarding or the welcome block. */
@@ -147,6 +149,7 @@ export function Stage({
     >
       <TopBand
         leftInset={leftInset}
+        bleed={bleed}
         session={!!cwd}
         split={state === 'half'}
         scrolled={(state !== 'full' && primaryScrolled) || (!!kind && secondaryScrolled)}
