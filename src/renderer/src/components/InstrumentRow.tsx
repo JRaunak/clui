@@ -3,6 +3,7 @@ import { useActive, useSession, type ToolCall } from '../store'
 import { Lumen } from './Lumen'
 import { lumenSiteOf } from '../lib/lumen'
 import { viaOf } from '../lib/motion'
+import { diveInto } from '../lib/dive'
 import {
   STATE_TEXT,
   isBackgroundedTool,
@@ -104,7 +105,6 @@ export function InstrumentRow({
     if (copyTimer.current) clearTimeout(copyTimer.current)
   }, [])
   const bodyId = useId()
-  const viewSubagent = useSession((s) => s.viewSubagent)
   const sendToBackground = useSession((s) => s.backgroundTask)
   // Boolean selectors: a streaming token re-runs them but only re-renders the row whose answer flips.
   const needsYou = useActive((s) => needsYouToolIdOf(s) === tool.id)
@@ -187,7 +187,8 @@ export function InstrumentRow({
                   <button
                     type="button"
                     data-ui="row-open-transcript"
-                    onClick={() => viewSubagent(tool.id)}
+                    data-tool-id={tool.id}
+                    onClick={(e) => diveInto(tool.id, viaOf(e))}
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px]"
                     title="Open transcript"
                     aria-label="Open transcript"

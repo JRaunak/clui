@@ -20,6 +20,8 @@ import { StatusBar } from './StatusBar'
 import { Notice } from './Notice'
 import { IconClose, IconMaximize, IconRestore, IconShield } from './Icon'
 import { SPLIT_MIN, getStage } from '../lib/stage'
+import { diveOut, resizePane } from '../lib/dive'
+import { viaOf } from '../lib/motion'
 
 export type PaneState = 'collapsed' | 'half' | 'full'
 
@@ -243,8 +245,13 @@ function PrimaryPane({ split }: { split: boolean }): JSX.Element {
       </div>
       <Chat onScrollbarWidth={setSbW} />
       {/* The transcript reserves a stable scrollbar gutter; the dock pads its right by the same
-          width so the composer column lines up with the message column. */}
-      <div ref={dockRef} className="group/dock absolute inset-x-0 bottom-0" style={{ paddingRight: 'var(--sb-w, 0px)' }}>
+          width so the composer column lines up with the message column. The wrapper ignores
+          pointer events so the scrollbar under that padding stays grabbable. */}
+      <div
+        ref={dockRef}
+        className="group/dock pointer-events-none absolute inset-x-0 bottom-0 [&>*]:pointer-events-auto"
+        style={{ paddingRight: 'var(--sb-w, 0px)' }}
+      >
         <ChangedFiles key={activeHandleId ?? 'none'} />
         <Composer />
       </div>
@@ -362,7 +369,7 @@ export function PaneHeader({
           <button
             type="button"
             data-ui="pane-expand"
-            onClick={pane.toggleSize}
+            onClick={(e) => resizePane(!full, viaOf(e))}
             aria-pressed={full}
             aria-label={full ? 'Return to split' : 'Expand to full'}
             title={full ? 'Split ⌥⌘B' : 'Expand ⌥⌘B'}
@@ -374,7 +381,7 @@ export function PaneHeader({
         <button
           type="button"
           data-ui="pane-close"
-          onClick={pane.close}
+          onClick={(e) => diveOut(viaOf(e))}
           aria-label="Close pane"
           title="Close (Esc)"
           className={PANE_BTN}

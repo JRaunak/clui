@@ -7,7 +7,7 @@ import { Settings } from './components/Settings'
 import { CommandPalette, type PaletteMode } from './components/CommandPalette'
 import { GlobalSearch } from './components/GlobalSearch'
 import { Stage } from './components/Stage'
-import { Button } from './components/Button'
+import { Hero } from './components/Hero'
 import { SplitNewSession } from './components/SplitNewSession'
 import { Onboarding, cliHealth } from './components/Onboarding'
 import { IconSettings, IconPlus, IconSidebar } from './components/Icon'
@@ -223,27 +223,7 @@ export function App(): JSX.Element {
         onDismissIntro={dismissIntro}
       />
     ) : (
-      <div className="m-auto flex max-w-md flex-col items-center px-6 text-center">
-        <div className="mb-6 flex items-baseline gap-2.5">
-          <span className="font-serif text-5xl font-semibold tracking-tight text-content">Clui</span>
-          <span className="h-2.5 w-2.5 translate-y-[-6px] rounded-full bg-accent" aria-hidden="true" />
-        </div>
-        <p className="font-serif text-xl italic leading-snug text-dim">
-          Drive Claude Code, visually.
-        </p>
-        <p className="mt-3 text-sm leading-relaxed text-faint">
-          A local window onto the <span className="font-mono text-dim">claude</span> CLI: your
-          sessions, permissions, and tools, running side by side.
-        </p>
-        <Button variant="primary" size="lg" className="mt-7" onClick={startNew} busy={spawnPending}>
-          <IconPlus className="h-4 w-4" />
-          New session
-        </Button>
-        {/* Ghost, so the New session button above stays the only accent button on this screen. */}
-        <Button variant="ghost" size="md" className="mt-2" onClick={startInDir} busy={spawnPending}>
-          New session in a directory…
-        </Button>
-      </div>
+      <Hero onNew={startNew} onNewInDir={startInDir} busy={spawnPending} />
     )
 
   return (

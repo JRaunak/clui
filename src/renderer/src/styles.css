@@ -996,3 +996,229 @@ body {
   bottom: calc(anchor(--composer-dock top, calc(100% - 96px)) + 8px);
   translate: -50% 0;
 }
+
+/* Welcome hero, played on the first welcome render of a launch. SVG transforms are in viewBox
+   units, so the bar's 8 screen px is 74 units at the 64px mark size. */
+.hero-mark .hero-bar,
+.hero-mark .hero-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes hero-c {
+  from { clip-path: circle(0% at 50% 50%); }
+  to { clip-path: circle(75% at 50% 50%); }
+}
+@keyframes hero-bar {
+  from { opacity: 0; transform: translateX(-74px); }
+}
+@keyframes hero-dot {
+  from { opacity: 0; transform: scale(0.5); }
+}
+@keyframes hero-rise {
+  from { opacity: 0; transform: translateY(6px); }
+}
+.hero-play .hero-c { animation: hero-c 380ms var(--ease-snap) both; }
+.hero-play .hero-bar { animation: hero-bar 220ms var(--ease-out) 200ms both; }
+.hero-play .hero-words { animation: hero-rise 260ms var(--ease-out) 320ms both; }
+.hero-play .hero-dot { animation: hero-dot 160ms var(--ease-out) 380ms both; }
+.hero-play .hero-actions { animation: vt-fade-in 200ms var(--ease-out) 520ms both; }
+/* The global neutralizer shortens durations but not delays, and a `both` fill would hold these
+   invisible until the delay passes. Reduced motion gets the end state directly. */
+@media (prefers-reduced-motion: reduce) {
+  .hero-play,
+  .hero-play * {
+    animation: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   View Transitions. Every ::view-transition rule in the app lives here.
+   Stage transitions are element-scoped: their pseudo tree hangs off the Stage, so each rule is
+   qualified by the Stage and the data-vt kind runTagged() put on it.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* The primary pane moves as one piece in Stage transitions. */
+[data-ui='pane-primary'] {
+  view-transition-name: stage-content;
+}
+
+@keyframes vt-fade-in {
+  from { opacity: 0; }
+}
+@keyframes vt-fade-out {
+  to { opacity: 0; }
+}
+@keyframes vt-recede {
+  to { opacity: 0; transform: scale(0.96); }
+}
+@keyframes vt-return {
+  from { opacity: 0; transform: scale(0.96); }
+}
+@keyframes vt-switch-out {
+  to { opacity: 0; transform: scale(0.985); }
+}
+@keyframes vt-switch-in {
+  from { opacity: 0; transform: scale(1.015); }
+}
+@keyframes vt-pane-in {
+  from { opacity: 0; transform: translateX(32px); }
+}
+@keyframes vt-pane-out {
+  to { opacity: 0; transform: translateX(16px); }
+}
+
+/* Stage root (everything in the Stage not otherwise named: its floor, the top band, the pane header
+   and the status bar). */
+[data-ui='stage'][data-vt]::view-transition-old(root) {
+  animation: vt-fade-out var(--dur-fast) var(--ease-in) both;
+}
+[data-ui='stage'][data-vt]::view-transition-new(root) {
+  animation: vt-fade-in var(--dur-fast) var(--ease-out) both;
+}
+
+/* Subagent dive: the Agent row morphs into the pane. */
+[data-ui='stage'][data-vt^='dive']::view-transition-group(dive),
+[data-ui='stage'][data-vt^='undive']::view-transition-group(dive) {
+  overflow: clip;
+  border-radius: var(--radius-md);
+  animation-timing-function: var(--ease-snap);
+}
+[data-ui='stage'][data-vt^='dive']::view-transition-group(dive) {
+  animation-duration: var(--dur-stage);
+}
+[data-ui='stage'][data-vt^='undive']::view-transition-group(dive) {
+  animation-duration: var(--dur-slow);
+}
+/* A 32px row and a full-height pane have different aspect ratios; cover-crop from the top-left
+   instead of stretching text. */
+[data-ui='stage'][data-vt]::view-transition-old(dive),
+[data-ui='stage'][data-vt]::view-transition-new(dive) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: left top;
+}
+[data-ui='stage'][data-vt^='dive']::view-transition-old(dive) {
+  animation: vt-fade-out 100ms var(--ease-in) both;
+}
+[data-ui='stage'][data-vt^='dive']::view-transition-new(dive) {
+  animation: vt-fade-in 160ms var(--ease-out) both;
+}
+[data-ui='stage'][data-vt^='undive']::view-transition-old(dive) {
+  animation: vt-fade-out var(--dur-fast) var(--ease-in) both;
+}
+/* The growing pane is transparent, so fill it or the transcript beneath shows through its edge. */
+[data-ui='stage'][data-vt='dive-split']::view-transition-group(dive) {
+  background-color: var(--color-bg);
+}
+[data-ui='stage'][data-vt^='undive']::view-transition-new(dive) {
+  animation: vt-fade-in 100ms var(--ease-out) both;
+}
+/* Dive to full: the transcript recedes behind the arriving pane and comes forward on the way out. */
+[data-ui='stage'][data-vt='dive']::view-transition-old(stage-content) {
+  animation: vt-recede var(--dur-base) var(--ease-out) both;
+}
+[data-ui='stage'][data-vt='undive']::view-transition-new(stage-content) {
+  animation: vt-return var(--dur-slow) var(--ease-out) both;
+}
+/* Half (split): the transcript's group morphs to the new width while both snapshots stay at
+   natural size, cropped from the top-left, so text never stretches. */
+[data-ui='stage'][data-vt$='-split']::view-transition-group(stage-content),
+[data-ui='stage'][data-vt='pane-open']::view-transition-group(stage-content),
+[data-ui='stage'][data-vt='pane-hide']::view-transition-group(stage-content) {
+  overflow: clip;
+  animation-timing-function: var(--ease-snap);
+}
+[data-ui='stage'][data-vt$='-split']::view-transition-group(stage-content),
+[data-ui='stage'][data-vt='pane-open']::view-transition-group(stage-content) {
+  animation-duration: var(--dur-slow);
+}
+[data-ui='stage'][data-vt='pane-hide']::view-transition-group(stage-content) {
+  animation-duration: var(--dur-base);
+}
+[data-ui='stage'][data-vt$='-split']::view-transition-old(stage-content),
+[data-ui='stage'][data-vt$='-split']::view-transition-new(stage-content),
+[data-ui='stage'][data-vt='pane-open']::view-transition-old(stage-content),
+[data-ui='stage'][data-vt='pane-open']::view-transition-new(stage-content),
+[data-ui='stage'][data-vt='pane-hide']::view-transition-old(stage-content),
+[data-ui='stage'][data-vt='pane-hide']::view-transition-new(stage-content) {
+  width: 100%;
+  height: 100%;
+  object-fit: none;
+  object-position: left top;
+}
+
+/* The right-sidebar pane's states. The pane holds the name `pane` only while one runs. */
+[data-ui='stage'][data-vt^='pane-open']::view-transition-new(pane) {
+  animation: vt-pane-in var(--dur-slow) var(--ease-snap) both;
+}
+[data-ui='stage'][data-vt='pane-hide']::view-transition-old(pane) {
+  animation: vt-pane-out var(--dur-base) var(--ease-in) both;
+}
+/* Opening straight to full on a narrow Stage: the transcript recedes, as in the dive to full. */
+[data-ui='stage'][data-vt='pane-open-full']::view-transition-old(stage-content) {
+  animation: vt-recede var(--dur-base) var(--ease-out) both;
+}
+/* Half ↔ full: the pane morphs its rect; the transcript fades out going full and back in going half. */
+[data-ui='stage'][data-vt='pane-full']::view-transition-group(pane),
+[data-ui='stage'][data-vt='pane-half']::view-transition-group(pane) {
+  overflow: clip;
+  animation-duration: var(--dur-slow);
+  animation-timing-function: var(--ease-snap);
+}
+[data-ui='stage'][data-vt='pane-full']::view-transition-old(pane),
+[data-ui='stage'][data-vt='pane-full']::view-transition-new(pane),
+[data-ui='stage'][data-vt='pane-half']::view-transition-old(pane),
+[data-ui='stage'][data-vt='pane-half']::view-transition-new(pane) {
+  width: 100%;
+  height: 100%;
+  object-fit: none;
+  /* The pane's right edge never moves, so anchoring there keeps its header controls still. */
+  object-position: right top;
+}
+/* Snapshots at two widths can't crossfade into alignment, so the new one shows at once over the old,
+   which drops out fast, and the group's clip does the moving. The default plus-lighter blend would
+   add up the overlap and glow. */
+[data-ui='stage'][data-vt$='-split']::view-transition-old(stage-content),
+[data-ui='stage'][data-vt='pane-open']::view-transition-old(stage-content),
+[data-ui='stage'][data-vt='pane-hide']::view-transition-old(stage-content),
+[data-ui='stage'][data-vt='pane-full']::view-transition-old(pane),
+[data-ui='stage'][data-vt='pane-half']::view-transition-old(pane) {
+  mix-blend-mode: normal;
+  animation: vt-fade-out var(--dur-instant) var(--ease-out) both;
+}
+[data-ui='stage'][data-vt$='-split']::view-transition-new(stage-content),
+[data-ui='stage'][data-vt='pane-open']::view-transition-new(stage-content),
+[data-ui='stage'][data-vt='pane-hide']::view-transition-new(stage-content),
+[data-ui='stage'][data-vt='pane-full']::view-transition-new(pane),
+[data-ui='stage'][data-vt='pane-half']::view-transition-new(pane) {
+  mix-blend-mode: normal;
+  animation: none;
+}
+[data-ui='stage'][data-vt='pane-full']::view-transition-old(stage-content) {
+  animation: vt-fade-out var(--dur-fast) var(--ease-in) both;
+}
+[data-ui='stage'][data-vt='pane-half']::view-transition-new(stage-content) {
+  animation: vt-fade-in var(--dur-base) var(--ease-out) both;
+}
+
+/* Pointer session switch. */
+[data-ui='stage'][data-vt='switch']::view-transition-group(stage-content) {
+  animation: none;
+}
+[data-ui='stage'][data-vt='switch']::view-transition-old(stage-content) {
+  animation: vt-switch-out var(--dur-fast) var(--ease-out) both;
+}
+[data-ui='stage'][data-vt='switch']::view-transition-new(stage-content) {
+  animation: vt-switch-in var(--dur-base) var(--ease-out) 40ms both;
+}
+
+/* runTransition already skips transitions under reduced motion; this covers anything that
+   slips past it (a transition started before the preference changed). */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

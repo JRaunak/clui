@@ -21,7 +21,8 @@ import {
 import { ToastStack } from './Toast'
 import { useGuardedAsync } from '../lib/useGuardedAsync'
 import { usePopover } from './Popover'
-import { viaOf } from '../lib/motion'
+import { runTagged, viaOf, type Via } from '../lib/motion'
+import { getStage } from '../lib/stage'
 
 /** A row in the merged sidebar list. On-disk sessions and live sessions are merged by CLI session id;
  *  live-only sessions get synthesized rows so they show up immediately. */
@@ -236,9 +237,18 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
 
   // Activate a live session or resume a dormant one, refusing when its folder is gone.
   const openMerged = useCallback(
-    (s: MergedSession, exists: boolean): void => {
-      if (s.live && s.handleId) activateSession(s.handleId)
-      else if (!exists)
+    (s: MergedSession, exists: boolean, via: Via = 'keyboard'): void => {
+      if (s.live && s.handleId) {
+        const h = s.handleId
+        const focusComposer = (): void => document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
+        // Re-clicking the active row still runs activateSession (it closes an open subagent
+        // view) but doesn't animate: nothing is switching.
+        if (h === useSession.getState().activeHandleId) {
+          activateSession(h)
+          return
+        }
+        runTagged('switch', { via, scope: getStage(), update: () => activateSession(h), after: focusComposer })
+      } else if (!exists)
         setNotice(
           `Can't resume: ${s.cwd} no longer exists. The transcript is safe. You can still export or delete it from the row menu.`
         )
@@ -391,7 +401,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
               key={s.handleId ?? s.id ?? `${s.cwd}-x`}
               session={s}
               active={Boolean(s.handleId) && s.handleId === activeHandleId}
-              onOpen={() => openMerged(s, exists)}
+              onOpen={(e) => openMerged(s, exists, viaOf(e))}
             />
           ))}
         </div>
@@ -519,7 +529,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
                         key={s.handleId ?? s.id ?? `${g.cwd}-x`}
                         session={s}
                         active={Boolean(s.handleId) && s.handleId === activeHandleId}
-                        onOpen={() => openMerged(s, g.exists)}
+                        onOpen={(e) => openMerged(s, g.exists, viaOf(e))}
                         onClose={s.live && s.handleId ? () => void closeSession(s.handleId!) : undefined}
                         onDelete={
                           s.onDisk && s.projectSlug && s.id
@@ -564,7 +574,7 @@ function SessionRow({
 }: {
   session: MergedSession
   active: boolean
-  onOpen: () => void
+  onOpen: (e: React.MouseEvent) => void
   onClose?: () => void
   /** Request an undoable delete. On-disk sessions only. */
   onDelete?: () => void
@@ -798,7 +808,7 @@ function SessionMonogram({
 }: {
   session: MergedSession
   active: boolean
-  onOpen: () => void
+  onOpen: (e: React.MouseEvent) => void
 }): JSX.Element {
   const st = session.status
   const project = basename(session.cwd)

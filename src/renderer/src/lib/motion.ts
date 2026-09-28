@@ -23,15 +23,45 @@ export function runTransition(o: {
   via: Via
   scope?: HTMLElement | null
   types?: string[]
+  /** Runs once the DOM reflects `update`, in both paths. Transition names for the new state are set here. */
+  after?: () => void
 }): ViewTransition | null {
   const host: Document | HTMLElement = o.scope ?? document
   if (o.via === 'keyboard' || reducedMotion() || !('startViewTransition' in host)) {
-    o.update()
+    flushSync(o.update)
+    o.after?.()
     return null
   }
   inflight.get(host)?.skipTransition()
-  const t = host.startViewTransition({ update: () => flushSync(o.update), types: o.types ?? [] })
+  const t = host.startViewTransition({
+    update: () => {
+      flushSync(o.update)
+      o.after?.()
+    },
+    types: o.types ?? []
+  })
   inflight.set(host, t)
   t.finished.finally(() => { if (inflight.get(host) === t) inflight.delete(host) })
+  return t
+}
+
+/**
+ * runTransition with the host tagged `data-vt="<kind>"` for the transition's lifetime, so the
+ * View Transitions CSS can key off it. A newer tagged transition on the same host owns the tag,
+ * so a skipped one finishing late never clears it.
+ */
+export function runTagged(kind: string, o: Parameters<typeof runTransition>[0]): ViewTransition | null {
+  const el = o.scope ?? document.documentElement
+  const seq = String((Number(el.dataset.vtSeq) || 0) + 1)
+  el.dataset.vtSeq = seq
+  el.dataset.vt = kind
+  const clear = (): void => {
+    if (el.dataset.vtSeq !== seq) return
+    delete el.dataset.vt
+    delete el.dataset.vtSeq
+  }
+  const t = runTransition(o)
+  if (t) t.finished.finally(clear)
+  else clear()
   return t
 }

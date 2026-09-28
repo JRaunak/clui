@@ -14,6 +14,8 @@ import {
   type NestedSubagent
 } from '../store'
 import { useEscape } from '../lib/useEscape'
+import { diveOut } from '../lib/dive'
+import { viaOf } from '../lib/motion'
 import { Markdown } from './Markdown'
 import { ToolGroup } from './MessageView'
 import { IconWarn } from './Icon'
@@ -622,7 +624,7 @@ export function SubagentView(): JSX.Element | null {
           <button
             type="button"
             className="shrink-0 font-semibold text-content hover:text-dim"
-            onClick={popSubagent}
+            onClick={(e) => (atRoot ? diveOut(viaOf(e)) : popSubagent())}
             title={atRoot ? 'Back to chat' : 'Back to the parent subagent'}
           >
             {atRoot ? '← Chat' : '← Back'}
