@@ -12,7 +12,7 @@ type Size = 'sm' | 'md' | 'lg' | 'icon'
 const VARIANTS: Record<Variant, string> = {
   primary: 'bg-accent text-on-accent hover:bg-accent-hover active:scale-[0.98]',
   secondary: 'bg-bg-raised text-content hover:bg-border border border-border',
-  outline: 'border border-border text-content hover:border-accent hover:text-content bg-transparent',
+  outline: 'border border-border text-content hover:border-border-strong hover:bg-bg-raised hover:text-content bg-transparent',
   ghost: 'text-dim hover:text-content hover:bg-bg-raised bg-transparent',
   destructive: 'bg-err text-on-err hover:brightness-110',
   // Secondary actions in a Gate footer: a bordered well reads as a button against the dock's elevated fill.

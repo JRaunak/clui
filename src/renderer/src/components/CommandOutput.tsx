@@ -168,7 +168,7 @@ export function ContextCard({ report }: { report: ContextReport }): JSX.Element 
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-border bg-tool">
       <div className="flex items-center justify-between border-b border-border/60 px-3.5 py-2">
-        <span className="text-caps uppercase text-accent">
+        <span className="text-caps uppercase text-dim">
           Context
         </span>
         {report.model && (
@@ -235,7 +235,7 @@ export function UsageCard({ report }: { report: UsageReport }): JSX.Element {
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-border bg-tool">
       <div className="border-b border-border/60 px-3.5 py-2">
-        <span className="text-caps uppercase text-accent">Usage</span>
+        <span className="text-caps uppercase text-dim">Usage</span>
       </div>
       {stats.length > 0 && (
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 px-3.5 py-3 sm:grid-cols-4">

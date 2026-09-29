@@ -400,15 +400,14 @@ function Row({
       onMouseMove={onHover}
       onClick={onClick}
       /* Keyboard-first surface: the selected row needs a perceivable marker; a ~1.08:1 fill
-         alone isn't. Reuse the sidebar's active-item language (a scarce terracotta left-edge
-         bar plus the row fill) so the eye tracks selection where names are read. */
+         alone isn't. A left-edge bar plus the row fill puts it where names are read. */
       className={`relative flex w-full cursor-pointer items-center gap-2.5 px-4 py-2 text-left ${
         selected ? 'bg-[var(--glass-row-hover)]' : ''
       }`}
     >
       {selected && (
         <span
-          className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-accent"
+          className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-content"
           aria-hidden="true"
         />
       )}

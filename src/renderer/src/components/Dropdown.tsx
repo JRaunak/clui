@@ -198,7 +198,7 @@ export function Dropdown<T extends string>({
                   <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-err" aria-hidden="true" />
                 )}
                 {!isPill && selected && (
-                  <span className="absolute inset-y-0 left-0 w-0.5 bg-accent" aria-hidden="true" />
+                  <span className="absolute inset-y-0 left-0 w-0.5 bg-content" aria-hidden="true" />
                 )}
                 {o.icon && <span className={`shrink-0 ${isPill ? '' : 'mt-px'}`}>{o.icon}</span>}
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">

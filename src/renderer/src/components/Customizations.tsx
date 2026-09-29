@@ -102,7 +102,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
               key={t}
               className={`rounded-t px-3 py-2 text-ui capitalize ${
                 tab === t
-                  ? 'border-b-2 border-accent font-semibold text-content'
+                  ? 'border-b-2 border-content font-semibold text-content'
                   : 'text-dim hover:text-content'
               }`}
               onClick={() => setTab(t)}
@@ -295,8 +295,7 @@ function ItemRow({
 }
 
 function OriginBadge({ origin }: { origin: ConfigOrigin }): JSX.Element {
-  const color =
-    origin === 'project' ? 'text-ok' : origin === 'user' ? 'text-accent' : 'text-dim'
+  const color = origin === 'project' ? 'text-ok' : 'text-dim'
   return (
     <span className={`rounded border border-border px-1.5 py-0.5 text-badge capitalize ${color}`}>
       {origin}

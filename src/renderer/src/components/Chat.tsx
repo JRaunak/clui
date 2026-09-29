@@ -326,7 +326,6 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
             with nothing saved. So the resumed copy claims context (which the CLI holds) without
             asserting what was saved. */}
         <div className="m-auto flex max-w-sm flex-col items-center gap-2 text-center" aria-live="polite">
-          <span className="h-2 w-2 rounded-full bg-accent/70" aria-hidden="true" />
           <p className="text-title text-content">{title}</p>
           <p className="text-sm leading-relaxed text-faint">{body}</p>
           {!resumed && ephemeral && (

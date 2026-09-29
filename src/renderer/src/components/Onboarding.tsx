@@ -161,7 +161,7 @@ export function Onboarding({
 function IntroPoint({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
   return (
     <li className="flex gap-2.5">
-      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden="true" />
+      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-faint" aria-hidden="true" />
       <span>
         <span className="text-sm font-medium text-content">{title}</span>
         <span className="mt-0.5 block text-xs leading-relaxed text-faint">{children}</span>
