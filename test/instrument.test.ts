@@ -1,6 +1,6 @@
 // Boundary: the row-state grammar, the aggregate's worst-state pick, "needs you" matching, and the
 // current-turn derivation that the top-band header renders.
-import { rowState, worstState, needsYouToolIdOf, turnNumberOf, currentTurnAt } from '../src/renderer/src/lib/instrument.ts'
+import { rowState, worstState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel } from '../src/renderer/src/lib/instrument.ts'
 import { equal } from './support/harness.mjs'
 
 const tool = (o: Record<string, unknown>) => ({ id: 't', name: 'Bash', input: {}, ...o }) as never
@@ -37,3 +37,10 @@ equal(currentTurnAt(log, 3), null, 'current: hidden while the prompt row itself 
 equal(currentTurnAt([msg('a0', 'assistant')], 0), null, 'current: no prompt above')
 equal(currentTurnAt([msg('u', 'user', '@"reviewer (agent)" check it'), msg('a', 'assistant')], 1)?.text, '@reviewer check it', 'current: agent mention tokens read as @name')
 equal(currentTurnAt([msg('u', 'user', ''), msg('a', 'assistant')], 1)?.text, 'Attachments only', 'current: an attachment-only prompt still has a label')
+
+const b = (tool: string) => `mcp__clui-browser__${tool}`
+equal(browserLabel(b('press'), { keys: 'Enter' }), 'press Enter', 'browser label: one key by name')
+equal(browserLabel(b('press'), { keys: [' '] }), 'press Space', 'browser label: space reads Space')
+equal(browserLabel(b('press'), { keys: ['a', 'b', 'c', 'd', 'Enter'] }), 'press 5 keys', 'browser label: several keys by count')
+equal(browserLabel(b('hover'), { ref: 12 }), 'hover 12', 'browser label: hover by ref')
+equal(browserLabel(b('hover'), { x: 320, y: 180 }), 'hover 320, 180', 'browser label: hover by point')

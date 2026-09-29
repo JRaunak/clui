@@ -249,13 +249,13 @@ export class BrowserManager {
     wc.on('dom-ready', () => void injectCursor(wc))
     wc.on('page-title-updated', (_ev, title) => mine() && this.patch(handleId, e, { title }))
     wc.on('render-process-gone', () => mine() && this.setDrive(handleId, e, 'stopped'))
-    // CDP mouse input also raises input-event, so only input outside the quiet window
-    // around our own dispatches counts as the user. before-input-event never fires for CDP.
+    // CDP mouse and key events raise these the same as real input, so only input outside the
+    // quiet window around our own dispatches counts as the user.
     wc.on('input-event', (_ev, input) => {
       if (USER_INPUT.has(input.type) && Date.now() > e.agentActingUntil) this.userActed(handleId, e)
     })
     wc.on('before-input-event', (_ev, input) => {
-      if (input.type === 'keyDown' && !input.meta && !input.control) this.userActed(handleId, e)
+      if (input.type === 'keyDown' && !input.meta && !input.control && Date.now() > e.agentActingUntil) this.userActed(handleId, e)
     })
   }
 

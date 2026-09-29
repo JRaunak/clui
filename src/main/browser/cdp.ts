@@ -43,6 +43,54 @@ const LIST_INTERACTIVE = `(() => {
 
 export interface Box { x: number; y: number; password: boolean }
 
+export interface KeyEvent {
+  key: string
+  code: string
+  windowsVirtualKeyCode?: number
+  nativeVirtualKeyCode?: number
+  text?: string
+  modifiers?: number
+}
+
+const NAMED: Record<string, [vk: number, text?: string]> = {
+  Enter: [13, '\r'],
+  Tab: [9],
+  Backspace: [8],
+  Escape: [27],
+  Delete: [46],
+  ArrowLeft: [37],
+  ArrowUp: [38],
+  ArrowRight: [39],
+  ArrowDown: [40],
+  Home: [36],
+  End: [35],
+  PageUp: [33],
+  PageDown: [34]
+}
+const SHIFT = 8
+
+/** A DOM key name as CDP key-event fields, or null for a name this doesn't know. */
+export function keyEvent(name: string): KeyEvent | null {
+  const named = NAMED[name]
+  if (named) {
+    const [vk, text] = named
+    return { key: name, code: name, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, ...(text ? { text } : {}) }
+  }
+  if ([...name].length !== 1) return null
+  // Pages that still read keyCode or code need them on letters, digits and space too.
+  if (/^[a-z]$/i.test(name)) {
+    const vk = name.toUpperCase().charCodeAt(0)
+    const upper = name !== name.toLowerCase()
+    return { key: name, code: `Key${name.toUpperCase()}`, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, text: name, ...(upper ? { modifiers: SHIFT } : {}) }
+  }
+  if (/^\d$/.test(name)) {
+    const vk = name.charCodeAt(0)
+    return { key: name, code: `Digit${name}`, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, text: name }
+  }
+  if (name === ' ') return { key: name, code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32, text: name }
+  return { key: name, code: '', text: name }
+}
+
 export class Cdp {
   private readonly wc: WebContents
   /** Called around every input dispatch, so the manager can tell CDP input from the user's. */
@@ -87,8 +135,12 @@ export class Cdp {
     }
   }
 
+  hover(x: number, y: number): Promise<void> {
+    return this.input('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+  }
+
   async click(x: number, y: number): Promise<void> {
-    await this.input('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+    await this.hover(x, y)
     await this.input('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 })
     await this.input('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
   }
@@ -97,9 +149,12 @@ export class Cdp {
     return this.input('Input.insertText', { text })
   }
 
-  async key(name: 'Enter'): Promise<void> {
-    const k = { key: name, code: name, windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
-    await this.input('Input.dispatchKeyEvent', { type: 'keyDown', text: '\r', ...k })
+  async key(name: string): Promise<void> {
+    const ev = keyEvent(name)
+    if (!ev) throw new Error(`Unknown key ${name}.`)
+    const { text, ...k } = ev
+    // A key that types no character goes as rawKeyDown, the way Chromium sends a real one.
+    await this.input('Input.dispatchKeyEvent', text ? { type: 'keyDown', text, ...k } : { type: 'rawKeyDown', ...k })
     await this.input('Input.dispatchKeyEvent', { type: 'keyUp', ...k })
   }
 

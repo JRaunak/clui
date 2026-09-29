@@ -111,5 +111,14 @@ export function browserLabel(name: string, input: unknown): string {
   if (action === 'navigate' && typeof o.url === 'string') return `navigate ${o.url.replace(/^https?:\/\//, '')}`
   if ((action === 'click' || action === 'type') && typeof o.ref === 'number') return `${action} ${o.ref}`
   if (action === 'scroll' && typeof o.dy === 'number') return `scroll ${o.dy}`
+  if (action === 'press') {
+    const keys = typeof o.keys === 'string' ? [o.keys] : Array.isArray(o.keys) ? o.keys : []
+    if (keys.length > 1) return `press ${keys.length} keys`
+    if (typeof keys[0] === 'string') return `press ${keys[0] === ' ' ? 'Space' : keys[0]}`
+  }
+  if (action === 'hover') {
+    if (typeof o.ref === 'number') return `hover ${o.ref}`
+    if (typeof o.x === 'number' && typeof o.y === 'number') return `hover ${o.x}, ${o.y}`
+  }
   return action
 }

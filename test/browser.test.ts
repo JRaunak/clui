@@ -53,7 +53,31 @@ ok(threw.length > 0, 'vault: an undecryptable file throws instead of reading as 
 // Boundary: the MCP server is reachable by anything on localhost, so the Origin/Host/token
 // gates and the JSON-RPC shapes the CLI relies on are pinned here against a stub manager.
 import { request } from 'node:http'
-import { BrowserMcpServer, fillAllowed } from '../src/main/browser/mcp.ts'
+import { BrowserMcpServer, fillAllowed, pressKeys } from '../src/main/browser/mcp.ts'
+import { keyEvent } from '../src/main/browser/cdp.ts'
+
+// Boundary: press sends real key events, so a page's keydown handler sees the key, code and keyCode
+// a keyboard would give it, and only printables carry text (text is what makes a character).
+equal(JSON.stringify(keyEvent('Enter')), JSON.stringify({ key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r' }), 'key: Enter types a carriage return')
+equal(JSON.stringify(keyEvent('ArrowLeft')), JSON.stringify({ key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37, nativeVirtualKeyCode: 37 }), 'key: arrows carry no text')
+equal(keyEvent('Backspace')?.windowsVirtualKeyCode, 8, 'key: Backspace')
+equal(keyEvent('Tab')?.text, undefined, 'key: Tab carries no text')
+equal(JSON.stringify(keyEvent('a')), JSON.stringify({ key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, text: 'a' }), 'key: a lowercase letter')
+equal(keyEvent('A')?.modifiers, 8, 'key: an uppercase letter holds shift')
+equal(keyEvent('a')?.modifiers, undefined, 'key: a lowercase letter holds nothing')
+equal(keyEvent('1')?.code, 'Digit1', 'key: digit code')
+equal(keyEvent(' ')?.code, 'Space', 'key: space')
+equal(keyEvent('é')?.text, 'é', 'key: any single character types itself')
+equal(keyEvent('Enterr'), null, 'key: an unknown name is refused')
+equal(keyEvent('hello'), null, 'key: a word is not a key')
+
+equal(JSON.stringify(pressKeys('Enter')), '["Enter"]', 'press: one key as a string')
+equal(JSON.stringify(pressKeys(['a', '+', ' '])), '["a","+"," "]', 'press: a lone plus is the plus key')
+ok(typeof pressKeys(['Control+a']) === 'string' && (pressKeys(['Control+a']) as string).includes('modifier'), 'press: a combination is refused')
+equal(pressKeys(Array(51).fill('a')), 'press takes at most 50 keys per call.', 'press: more than 50 keys is refused')
+equal((pressKeys(Array(50).fill('a')) as string[]).length, 50, 'press: 50 keys pass')
+ok(typeof pressKeys([]) === 'string' && typeof pressKeys(undefined) === 'string' && typeof pressKeys([1]) === 'string', 'press: no keys or non-strings are refused')
+ok(typeof pressKeys(['hello']) === 'string', 'press: text is refused toward type')
 
 ok(fillAllowed('https://example.com/login') && fillAllowed('http://127.0.0.1:8080/') && fillAllowed('http://localhost/'), 'fill: https and this machine')
 ok(!fillAllowed('http://example.com/login') && !fillAllowed('http://127.0.0.1.evil.example/'), 'fill: plain http elsewhere is refused')
@@ -92,7 +116,7 @@ const init = await call({ headers: auth, body: rpc('initialize', { protocolVersi
 equal(init.json?.result?.protocolVersion, '2099-01-01', 'mcp: initialize echoes the protocol version')
 equal((await call({ headers: auth, body: rpc('server/discover') })).json?.error?.code, -32601, 'mcp: an unknown method is -32601')
 const listed = await call({ headers: auth, body: rpc('tools/list') })
-equal(listed.json?.result?.tools?.map((t: { name: string }) => t.name).join(','), 'navigate,snapshot,click,type,scroll,back,autofill_login', 'mcp: tools/list')
+equal(listed.json?.result?.tools?.map((t: { name: string }) => t.name).join(','), 'navigate,snapshot,click,type,scroll,press,hover,back,autofill_login', 'mcp: tools/list')
 const called = await call({ headers: auth, body: rpc('tools/call', { name: 'snapshot', arguments: {} }) })
 equal(called.json?.result?.content?.[0]?.text, 'The browser is off for this session.', 'mcp: a refused call answers with text')
 mcp.revoke('h1')
