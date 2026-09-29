@@ -91,7 +91,7 @@ export function Onboarding({
               Or see{' '}
               <button
                 type="button"
-                className="text-accent underline-offset-2 hover:underline"
+                className="text-content underline underline-offset-2 pointer-fine:hover:decoration-2"
                 onClick={() => void window.clui.openExternal(INSTALL_URL)}
               >
                 claude.com/claude-code
