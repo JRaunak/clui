@@ -42,7 +42,7 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
       <span className="relative mr-1 flex h-2 w-2 shrink-0" role="status" aria-label="Working">
         {/* The light goes first so the bead, the later positioned sibling, paints over its additive blend. */}
         <Lumen lit={lit} />
-        <span className="relative h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
+        <span className={`relative h-2 w-2 rounded-full ${lit ? 'bg-accent' : 'bg-faint'}`} aria-hidden="true" />
       </span>
       {compacting ? (
         <span className="text-content">Compacting context…</span>

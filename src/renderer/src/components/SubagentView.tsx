@@ -124,7 +124,7 @@ type RunState = 'running' | 'background' | 'done' | 'failed' | 'stopped'
 function StatusMark({ state, startMs }: { state: RunState; startMs?: number }): JSX.Element {
   const mark =
     state === 'running'
-      ? 'bg-accent'
+      ? 'bg-faint'
       : state === 'background'
         ? 'bg-info'
         : state === 'failed'
@@ -151,11 +151,12 @@ function StatusMark({ state, startMs }: { state: RunState; startMs?: number }): 
 function WorkingTail({ bg }: { bg: boolean }): JSX.Element {
   const full = usePane().state === 'full'
   const on = useActive((s) => lumenKeyOf(s) !== '')
+  const lit = full && !bg && on
   return (
     <span data-ui="subagent-working" className="flex items-center gap-2 text-label">
       <span className="relative mr-1 flex h-2 w-2 shrink-0" aria-hidden="true">
-        <Lumen lit={full && !bg && on} />
-        <span className={`relative h-2 w-2 rounded-full ${bg ? 'bg-info' : 'bg-accent'}`} />
+        <Lumen lit={lit} />
+        <span className={`relative h-2 w-2 rounded-full ${bg ? 'bg-info' : lit ? 'bg-accent' : 'bg-faint'}`} />
       </span>
       <span className="font-medium text-content">{bg ? 'Working in the background' : 'Working…'}</span>
     </span>
