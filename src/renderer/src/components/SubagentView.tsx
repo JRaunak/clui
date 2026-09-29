@@ -293,7 +293,8 @@ function WorkflowTreeView({
   const sel = workflow.agents.find((a) => a.index === selIdx) ?? null
   const done = workflow.agents.filter((a) => /done|complete|success/i.test(a.state)).length
   const failed = workflow.agents.filter((a) => /fail|error/i.test(a.state)).length
-  const running = workflow.agents.length - done - failed
+  const queued = workflow.agents.filter((a) => /queue/i.test(a.state)).length
+  const running = workflow.agents.length - done - failed - queued
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -304,6 +305,12 @@ function WorkflowTreeView({
             <span>{done} done</span>
             <span aria-hidden="true">·</span>
             <span>{running} running</span>
+            {queued > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{queued} queued</span>
+              </>
+            )}
             {failed > 0 && (
               <>
                 <span aria-hidden="true">·</span>

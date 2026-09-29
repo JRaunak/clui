@@ -52,7 +52,8 @@ export function WorkflowTray(): JSX.Element | null {
   const agents = running.flatMap((w) => w.agents)
   const done = agents.filter((a) => /done|complete|success/i.test(a.state)).length
   const failed = agents.filter((a) => /fail|error/i.test(a.state)).length
-  const active = agents.length - done - failed
+  const queued = agents.filter((a) => /queue/i.test(a.state)).length
+  const active = agents.length - done - failed - queued
 
   // Which workflow the chip opens: the running one (if any), else the most recent ended.
   const target = hasRunning ? running[0] : ended[ended.length - 1]
