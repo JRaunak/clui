@@ -5,6 +5,7 @@
  */
 import { safeStorage, app } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { siteKeyOf, type SavedLoginInfo } from '../../shared/browser'
@@ -23,18 +24,19 @@ interface Entry {
 const vaultPath = (): string => join(app.getPath('userData'), 'browser-vault.bin')
 const UNAVAILABLE = "Saved logins need macOS Keychain access, which isn't available right now."
 
+/** Reaching for the key can raise a Keychain prompt, so with no vault yet the question waits for the first save. */
 export function vaultAvailable(): boolean {
-  return safeStorage.isEncryptionAvailable()
+  return !existsSync(vaultPath()) || safeStorage.isEncryptionAvailable()
 }
 
 async function read(): Promise<Entry[]> {
-  if (!vaultAvailable()) throw new Error(UNAVAILABLE)
   let bytes: Buffer
   try {
     bytes = await readFile(vaultPath())
   } catch {
     return []
   }
+  if (!safeStorage.isEncryptionAvailable()) throw new Error(UNAVAILABLE)
   let parsed: unknown
   try {
     parsed = JSON.parse(safeStorage.decryptString(bytes))
@@ -59,6 +61,7 @@ let writeChain: Promise<unknown> = Promise.resolve()
 function mutate<T>(fn: (entries: Entry[]) => { entries: Entry[]; result: T }): Promise<T> {
   const next = writeChain.then(async () => {
     const { entries, result } = fn(await read())
+    if (!safeStorage.isEncryptionAvailable()) throw new Error(UNAVAILABLE)
     await atomicWriteFile(vaultPath(), safeStorage.encryptString(JSON.stringify(entries)))
     return result
   })
