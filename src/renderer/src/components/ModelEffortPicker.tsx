@@ -10,7 +10,6 @@ import {
   supportsUltracodeToggle,
   clampEffort,
   cappedEffort,
-  capBlocksUltra,
   contextSizeLabel,
   contextWindowForModel,
   EFFORT_LABELS,
@@ -58,19 +57,14 @@ export function ModelEffortPicker(): JSX.Element {
   // Subscribe so a startup / session-start caps load re-renders the chip and flyout.
   useSession((s) => s.effortCaps)
 
-  // The chip must show the effort that will ACTUALLY run. Ultra forces xhigh (unless a
-  // sub-xhigh CLI cap makes it unreachable, in which case it isn't engaged); the CLI then
-  // floors whatever's intended at `maxEffortLevel`. None of this mutates the stored choice,
-  // which is restored when ultra turns off.
+  // The chip shows the effort that will actually run: the CLI floors the stored choice at
+  // `maxEffortLevel` without Clui rewriting it.
   const cap = effortCap(modelChoice)
-  const ultraEngaged = ultracode && supportsUltracodeToggle(modelChoice) && !capBlocksUltra(cap)
-  const intended: EffortChoice = ultraEngaged ? 'xhigh' : effortChoice
-  const runningEffort = cappedEffort(modelChoice, intended, cap)
-  const cappedDown = !!cap && runningEffort !== intended
+  const runningEffort = cappedEffort(modelChoice, effortChoice, cap)
+  const cappedDown = !!cap && runningEffort !== effortChoice
   const capLabel = cap ? EFFORT_LABELS[clampEffort(modelChoice, cap)] : ''
   const setModel = useSession((s) => s.setModel)
   const setEffort = useSession((s) => s.setEffort)
-  const setUltracode = useSession((s) => s.setUltracode)
   const [models, setModels] = useState<ModelInfo[]>([])
   // Per-call, not app state: only a SUCCESSFUL list is cached in main, so a later call
   // (or the refresh button) can go live again.
@@ -163,23 +157,14 @@ export function ModelEffortPicker(): JSX.Element {
       >
         <IconSliders className="h-3.5 w-3.5 shrink-0 text-dim @max-[480px]/composer:hidden" />
         <span className="min-w-0 truncate whitespace-nowrap font-medium">{curLabel}</span>
-        {/* Effort readout. Shows the level that will actually run: Ultra locks it to X-High
-            (Ultra purple), and a CLI `maxEffortLevel` cap floors it lower. A lock glyph marks
-            either lock, so the chip is honest without hiding the value. */}
+        {/* A lock glyph marks a CLI `maxEffortLevel` cap, so the chip is honest without
+            hiding the value. Ultra stays off the chip; its own toggle already says it's on. */}
         <span
-          className={`flex shrink-0 items-center gap-1 whitespace-nowrap font-medium ${
-            ultraEngaged ? 'text-effort-ultra' : EFFORT_COLORS[runningEffort]
-          }`}
-          title={
-            ultraEngaged
-              ? 'Ultra runs at X-High. Turn off Ultra to change effort.'
-              : cappedDown
-                ? `Your CLI settings cap effort at ${capLabel}.`
-                : undefined
-          }
+          className={`flex shrink-0 items-center gap-1 whitespace-nowrap font-medium ${EFFORT_COLORS[runningEffort]}`}
+          title={cappedDown ? `Your CLI settings cap effort at ${capLabel}.` : undefined}
         >
           {EFFORT_LABELS[runningEffort]}
-          {(ultraEngaged || cappedDown) && <IconLock className="h-3 w-3 opacity-80" />}
+          {cappedDown && <IconLock className="h-3 w-3 opacity-80" />}
         </span>
         <svg
           viewBox="0 0 12 12"
@@ -201,7 +186,7 @@ export function ModelEffortPicker(): JSX.Element {
         onMouseLeave={scheduleHide}
       >
           <div className="flex shrink-0 items-center justify-between px-3 py-1 text-caps uppercase text-dim">
-            <span>{ultracode ? 'Model · Ultra needs X-High' : 'Model'}</span>
+            <span>Model</span>
             <button
               type="button"
               className="-my-1 flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -214,9 +199,9 @@ export function ModelEffortPicker(): JSX.Element {
               <IconRefresh className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
           </div>
-          {/* Own line UNDER the header, not in it: the left slot is already spoken for by
-              the ultracode string. Wraps to two lines at w-[180px]; shrinking it below the
-              meta size would fail the contrast/size floor. */}
+          {/* Its own line under the header, since the header row has no room for it. Wraps
+              to two lines at w-[180px]; shrinking it below the meta size would fail the
+              contrast/size floor. */}
           {!live && (
             <div
               className="flex shrink-0 items-start gap-1 px-3 pb-1 text-meta text-warn"
@@ -241,33 +226,29 @@ export function ModelEffortPicker(): JSX.Element {
                 </div>
               )}
               {group.models.map((info) => {
-            // While Ultra is on, a model without X-High can't run it. Show it
-            // DISABLED-WITH-REASON (not hidden, since hiding is the disappearing-menu
-            // anti-pattern) so the user keeps their map + learns the rule.
+            // While Ultra is on, a model that can't run it stays in the list, disabled with
+            // its reason, so the menu keeps its shape when Ultra toggles.
             const incompatible = ultracode && !supportsUltracodeToggle(info.id)
             if (incompatible) {
               return (
                 <div
                   key={info.id}
                   aria-disabled="true"
-                  title="Ultra needs a model with X-High reasoning"
+                  title="Ultra isn't available on this model"
                   className="flex w-full cursor-default items-center gap-2 px-3 py-2 text-left text-dim opacity-60"
                 >
                   <span className="w-3 shrink-0">{info.id === modelChoice && <IconCheck className="h-3 w-3 text-dim" />}</span>
                   <span className="min-w-0 flex-1 truncate">{info.label}</span>
-                  <span className="shrink-0 text-meta text-dim">Needs X-High</span>
+                  <span className="shrink-0 text-meta text-dim">No Ultra</span>
                 </div>
               )
             }
-            // Effort is not selectable while Ultra is on (it's forced to X-High), so the
-            // per-model flyout is suppressed, so the row just switches the model.
-            const effortSelectable = !ultracode
             return (
               <div
                 key={info.id}
                 style={hover === info.id ? ({ anchorName: '--effort-row' } as React.CSSProperties) : undefined}
                 className="relative"
-                onMouseEnter={() => effortSelectable && scheduleHover(info.id)}
+                onMouseEnter={() => scheduleHover(info.id)}
               >
                 {/* Two click regions (dropdown contract: selecting an item closes the
                     menu). Clicking the MODEL NAME switches the model AND closes, a
@@ -299,38 +280,40 @@ export function ModelEffortPicker(): JSX.Element {
                       </span>
                     )}
                   </button>
-                  {/* Chevron = explicit "adjust effort" affordance (only meaningful when
-                      effort is selectable; hidden while Ultra locks it to X-High). */}
-                  {effortSelectable && (
-                    <button
-                      type="button"
-                      ref={hover === info.id ? chevronRef : undefined}
-                      aria-expanded={hover === info.id}
-                      className="flex shrink-0 items-center py-2 pr-3 pl-1 text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                      title={`Adjust effort · ${info.label}`}
-                      aria-label={`Adjust effort for ${info.label}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        clearHoverTimer()
-                        setHover((h) => (h === info.id ? null : info.id))
-                      }}
+                  <button
+                    type="button"
+                    ref={hover === info.id ? chevronRef : undefined}
+                    aria-expanded={hover === info.id}
+                    className="flex shrink-0 items-center py-2 pr-3 pl-1 text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    title={`Adjust effort · ${info.label}`}
+                    aria-label={`Adjust effort for ${info.label}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      clearHoverTimer()
+                      setHover((h) => (h === info.id ? null : info.id))
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'ArrowRight') return
+                      e.preventDefault()
+                      clearHoverTimer()
+                      setHover(info.id)
+                    }}
+                  >
+                    <svg
+                      viewBox="0 0 12 12"
+                      className="h-3 w-3"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     >
-                      <svg
-                        viewBox="0 0 12 12"
-                        className="h-3 w-3"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M4.5 3 7.5 6 4.5 9" />
-                      </svg>
-                    </button>
-                  )}
+                      <path d="M4.5 3 7.5 6 4.5 9" />
+                    </svg>
+                  </button>
                 </div>
 
-                {effortSelectable && hover === info.id && (
+                {hover === info.id && (
                   <EffortFlyout
                     info={info}
                     cap={effortCap(info.id)}
@@ -343,9 +326,6 @@ export function ModelEffortPicker(): JSX.Element {
                     }}
                     onPick={(ef) => {
                       if (info.id !== modelChoice) void setModel(info.id)
-                      // Explicitly picking an effort while Ultra is on means the user
-                      // wants that reasoning level → turn Ultra OFF (it forces xhigh).
-                      if (ultracode) void setUltracode(false)
                       void setEffort(ef)
                       p.close({ via: 'pointer' })
                     }}

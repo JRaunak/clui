@@ -7,7 +7,7 @@ import {
   sameModel,
   clampEffort,
   cappedEffort,
-  capBlocksUltra,
+  supportsUltracodeToggle,
   supports1m,
   contextSizeLabel,
   reconcileModelChoice
@@ -80,11 +80,9 @@ ok(cappedEffort('claude-opus-4-8[1m]', 'medium', 'xhigh') === 'medium', 'cappedE
 // cap still clamps to what the model supports (haiku tops out at high)
 ok(cappedEffort('claude-haiku-4-5', 'max', 'xhigh') === 'high', 'cappedEffort: model support still clamps under a cap')
 
-// capBlocksUltra: only a sub-xhigh cap blocks ultra; no cap never blocks
-ok(capBlocksUltra(undefined) === false, 'capBlocksUltra: no cap does not block')
-ok(capBlocksUltra('high') === true, 'capBlocksUltra: high cap blocks ultra')
-ok(capBlocksUltra('xhigh') === false, 'capBlocksUltra: xhigh cap allows ultra')
-ok(capBlocksUltra('max') === false, 'capBlocksUltra: max cap allows ultra')
+// The model is the only ultra gate; a cap never is.
+ok(supportsUltracodeToggle('claude-opus-5-5[1m]'), 'supportsUltracodeToggle: opus 5.5 can run ultra')
+ok(!supportsUltracodeToggle('claude-haiku-4-5'), 'supportsUltracodeToggle: haiku cannot run ultra')
 
 // off-enum values dropped
 {

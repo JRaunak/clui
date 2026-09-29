@@ -1,6 +1,6 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { perTurnUsage } from '../src/renderer/src/store.ts'
+import { perTurnUsage, useSession } from '../src/renderer/src/store.ts'
 import { equal, ok } from './support/harness.mjs'
 
 const cum = (costUSD: number, out: number, cacheRead: number, cacheCreate: number) => ({
@@ -39,4 +39,65 @@ const cum = (costUSD: number, out: number, cacheRead: number, cacheCreate: numbe
   const t = perTurnUsage(cum(0.01, 50, 500, 0), prev)
   equal(t.costUSD, 0, 'perTurn: a lower cumulative floors at 0')
   equal(t.outputTokens, 0, 'perTurn: a lower token count floors at 0')
+}
+
+// The store's IPC is stubbed: each call is recorded and resolves true.
+const calls: { name: string; args: unknown[] }[] = []
+;(globalThis as any).window = {
+  clui: new Proxy({}, { get: (_t, name: string) => async (...args: unknown[]) => (calls.push({ name, args }), true) })
+}
+const slice = (over: Record<string, unknown> = {}): any => ({
+  handleId: 'h1',
+  sessionId: null,
+  model: 'claude-opus-5-5[1m]',
+  modelChoice: 'claude-opus-5-5[1m]',
+  effortChoice: 'high',
+  ultracode: true,
+  contextTokens: null,
+  contextPercent: null,
+  contextWindow: null,
+  costUsd: null,
+  prevCumUsage: { costUSD: 0, inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, models: [] },
+  busy: true,
+  interrupting: false,
+  thinkingTokens: null,
+  messages: [],
+  queuedMessages: [],
+  lastError: null,
+  exited: false,
+  lastActivityMs: 0,
+  ...over
+})
+const reset = (over?: Record<string, unknown>, caps = {}): void => {
+  calls.length = 0
+  useSession.setState({ sessions: { h1: slice(over) }, activeHandleId: 'h1', notice: null, effortCaps: caps })
+}
+const cur = (): any => useSession.getState().sessions.h1
+const st = useSession.getState
+
+// Ultra is only gated by the model: a cap keeps it on, a model without Ultra drops it.
+{
+  reset({}, { maxEffortLevel: 'medium' })
+  await st().setModel('claude-opus-4-8[1m]')
+  ok(cur().ultracode === true, 'store: a capped model keeps Ultra on')
+  ok(!calls.some((c) => c.name === 'setUltracode'), 'store: a capped switch sends no ultracode change')
+  reset()
+  await st().setModel('claude-haiku-4-5')
+  ok(cur().ultracode === false, 'store: a model without Ultra turns it off')
+}
+
+// Toggling Ultra never touches effort, and its IPC carries only the flag.
+{
+  reset({ ultracode: false, effortChoice: 'max' })
+  await st().setUltracode(true)
+  await st().setUltracode(false)
+  await st().setUltracode(true)
+  ok(cur().effortChoice === 'max', 'store: Ultra toggles keep the stored effort')
+  ok(!calls.some((c) => c.name === 'setEffort'), 'store: Ultra toggles never send an effort')
+  const ultraCalls = calls.filter((c) => c.name === 'setUltracode')
+  ok(ultraCalls.length === 3 && ultraCalls.every((c) => c.args.length === 2 && typeof c.args[1] === 'boolean'), 'store: setUltracode IPC is only (handle, on)')
+  calls.length = 0
+  await st().setEffort('low')
+  ok(cur().ultracode === true && cur().effortChoice === 'low', 'store: picking an effort with Ultra on keeps Ultra')
+  ok(!calls.some((c) => c.name === 'setUltracode'), 'store: picking an effort sends no ultracode change')
 }

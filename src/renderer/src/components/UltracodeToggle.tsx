@@ -1,19 +1,20 @@
 /**
- * Ultracode toggle for the active session (X-High reasoning + dynamic workflows).
+ * Ultracode toggle for the active session (multi-step workflows at the stored effort).
  * Visual grammar: persistent ✦ star (dim off, lit purple on), one-shot ripple on
  * activation, star halo breathes during a busy ultracode turn (the one busy cue
  * generic indicators don't carry). State by color + fill + aria-pressed, never
- * motion alone (reduced-motion loses nothing). Disabled on non-X-High models
+ * motion alone (reduced-motion loses nothing). Disabled on models without Ultra
  * (shown, aria-disabled, tooltip explains why).
  */
 import { useState } from 'react'
 import { useActive, useSession, effortCap } from '../store'
-import { supportsUltracodeToggle, capBlocksUltra, clampEffort, EFFORT_LABELS } from '../../../shared/settings'
+import { supportsUltracodeToggle, cappedEffort, EFFORT_LABELS } from '../../../shared/settings'
 import { Tooltip } from './Tooltip'
 
 export function UltracodeToggle(): JSX.Element | null {
   const model = useActive((s) => s?.modelChoice ?? null)
   const on = useActive((s) => s?.ultracode ?? false)
+  const effortChoice = useActive((s) => s?.effortChoice ?? 'high')
   const busy = useActive((s) => s?.busy ?? false)
   const setUltracode = useSession((s) => s.setUltracode)
   // Subscribe so a startup / session-start caps load re-renders the toggle.
@@ -22,19 +23,13 @@ export function UltracodeToggle(): JSX.Element | null {
 
   if (model === null) return null
 
-  const cap = effortCap(model)
-  // Ultra forces xhigh, so a sub-xhigh CLI cap blocks it as surely as a model without xhigh.
-  const capBlocked = capBlocksUltra(cap)
-  const ultraEngageable = supportsUltracodeToggle(model) && !capBlocked
-  const capLabel = cap ? EFFORT_LABELS[clampEffort(model, cap)] : ''
-  // Precedence: a model lacking xhigh outranks the cap message (fix the model first).
-  const tipCopy = !supportsUltracodeToggle(model)
-    ? "Ultra needs a model with X-High reasoning. The current one doesn't have it."
-    : capBlocked
-      ? `Ultra needs X-High, but your CLI settings cap effort at ${capLabel}.`
-      : on
-        ? 'Ultra is on. X-High reasoning and multi-step workflows, this session only.'
-        : 'X-High reasoning and multi-step workflows, for this session.'
+  const ultraEngageable = supportsUltracodeToggle(model)
+  const runLabel = EFFORT_LABELS[cappedEffort(model, effortChoice, effortCap(model))]
+  const tipCopy = !ultraEngageable
+    ? "Ultra isn't available on this model."
+    : on
+      ? `Ultra is on for this session. Multi-step workflows at ${runLabel} effort.`
+      : `Multi-step workflows for this session, at ${runLabel} effort.`
 
   const engaged = on && busy // a live ultracode turn → the star's halo breathes
 

@@ -56,7 +56,7 @@ export interface ClaudeSessionOptions {
   enableTaskTools?: boolean
   /** Quick chat: pass `--no-session-persistence` so nothing is written to disk. */
   ephemeral?: boolean
-  /** Ultracode on (forces xhigh + workflow orchestration). Passed at launch via
+  /** Ultracode on (workflow orchestration at the current effort). Passed at launch via
    *  `--settings {ultracode:true}` so it survives a resume; toggled live otherwise. */
   ultracode?: boolean
   /** With `resumeSessionId`, pass `--fork-session` → the CLI branches to a NEW
@@ -662,10 +662,9 @@ export class ClaudeSession extends EventEmitter {
   }
 
   /**
-   * Toggle ultracode LIVE (`apply_flag_settings {ultracode}`). Ultracode forces xhigh
-   * reasoning + workflow-orchestration disposition; the `Workflow` tool is present at
-   * every effort level (verified), so this is a pure live setting, NO respawn. Persisted
-   * into opts so a respawn (e.g. effort fallback) keeps it.
+   * Toggle ultracode live (`apply_flag_settings {ultracode}`). Ultracode runs at the current
+   * effortLevel and the `Workflow` tool is present at every effort level (verified), so it
+   * needs no respawn. Persisted into opts so a respawn (e.g. effort fallback) keeps it.
    */
   async setUltracode(on: boolean): Promise<boolean> {
     if (!this.child) return false

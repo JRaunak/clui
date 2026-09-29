@@ -112,8 +112,8 @@ export const THEME_LABELS: Record<ThemeChoice, string> = {
 export type ModelChoice = string
 
 /** Effort choices (CLI: low/medium/high/xhigh/max). No inherit. Ultracode is a
- *  SEPARATE per-session toggle (not an effort level) that forces xhigh + workflow
- *  orchestration; see `setUltracode` in the store. */
+ *  separate per-session toggle for workflow orchestration that runs at the stored
+ *  effort; see `setUltracode` in the store. */
 export type EffortChoice = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export const EFFORT_CHOICES: EffortChoice[] = ['low', 'medium', 'high', 'xhigh', 'max']
@@ -131,7 +131,8 @@ export const EFFORT_LABELS: Record<EffortChoice, string> = {
   max: 'Max'
 }
 
-/** True if this MODEL supports ultracode (needs xhigh capability). */
+/** True if this model can run ultracode. The CLI offers it only on models with an
+ *  xhigh tier, so that tier is the gate, though ultra runs at the stored effort. */
 export function supportsUltracodeToggle(id: string): boolean {
   return effortsFor(id).includes('xhigh')
 }
@@ -362,11 +363,6 @@ export function contextSizeLabel(id: string): string {
   return n >= 1_000_000 ? '1M' : `${Math.round(n / 1000)}K`
 }
 
-/** ultracode (= xhigh + workflow orchestration) is available iff the model has xhigh. */
-export function supportsUltracode(id: string): boolean {
-  return effortsFor(id).includes('xhigh')
-}
-
 /** True if two model ids denote the SAME model (family+version+1M), ignoring the
  *  Bedrock inference-profile prefix, so the CLI's raw report `claude-sonnet-5`
  *  matches a picker id `us.anthropic.claude-sonnet-5`. */
@@ -439,12 +435,6 @@ export function cappedEffort(
   maxEffort?: EffortChoice
 ): EffortChoice {
   return clampEffort(model, maxEffort ? lowerOf(effort, maxEffort) : effort)
-}
-
-/** True when a CLI effort cap sits below xhigh, which makes ultracode (xhigh-forced)
- *  unreachable. No cap → never blocks. */
-export function capBlocksUltra(maxEffort?: EffortChoice): boolean {
-  return !!maxEffort && idx(maxEffort) < idx('xhigh')
 }
 
 export const DEFAULT_SETTINGS: CluiSettings = {

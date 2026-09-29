@@ -22,7 +22,7 @@ import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { CluiApi, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
-import { clampEffort, capBlocksUltra, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
+import { clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
 import type { Via } from './lib/motion'
 
@@ -213,7 +213,7 @@ export interface PerSessionState {
   modelMode: PermissionModeChoice | null
   /** The user's selected model choice for this session (drives the picker). */
   modelChoice: ModelChoice
-  /** Ultracode on for this session (xhigh + workflow orchestration). Per-session,
+  /** Ultracode on for this session (workflow orchestration at the stored effort). Per-session,
    *  live-toggled, persisted in the session-models sidecar. */
   ultracode: boolean
   /** The user's selected effort choice for this session (drives the picker). */
@@ -1448,12 +1448,10 @@ export const useSession = create<SessionStore>((set, get) => ({
     // If the new model doesn't support the current effort, clamp it down.
     const nextEffort = clampEffort(model, active.effortChoice)
     const prevEffort = active.effortChoice
-    // Ultracode requires an xhigh-capable model AND a CLI cap that doesn't sit below xhigh,
-    // so switching to a model that lacks xhigh (e.g. Haiku) or into a sub-xhigh per-model cap
-    // must turn it OFF, else a lit star would run at the capped level (model switch is live,
-    // no respawn, so nothing else would clear it).
-    const nextUltra =
-      active.ultracode && supportsUltracodeToggle(model) && !capBlocksUltra(effortCap(model))
+    // Switching to a model that can't run Ultra (e.g. Haiku) turns it off: the switch is live
+    // with no respawn, so nothing else would clear a lit star. An effort cap never turns it
+    // off, since Ultra runs at whatever effort is allowed.
+    const nextUltra = active.ultracode && supportsUltracodeToggle(model)
     const ultraChanged = nextUltra !== active.ultracode
     // Switching model can change the context window (1M ↔ 200K). Recompute it now from
     // the new id and rescale the ring % against it, else the ring keeps the old
@@ -1517,12 +1515,9 @@ export const useSession = create<SessionStore>((set, get) => ({
   setUltracode: async (on) => {
     const active = activeSlice(get())
     if (!active) return
-    // Only meaningful on xhigh-capable models; ignore on incompatible ones.
     if (on && !supportsUltracodeToggle(active.modelChoice)) return
-    // Do NOT mutate the stored effortChoice. The CLI forces xhigh while ultracode is
-    // on regardless of effortLevel; the picker DISPLAYS xhigh (derived) + disables while
-    // on, and RESTORES the user's real effort when turned off. Mutating stored effort
-    // would silently lose their prior choice on toggle-off.
+    // Effort is independent of Ultra: the CLI runs ultracode at the stored effortLevel, so
+    // this sends only the ultracode flag and never touches effortChoice.
     const prevUltra = active.ultracode
     set((s) => patchSlice(s, active.handleId, { ultracode: on }))
     if (active.sessionId) rememberModelPrefs(active.sessionId, { ultracode: on })

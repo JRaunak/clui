@@ -46,7 +46,7 @@ export interface StartSessionOptions {
   model?: ModelChoice
   /** Per-session effort choice. If omitted, the global Settings default is used. */
   effort?: EffortChoice
-  /** Ultracode on for this session (xhigh + workflow orchestration). Default false. */
+  /** Ultracode on for this session (workflow orchestration at the stored effort). Default false. */
   ultracode?: boolean
   /** Session title passed as `claude -n "<name>"` at spawn, writing the on-disk
    *  custom-title from turn zero (a post-spawn rename lands too late for a skill that
@@ -160,7 +160,7 @@ export interface CluiApi {
   setEffort: (handleId: string, effort: EffortChoice) => Promise<void>
   /** Push a discovery-name change onto a running session via `/rename` (no-op if not live). */
   injectRename: (handleId: string, name: string) => Promise<void>
-  /** Toggle ultracode (xhigh + workflow orchestration) live. False = rejected (renderer reverts). */
+  /** Toggle ultracode (workflow orchestration) live. False = rejected (renderer reverts). */
   setUltracode: (handleId: string, on: boolean) => Promise<boolean>
   /** Stop and clean up a session's process. */
   stopSession: (handleId: string) => Promise<void>
