@@ -336,6 +336,7 @@ function WorkflowTreeView({
             would show through at rest. */}
         <div
           data-beside-header
+          data-ui="agent-rail"
           className="mt-[calc(var(--bar-h,44px)+36px)] w-64 shrink-0 overflow-y-auto border-r border-border bg-bg-elev px-2 pt-2 pb-2"
         >
           <div className="px-2 pb-2 pt-1 text-meta text-faint">{workflow.description}</div>
@@ -350,17 +351,22 @@ function WorkflowTreeView({
                 {inPhase.map((a) => {
                   const st = agentStatus(a.state)
                   const selected = a.index === selIdx
+                  const failed = st.label === 'failed'
                   return (
                     <button
                       key={a.index}
                       onClick={() => setSelIdx(a.index)}
-                      className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-5 pr-2 text-left text-meta ${
-                        selected ? 'bg-accent-surface text-content' : 'text-dim hover:bg-bg-raised'
-                      } ${/fail|error/i.test(a.state) ? 'text-content' : ''}`}
+                      aria-current={selected || undefined}
+                      className={`relative flex w-full items-center gap-2 rounded-md py-1.5 pl-5 pr-2 text-left text-meta transition-colors ${
+                        selected ? 'bg-row-selected' : 'hover:bg-row-hover'
+                      } ${selected || failed ? 'text-content' : 'text-dim'}`}
                     >
+                      {selected && (
+                        <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-accent" aria-hidden="true" />
+                      )}
                       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.cls}`} aria-hidden="true" />
                       <span className="min-w-0 flex-1 truncate font-mono text-meta">{a.label}</span>
-                      <span className="shrink-0 font-mono text-meta text-faint">{st.label}</span>
+                      <span className={`shrink-0 font-mono text-meta ${selected ? 'text-dim' : 'text-faint'}`}>{st.label}</span>
                     </button>
                   )
                 })}

@@ -70,7 +70,6 @@
   --terra-500: #de7356; /* accent */
   --terra-400: #e88b70; /* accent hover */
   --terra-700: #bd5a3d; /* accent deep: active edge, pressed */
-  --terra-tint: #241c19; /* accent-tinted dark surface: the anchored session */
 
   /* Status: neutral/conventional (not rehued), so terracotta stays the unique accent. */
   --teal-400: #4ec9b0; /* ok / success / live */
@@ -148,7 +147,6 @@
   --color-accent: var(--terra-500);
   --color-accent-hover: var(--terra-400);
   --color-accent-deep: var(--terra-700);
-  --color-accent-surface: var(--terra-tint);
   /* The open session's row: a neutral step lighter than the sidebar, so the accent bar stays the only warm mark on it. */
   --color-row-selected: var(--ink-820);
   /* Paired foregrounds: text sitting on a colored fill. Kept as tokens so light mode can flip them independently. */
@@ -290,7 +288,6 @@
   --color-accent: #b8502e;
   --color-accent-hover: #984324;
   --color-accent-deep: #82381c;
-  --color-accent-surface: #e6e6e7;
   /* On the white rail nothing is lighter, so selection steps down here; the sidebar re-maps it to white below. */
   --color-row-selected: #e6e6e7;
   --color-on-accent: #ffffff;
@@ -381,6 +378,11 @@
 }
 :root[data-theme='light'] .bg-control:hover {
   box-shadow: inset 0 0 0 1px var(--color-control-edge);
+}
+
+/* On the white rail nothing is lighter, so selection steps further down than the global value to stay clear of hover. */
+:root[data-theme='light'] [data-ui='agent-rail'] {
+  --color-row-selected: #e0e0e1;
 }
 
 /* Opacity-only: the transform/opacity-only motion rule forbids animating the width, so it snaps and only the incoming content fades. */
