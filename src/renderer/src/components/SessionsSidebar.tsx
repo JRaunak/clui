@@ -627,7 +627,7 @@ function SessionRow({
     <div
       data-ui="sidebar-row"
       className={`group relative flex items-center gap-2 rounded-md py-1.5 pl-3 pr-1.5 transition-colors ${st ? 'min-h-11' : ''} ${
-        active ? 'bg-accent-surface' : 'hover:bg-bg-raised'
+        active ? 'bg-row-selected' : 'hover:bg-bg-raised'
       }`}
     >
       {active && <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-accent" aria-hidden="true" />}
@@ -830,7 +830,7 @@ function SessionMonogram({
   const working = st?.kind === 'working'
   const needs = st?.kind === 'needs'
   const tone = active || working || needs ? 'text-content' : session.live ? 'text-dim' : 'text-faint'
-  const fill = active ? 'bg-accent-surface' : working || needs ? 'bg-bg-raised' : 'border border-border'
+  const fill = active ? 'bg-row-selected' : working || needs ? 'bg-bg-raised' : 'border border-border'
 
   return (
     <div className="relative flex shrink-0 items-center justify-center">

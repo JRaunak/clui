@@ -62,7 +62,8 @@
   /* Paper (text) ramp, neutral. */
   --paper-100: #e6e6e6; /* primary content */
   --paper-400: #9a9a9a; /* dim (secondary) */
-  /* faint (tertiary). Raised #6f6f71→#8f8f92 so it clears WCAG AA 4.5:1 as text on every dark surface. */
+  /* faint (tertiary). #8f8f92 clears WCAG AA 4.5:1 as text on the dark surfaces, but not on the selected sidebar row
+     (4.32:1), so text there stays at dim or stronger. */
   --paper-500: #8f8f92; /* faint (tertiary) */
 
   /* Terracotta, Clui's accent, anchored on the app-icon orange #de7356. The scarce, saturated focal note. */
@@ -148,6 +149,8 @@
   --color-accent-hover: var(--terra-400);
   --color-accent-deep: var(--terra-700);
   --color-accent-surface: var(--terra-tint);
+  /* The open session's row: a neutral step lighter than the sidebar, so the accent bar stays the only warm mark on it. */
+  --color-row-selected: var(--ink-820);
   /* Paired foregrounds: text sitting on a colored fill. Kept as tokens so light mode can flip them independently. */
   --color-on-accent: #1a1a1a; /* near-black on the terracotta fill */
   --color-on-warn: #1a1a1a; /* near-black on the amber fill */
@@ -288,6 +291,8 @@
   --color-accent-hover: #984324;
   --color-accent-deep: #82381c;
   --color-accent-surface: #e6e6e7;
+  /* On the white rail nothing is lighter, so selection steps down here; the sidebar re-maps it to white below. */
+  --color-row-selected: #e6e6e7;
   --color-on-accent: #ffffff;
 
   /* Message + tool surfaces: neutral gray insets recessed from the white surface, text ≥12:1. */
@@ -348,13 +353,20 @@
   --glass-row-hover: rgb(0 0 0 / 0.05);
 }
 
+/* In dark, hover and selection both lift, so the sidebar's hover takes a smaller step than the global one and selection
+   stays clearly above it. Light overrides this below. */
+.surface-sidebar {
+  --color-bg-raised: var(--ink-900);
+}
+
 /* bg-raised is a fixed near-white gray, so hover:bg-bg-raised lands ~7 CIELAB L* below the white main area (a strong,
    clear hover) but only ~2.8 below the gray sidebar surface (a whisper). A fixed fill can't serve both backdrops. Inside
    the expanded sidebar (the .bg-bg-sidebar surface; the collapsed rail is .bg-bg and keeps the global value), re-map raised
    to a step measured against the gray: #e2e2e2 puts a live-row hover ~5.6 L* below the sidebar and a dormant /60 hover ~3.5
-   below, both clearly readable. Selection still leads via the terracotta rail, not fill darkness. */
+   below, both clearly readable. Selection goes the other way, up to white, so it never reads as a hover. */
 :root[data-theme='light'] .bg-bg-sidebar {
   --color-bg-raised: #e2e2e2;
+  --color-row-selected: #ffffff;
 }
 
 /* The composer's recessed config pills darken only from 3% to 4% black on hover: on white that is ~1.2 L*, near-invisible,
