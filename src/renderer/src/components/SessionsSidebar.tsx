@@ -475,10 +475,10 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
             const groupFailed = g.sessions.filter((s) => s.status?.kind === 'failed').length
             return (
               <div key={g.cwd} className="mb-1.5">
-                <div className="group/hdr flex w-full items-center gap-1.5 rounded px-1" title={g.cwd}>
+                <div className="group/hdr flex w-full items-center gap-1.5 rounded pr-1" title={g.cwd}>
                   {/* Toggle takes flex-1 so the label truncates; the "+" is a sibling (button-in-button is invalid). */}
                   <button
-                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 text-left text-label font-medium text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left text-label font-medium text-dim transition-colors -outline-offset-2 hover:text-content"
                     onClick={() => toggleGroup(g.cwd)}
                   >
                     <IconChevron
@@ -658,9 +658,10 @@ function SessionRow({
           ) : (
             <button
               ref={titleBtnRef}
-              className={`min-w-0 flex-1 truncate rounded text-left text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 ${titleTone}`}
+              className={`min-w-0 flex-1 truncate rounded text-left text-xs ${titleTone}`}
               // Rename is the kebab or F2, never a title click: on a dormant row the click resumes.
               onClick={onOpen}
+              aria-current={active || undefined}
               onKeyDown={(e) => {
                 if (e.key === 'F2' && onRename) {
                   e.preventDefault()
@@ -842,6 +843,7 @@ function SessionMonogram({
           !active && !working && !needs ? 'hover:bg-bg-raised' : ''
         }`}
         aria-label={label}
+        aria-current={active || undefined}
         title={label}
         onClick={onOpen}
       >
