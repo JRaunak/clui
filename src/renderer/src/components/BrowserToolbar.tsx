@@ -255,7 +255,12 @@ export function BrowserDriveStrip(): JSX.Element {
               <span className="h-2 w-2 rounded-[1.5px] bg-dim" />
             )}
           </span>
-          <span className="whitespace-nowrap text-label font-medium text-content">{copy.label}</span>
+          <span
+            className="whitespace-nowrap text-label font-medium text-content"
+            title={clipped ? copy.hint : undefined}
+          >
+            {copy.label}
+          </span>
           <span ref={setHintEl} className={`min-w-0 flex-1 truncate text-label text-dim ${clipped ? 'invisible' : ''}`}>
             {copy.hint}
           </span>

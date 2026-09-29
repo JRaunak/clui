@@ -248,7 +248,7 @@ export function InstrumentRow({
                     }}
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px] aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:text-dim"
                     title={tabGone ? `Tab ${tabNo} is closed` : tabNo ? `Show tab ${tabNo} in browser` : 'Show in browser'}
-                    aria-label={tabNo ? `Show tab ${tabNo} in browser` : 'Show in browser'}
+                    aria-label={tabGone ? `Tab ${tabNo} is closed` : tabNo ? `Show tab ${tabNo} in browser` : 'Show in browser'}
                   >
                     <IconAgentBrowser className="h-4 w-4" />
                   </button>

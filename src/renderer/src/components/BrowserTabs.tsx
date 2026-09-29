@@ -32,7 +32,7 @@ export function closeTab(id: number, refocus: boolean): void {
 
 const STATE: Partial<Record<'driving' | 'user' | 'suspended', { suffix: string; line: string }>> = {
   driving: { suffix: ', Claude is driving', line: 'Claude is driving in this tab' },
-  user: { suffix: ', you took over, Claude is paused here', line: 'You took over this tab. Claude is paused here.' },
+  user: { suffix: ", you're driving", line: 'You took over this tab. Claude is paused here.' },
   suspended: {
     suffix: ', paused to save memory',
     line: 'Paused to save memory. Viewing it reloads the page, and anything typed into it is gone.'
