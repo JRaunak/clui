@@ -20,6 +20,7 @@ function resolve(pref: ThemeChoice): 'dark' | 'light' {
 }
 
 let systemListener: ((e: MediaQueryListEvent) => void) | null = null
+let current: ThemeChoice | null = null
 
 /**
  * Apply a theme preference to `<html data-theme>`. When the preference is
@@ -28,6 +29,11 @@ let systemListener: ((e: MediaQueryListEvent) => void) | null = null
  */
 export function applyTheme(pref: ThemeChoice): void {
   document.documentElement.setAttribute('data-theme', resolve(pref))
+  current = pref
+  // Main sets the native theme from the saved choice, so while another theme is saved the media query
+  // answers for it, not the OS. Previewing 'system' asks main for the OS appearance itself.
+  if (pref === 'system')
+    void window.clui.getOsTheme().then((t) => current === 'system' && document.documentElement.setAttribute('data-theme', t))
 
   if (systemListener) {
     media.removeEventListener('change', systemListener)

@@ -23,6 +23,7 @@ const api: CluiApi = {
   getCliInfo: () => ipcRenderer.invoke(IpcChannels.getCliInfo),
   getFullscreen: () => ipcRenderer.invoke(IpcChannels.getFullscreen),
   getReducedTransparency: () => ipcRenderer.invoke(IpcChannels.getReducedTransparency),
+  getOsTheme: () => ipcRenderer.invoke(IpcChannels.getOsTheme),
   startSession: (opts: StartSessionOptions) =>
     ipcRenderer.invoke(IpcChannels.startSession, opts),
   sendMessage: (handleId: string, text: string, attachments?: WireAttachment[]) =>

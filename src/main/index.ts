@@ -4,7 +4,7 @@
  * Owns the CLI subprocesses (via SessionManager), the native window, and the IPC
  * handlers that back the preload `window.clui` API. The renderer is pure UI.
  */
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Menu, shell, systemPreferences } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -349,6 +349,8 @@ function registerIpc(): void {
 
   handle(IpcChannels.getFullscreen, () => mainWindow?.isFullScreen() ?? false)
   handle(IpcChannels.getReducedTransparency, () => nativeTheme.prefersReducedTransparency)
+  // themeSource overrides what nativeTheme reports, but not the macOS default it reads.
+  handle(IpcChannels.getOsTheme, () => (systemPreferences.getUserDefault('AppleInterfaceStyle', 'string') === 'Dark' ? 'dark' : 'light'))
 
   handle(IpcChannels.startSession, async (_e, opts: StartSessionOptions) => {
     const settings = await getSettings()
@@ -624,6 +626,7 @@ function registerIpc(): void {
     async (_e, patch: Partial<CluiSettings>, clear?: SettingsKey[]) => {
       const next = await updateSettings(patch, clear ?? [])
       if ('theme' in patch || clear?.includes('theme')) {
+        nativeTheme.themeSource = getSettingsSync().theme
         mainWindow?.setBackgroundColor(THEME_BG[resolveTheme()])
         browser.repaint()
       }
@@ -699,6 +702,8 @@ if (!gotSingleInstanceLock) {
     // Warm the settings cache BEFORE creating the window so the sync theme IPC and
     // the window backgroundColor resolve to the persisted theme (not defaults).
     await getSettings()
+    // Native menus, dialogs and every webContents' prefers-color-scheme follow Clui's theme, not the OS's.
+    nativeTheme.themeSource = getSettingsSync().theme
     registerIpc()
     buildMenu()
     createWindow()

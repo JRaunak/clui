@@ -268,6 +268,8 @@ export interface CluiApi {
   onFullscreenChanged: (cb: (isFullscreen: boolean) => void) => () => void
   /** macOS "Reduce transparency", read from nativeTheme so the solid fallback doesn't rely on Chromium's media query. */
   getReducedTransparency: () => Promise<boolean>
+  /** The OS appearance itself. The renderer's prefers-color-scheme follows Clui's own theme instead. */
+  getOsTheme: () => Promise<'dark' | 'light'>
   onReducedTransparencyChanged: (cb: (on: boolean) => void) => () => void
   /** Fire-and-forget: sent at most once per animation frame. */
   browserSetBounds: (handleId: string, b: PaneBounds | null) => void
@@ -379,6 +381,7 @@ export const IpcChannels = {
   /** main → renderer push channel for native application-menu actions */
   menuAction: 'clui:menuAction',
   getReducedTransparency: 'clui:getReducedTransparency',
+  getOsTheme: 'clui:getOsTheme',
   reducedTransparencyChanged: 'clui:reducedTransparencyChanged',
   fullscreenChanged: 'clui:fullscreenChanged',
   browserEvent: 'clui:browserEvent',
