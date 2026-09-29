@@ -6,6 +6,7 @@
  * drift skips the envelope instead of crashing the app.
  */
 import type { DomainEvent, PermissionSuggestion, TurnUsage } from '../../shared/events'
+import { deriveModelInfo } from '../../shared/settings'
 
 // Minimal structural typing of the raw envelopes we care about.
 interface RawEnvelope {
@@ -70,6 +71,16 @@ interface RawEnvelope {
   }
   is_error?: boolean
   result?: string | null
+  // system/api_retry
+  attempt?: number
+  max_retries?: number
+  retry_delay_ms?: number
+  error_status?: number | null
+  // An API error's remedy rides the assistant message that wraps it; the result repeats
+  // only the status.
+  is_api_error_message?: boolean
+  api_error_status?: number | null
+  api_error_params?: { remedy?: string }
   total_cost_usd?: number
   modelUsage?: Record<
     string,
@@ -216,10 +227,19 @@ export class EventMapper {
    *  background AFTER its task_started (no fresh one fires) can still get a tray handle
    *  from its later task_updated. Cleared on the task's terminal notification. */
   private agentTaskMeta = new Map<string, { toolUseId?: string; description?: string }>()
+  /** The session's current model, for naming it in a model-access error. */
+  private model = ''
+  /** This foreground turn's API error, from its `is_api_error_message` assistant envelope. */
+  private apiError: ApiError | null = null
 
   /** Suppress the next result's is_error box (see the `interrupted` field). */
   markInterrupted(): void {
     this.interrupted = true
+  }
+
+  /** A live `set_model` emits no fresh init, so the session reports the switch here. */
+  setModel(model: string): void {
+    this.model = model
   }
 
   /** Swallow everything from a Clui-injected `/rename` (see the `suppressRenameTurn` field). */
@@ -292,6 +312,16 @@ export class EventMapper {
         return env.request_id ? [{ type: 'permission-cancel', requestId: env.request_id }] : []
       case 'assistant': {
         const out: DomainEvent[] = []
+        if (env.is_api_error_message) {
+          const content = Array.isArray(env.message?.content) ? env.message.content : []
+          this.apiError = {
+            status: env.api_error_status ?? undefined,
+            remedy: env.api_error_params?.remedy,
+            text: content.map((c) => (c && c.type === 'text' && typeof c.text === 'string' ? c.text : '')).join('')
+          }
+          // A classified error is rewritten at the result, so its raw text never shows as a bubble.
+          if (this.classifiedError()) return this.usageEvent(env.message?.usage)
+        }
         // Slash-command output (/usage, /cost, /context, …) arrives as a bare
         // snapshot with text but no message_start/text_delta. If we streamed no
         // text this turn, surface the snapshot's text so it renders (normal turns
@@ -329,10 +359,12 @@ export class EventMapper {
         // text was ALREADY rendered as an assistant bubble (the API-error-as-text case),
         // not merely because some progress text streamed first.
         const alreadyShown = Boolean(env.result) && this.turnText.includes(env.result as string)
+        const classified = isForeground ? this.classifiedError(env.api_error_status ?? undefined) : null
         if (isForeground) {
           this.streamedTextSinceStart = false
           this.interrupted = false
           this.turnText = ''
+          this.apiError = null
         }
         const out: DomainEvent[] = [
           {
@@ -368,7 +400,9 @@ export class EventMapper {
         // Surface a foreground failure as the in-chat error box. `alreadyShown` de-dups the
         // API-error-as-assistant-text case; a Stop is the user's own action, not a failure;
         // a bg-subagent or peer result is not the foreground turn.
-        if (env.is_error && isForeground && !wasInterrupted && !alreadyShown) {
+        if (env.is_error && isForeground && !wasInterrupted && classified) {
+          out.push({ type: 'error', message: classified, severity: 'error' })
+        } else if (env.is_error && isForeground && !wasInterrupted && !alreadyShown) {
           out.push({ type: 'error', message: env.result ?? 'The request failed.', severity: 'error' })
         }
         // The authoritative window changed (e.g. a model switch corrected 200K↔1M) but no
@@ -400,6 +434,7 @@ export class EventMapper {
     if (env.subtype === 'init') {
       // Seed the context window from the model id (refined later by the result).
       this.contextWindow = this.contextWindowFor(env.model)
+      this.model = env.model ?? ''
       return [
         {
           type: 'session-init',
@@ -415,6 +450,20 @@ export class EventMapper {
     // backgrounded subagent) keeps running AFTER the turn's `result` fires, so we
     // surface these as their own events rather than folding into turn-level busy.
     switch (env.subtype) {
+      case 'api_retry': {
+        const kind = env.origin?.kind
+        if (env.parent_tool_use_id || kind === 'task-notification' || kind === 'peer') return []
+        if (typeof env.attempt !== 'number' || typeof env.max_retries !== 'number') return []
+        return [
+          {
+            type: 'api-retry',
+            attempt: env.attempt,
+            maxRetries: env.max_retries,
+            delayMs: env.retry_delay_ms ?? 0,
+            status: env.error_status ?? null
+          }
+        ]
+      }
       case 'task_started':
         // Only TRUE background work (Bash run_in_background = task_type 'local_bash')
         // belongs in the background tray. Subagents (task_type 'local_agent') run in
@@ -712,6 +761,26 @@ export class EventMapper {
     }
   }
 
+  /** Clui's copy for this turn's API error when it can name the real fix, else null (the
+   *  caller keeps the CLI's own text). Model access is checked first: the CLI tags a Bedrock
+   *  model-access 403 as `refresh_command` (captured live, 2.1.284), so the credential copy
+   *  would send the user to refresh credentials that already work. */
+  private classifiedError(resultStatus?: number): string | null {
+    const err = this.apiError
+    if (!err) return null
+    const status = err.status ?? resultStatus
+    if (err.remedy === 'model_access' || (status === 403 && MODEL_ACCESS_TEXT.test(providerMessage(err.text)))) {
+      const info = deriveModelInfo(this.model)
+      const subject = info.family === 'unknown' ? 'This model' : info.label
+      return `${subject} isn't enabled on your AWS account in this region. Switch to another model, or ask your AWS admin to enable it in Amazon Bedrock.`
+    }
+    if (err.remedy === 'refresh_command') {
+      const command = /`([^`]+)`/.exec(err.text)?.[1] ?? 'your AWS sign-in command'
+      return `Your AWS sign-in has expired. Run ${command} in a terminal, then send your message again.`
+    }
+    return null
+  }
+
   /** Blocks are emitted in block order so the transcript renders text and tool cards
    *  in true stream order. Agent/Task tool_use maps to `subagent-nested` (a spawned
    *  child), any other tool_use to `subagent-tool`. */
@@ -813,6 +882,22 @@ export class EventMapper {
     }
     return []
   }
+}
+
+interface ApiError {
+  status?: number
+  remedy?: string
+  text: string
+}
+
+const MODEL_ACCESS_TEXT = /model access|marketplace|not enabled|enable this model/i
+
+/** The provider's own message, after the CLI's `API Error:` marker. The CLI's Bedrock
+ *  credentials template itself says "check AWS permissions and model access", so matching
+ *  the whole text would flag every expired-credentials 403 as a model-access failure. */
+function providerMessage(text: string): string {
+  const i = text.lastIndexOf('API Error:')
+  return i >= 0 ? text.slice(i) : text
 }
 
 /** tool_result content can be a string or an array of blocks; normalize to text. */

@@ -479,7 +479,7 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
       <QueuedMessages />
       <CompactSuggestion />
       {lastError && (
-        <div className="mt-2 whitespace-pre-wrap rounded-md border border-err/60 bg-err/10 px-3 py-2 text-xs text-err">
+        <div role="alert" className="mt-2 whitespace-pre-wrap rounded-md border border-err/60 bg-err/10 px-3 py-2 text-xs text-err">
           {lastError}
         </div>
       )}

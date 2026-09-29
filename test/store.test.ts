@@ -1,6 +1,6 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { perTurnUsage, useSession } from '../src/renderer/src/store.ts'
+import { perTurnUsage, useSession, apiRetryCopy } from '../src/renderer/src/store.ts'
 import { equal, ok } from './support/harness.mjs'
 
 const cum = (costUSD: number, out: number, cacheRead: number, cacheCreate: number) => ({
@@ -100,4 +100,56 @@ const st = useSession.getState
   await st().setEffort('low')
   ok(cur().ultracode === true && cur().effortChoice === 'low', 'store: picking an effort with Ultra on keeps Ultra')
   ok(!calls.some((c) => c.name === 'setUltracode'), 'store: picking an effort sends no ultracode change')
+}
+
+// Retry copy
+{
+  const r = { attempt: 3, maxRetries: 10, delayMs: 11200, status: 403 as number | null }
+  equal(apiRetryCopy(r), 'The API returned 403. Retrying in 12s, attempt 3 of 10.', 'store: retry copy with a status')
+  equal(apiRetryCopy({ ...r, status: null }), "Couldn't reach the API. Retrying in 12s, attempt 3 of 10.", 'store: retry copy without a response')
+  equal(apiRetryCopy({ ...r, attempt: 10 }), 'The API returned 403. Last retry in 12s.', 'store: last retry copy')
+  equal(apiRetryCopy({ ...r, status: null, attempt: 10 }), "Couldn't reach the API. Last retry in 12s.", 'store: last retry copy without a response')
+  equal(apiRetryCopy({ ...r, delayMs: 200 }), 'The API returned 403. Retrying in 1s, attempt 3 of 10.', 'store: retry delay floors at 1s')
+  ok(![apiRetryCopy(r), apiRetryCopy({ ...r, status: null, attempt: 10 })].some((c) => /[–—…]/.test(c)), 'store: retry copy has no dashes or ellipsis')
+}
+
+const retry = (attempt: number, status: number | null = 403): any => ({ type: 'api-retry', attempt, maxRetries: 10, delayMs: 11200, status })
+
+// Retry state is set by api-retry and cleared by stream, result, exit and Stop.
+{
+  const clears: [string, () => void | Promise<void>][] = [
+    ['text-delta', () => st().applyEvent('h1', { type: 'text-delta', text: 'hi' })],
+    ['message-start', () => st().applyEvent('h1', { type: 'message-start' })],
+    ['result', () => st().applyEvent('h1', { type: 'result', sessionId: 's', isError: true, result: null })],
+    ['process-exit', () => st().applyEvent('h1', { type: 'process-exit', code: 1 })],
+    ['Stop', () => st().interrupt()]
+  ]
+  for (const [name, clear] of clears) {
+    reset()
+    st().applyEvent('h1', retry(3))
+    ok(cur().apiRetry?.attempt === 3, `store: api-retry sets retry state (${name})`)
+    st().dismissApiRetry()
+    await clear()
+    ok(cur().apiRetry === null && cur().apiRetryDismissed === false, `store: ${name} clears retry state`)
+  }
+  reset()
+  st().applyEvent('h1', retry(3))
+  st().applyEvent('h1', { type: 'result', sessionId: 's', isError: false, result: null, fromTaskNotification: true } as any)
+  ok(cur().apiRetry?.attempt === 3, 'store: a bg result leaves the foreground retry')
+}
+
+// Dismiss holds for the run; the live text changes only on the first and last attempts.
+{
+  reset()
+  const said: string[] = []
+  for (let a = 1; a <= 10; a++) {
+    st().applyEvent('h1', retry(a))
+    if (said.at(-1) !== cur().apiRetryAnnounce) said.push(cur().apiRetryAnnounce)
+    if (a === 3) st().dismissApiRetry()
+  }
+  ok(said.length === 2 && said[1] === 'The API returned 403. Last retry in 12s.', 'store: ten attempts announce twice')
+  ok(cur().apiRetryDismissed === true, 'store: a dismissed retry stays hidden for later attempts')
+  st().applyEvent('h1', { type: 'result', sessionId: 's', isError: true, result: null })
+  st().applyEvent('h1', retry(1))
+  ok(cur().apiRetry?.attempt === 1 && cur().apiRetryDismissed === false, "store: the next turn's retry shows again")
 }

@@ -311,5 +311,8 @@ export type DomainEvent =
        *  red in-chat error box. Defaults to error severity when omitted. */
       severity?: 'error' | 'info'
     }
+  /** The CLI is retrying a failed API request (`system/api_retry`). `status` is null for a
+   *  connection error with no HTTP response. */
+  | { type: 'api-retry'; attempt: number; maxRetries: number; delayMs: number; status: number | null }
   /** The underlying CLI process exited. */
   | { type: 'process-exit'; code: number | null }

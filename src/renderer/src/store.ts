@@ -295,6 +295,13 @@ export interface PerSessionState {
   tasks: SessionTask[]
   /** Transient errors to surface. */
   lastError: string | null
+  /** The CLI's latest API retry this turn, shown in the notice strip. Cleared as soon as
+   *  the turn streams, ends, or is stopped. */
+  apiRetry: ApiRetry | null
+  apiRetryDismissed: boolean
+  /** The retry copy for the live region: only a run's first and last attempts, so a ten-attempt
+   *  run is two announcements, not ten. */
+  apiRetryAnnounce: string
   /**
    * True once the underlying process has exited for real (NOT an effort respawn,
    * which is swallowed in the main process). The slice is kept so the transcript
@@ -340,7 +347,17 @@ export type BrowserLoginVerdict = Parameters<CluiApi['browserLoginVerdict']>[2]
 const LIVE_SESSION_CAP = 8
 
 /** Tone of the app-level notice banner, driving its color + icon. */
-export type NoticeTone = 'success' | 'warn' | 'error'
+export type NoticeTone = 'success' | 'warn' | 'error' | 'info'
+
+export type ApiRetry = Omit<Extract<DomainEvent, { type: 'api-retry' }>, 'type'>
+
+export function apiRetryCopy(r: ApiRetry): string {
+  const secs = Math.max(1, Math.ceil(r.delayMs / 1000))
+  const cause = r.status === null ? "Couldn't reach the API." : `The API returned ${r.status}.`
+  return r.attempt === r.maxRetries
+    ? `${cause} Last retry in ${secs}s.`
+    : `${cause} Retrying in ${secs}s, attempt ${r.attempt} of ${r.maxRetries}.`
+}
 /** The transient app-level notice: a message plus the tone that channels its styling. */
 export interface Notice {
   message: string
@@ -520,6 +537,8 @@ interface SessionStore {
   setNotice: (message: string, tone?: NoticeTone) => void
   /** Dismiss the transient app-level notice. */
   dismissNotice: () => void
+  /** Hide the active session's retry strip for the rest of this retry run. */
+  dismissApiRetry: () => void
   /** Open the maximized transcript view for a subagent (by parent_tool_use_id). Resets
    *  the nesting trail to just this id (fresh entry from an Agent card / bg tray). */
   viewSubagent: (parentToolUseId: string) => void
@@ -981,6 +1000,9 @@ async function beginSession(
     slashCommands: EMPTY_SLASH_COMMANDS,
     tasks: EMPTY_TASKS,
     lastError: null,
+    apiRetry: null,
+    apiRetryDismissed: false,
+    apiRetryAnnounce: '',
     exited: false,
     createdMs: now,
     lastActivityMs: now,
@@ -1182,6 +1204,23 @@ export function subagentOwnerOfTask(
 }
 
 /** True for events that mutate the message list (need a fresh array copy). */
+const NO_RETRY = { apiRetry: null, apiRetryDismissed: false, apiRetryAnnounce: '' } as const
+
+/** Anything the turn streams means the API answered, so a retry notice is stale. A result
+ *  clears it too, but only the foreground turn's. */
+const ENDS_RETRY = new Set<DomainEvent['type']>([
+  'message-start',
+  'text-delta',
+  'thinking-delta',
+  'thinking-tokens',
+  'tool-use-start',
+  'tool-use-input-delta',
+  'tool-use-stop',
+  'turn-complete',
+  'context-usage',
+  'process-exit'
+])
+
 function touchesMessages(type: DomainEvent['type']): boolean {
   return (
     type === 'text-delta' ||
@@ -1621,6 +1660,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           turnStartMs: null,
           thinkingTokens: null,
           compacting: false,
+          ...NO_RETRY,
           ...(next ? { queuedMessages: rest } : {})
         })
       )
@@ -1631,7 +1671,16 @@ export const useSession = create<SessionStore>((set, get) => ({
     // A running turn will emit a terminal `result`. Mark `interrupting` (distinct from idle)
     // so a new prompt queues instead of dispatching a second concurrent turn; the late result
     // is recognized as THIS turn's boundary and swallowed, not the new turn's.
-    set((s) => patchSlice(s, active.handleId, { busy: false, interrupting: true, turnStartMs: null, thinkingTokens: null, compacting: false }))
+    set((s) =>
+      patchSlice(s, active.handleId, {
+        busy: false,
+        interrupting: true,
+        turnStartMs: null,
+        thinkingTokens: null,
+        compacting: false,
+        ...NO_RETRY
+      })
+    )
     await window.clui.interrupt(active.handleId)
   },
 
@@ -1793,8 +1842,17 @@ export const useSession = create<SessionStore>((set, get) => ({
       // Set true to CLEAR the app-level notice (e.g. a fresh session-init resolves the
       // transient "Reconnecting…" notice from an effort/ultracode respawn).
       let clearNotice = false
+      if (slice.apiRetry && (ENDS_RETRY.has(e.type) || (e.type === 'result' && !e.fromTaskNotification && !e.fromPeer))) {
+        Object.assign(patch, NO_RETRY)
+      }
 
       switch (e.type) {
+        case 'api-retry': {
+          const retry = { attempt: e.attempt, maxRetries: e.maxRetries, delayMs: e.delayMs, status: e.status }
+          patch.apiRetry = retry
+          if (!slice.apiRetry || retry.attempt === retry.maxRetries) patch.apiRetryAnnounce = apiRetryCopy(retry)
+          break
+        }
         case 'session-init':
           // A pick made before the first message had no sessionId to persist under (null
           // until now), so persist it once the id exists. The null→real gate excludes a
@@ -2348,6 +2406,8 @@ export const useSession = create<SessionStore>((set, get) => ({
 
   setNotice: (message, tone = 'warn') => set(() => ({ notice: { message, tone } })),
   dismissNotice: () => set(() => ({ notice: null })),
+  dismissApiRetry: () =>
+    set((s) => (s.activeHandleId ? patchSlice(s, s.activeHandleId, { apiRetryDismissed: true }) : {})),
   dismissCompactSuggestion: () =>
     set((s) => {
       const active = activeSlice(s)

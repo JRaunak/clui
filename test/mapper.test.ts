@@ -111,3 +111,130 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
     'mapper: compact_boundary → marker + context drop'
   )
 }
+
+// system/api_retry → a foreground api-retry; a subagent's or bg turn's retry maps to nothing
+{
+  const retry = { type: 'system', subtype: 'api_retry', attempt: 3, max_retries: 10, retry_delay_ms: 11200, error_status: 403 }
+  const evs = new EventMapper().map(retry) as any[]
+  ok(
+    evs.length === 1 &&
+      JSON.stringify(evs[0]) === JSON.stringify({ type: 'api-retry', attempt: 3, maxRetries: 10, delayMs: 11200, status: 403 }),
+    'mapper: api_retry → api-retry'
+  )
+  ok((new EventMapper().map({ ...retry, error_status: null }) as any[])[0]?.status === null, 'mapper: api_retry without HTTP status → null')
+  ok(new EventMapper().map({ ...retry, parent_tool_use_id: 't1' }).length === 0, 'mapper: subagent api_retry → none')
+  ok(new EventMapper().map({ ...retry, origin: { kind: 'task-notification' } }).length === 0, 'mapper: bg-turn api_retry → none')
+}
+
+// The live Sonnet 5.5 403 (CLI 2.1.284 tags it remedy:refresh_command) reads as model access
+{
+  const { readFileSync } = await import('node:fs')
+  const envs = readFileSync(new URL('./fixtures/sonnet55-403.jsonl', import.meta.url), 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l))
+  const m = new EventMapper()
+  m.map({ type: 'system', subtype: 'init', model: 'global.anthropic.claude-sonnet-5-5', session_id: 's' })
+  const evs = feed(m, envs)
+  const errors = evs.filter((e) => e.type === 'error')
+  ok(evs.filter((e) => e.type === 'api-retry').length === 10, 'mapper: fixture yields ten api-retry events')
+  ok(!evs.some((e) => e.type === 'text-delta'), 'mapper: a classified API error never renders its raw text')
+  ok(
+    errors.length === 1 && errors[0].message.startsWith("Sonnet 5.5 isn't enabled on your AWS account"),
+    'mapper: the Sonnet 5.5 403 is a model-access error'
+  )
+  ok(!errors.some((e) => /authentication failed|claude_aws_auth_local|credentials/i.test(e.message)), 'mapper: model-access copy never names the refresh path')
+  const unnamed = new EventMapper()
+  const e2 = feed(unnamed, envs).find((e) => e.type === 'error')
+  ok(e2?.message.startsWith("This model isn't enabled"), 'mapper: model-access copy without a known model')
+}
+
+// A switched model is the one named; the next turn starts clean
+{
+  const m = new EventMapper()
+  m.map({ type: 'system', subtype: 'init', model: 'claude-opus-5-5[1m]', session_id: 's' })
+  m.setModel('global.anthropic.claude-sonnet-5-5')
+  const evs = feed(m, [
+    {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'AWS authentication failed · run `x` and retry · API Error: 403 Your AWS Marketplace subscription failed.' }] },
+      is_api_error_message: true,
+      api_error_status: 403,
+      api_error: 'provider_credentials',
+      api_error_params: { provider: 'bedrock', remedy: 'refresh_command' }
+    },
+    { type: 'result', is_error: true, api_error_status: 403, result: 'x', session_id: 's' },
+    { type: 'result', is_error: true, result: 'API Error 500', session_id: 's' }
+  ])
+  const errors = evs.filter((e) => e.type === 'error')
+  ok(errors[0]?.message.startsWith('Sonnet 5.5 '), 'mapper: setModel names the switched model')
+  ok(errors[1]?.message === 'API Error 500', 'mapper: the API error does not leak into the next turn')
+}
+
+// remedy:refresh_command without model-access text → the sign-in copy with the CLI's command.
+// The CLI's own template says "check AWS permissions and model access", which must not count.
+{
+  const text =
+    'AWS authentication failed · run `claude_aws_auth_local` and retry · if credentials are current, check AWS permissions and model access · API Error: 403 The security token included in the request is expired'
+  for (const status of [401, 403]) {
+    const evs = feed(new EventMapper(), [
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'text', text }] },
+        is_api_error_message: true,
+        api_error_status: status,
+        api_error: 'provider_credentials',
+        api_error_params: { provider: 'bedrock', remedy: 'refresh_command' }
+      },
+      { type: 'result', is_error: true, api_error_status: status, result: text, session_id: 's' }
+    ])
+    const errors = evs.filter((e) => e.type === 'error')
+    ok(
+      errors.length === 1 &&
+        errors[0].message === 'Your AWS sign-in has expired. Run claude_aws_auth_local in a terminal, then send your message again.',
+      `mapper: ${status} refresh_command → sign-in copy`
+    )
+  }
+  const noCmd = feed(new EventMapper(), [
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'expired' }] }, is_api_error_message: true, api_error_params: { remedy: 'refresh_command' } },
+    { type: 'result', is_error: true, result: 'expired', session_id: 's' }
+  ]).find((e) => e.type === 'error')
+  ok(noCmd?.message.includes('Run your AWS sign-in command in a terminal'), 'mapper: sign-in copy without a known command')
+}
+
+// remedy:model_access classifies on its own
+{
+  const err = feed(new EventMapper(), [
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'denied' }] }, is_api_error_message: true, api_error_status: 400, api_error_params: { remedy: 'model_access' } },
+    { type: 'result', is_error: true, result: 'denied', session_id: 's' }
+  ]).find((e) => e.type === 'error')
+  ok(err?.message.startsWith("This model isn't enabled"), 'mapper: remedy model_access → model-access copy')
+}
+
+// An unclassified API error maps exactly as the same envelopes without the api-error fields
+{
+  const assistant = { type: 'assistant', message: { content: [{ type: 'text', text: 'API Error: PDF too large' }] } }
+  const result = { type: 'result', is_error: true, api_error_status: 400, result: 'API Error: PDF too large', session_id: 's' }
+  const tagged = feed(new EventMapper(), [
+    { ...assistant, is_api_error_message: true, api_error_status: 400, api_error: 'pdf_too_large', api_error_params: {} },
+    result
+  ])
+  const plain = feed(new EventMapper(), [assistant, result])
+  ok(JSON.stringify(tagged) === JSON.stringify(plain), 'mapper: unclassified API error output is unchanged')
+}
+
+// Copy carries no dash, en dash or ellipsis
+{
+  const copies = [
+    "Sonnet 5.5 isn't enabled on your AWS account in this region. Switch to another model, or ask your AWS admin to enable it in Amazon Bedrock.",
+    'Your AWS sign-in has expired. Run your AWS sign-in command in a terminal, then send your message again.'
+  ]
+  const m = new EventMapper()
+  m.map({ type: 'system', subtype: 'init', model: 'global.anthropic.claude-sonnet-5-5', session_id: 's' })
+  const got = feed(m, [
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Marketplace' }] }, is_api_error_message: true, api_error_status: 403 },
+    { type: 'result', is_error: true, result: 'x', session_id: 's' }
+  ]).find((e) => e.type === 'error')
+  ok(got?.message === copies[0], 'mapper: model-access copy is exact')
+  ok(!copies.some((c) => /[–—…]/.test(c)), 'mapper: error copy has no dashes or ellipsis')
+}

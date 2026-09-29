@@ -636,7 +636,10 @@ export class ClaudeSession extends EventEmitter {
   async setModel(model: string): Promise<boolean> {
     if (!this.child) return false
     const ok = await this.sendControl('set_model', { model })
-    if (ok) this.opts = { ...this.opts, model }
+    if (ok) {
+      this.opts = { ...this.opts, model }
+      this.mapper.setModel(model)
+    }
     return ok
   }
 
