@@ -21,7 +21,7 @@ export function TopBand({
 }: {
   leftInset: number
   /** How far the glass reaches left past the band, under the collapsed rail's empty top, so the
-   *  increased-contrast hairline runs unbroken to the window edge. */
+   *  hairline runs unbroken to the window edge. */
   bleed: number
   /** A session is open. Without one the band has nothing to describe, so it's only a drag surface. */
   session: boolean
@@ -62,7 +62,7 @@ export function TopBand({
         aria-hidden="true"
         data-ui="top-band-glass"
         style={{ left: -bleed }}
-        className={`glass-bar pointer-events-none absolute inset-0 -z-10 opacity-0 group-data-[scrolled]/band:opacity-100 contrast-more:opacity-100 ${
+        className={`glass-bar pointer-events-none absolute inset-0 -z-10 opacity-0 [--bar-edge:var(--band-edge)] contrast-more:[--bar-edge:var(--color-control-edge)] group-data-[scrolled]/band:opacity-100 contrast-more:opacity-100 ${
           settled ? 'transition-opacity duration-fast ease-in group-data-[scrolled]/band:ease-out motion-reduce:transition-none' : ''
         }`}
       />

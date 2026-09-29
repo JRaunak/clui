@@ -233,6 +233,9 @@
   --shadow-float: 0 1px 2px rgb(0 0 0 / 0.35), 0 12px 32px -12px rgb(0 0 0 / 0.6);
   --solid-edge: var(--color-bg);
   --bar-edge: transparent;
+  /* The top band's scrolled edge, the same weight as the Stage seam it meets. Translucent so it stays a fixed step
+     above whatever passes under the band, where an opaque line would vanish over a bright screenshot. */
+  --band-edge: rgb(255 255 255 / 0.1);
   --solid-thick: #1e1e1f;
   --edge-mask: 0.35;
   --edge-ramp: 24px;
@@ -327,6 +330,7 @@
   --glass-sat: 1.1;
   --glass-edge: rgb(0 0 0 / 0.08);
   --glass-edge-top: rgb(0 0 0 / 0.06);
+  --band-edge: rgb(0 0 0 / 0.14);
   /* A white lip reads on translucent white over darker content. */
   --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
   --shadow-float: 0 1px 3px rgb(0 0 0 / 0.06), 0 12px 32px -12px rgb(0 0 0 / 0.16);
@@ -711,7 +715,7 @@ body {
 @utility glass-bar {
   background: if(style(--control-material: solid): var(--solid-edge); else: var(--glass-tint-edge));
   backdrop-filter: if(style(--control-material: solid): none; else: blur(var(--glass-blur-edge)) saturate(var(--glass-sat)));
-  /* The bottom edge draws only under increased contrast; it stays 1px so the geometry never changes. */
+  /* The bottom edge is transparent unless a bar sets --bar-edge; it stays 1px so the geometry never changes. */
   border-bottom: 1px solid var(--bar-edge);
 }
 
