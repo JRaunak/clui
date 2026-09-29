@@ -22,6 +22,7 @@ const api: CluiApi = {
   getChatDir: () => ipcRenderer.invoke(IpcChannels.getChatDir),
   getCliInfo: () => ipcRenderer.invoke(IpcChannels.getCliInfo),
   getFullscreen: () => ipcRenderer.invoke(IpcChannels.getFullscreen),
+  isMac: process.platform === 'darwin',
   getReducedTransparency: () => ipcRenderer.invoke(IpcChannels.getReducedTransparency),
   getOsTheme: () => ipcRenderer.invoke(IpcChannels.getOsTheme),
   startSession: (opts: StartSessionOptions) =>

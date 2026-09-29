@@ -136,6 +136,8 @@ export interface CluiApi {
   getCliInfo: () => Promise<CliInfo>
   /** True in macOS fullscreen, where the OS hides the traffic lights. */
   getFullscreen: () => Promise<boolean>
+  /** The window carries the native sidebar material only on macOS. */
+  isMac: boolean
   /** Start a session; returns a local handle. */
   startSession: (opts: StartSessionOptions) => Promise<StartSessionResult>
   /**

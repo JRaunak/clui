@@ -251,6 +251,10 @@
   --lumen-scale-min: 0.86;
   /* A thin state overlay for hover on glass, never a second glass layer. */
   --glass-row-hover: rgb(255 255 255 / 0.06);
+  --window-material: solid;
+  /* Solved against the measured dark material; the worst case is a white window behind (12-sidebar-glass.md §13.8). */
+  --sidebar-glass-a: 85%;
+  --row-selected-a: 100%;
   /* Height of the glass above a scroller. Zero until a top bar publishes it, which keeps the scroll-edge mask valid. */
   --top-h: 0px;
 }
@@ -348,21 +352,31 @@
   --lumen-min: 0.6;
   --lumen-scale-min: 0.9;
   --glass-row-hover: rgb(0 0 0 / 0.05);
+  /* The lowest tint that keeps every sidebar foreground at AA over a black window, the hover visible and warm
+     show-through under the chroma cap, solved from the native material. The row lift is solved for visibility only:
+     every row foreground passes on both the sidebar and the opaque lift, so it passes on any mix of them. */
+  --sidebar-glass-a: 70%;
+  --row-selected-a: 60%;
 }
 
 /* In dark, hover and selection both lift, so the sidebar's hover takes a smaller step than the global one and selection
-   stays clearly above it. Light overrides this below. */
-.surface-sidebar {
-  --color-bg-raised: var(--ink-900);
+   stays clearly above it. Over a light window the dark glass lands near ink-900, so glass takes lighter steps and nudges
+   the two foregrounds that fall short there. */
+:root:not([data-theme='light']) .surface-sidebar {
+  --color-bg-raised: if(style(--window-material: glass): #2b2b2d; else: var(--ink-900));
+  --color-row-selected: if(style(--window-material: glass): #323234; else: var(--ink-820));
+  --color-err: if(style(--window-material: glass): #f25555; else: var(--red-400));
+  --color-control-edge: if(style(--window-material: glass): #6e6e73; else: #6b6b70);
 }
 
 /* bg-raised is a fixed near-white gray, so hover:bg-bg-raised lands ~7 CIELAB L* below the white main area (a strong,
    clear hover) but only ~2.8 below the gray sidebar surface (a whisper). A fixed fill can't serve both backdrops. Inside
-   the expanded sidebar (the .bg-bg-sidebar surface; the collapsed rail is .bg-bg and keeps the global value), re-map raised
-   to a step measured against the gray: #e2e2e2 puts a live-row hover ~5.6 L* below the sidebar and a dormant /60 hover ~3.5
-   below, both clearly readable. Selection goes the other way, up to white, so it never reads as a hover. */
-:root[data-theme='light'] .bg-bg-sidebar {
-  --color-bg-raised: #e2e2e2;
+   the expanded sidebar (.surface-sidebar; the collapsed rail is .bg-bg and keeps the global value), re-map raised to a
+   step measured against the gray: #e2e2e2 puts a live-row hover ~5.6 L* below the sidebar and a dormant /60 hover ~3.5
+   below. The glass composite lands lighter than the opaque gray, so there it takes #dcdcdd to stay visible. Selection goes
+   the other way, up to white, so it never reads as a hover. */
+:root[data-theme='light'] .surface-sidebar {
+  --color-bg-raised: if(style(--window-material: glass): #dcdcdd; else: #e2e2e2);
   --color-row-selected: #ffffff;
 }
 
@@ -586,7 +600,7 @@ body,
 }
 
 body {
-  background: var(--color-bg);
+  background: if(style(--window-material: glass): transparent; else: var(--color-bg));
   color: var(--color-content);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
@@ -733,6 +747,21 @@ body {
   border-bottom: 1px solid var(--bar-edge);
 }
 
+/* The expanded sidebar over the native window material. No backdrop-filter: the web layer behind it is empty.
+   The mixes live here, not in :root tokens, so they pick up the sidebar's scoped light re-maps. */
+@utility surface-sidebar {
+  background: if(
+    style(--window-material: glass): color-mix(in srgb, var(--color-bg-sidebar) var(--sidebar-glass-a), transparent);
+    else: var(--color-bg-sidebar)
+  );
+}
+@utility surface-row-selected {
+  background: if(
+    style(--window-material: glass): color-mix(in srgb, var(--color-row-selected) var(--row-selected-a), transparent);
+    else: var(--color-row-selected)
+  );
+}
+
 /* Thick variant: floats over unprotected content (popovers, menus, toasts, tooltips, palette, search). */
 @utility glass-thick {
   background: if(style(--control-material: solid): var(--solid-thick); else: var(--glass-tint-thick));
@@ -781,6 +810,19 @@ body {
     --glass-edge: var(--color-control-edge);
     --glass-edge-top: var(--color-control-edge);
     --bar-edge: var(--color-control-edge);
+  }
+}
+/* Only macOS windowed shows the material. The accessibility settings take the sidebar back to its opaque surface
+   as well as asking the OS to flatten it, so the result never depends on the OS doing both. */
+:root[data-window-glass] {
+  --window-material: glass;
+}
+:root[data-window-glass][data-reduce-transparency] {
+  --window-material: solid;
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root[data-window-glass] {
+    --window-material: solid;
   }
 }
 

@@ -107,6 +107,12 @@ export function App(): JSX.Element {
     return window.clui.onFullscreenChanged(setIsFullscreen)
   }, [])
 
+  // Set after the first commit, never in preload: before it the sidebar isn't painted, and the material would show
+  // across the whole empty window.
+  useLayoutEffect(() => {
+    document.documentElement.toggleAttribute('data-window-glass', window.clui.isMac && !isFullscreen)
+  }, [isFullscreen])
+
   // Refresh CLI info when Settings closes (path may have changed).
   useEffect(() => {
     if (!settingsOpen) window.clui.getCliInfo().then(setCliInfo)
@@ -245,7 +251,7 @@ export function App(): JSX.Element {
         id="app-sidebar"
         // No width transition while dragging, so the edge tracks the pointer 1:1.
         className={`relative flex h-screen min-h-0 shrink-0 flex-col ${sidebarResize.dragging ? '' : 'sidebar-anim'} ${
-          sidebarCollapsed ? 'w-11 items-center gap-2.5 bg-bg' : 'gap-3 bg-bg-sidebar'
+          sidebarCollapsed ? 'w-11 items-center gap-2.5 bg-bg' : 'gap-3 surface-sidebar'
         }`}
         style={sidebarCollapsed ? undefined : { width: sidebarResize.appliedWidth }}
       >
@@ -328,7 +334,7 @@ export function App(): JSX.Element {
           </div>
         ) : (
           // Gear is absolute so it doesn't pull the centered CLI status off-center.
-          <div data-ui="sidebar-footer" className="relative flex h-8 shrink-0 items-center justify-center border-t border-border bg-bg-sidebar px-3 text-meta text-dim">
+          <div data-ui="sidebar-footer" className="relative flex h-8 shrink-0 items-center justify-center border-t border-border px-3 text-meta text-dim">
             {cliInfo?.path ? (
               <span className="truncate font-mono" title={cliInfo.path}>
                 claude {cliInfo.version ?? ''}
@@ -367,7 +373,7 @@ export function App(): JSX.Element {
         )}
       </aside>
 
-      <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <main ref={mainRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
         {/* Collapsed and windowed, the traffic lights and the sidebar toggle sit over the Stage's
             top-left, so the band's content starts after them. */}
         <Stage

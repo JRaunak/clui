@@ -627,7 +627,7 @@ function SessionRow({
     <div
       data-ui="sidebar-row"
       className={`group relative flex items-center gap-2 rounded-md py-1.5 pl-3 pr-1.5 transition-colors ${st ? 'min-h-11' : ''} ${
-        active ? 'bg-row-selected' : 'hover:bg-bg-raised'
+        active ? 'surface-row-selected' : 'hover:bg-bg-raised'
       }`}
     >
       {active && <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-accent" aria-hidden="true" />}

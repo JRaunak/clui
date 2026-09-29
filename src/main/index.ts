@@ -81,6 +81,9 @@ function modeToFlag(choice: PermissionModeChoice): string | undefined {
  *  flash of the wrong color before the React/CSS paint. Keep in sync with styles.css. */
 const THEME_BG = { dark: '#161617', light: '#ffffff' } as const
 
+/** An opaque window background paints over the vibrancy material, so on macOS the page paints its own surfaces. */
+const windowBg = (): string => (process.platform === 'darwin' ? '#00000000' : THEME_BG[resolveTheme()])
+
 function resolveTheme(): 'dark' | 'light' {
   const pref = getSettingsSync().theme
   if (pref === 'system') return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
@@ -189,10 +192,14 @@ function createWindow(): void {
     minHeight: 480,
     show: false,
     title: 'Clui',
-    backgroundColor: THEME_BG[resolveTheme()],
+    backgroundColor: windowBg(),
     // Hide the native title bar so the sidebar reaches the window top; the lights overlay its band.
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 19, y: 16 },
+    // The material shows only through the expanded sidebar. Fullscreen and the accessibility settings cover it in CSS,
+    // so nothing here toggles during the OS fullscreen animation.
+    vibrancy: 'sidebar',
+    visualEffectState: 'followWindow',
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -627,7 +634,7 @@ function registerIpc(): void {
       const next = await updateSettings(patch, clear ?? [])
       if ('theme' in patch || clear?.includes('theme')) {
         nativeTheme.themeSource = getSettingsSync().theme
-        mainWindow?.setBackgroundColor(THEME_BG[resolveTheme()])
+        mainWindow?.setBackgroundColor(windowBg())
         browser.repaint()
       }
       return next
@@ -654,7 +661,7 @@ function registerIpc(): void {
       mainWindow.webContents.send(IpcChannels.reducedTransparencyChanged, nativeTheme.prefersReducedTransparency)
     }
     if (getSettingsSync().theme === 'system') {
-      mainWindow?.setBackgroundColor(THEME_BG[resolveTheme()])
+      mainWindow?.setBackgroundColor(windowBg())
       browser.repaint()
     }
   })
