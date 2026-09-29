@@ -29,27 +29,27 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
   // the modal commits on Save, so a reset is staged until then, and re-picking a value un-stages it.
   const [sources, setSources] = useState<Record<SettingsKey, SettingsSource> | null>(null)
   const [cleared, setCleared] = useState<SettingsKey[]>([])
-  // The theme is applied live on change for instant feedback, but only persisted on Save.
-  // `persistedTheme` tracks the last-persisted value so closing without saving can revert the live preview;
+  // `baseline` is what getSettings() loaded. The draft diffs against it, and closing without saving reverts
+  // the live theme preview to its theme, which is applied on change but only persisted on Save.
   // `previewedTheme` is null until the user changes the dropdown, so the unmount revert only fires when
   // there's a real preview to undo. Avoids reverting when StrictMode's simulated mount/unmount fires cleanup
   // before the async getSettings() resolves.
-  const persistedTheme = useRef<CluiSettings['theme'] | null>(null)
+  const baseline = useRef<CluiSettings | null>(null)
   const previewedTheme = useRef<CluiSettings['theme'] | null>(null)
 
   useEffect(() => {
     window.clui.getSettings().then(({ values, sources: src }) => {
       setSettings(values)
       setSources(src)
-      persistedTheme.current = values.theme
+      baseline.current = values
     })
   }, [])
 
   // On unmount, revert an unsaved live theme preview, but only if one was made and we know the persisted baseline.
   useEffect(() => {
     return () => {
-      if (previewedTheme.current !== null && persistedTheme.current !== null) {
-        applyTheme(persistedTheme.current)
+      if (previewedTheme.current !== null && baseline.current !== null) {
+        applyTheme(baseline.current.theme)
       }
     }
   }, [])
@@ -96,7 +96,7 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
     try {
       await window.clui.updateSettings(values, cleared)
       // The live-applied theme is now persisted, so mark it so the unmount revert is a no-op.
-      persistedTheme.current = settings.theme
+      baseline.current = settings
       previewedTheme.current = null
       closeSettings()
     } catch (e) {
@@ -126,6 +126,12 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
   }
 
   const draft = settings && sources ? { settings, sources, set, reset, isOverridden } : null
+  const loaded = baseline.current
+  const dirty =
+    cleared.length > 0 ||
+    (!!settings && !!loaded && (Object.keys(settings) as SettingsKey[]).some((k) => k !== 'browserEnabled' && settings[k] !== loaded[k]))
+  // Browser applies its changes right away, so it only needs Save while another section holds an edit.
+  const footer = section !== 'browser' || dirty || !!saveError
   const loading = <p className="text-meta text-dim">Loading…</p>
 
   return (
@@ -187,20 +193,24 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
         </div>
       </div>
 
-      <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-3">
-        {/* On failure only: keep the modal open + explain. Success needs no message; the modal closes. */}
-        {saveError && (
-          <span className="mr-auto text-xs text-err" role="alert" aria-live="assertive">
-            {saveError}
-          </span>
-        )}
-        <Button variant="outline" size="md" onClick={closeSettings}>
-          Cancel
-        </Button>
-        <Button variant="primary" size="md" onClick={() => void save()} disabled={saving || !draft}>
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
-      </div>
+      {footer && (
+        <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-3">
+          {/* A failed save keeps the modal open and says why; success closes it. On Browser the slot says why Save is here. */}
+          {saveError ? (
+            <span className="mr-auto text-xs text-err" role="alert" aria-live="assertive">
+              {saveError}
+            </span>
+          ) : (
+            section === 'browser' && <span className="mr-auto text-meta text-dim">Unsaved changes in other sections.</span>
+          )}
+          <Button variant="outline" size="md" onClick={closeSettings}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="md" onClick={() => void save()} disabled={saving || !draft}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
+      )}
     </Overlay>
   )
 }

@@ -29,7 +29,7 @@ export function Pane({
       id={`settings-panel-${section}`}
       aria-labelledby={`settings-tab-${section}`}
       hidden={!active}
-      className={`h-full overflow-y-auto px-5 py-4 ${className}`}
+      className={`h-full overflow-y-auto [scrollbar-gutter:stable] py-4 pl-5 pr-3 ${className}`}
     >
       {children}
     </div>
@@ -41,7 +41,7 @@ export function CheckBox({ checked }: { checked: boolean }): JSX.Element {
   return (
     <span
       className={`flex h-4 w-4 flex-none items-center justify-center rounded-[4px] border transition-colors duration-150 ${
-        checked ? 'border-accent bg-accent/15 text-accent' : 'border-control-edge text-transparent group-hover:border-border-strong'
+        checked ? 'border-content bg-content text-bg' : 'border-control-edge text-transparent group-hover:border-dim group-aria-disabled:border-border'
       }`}
     >
       <IconCheck className="h-3 w-3" />

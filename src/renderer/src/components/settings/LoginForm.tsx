@@ -1,4 +1,4 @@
-import { useState, useId, type KeyboardEvent } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { siteKeyOf, type SavedLoginInfo } from '../../../../shared/browser'
 import { Button } from '../Button'
 import { IconWarn } from '../Icon'
@@ -10,13 +10,15 @@ const normalizeSite = (raw: string): string | null => siteKeyOf(`https://${raw.t
 /** Add or edit a saved login. An edit never shows the stored password: leaving it blank keeps it.
  *  Field values stay in this component; the password goes to main in the save call only. */
 export function LoginForm({
+  id: formId,
   edit,
   onCancel,
   onSaved
 }: {
+  id: string
   edit: SavedLoginInfo | null
   onCancel: () => void
-  onSaved: () => void
+  onSaved: (saved: SavedLoginInfo) => void
 }): JSX.Element {
   const [site, setSite] = useState(edit?.site ?? '')
   const [username, setUsername] = useState(edit?.username ?? '')
@@ -27,6 +29,13 @@ export function LoginForm({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const id = useId()
+  const rootRef = useRef<HTMLDivElement>(null)
+  const siteRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    rootRef.current?.scrollIntoView({ block: 'nearest' })
+    siteRef.current?.focus({ preventScroll: true })
+  }, [])
 
   const normalized = normalizeSite(site)
   const siteErr = touched.site && !normalized
@@ -40,14 +49,14 @@ export function LoginForm({
     setSaving(true)
     setSaveError(null)
     try {
-      await window.clui.browserSaveLogin({
+      const saved = await window.clui.browserSaveLogin({
         ...(edit ? { id: edit.id } : {}),
         site: normalized,
         username: username.trim(),
         ...(password ? { password } : {}),
         ...(seed.trim() ? { totpSeed: seed.trim() } : {})
       })
-      onSaved()
+      onSaved(saved)
     } catch (e) {
       setSaving(false)
       setSaveError(e instanceof Error ? e.message : "Couldn't save the login.")
@@ -61,12 +70,13 @@ export function LoginForm({
   }
 
   return (
-    <div className="my-1 flex flex-col gap-2.5 rounded-md bg-tool p-3">
+    <div ref={rootRef} id={formId} className="my-1 flex flex-col gap-2.5 rounded-md border border-border bg-tool p-3">
       <div className="flex flex-col gap-1">
         <label htmlFor={`${id}-site`} className="text-meta text-dim">
           Site
         </label>
         <input
+          ref={siteRef}
           id={`${id}-site`}
           spellCheck={false}
           autoComplete="off"

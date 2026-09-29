@@ -451,24 +451,3 @@ export function IconEyeOff(p: IconProps): JSX.Element {
     </Svg>
   )
 }
-
-export function IconCookie(p: IconProps): JSX.Element {
-  return (
-    <Svg {...p}>
-      <path d="M21 12a9 9 0 1 1-9-9 3 3 0 0 0 3 3 3 3 0 0 0 3 3 3 3 0 0 0 3 3Z" />
-      <circle cx="8.5" cy="10" r="1" fill="currentColor" stroke="none" />
-      <circle cx="9" cy="15.5" r="1" fill="currentColor" stroke="none" />
-      <circle cx="14" cy="14" r="1" fill="currentColor" stroke="none" />
-    </Svg>
-  )
-}
-
-export function IconHistory(p: IconProps): JSX.Element {
-  return (
-    <Svg {...p}>
-      <path d="M3 12a9 9 0 1 0 2.6-6.4L3 8.2" />
-      <path d="M3 3.5v4.7h4.7" />
-      <path d="M12 7.5V12l3 2" />
-    </Svg>
-  )
-}
