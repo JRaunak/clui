@@ -16,7 +16,9 @@ export const safeStorage = {
     return s.slice(9)
   }
 }
+// Always rejects, so a test takes the no-Trash fallback and never fills the real Trash.
+export const shell = { trashItem: async () => { throw new Error('no Trash in tests') } }
 // Loaded by the browser manager's module graph; no test constructs them.
 export const session = {}
 export class WebContentsView {}
-export default { app, safeStorage, session, WebContentsView }
+export default { app, safeStorage, session, shell, WebContentsView }

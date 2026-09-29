@@ -8,7 +8,7 @@
  * Renames are stored in an app-owned sidecar map (`<userData>/session-names.json`)
  * rather than mutating the CLI's files, so they survive resume and CLI upgrades.
  */
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import { createReadStream, existsSync } from 'node:fs'
 import { readdir, stat, rm, readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
@@ -290,6 +290,17 @@ function slugToPathGuess(slug: string): string {
   return slug.startsWith('-') ? '/' + slug.slice(1).replace(/-/g, '/') : slug
 }
 
+/** A deleted session stays recoverable from the Trash after the undo window closes. A volume without a Trash (a
+ *  network share or FAT drive under CLAUDE_CONFIG_DIR) makes trashItem reject, and there the delete is permanent. */
+async function trash(path: string): Promise<void> {
+  if (!existsSync(path)) return
+  try {
+    await shell.trashItem(path)
+  } catch {
+    await rm(path, { recursive: true, force: true })
+  }
+}
+
 /** Delete a session: its `.jsonl` plus any sibling per-session directory. */
 export async function deleteSession(projectSlug: string, id: string): Promise<void> {
   // Hard boundary: both args cross IPC untrusted. Reject anything that could escape
@@ -305,9 +316,9 @@ export async function deleteSession(projectSlug: string, id: string): Promise<vo
   if (!resolve(jsonlPath).startsWith(dirPrefix) || !resolve(sideDir).startsWith(dirPrefix)) {
     throw new Error('refusing to delete outside the session directory')
   }
-  await rm(jsonlPath, { force: true })
+  await trash(jsonlPath)
   // The CLI also creates a sibling dir named <id> for subagent transcripts, etc.
-  await rm(sideDir, { recursive: true, force: true })
+  await trash(sideDir)
   // Drop any sidecar rename.
   await serializeSidecar(async () => {
     const map = await readSidecar()
