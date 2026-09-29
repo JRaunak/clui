@@ -139,7 +139,7 @@ export function Stage({
         if (kind === 'browser') useSession.getState().setBrowserPane(wide ? 'half' : 'collapsed')
         else if (wide) setPaneFull(false)
         else closeSubagentView()
-        requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="gate"]')?.focus())
+        requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="gate-title"]')?.focus())
       },
       escapeActive: state === 'full' || focusInSecondary
     }),
