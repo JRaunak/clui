@@ -3,6 +3,7 @@ import { useActive } from '../store'
 import { IconClose } from './Icon'
 import { useEscape } from '../lib/useEscape'
 import { useDialogFocus } from '../lib/useDialogFocus'
+import { useOverlayEnter, useOverlayCovered } from '../lib/overlayOrigin'
 import type { ConfigBundle, ConfigOrigin } from '../../../shared/config'
 
 type Tab = 'agents' | 'skills' | 'hooks' | 'mcp'
@@ -18,7 +19,7 @@ type Tab = 'agents' | 'skills' | 'hooks' | 'mcp'
  * the sidebar). Named "Configuration" so it doesn't collide with Settings, and so the
  * skills tab stops implying it's a second invoke-door to the composer's `/` menu.
  */
-export function Customizations({ onClose }: { onClose: () => void }): JSX.Element {
+export function Customizations({ onClose, covered }: { onClose: () => void; covered: boolean }): JSX.Element {
   const cwd = useActive((s) => s?.cwd ?? null)
   const [bundle, setBundle] = useState<ConfigBundle | null>(null)
   const [tab, setTab] = useState<Tab>('agents')
@@ -39,7 +40,10 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
 
   // Esc closes the modal (nesting-aware via the escape-stack).
   useEscape(true, onClose)
+  const scrimRef = useRef<HTMLDivElement>(null)
   const dialogRef = useDialogFocus<HTMLDivElement>()
+  useOverlayEnter(scrimRef, dialogRef)
+  useOverlayCovered(scrimRef, covered)
 
   const pluginFilter = <T extends { origin: ConfigOrigin }>(items: T[]): T[] =>
     showPlugins ? items : items.filter((it) => it.origin !== 'plugin')
@@ -59,7 +63,7 @@ export function Customizations({ onClose }: { onClose: () => void }): JSX.Elemen
     : { agents: 0, skills: 0, hooks: 0, mcp: 0 }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center scrim">
+    <div ref={scrimRef} className="fixed inset-0 z-40 flex items-center justify-center scrim">
       <div
         ref={dialogRef}
         tabIndex={-1}

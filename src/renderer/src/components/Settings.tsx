@@ -6,6 +6,7 @@ import { IconClose } from './Icon'
 import { applyTheme } from '../lib/theme'
 import { useEscape } from '../lib/useEscape'
 import { useDialogFocus } from '../lib/useDialogFocus'
+import { useOverlayEnter, useOverlayCovered } from '../lib/overlayOrigin'
 import { Pane } from './settings/shared'
 import { GeneralSection } from './settings/GeneralSection'
 import { SessionsSection } from './settings/SessionsSection'
@@ -17,7 +18,7 @@ const SECTIONS: { key: SettingsSection; label: string }[] = [
   { key: 'browser', label: 'Browser' }
 ]
 
-export function Settings(): JSX.Element {
+export function Settings({ covered }: { covered: boolean }): JSX.Element {
   const section = useSession((s) => s.settingsSection) ?? 'general'
   const openSettings = useSession((s) => s.openSettings)
   const closeSettings = useSession((s) => s.closeSettings)
@@ -128,7 +129,7 @@ export function Settings(): JSX.Element {
   const loading = <p className="text-meta text-dim">Loading…</p>
 
   return (
-    <Overlay>
+    <Overlay covered={covered}>
       <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
         <div className="text-title text-content">Settings</div>
         <button
@@ -206,10 +207,13 @@ export function Settings(): JSX.Element {
 
 /** No scrim dismissal: the form holds unsaved edits an outside click would discard. The height is
  *  fixed so switching between a short section and a long one never moves the dialog. */
-function Overlay({ children }: { children: React.ReactNode }): JSX.Element {
+function Overlay({ covered, children }: { covered: boolean; children: React.ReactNode }): JSX.Element {
+  const scrimRef = useRef<HTMLDivElement>(null)
   const dialogRef = useDialogFocus<HTMLDivElement>()
+  useOverlayEnter(scrimRef, dialogRef)
+  useOverlayCovered(scrimRef, covered)
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center scrim">
+    <div ref={scrimRef} className="fixed inset-0 z-40 flex items-center justify-center scrim">
       <div
         ref={dialogRef}
         tabIndex={-1}

@@ -51,7 +51,8 @@ export function App(): JSX.Element {
   const lastBgFocusRef = useRef<HTMLElement | null>(null)
   // Holds the previous overlay state so the restore below skips the initial mount.
   const wasOverlayOpenRef = useRef(false)
-  const anyOverlayOpen = settingsOpen || showCustomizations || !!palette || globalSearchOpen
+  const floatOpen = !!palette || globalSearchOpen
+  const anyOverlayOpen = settingsOpen || showCustomizations || floatOpen
 
   useEffect(() => {
     const onFocusIn = (e: FocusEvent): void => {
@@ -396,8 +397,8 @@ export function App(): JSX.Element {
       <div data-overlay-host>
         <GateAnnouncer />
         <GlobalSearch />
-        {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} />}
-        {settingsOpen && <Settings />}
+        {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} covered={floatOpen} />}
+        {settingsOpen && <Settings covered={floatOpen} />}
         {palette && (
           <CommandPalette
             mode={palette.mode}

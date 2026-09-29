@@ -510,11 +510,12 @@ export class BrowserManager {
       return null
     }
     if (!e.shown) return t.state.still
-    const still = await this.refreshStill(handleId, t)
+    // Whatever asked to hide the page is about to draw where it sits, so it goes first. A capture
+    // straight after the detach still returns the last frame that was on screen.
     e.shown = false
     t.lastViewedMs = Date.now()
     this.sync(e)
-    return still
+    return this.refreshStill(handleId, t)
   }
 
   private async capture(t: Tab): Promise<string | null> {

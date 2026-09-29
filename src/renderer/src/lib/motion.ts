@@ -1,5 +1,14 @@
 import { flushSync } from 'react-dom'
 
+export const cssVar = (name: string): string => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+
+/** A duration token in ms. The minifier rewrites 150ms as .15s, so the unit has to be read, not assumed. */
+export function cssMs(name: string): number {
+  const v = cssVar(name)
+  const n = parseFloat(v) || 0
+  return v.endsWith('ms') ? n : v.endsWith('s') ? n * 1000 : n
+}
+
 export type Via = 'pointer' | 'keyboard'
 
 /** A click fired by Enter/Space on a button has detail 0; a real pointer click has detail ≥ 1. */
