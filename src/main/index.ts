@@ -50,7 +50,7 @@ import { BrowserMcpServer } from './browser/mcp'
 import { WORLD } from './browser/cursor'
 import { approve as approveSite, listSites, removeSite } from './browser/sites'
 import { listLogins, removeLogin, saveLogin, vaultAvailable } from './browser/vault'
-import type { ClearBrowsingData, PaneBounds } from '../shared/browser'
+import type { ClearBrowsingData, DriveState, PaneBounds, TabActor } from '../shared/browser'
 import type { CluiSettings, SettingsKey } from '../shared/settings'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -212,6 +212,7 @@ function createWindow(): void {
   }
   mainWindow.on('enter-full-screen', pushFullscreen)
   mainWindow.on('leave-full-screen', pushFullscreen)
+  mainWindow.on('resize', () => browserManager?.relayout())
 
   // nativeTheme's `updated` isn't documented to fire for Reduce transparency, so re-send it whenever
   // the window regains focus, which is where the user returns after changing System Settings.
@@ -257,16 +258,29 @@ function registerIpc(): void {
     Object.assign(globalThis, {
       __cluiBrowser: {
         endpoint: (handleId: string) => mcp.endpoint(handleId),
-        callTool: (handleId: string, name: string, args: Record<string, unknown> = {}) => mcp.callTool(handleId, name, args),
-        evalInPage: (handleId: string, code: string) =>
-          browser.page(handleId)?.wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]) ?? Promise.resolve(null),
+        callTool: (handleId: string, name: string, args: Record<string, unknown> = {}, toolUseId?: string) =>
+          mcp.callTool(handleId, name, args, toolUseId),
+        evalInPage: (handleId: string, code: string, tab?: number) =>
+          browser.page(handleId, tab ?? browser.tabsOf(handleId)?.viewed ?? 1)?.wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]) ??
+          Promise.resolve(null),
         clearData: (what: ClearBrowsingData) => browser.clearData(what),
         approveSite: (site: string) => approveSite(site),
         // A fresh blank page for the same session and token, so one scene's page can't leak into the next.
         resetPage: (handleId: string) => {
           browser.dispose(handleId)
           browser.enable(handleId)
-        }
+        },
+        newTab: async (handleId: string, by: TabActor, url?: string) => {
+          const tab = await browser.newTab(handleId, by, url)
+          if (tab !== null && url) await browser.navigate(handleId, tab, url, by)
+          return tab
+        },
+        closeTab: (handleId: string, tab: number, by: TabActor) => browser.closeTab(handleId, tab, by),
+        setDrive: (handleId: string, tab: number, drive: DriveState) => browser.setTabDrive(handleId, tab, drive),
+        suspend: (handleId: string, tab: number) => browser.suspendTab(handleId, tab),
+        tabs: (handleId: string) =>
+          browser.tabsOf(handleId)?.tabs.map(({ id, url, title, drive, suspended, attached, parked }) => ({ id, url, title, drive, suspended, attached, parked })) ?? null,
+        lastToolTab: (handleId: string) => browser.tabsOf(handleId)?.lastUsed ?? null
       }
     })
   }
@@ -429,10 +443,19 @@ function registerIpc(): void {
     if (fromTrustedFrame(e)) browser.setBounds(handleId, b)
   })
   handle(IpcChannels.browserSetVisible, (_e, handleId: string, visible: boolean) => browser.setVisible(handleId, visible))
-  handle(IpcChannels.browserNavigate, (_e, handleId: string, url: string) => browser.navigate(handleId, url, 'user'))
-  handle(IpcChannels.browserNav, (_e, handleId: string, action: 'back' | 'forward' | 'reload' | 'stop') => browser.nav(handleId, action))
-  handle(IpcChannels.browserDrive, (_e, handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset') =>
-    browser.drive(handleId, action)
+  handle(IpcChannels.browserViewTab, (_e, handleId: string, tab: number) => browser.viewTab(handleId, tab))
+  handle(IpcChannels.browserNewTab, async (_e, handleId: string) => {
+    const tab = await browser.newTab(handleId, 'user')
+    if (tab === null) throw new Error('The browser is off for this session.')
+    return tab
+  })
+  handle(IpcChannels.browserCloseTab, (_e, handleId: string, tab: number) => browser.closeTab(handleId, tab, 'user'))
+  handle(IpcChannels.browserNavigate, (_e, handleId: string, tab: number, url: string) => browser.navigate(handleId, tab, url, 'user'))
+  handle(IpcChannels.browserNav, (_e, handleId: string, tab: number, action: 'back' | 'forward' | 'reload' | 'stop') =>
+    browser.nav(handleId, tab, action)
+  )
+  handle(IpcChannels.browserDrive, (_e, handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset', tab?: number) =>
+    browser.drive(handleId, action, tab)
   )
   handle(IpcChannels.browserSiteVerdict, (_e, handleId: string, requestId: string, allow: boolean) =>
     browser.siteVerdict(handleId, requestId, allow)

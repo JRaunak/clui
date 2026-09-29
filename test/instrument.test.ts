@@ -44,3 +44,5 @@ equal(browserLabel(b('press'), { keys: [' '] }), 'press Space', 'browser label: 
 equal(browserLabel(b('press'), { keys: ['a', 'b', 'c', 'd', 'Enter'] }), 'press 5 keys', 'browser label: several keys by count')
 equal(browserLabel(b('hover'), { ref: 12 }), 'hover 12', 'browser label: hover by ref')
 equal(browserLabel(b('hover'), { x: 320, y: 180 }), 'hover 320, 180', 'browser label: hover by point')
+equal(browserLabel(b('navigate'), { url: 'https://github.com' }, 2), 'navigate github.com · tab 2', 'browser label: names its tab')
+equal(browserLabel(b('navigate'), { url: 'https://github.com' }, 0), 'navigate github.com', 'browser label: no tab, no suffix')

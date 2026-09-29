@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { activeSlice, selectBrowserOpen, useActive, useSession } from '../store'
+import { activeSlice, anyTabIn, selectBrowserOpen, useActive, useSession } from '../store'
 import { CurrentTurnHeader } from './CurrentTurnHeader'
 import { FindBar } from './FindBar'
 import { IconAgentBrowser } from './Icon'
@@ -138,7 +138,7 @@ export function TopSlot({
  *  hidden browser, a static dot marks it, since the light itself stays in the transcript. */
 function BrowserToggle(): JSX.Element {
   const open = useSession((s) => !s.viewingSubagent && selectBrowserOpen(activeSlice(s)))
-  const driving = useActive((s) => s?.browser?.drive === 'driving')
+  const driving = useActive((s) => anyTabIn(s?.browser, 'driving'))
   const toggleBrowser = useSession((s) => s.toggleBrowser)
   return (
     <button

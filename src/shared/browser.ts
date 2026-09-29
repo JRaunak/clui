@@ -4,6 +4,7 @@ export type DriveState = 'idle' | 'driving' | 'user' | 'stopped' | 'done'
 /** The right sidebar's state for this session's browser. */
 export type BrowserPaneState = 'collapsed' | 'half' | 'full'
 
+/** One tab's page. Every tab of a session shares the session's partition, site approvals and vault. */
 export interface BrowserState {
   url: string
   title: string
@@ -23,13 +24,28 @@ export type LoginRequest =
   | { kind: 'choose'; site: string; usernames: string[] }
   | { kind: 'save'; site: string }
 
+/** Tab ids count up from 1 per session in open order and are never reused while the process lives. */
+export interface TabState extends BrowserState {
+  id: number
+}
+
+/** Who opened or closed a tab. The renderer announces only Claude's changes. */
+export type TabActor = 'agent' | 'user'
+
 export type BrowserEvent =
-  | { type: 'state'; patch: Partial<BrowserState> }
+  | { type: 'tab-state'; tab: number; patch: Partial<BrowserState> }
+  /** Appended at the end of the strip. `viewed` is the session's viewed tab after the change.
+   *  `url` is where Claude is opening it, which the page hasn't loaded yet. */
+  | { type: 'tab-opened'; tab: TabState; by: TabActor; viewed: number; url?: string }
+  /** `viewed` is the viewed tab after the close; closing the last tab opens a fresh one first. */
+  | { type: 'tab-closed'; tab: number; by: TabActor; viewed: number }
+  /** The tab a browser tool call ran in, keyed by the CLI's tool_use id. */
+  | { type: 'tool-tab'; toolUseId: string; tab: number }
   /** `page`: the page itself tried to go there, not Claude, and the Gate says so.
    *  `from` is that page's site, null when it has none (about:blank). */
-  | { type: 'site-request'; requestId: string; site: string; cause: 'agent' | 'page'; from: string | null }
-  | { type: 'login-request'; requestId: string; request: LoginRequest }
-  | { type: 'filled'; site: string }
+  | { type: 'site-request'; requestId: string; site: string; cause: 'agent' | 'page'; from: string | null; tab: number }
+  | { type: 'login-request'; requestId: string; request: LoginRequest; tab: number }
+  | { type: 'filled'; site: string; tab: number }
 
 export interface PaneBounds { x: number; y: number; width: number; height: number }
 

@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { useActive, useSession } from '../store'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useActive, useSession, viewedTabOf, type BrowserTabs } from '../store'
 import type { DriveState } from '../../../shared/browser'
 import { IconChevron, IconClose, IconRefresh, IconStop } from './Icon'
 import { PANE_BTN } from './Stage'
@@ -13,10 +13,42 @@ const ANNOUNCE: Partial<Record<DriveState, string>> = {
   done: 'Claude finished with the browser.'
 }
 
-const STRIP: Partial<Record<DriveState, { label: string; hint: string }>> = {
-  driving: { label: 'Claude is driving', hint: 'Click the page to take over' },
-  user: { label: "You're driving", hint: 'Claude is paused' },
-  stopped: { label: 'Stopped', hint: 'Send a message to let Claude use the browser again' }
+/** What the strip says about the viewed tab. `elsewhere`: Claude drives other tabs, not this one. */
+type Mode = 'driving' | 'user' | 'stopped' | 'elsewhere'
+
+interface StripView {
+  mode: Mode
+  /** Other tabs Claude is driving. */
+  others: number
+  /** The one of them Claude acted in last. */
+  recent: number
+}
+
+function copyOf({ mode, others, recent }: StripView): { label: string; hint: string } {
+  const where = others > 1 ? `in ${others} other tabs` : `in tab ${recent}`
+  switch (mode) {
+    case 'driving':
+      return { label: 'Claude is driving', hint: others ? `Also driving ${where}` : 'Click the page to take over' }
+    case 'user':
+      return { label: "You're driving", hint: others ? `Claude is still driving ${where}` : 'Claude is paused in this tab' }
+    case 'elsewhere':
+      return { label: `Claude is driving ${where}`, hint: 'You can keep using this tab' }
+    case 'stopped':
+      return { label: 'Stopped', hint: 'Send a message to let Claude use the browser again' }
+  }
+}
+
+const othersOf = (b: BrowserTabs | null | undefined): number =>
+  b ? b.tabs.filter((t) => t.id !== b.viewed && t.drive === 'driving').length : 0
+
+/** The other driving tab Claude used last, from the tool calls main attributed; else the newest one. */
+function recentOf(b: BrowserTabs | null | undefined): number {
+  if (!b) return 0
+  const driving = new Set(b.tabs.filter((t) => t.id !== b.viewed && t.drive === 'driving').map((t) => t.id))
+  if (!driving.size) return 0
+  const used = Object.values(b.toolTabs)
+  for (let i = used.length - 1; i >= 0; i--) if (driving.has(used[i])) return used[i]
+  return Math.max(...driving)
 }
 
 /** A bare host or host:port gets https://; anything with a real scheme goes to main as typed, which
@@ -38,13 +70,13 @@ function splitUrl(url: string): { origin: string; rest: string } {
 }
 
 export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element {
-  const url = useActive((s) => s?.browser?.url ?? '')
-  const loading = useActive((s) => s?.browser?.loading ?? false)
-  const canBack = useActive((s) => s?.browser?.canBack ?? false)
-  const canForward = useActive((s) => s?.browser?.canForward ?? false)
-  const driving = useActive((s) => s?.browser?.drive === 'driving')
-  const suspended = useActive((s) => s?.browser?.suspended ?? false)
-  const wall = useActive((s) => s?.browser?.loginWall === 'hardware')
+  const tab = useActive((s) => s?.browser?.viewed ?? 0)
+  const url = useActive((s) => viewedTabOf(s?.browser)?.url ?? '')
+  const loading = useActive((s) => viewedTabOf(s?.browser)?.loading ?? false)
+  const canBack = useActive((s) => viewedTabOf(s?.browser)?.canBack ?? false)
+  const canForward = useActive((s) => viewedTabOf(s?.browser)?.canForward ?? false)
+  const driving = useActive((s) => viewedTabOf(s?.browser)?.drive === 'driving')
+  const wall = useActive((s) => viewedTabOf(s?.browser)?.loginWall === 'hardware')
   const setNotice = useSession((s) => s.setNotice)
 
   const shown = url === 'about:blank' ? '' : url
@@ -54,11 +86,11 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
   const { origin, rest } = splitUrl(shown)
 
   const navBtn = `${PANE_BTN} disabled:pointer-events-none disabled:opacity-40`
-  const nav = (action: 'back' | 'forward' | 'reload' | 'stop'): void => void window.clui.browserNav(handleId, action)
+  const nav = (action: 'back' | 'forward' | 'reload' | 'stop'): void => void window.clui.browserNav(handleId, tab, action)
 
   const go = async (): Promise<void> => {
     if (!draft?.trim()) return
-    const err = await window.clui.browserNavigate(handleId, normalize(draft))
+    const err = await window.clui.browserNavigate(handleId, tab, normalize(draft))
     if (err) setNotice(err, 'warn')
     else setDraft(null)
   }
@@ -83,7 +115,7 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
       <div className="relative flex min-w-40 flex-1">
         <input
           data-ui="browser-url"
-          data-pane-title={suspended || wall ? undefined : ''}
+          data-pane-title={wall ? undefined : ''}
           aria-label="Address"
           placeholder="Enter an address, or ask Claude"
           spellCheck={false}
@@ -121,75 +153,114 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
         )}
       </div>
 
-      {suspended && <span className="shrink-0 text-label text-dim">Page paused</span>}
     </div>
   )
 }
 
 /**
- * Who is driving, on its own line between the toolbar and the page. It never animates: the page
- * under it jumps by the strip's height, and motion would only draw the eye to the jump. The live
- * region sits outside the strip so it's still mounted to say "finished" once the strip has gone.
+ * Who is driving the viewed tab, on its own line between the toolbar and the page, and whether Claude
+ * is driving other tabs. It never animates: the page under it jumps by the strip's height, and motion
+ * would only draw the eye to the jump. Once shown it stays for the rest of the turn, so Claude moving
+ * between tabs moves the page once rather than on every switch. The live region sits outside the
+ * strip so it's still mounted to say "finished" once the strip has gone.
  */
 export function BrowserDriveStrip(): JSX.Element {
-  const drive = useActive((s) => s?.browser?.drive ?? 'idle')
-  const suspended = useActive((s) => s?.browser?.suspended ?? false)
+  const viewed = useActive((s) => s?.browser?.viewed ?? 0)
+  const drive = useActive((s) => viewedTabOf(s?.browser)?.drive ?? 'idle')
+  const others = useActive((s) => othersOf(s?.browser))
+  const recent = useActive((s) => recentOf(s?.browser))
+  const several = useActive((s) => (s?.browser?.tabs.length ?? 0) > 1)
+  const busy = useActive((s) => !!s?.busy)
   const browserDrive = useSession((s) => s.browserDrive)
+  const viewTab = useSession((s) => s.viewBrowserTab)
   const rootRef = useRef<HTMLDivElement>(null)
-  const state = suspended ? undefined : STRIP[drive]
+
+  const mode: Mode | null =
+    drive === 'driving' || drive === 'user' || drive === 'stopped' ? drive : others ? 'elsewhere' : null
+  const view = useMemo<StripView | null>(() => (mode ? { mode, others, recent } : null), [mode, others, recent])
+  const [held, setHeld] = useState<StripView | null>(null)
+  useEffect(() => {
+    if (!busy) setHeld(null)
+    else if (view) setHeld(view)
+  }, [view, busy])
+  const shown = view ?? (busy ? held : null)
 
   const [announce, setAnnounce] = useState('')
-  const prevDrive = useRef(drive)
+  const prev = useRef({ viewed, drive, mode })
   const seq = useRef(0)
   useEffect(() => {
-    const prev = prevDrive.current
-    prevDrive.current = drive
-    if (prev === drive) return
-    const text = drive === 'driving' ? (prev === 'user' ? 'Claude is driving again.' : 'Claude is driving the browser.') : ANNOUNCE[drive]
+    const p = prev.current
+    prev.current = { viewed, drive, mode }
+    // Viewing another tab is the user's own doing, and focus on the tab already says where they are.
+    if (p.viewed !== viewed) return
+    let text: string | undefined
+    if (mode === 'elsewhere' && p.mode !== 'elsewhere') text = `Claude is driving in tab ${recent}.`
+    else if (p.drive !== drive)
+      text = drive === 'driving' ? (p.drive === 'user' ? 'Claude is driving again.' : 'Claude is driving the browser.') : ANNOUNCE[drive]
     if (text) setAnnounce(`${text}${'\u200b'.repeat(++seq.current % 2)}`)
-  }, [drive])
+  }, [viewed, drive, mode, recent])
 
   // The pressed button unmounts once main answers, so focus that was in the strip goes to the next
-  // useful control: Stop after Hand back, the address once Claude is stopped.
+  // useful control: Stop after Hand back or Show tab, the address once Claude is stopped.
   const refocus = useRef<string | null>(null)
+  const shownMode = shown?.mode
   useLayoutEffect(() => {
     const target = refocus.current
     if (!target) return
     refocus.current = null
     document.querySelector<HTMLElement>(target)?.focus()
-  }, [drive])
+  }, [shownMode])
+  const keepFocus = (target: string): void => {
+    if (rootRef.current?.contains(document.activeElement)) refocus.current = target
+  }
   const act = (action: 'stop' | 'handback'): void => {
-    if (rootRef.current?.contains(document.activeElement))
-      refocus.current = action === 'stop' ? '[data-ui="browser-url"]' : '[data-ui="browser-stop"]'
+    keepFocus(action === 'stop' ? '[data-ui="browser-url"]' : '[data-ui="browser-stop"]')
     void browserDrive(action)
   }
+  const copy = shown && copyOf(shown)
+  // A status hint cut mid-word reads as broken, so one that doesn't fit is hidden whole. It stays in
+  // layout while hidden, so its widths keep measuring and it comes back once there's room.
+  const [hintEl, setHintEl] = useState<HTMLSpanElement | null>(null)
+  const [clipped, setClipped] = useState(false)
+  const hint = copy?.hint
+  useLayoutEffect(() => {
+    if (!hintEl) return
+    const check = (): void => setClipped(hintEl.scrollWidth > hintEl.clientWidth)
+    check()
+    const ro = new ResizeObserver(check)
+    ro.observe(hintEl)
+    return () => ro.disconnect()
+  }, [hintEl, hint])
 
   return (
     <>
-      {state && (
+      {shown && copy && (
         <div
           ref={rootRef}
           data-ui="browser-drive-strip"
+          data-mode={shown.mode}
           className="@container flex h-9 shrink-0 items-center gap-2 border-b border-border bg-tool pl-2 pr-2"
         >
           <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center gap-0.5">
-            {drive === 'driving' ? (
+            {shown.mode === 'driving' ? (
               <span className="h-2 w-2 rounded-full bg-accent" />
-            ) : drive === 'user' ? (
+            ) : shown.mode === 'user' ? (
               <>
                 <span className="h-2 w-0.5 rounded-[1px] bg-dim" />
                 <span className="h-2 w-0.5 rounded-[1px] bg-dim" />
               </>
+            ) : shown.mode === 'elsewhere' ? (
+              <span className="h-2 w-2 rounded-full border-[1.5px] border-dim" />
             ) : (
               <span className="h-2 w-2 rounded-[1.5px] bg-dim" />
             )}
           </span>
-          <span className="whitespace-nowrap text-label font-medium text-content">{state.label}</span>
-          <span title={state.hint} className="min-w-0 flex-1 truncate text-label text-dim @max-[400px]:hidden">
-            {state.hint}
+          <span className="whitespace-nowrap text-label font-medium text-content">{copy.label}</span>
+          <span ref={setHintEl} className={`min-w-0 flex-1 truncate text-label text-dim ${clipped ? 'invisible' : ''}`}>
+            {copy.hint}
           </span>
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            {drive === 'user' && (
+            {shown.mode === 'user' && (
               <button
                 type="button"
                 data-ui="browser-handback"
@@ -199,11 +270,24 @@ export function BrowserDriveStrip(): JSX.Element {
                 Hand back
               </button>
             )}
-            {drive !== 'stopped' && (
+            {shown.mode === 'elsewhere' && (
+              <button
+                type="button"
+                data-ui="browser-show-tab"
+                onClick={() => {
+                  keepFocus('[data-ui="browser-stop"]')
+                  viewTab(shown.recent)
+                }}
+                className="flex h-7 shrink-0 items-center justify-center rounded-md border border-control-edge bg-control px-2.5 text-label text-content transition-colors pointer-fine:hover:bg-control-hover active:bg-border-strong"
+              >
+                Show tab {shown.recent}
+              </button>
+            )}
+            {shown.mode !== 'stopped' && (
               <button
                 type="button"
                 data-ui="browser-stop"
-                title="Stop ⌘."
+                title={several ? 'Stop in every tab ⌘.' : 'Stop ⌘.'}
                 aria-label="Stop"
                 aria-keyshortcuts="Meta+Period"
                 onClick={() => act('stop')}

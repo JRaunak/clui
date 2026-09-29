@@ -18,8 +18,11 @@ const pane = (): HTMLElement | null => document.querySelector<HTMLElement>('[dat
 // In full the primary pane is unmounted, so its presence is the half/full test.
 const primaryShown = (): boolean => !!document.querySelector('[data-ui="pane-primary"]')
 
-function focusPaneTitle(): void {
-  document.querySelector<HTMLElement>('[data-ui="pane-title"]')?.focus({ preventScroll: true })
+/** The browser pane has no title; its viewed tab stands in for one. */
+export function focusPaneTitle(): void {
+  document
+    .querySelector<HTMLElement>('[data-ui="pane-title"], [data-ui="browser-tabs"] [aria-selected="true"]')
+    ?.focus({ preventScroll: true })
 }
 
 /** Back on the transcript, return focus to the row that opened the pane. If the row isn't rendered,

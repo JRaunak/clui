@@ -104,8 +104,14 @@ const BROWSER_PREFIX = 'mcp__clui-browser__'
 export function isBrowserTool(name: string): boolean {
   return name.startsWith(BROWSER_PREFIX)
 }
-/** "navigate github.com/org/repo", "click 12", "autofill_login", for the row's primary arg. */
-export function browserLabel(name: string, input: unknown): string {
+/** "navigate github.com/org/repo", "click 12", "autofill login", for the row's primary arg. `tab` names
+ *  the tab it ran in, for a session that has had more than one. */
+export function browserLabel(name: string, input: unknown, tab?: number): string {
+  const label = actionLabel(name, input)
+  return tab ? `${label} · tab ${tab}` : label
+}
+
+function actionLabel(name: string, input: unknown): string {
   const action = name.slice(BROWSER_PREFIX.length)
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
   if (action === 'navigate' && typeof o.url === 'string') return `navigate ${o.url.replace(/^https?:\/\//, '')}`
@@ -120,5 +126,6 @@ export function browserLabel(name: string, input: unknown): string {
     if (typeof o.ref === 'number') return `hover ${o.ref}`
     if (typeof o.x === 'number' && typeof o.y === 'number') return `hover ${o.x}, ${o.y}`
   }
-  return action
+  if (action === 'new_tab' && typeof o.url === 'string') return `new tab ${o.url.replace(/^https?:\/\//, '')}`
+  return action.replace(/_/g, ' ')
 }

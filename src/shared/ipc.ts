@@ -271,12 +271,19 @@ export interface CluiApi {
   onReducedTransparencyChanged: (cb: (on: boolean) => void) => () => void
   /** Fire-and-forget: sent at most once per animation frame. */
   browserSetBounds: (handleId: string, b: PaneBounds | null) => void
-  /** Resolves to a fresh still (data URL) captured just before hiding, or null. */
+  /** Shows or hides the session's viewed tab. Resolves to a fresh still captured just before hiding, or null. */
   browserSetVisible: (handleId: string, visible: boolean) => Promise<string | null>
+  /** Makes `tab` the viewed tab. A suspended tab reloads. */
+  browserViewTab: (handleId: string, tab: number) => Promise<void>
+  /** Opens an empty tab at the end and views it. Resolves to its id. */
+  browserNewTab: (handleId: string) => Promise<number>
+  /** Closing the last tab opens a fresh empty one in its place. */
+  browserCloseTab: (handleId: string, tab: number) => Promise<void>
   /** Resolves to an error text when the URL is refused (non-http(s)), else null. */
-  browserNavigate: (handleId: string, url: string) => Promise<string | null>
-  browserNav: (handleId: string, action: 'back' | 'forward' | 'reload' | 'stop') => Promise<void>
-  browserDrive: (handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset') => Promise<void>
+  browserNavigate: (handleId: string, tab: number, url: string) => Promise<string | null>
+  browserNav: (handleId: string, tab: number, action: 'back' | 'forward' | 'reload' | 'stop') => Promise<void>
+  /** stop and reset apply to every tab; handback and takeover to `tab`, which they require. */
+  browserDrive: (handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset', tab?: number) => Promise<void>
   browserSiteVerdict: (handleId: string, requestId: string, allow: boolean) => Promise<void>
   /** choose: `loginId`; save: the user's fields (the password crosses IPC only here); decline: neither. */
   browserLoginVerdict: (
@@ -377,6 +384,9 @@ export const IpcChannels = {
   browserEvent: 'clui:browserEvent',
   browserSetBounds: 'clui:browserSetBounds',
   browserSetVisible: 'clui:browserSetVisible',
+  browserViewTab: 'clui:browserViewTab',
+  browserNewTab: 'clui:browserNewTab',
+  browserCloseTab: 'clui:browserCloseTab',
   browserNavigate: 'clui:browserNavigate',
   browserNav: 'clui:browserNav',
   browserDrive: 'clui:browserDrive',

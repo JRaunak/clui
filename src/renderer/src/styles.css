@@ -1255,6 +1255,23 @@ body {
   animation: vt-fade-in var(--dur-base) var(--ease-out) both;
 }
 
+/* A clipped edge of the browser's tab strip fades out. It's the only sign more tabs sit past it. */
+[data-ui='browser-tabs'] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--clip-s, 0px),
+    #000 calc(100% - var(--clip-e, 0px)),
+    transparent
+  );
+}
+[data-ui='browser-tabs'][data-clip-start] {
+  --clip-s: 24px;
+}
+[data-ui='browser-tabs'][data-clip-end] {
+  --clip-e: 24px;
+}
+
 /* Pointer session switch. */
 [data-ui='stage'][data-vt='switch']::view-transition-group(stage-content) {
   animation: none;

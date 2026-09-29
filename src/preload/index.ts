@@ -112,9 +112,12 @@ const api: CluiApi = {
   },
   browserSetBounds: (handleId, b) => ipcRenderer.send(IpcChannels.browserSetBounds, handleId, b),
   browserSetVisible: (handleId, visible) => ipcRenderer.invoke(IpcChannels.browserSetVisible, handleId, visible),
-  browserNavigate: (handleId, url) => ipcRenderer.invoke(IpcChannels.browserNavigate, handleId, url),
-  browserNav: (handleId, action) => ipcRenderer.invoke(IpcChannels.browserNav, handleId, action),
-  browserDrive: (handleId, action) => ipcRenderer.invoke(IpcChannels.browserDrive, handleId, action),
+  browserViewTab: (handleId, tab) => ipcRenderer.invoke(IpcChannels.browserViewTab, handleId, tab),
+  browserNewTab: (handleId) => ipcRenderer.invoke(IpcChannels.browserNewTab, handleId),
+  browserCloseTab: (handleId, tab) => ipcRenderer.invoke(IpcChannels.browserCloseTab, handleId, tab),
+  browserNavigate: (handleId, tab, url) => ipcRenderer.invoke(IpcChannels.browserNavigate, handleId, tab, url),
+  browserNav: (handleId, tab, action) => ipcRenderer.invoke(IpcChannels.browserNav, handleId, tab, action),
+  browserDrive: (handleId, action, tab) => ipcRenderer.invoke(IpcChannels.browserDrive, handleId, action, tab),
   browserSiteVerdict: (handleId, requestId, allow) =>
     ipcRenderer.invoke(IpcChannels.browserSiteVerdict, handleId, requestId, allow),
   browserLoginVerdict: (handleId, requestId, verdict) =>

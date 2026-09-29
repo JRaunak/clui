@@ -21,10 +21,11 @@ const MAX_BODY = 1 << 20
 const MAX_KEYS = 50
 const SETTLE_WAIT_MS = 10_000
 
-const TOOLS = [
+const PAGE_TOOLS = [
   {
     name: 'navigate',
-    description: 'Open a web page (http or https) in the browser pane the user is watching.',
+    description:
+      'Open a web page (http or https) in a browser tab, by default the tab you last used. The user may be viewing another tab.',
     inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] }
   },
   {
@@ -84,6 +85,29 @@ const TOOLS = [
   }
 ]
 
+const TAB = { type: 'number', description: 'Tab id from tabs. Defaults to the tab you last used.' }
+
+export const TOOLS = [
+  ...PAGE_TOOLS.map((t) => ({ ...t, inputSchema: { ...t.inputSchema, properties: { ...t.inputSchema.properties, tab: TAB } } })),
+  {
+    name: 'tabs',
+    description: 'List the open tabs: id, title and URL, which one the user is viewing and which one you last used.',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'new_tab',
+    description:
+      "Open a new tab at the end, optionally at a url (http or https). The user's view stays on the tab they're viewing. " +
+      'Later calls default to the new tab.',
+    inputSchema: { type: 'object', properties: { url: { type: 'string' } } }
+  },
+  {
+    name: 'close_tab',
+    description: 'Close a tab. Closing the last tab leaves a fresh empty one.',
+    inputSchema: { type: 'object', properties: { tab: { type: 'number', description: 'Tab id from tabs.' } }, required: ['tab'] }
+  }
+]
+
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError } : {}) })
 const untrusted = (url: string): string => {
   let origin = url
@@ -108,6 +132,12 @@ export function pressKeys(v: unknown): string[] | string {
     if (!keyEvent(k)) return `press doesn't know the key "${k}". Use a DOM key name like Enter or ArrowLeft, a single character, or type for text.`
   }
   return keys as string[]
+}
+
+/** The tab a call acts in: the one it names, else the one Claude last used, else the viewed one. A string is the refusal. */
+export function targetTab(asked: unknown, open: number[], lastUsed: number, viewed: number): number | string {
+  if (asked !== undefined && asked !== null) return typeof asked === 'number' && open.includes(asked) ? asked : TEXT.noTab(asked)
+  return open.includes(lastUsed) ? lastUsed : viewed
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -150,7 +180,7 @@ export function fillAllowed(raw: string): boolean {
 
 export class BrowserMcpServer {
   private readonly tokens = new Map<string, string>()
-  /** One tool call at a time per session, so a fill can't interleave with a navigation. */
+  /** One tool call at a time per tab, keyed `${handleId}\n${tab}`, so a fill can't interleave with a navigation. */
   private readonly chains = new Map<string, Promise<unknown>>()
   /** Sites this session filled a login on. A form that submits by GET puts the password in the URL,
    *  so URLs on these sites lose their query string in anything the model reads. */
@@ -196,7 +226,7 @@ export class BrowserMcpServer {
 
   revoke(handleId: string): void {
     this.tokens.delete(handleId)
-    this.chains.delete(handleId)
+    for (const key of this.chains.keys()) if (key.startsWith(`${handleId}\n`)) this.chains.delete(key)
     this.filledSites.delete(handleId)
   }
 
@@ -209,9 +239,10 @@ export class BrowserMcpServer {
     return u.toString()
   }
 
-  private pageLine(handleId: string, wc: WebContents): string {
+  private pageLine(handleId: string, tab: number, wc: WebContents): string {
     const url = this.shownUrl(handleId, wc.getURL())
-    return `${untrusted(url)}\nURL: ${url}\nTitle: ${wc.getTitle()}`
+    const many = (this.browser.tabsOf(handleId)?.tabs.length ?? 0) > 1
+    return `${many ? `Tab: ${tab}\n` : ''}${untrusted(url)}\nURL: ${url}\nTitle: ${wc.getTitle()}`
   }
 
   private authorized(handleId: string, header: string | undefined): boolean {
@@ -265,7 +296,8 @@ export class BrowserMcpServer {
       case 'tools/call': {
         const name = typeof params.name === 'string' ? params.name : ''
         const args = params.arguments && typeof params.arguments === 'object' ? (params.arguments as Record<string, unknown>) : {}
-        return this.reply(res, msg.id, await this.callTool(handleId, name, args))
+        const meta = params._meta && typeof params._meta === 'object' ? (params._meta as Record<string, unknown>)['claudecode/toolUseId'] : undefined
+        return this.reply(res, msg.id, await this.callTool(handleId, name, args, typeof meta === 'string' ? meta : undefined))
       }
       default:
         return this.reply(res, msg.id, undefined, { code: -32601, message: 'Method not found' })
@@ -278,27 +310,91 @@ export class BrowserMcpServer {
   }
 
   /** Runs one tool for a session. Never throws: every failure becomes text for the model. */
-  callTool(handleId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
-    const next = (this.chains.get(handleId) ?? Promise.resolve()).then(() => this.callNow(handleId, name, args))
-    this.chains.set(handleId, next.catch(() => {}))
-    return next
+  async callTool(handleId: string, name: string, args: Record<string, unknown>, toolUseId?: string): Promise<ToolResult> {
+    if (name === 'tabs') return this.listTabs(handleId)
+    if (name === 'new_tab') return this.openTab(handleId, args, toolUseId)
+    if (name === 'close_tab') return this.closeTab(handleId, args, toolUseId)
+    if (!PAGE_TOOLS.some((t) => t.name === name)) return text(`Unknown tool ${name}.`, true)
+    const info = this.browser.tabsOf(handleId)
+    if (!info) return text(TEXT.off, true)
+    const tab = targetTab(args.tab, info.tabs.map((t) => t.id), info.lastUsed, info.viewed)
+    if (typeof tab === 'string') return text(tab, true)
+    this.browser.used(handleId, tab)
+    if (toolUseId) this.browser.toolTab(handleId, toolUseId, tab)
+    return this.inTab(handleId, tab, name, args)
   }
 
-  private async callNow(handleId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
-    if (!TOOLS.some((t) => t.name === name)) return text(`Unknown tool ${name}.`, true)
-    const refusal = await this.browser.beginTool(handleId, name)
+  /** Queues the call behind the tab's running one. Closing the tab answers it at once instead of after its page work. */
+  private inTab(handleId: string, tab: number, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const key = `${handleId}\n${tab}`
+    let off = (): void => {}
+    const closed = new Promise<ToolResult>((resolve) => {
+      off = this.browser.onTabClosed(handleId, tab, (by) => resolve(text(TEXT.closed(tab, by), true)))
+    })
+    const next = (this.chains.get(key) ?? Promise.resolve()).then(() => this.callNow(handleId, tab, name, args))
+    const tail = next.catch(() => {})
+    this.chains.set(key, tail)
+    void tail.then(() => this.chains.get(key) === tail && this.chains.delete(key))
+    return Promise.race([next, closed]).finally(off)
+  }
+
+  private async callNow(handleId: string, tab: number, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const refusal = await this.browser.beginTool(handleId, tab, name)
     if (refusal) return text(refusal, true)
     try {
-      return await this.run(handleId, name, args)
+      return await this.run(handleId, tab, name, args)
     } catch (err) {
       return text(`The browser action failed: ${err instanceof Error ? err.message : String(err)}`, true)
     } finally {
-      this.browser.endTool(handleId)
+      this.browser.endTool(handleId, tab)
     }
   }
 
-  private async run(handleId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
-    const page = this.browser.page(handleId)
+  private listTabs(handleId: string): ToolResult {
+    const info = this.browser.tabsOf(handleId)
+    if (!info) return text(TEXT.off, true)
+    const open = info.tabs.map((t) => t.id)
+    const last = targetTab(undefined, open, info.lastUsed, info.viewed)
+    // Titles come from the page, so whitespace collapses: a newline in one can't forge another tab's line.
+    const one = (s: string): string => s.replace(/\s+/g, ' ').trim()
+    const lines = info.tabs.map((t) => {
+      const url = one(this.shownUrl(handleId, t.url))
+      const flags = `${t.id === info.viewed ? ' (viewed)' : ''}${t.id === last ? ' (last used)' : ''}`
+      const line = `${t.id} ${one(t.title) || 'New page'} ${url}${flags}`
+      return siteKeyOf(url) ? `${untrusted(url)}\n${line}` : line
+    })
+    return text(lines.join('\n\n'))
+  }
+
+  private async openTab(handleId: string, args: Record<string, unknown>, toolUseId?: string): Promise<ToolResult> {
+    if (args.url !== undefined && (typeof args.url !== 'string' || !args.url.trim())) return text('new_tab takes a url or nothing.', true)
+    if (this.browser.sessionStopped(handleId)) return text(TEXT.stopped, true)
+    const id = await this.browser.newTab(handleId, 'agent', args.url)
+    if (id === null) return text(TEXT.off, true)
+    this.browser.used(handleId, id)
+    if (toolUseId) this.browser.toolTab(handleId, toolUseId, id)
+    if (typeof args.url !== 'string') return text(`Opened tab ${id}.`)
+    const res = await this.inTab(handleId, id, 'navigate', { url: args.url })
+    const said = res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n')
+    return text(`Opened tab ${id}.${res.isError ? ' ' : '\n'}${said}`, res.isError)
+  }
+
+  private closeTab(handleId: string, args: Record<string, unknown>, toolUseId?: string): ToolResult {
+    const info = this.browser.tabsOf(handleId)
+    if (!info) return text(TEXT.off, true)
+    const tab = num(args.tab)
+    if (tab === null) return text('close_tab needs a tab.', true)
+    const t = info.tabs.find((x) => x.id === tab)
+    if (!t) return text(TEXT.noTab(tab), true)
+    if (t.drive === 'stopped') return text(TEXT.stopped, true)
+    if (t.drive === 'user') return text(TEXT.userDriving, true)
+    if (toolUseId) this.browser.toolTab(handleId, toolUseId, tab)
+    this.browser.closeTab(handleId, tab, 'agent')
+    return text(`Closed tab ${tab}.`)
+  }
+
+  private async run(handleId: string, tab: number, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const page = this.browser.page(handleId, tab)
     if (!page) return text(TEXT.off, true)
     const { wc, cdp, view } = page
     if (wc.isLoading()) await settle(wc)
@@ -308,9 +404,9 @@ export class BrowserMcpServer {
         if (typeof args.url !== 'string' || !args.url.trim()) return text('navigate needs a url.', true)
         const raw = args.url.trim()
         const url = /^[a-z][a-z\d+.-]*:/i.test(raw) ? raw : `https://${raw}`
-        const refusal = await this.browser.navigate(handleId, url, 'agent')
+        const refusal = await this.browser.navigate(handleId, tab, url, 'agent')
         if (refusal) return text(refusal, true)
-        return text(this.pageLine(handleId, wc))
+        return text(this.pageLine(handleId, tab, wc))
       }
 
       case 'snapshot': {
@@ -321,7 +417,7 @@ export class BrowserMcpServer {
           if (!img.isEmpty()) content.push({ type: 'image', data: img.toPNG().toString('base64'), mimeType: 'image/png' })
         }
         const note = shown ? '\n\nNo screenshot: a saved password Clui filled is visible on the page.' : ''
-        content.push({ type: 'text', text: `${this.pageLine(handleId, wc)}${note}\n\n${list || '(no interactive elements)'}` })
+        content.push({ type: 'text', text: `${this.pageLine(handleId, tab, wc)}${note}\n\n${list || '(no interactive elements)'}` })
         return { content }
       }
 
@@ -415,15 +511,15 @@ export class BrowserMcpServer {
         const h = wc.navigationHistory
         if (!h.canGoBack()) return text('There is no earlier page.', true)
         // Going back fires no will-navigate, so the earlier page's site is gated here.
-        const refusal = await this.browser.allowAgentAt(handleId, h.getEntryAtIndex(h.getActiveIndex() - 1).url)
+        const refusal = await this.browser.allowAgentAt(handleId, tab, h.getEntryAtIndex(h.getActiveIndex() - 1).url)
         if (refusal) return text(refusal, true)
         h.goBack()
         await settle(wc)
-        return text(this.pageLine(handleId, wc))
+        return text(this.pageLine(handleId, tab, wc))
       }
 
       case 'autofill_login':
-        return this.autofill(handleId, wc)
+        return this.autofill(handleId, tab, wc)
     }
     return text(`Unknown tool ${name}.`, true)
   }
@@ -435,7 +531,7 @@ export class BrowserMcpServer {
     return text(pressed ? `Pressed ${pressed} ${pressed === 1 ? 'key' : 'keys'}, then stopped. ${refusal}` : refusal, true)
   }
 
-  private async autofill(handleId: string, wc: WebContents): Promise<ToolResult> {
+  private async autofill(handleId: string, tab: number, wc: WebContents): Promise<ToolResult> {
     const site = siteKeyOf(wc.getURL())
     if (!site) return text("There's no sign-in on this page.", true)
     if (!fillAllowed(wc.getURL())) return text('Clui fills saved logins only on https pages.', true)
@@ -445,18 +541,18 @@ export class BrowserMcpServer {
     const logins = this.browser.pendingLogin(handleId, site) ? [] : await loginsForSite(site)
     if (logins.length === 1) loginId = logins[0].id
     else {
-      const out = await this.browser.loginGate(handleId, site, logins.map((l) => l.username))
+      const out = await this.browser.loginGate(handleId, tab, site, logins.map((l) => l.username))
       if (out === WAITING) return text('Waiting for the user to answer the sign-in request in Clui. Call autofill_login again after they answer.')
-      if (this.browser.isStopped(handleId)) return text(TEXT.stopped, true)
+      if (this.browser.isStopped(handleId, tab)) return text(TEXT.stopped, true)
       if (out.action === 'decline') return text('The user declined to save a login.', true)
       if (out.action === 'self') return text('The user is signing in themselves. Wait for them to hand the browser back.')
       if (out.action === 'failed') return text("Clui couldn't save that login. Ask the user to try again.", true)
       loginId = out.loginId
     }
-    return this.fill(handleId, wc, site, loginId)
+    return this.fill(handleId, tab, wc, site, loginId)
   }
 
-  private async fill(handleId: string, wc: WebContents, site: string, loginId: string): Promise<ToolResult> {
+  private async fill(handleId: string, tab: number, wc: WebContents, site: string, loginId: string): Promise<ToolResult> {
     const secret = await secretOf(loginId, site)
     if (!secret) return text('That saved login no longer exists.', true)
     await injectCursor(wc)
@@ -475,7 +571,7 @@ export class BrowserMcpServer {
     let sites = this.filledSites.get(handleId)
     if (!sites) this.filledSites.set(handleId, (sites = new Set()))
     sites.add(site)
-    this.browser.emitFilled(handleId, site)
+    this.browser.emitFilled(handleId, tab, site)
     if (!found.password && !found.code) {
       return text(`Filled the saved username for ${site}. Continue to the next step, then call autofill_login again for the password.`)
     }

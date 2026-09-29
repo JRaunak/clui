@@ -18,7 +18,8 @@
  * safety guarantee against hijacking typing.
  */
 import { useEffect } from 'react'
-import { activeSlice, useSession } from '../store'
+import { activeSlice, anyTabIn, useSession } from '../store'
+import { closeTab } from '../components/BrowserTabs'
 import type { PaletteMode } from '../components/CommandPalette'
 
 /**
@@ -63,8 +64,13 @@ export function useKeyboardShortcuts(opts: {
           onNewSessionInDir()
           break
         case 'close-session': {
-          const id = store.activeHandleId
-          if (id) void store.closeSession(id)
+          // In the tab strip or the page itself, ⌘W means the tab. A focused native page leaves the
+          // renderer's document without focus.
+          const slice = activeSlice(store)
+          const inTabs = !!document.activeElement?.closest('[data-ui="browser-tabs"]')
+          const inPage = !document.hasFocus() && !!slice?.browserOpen && !store.viewingSubagent
+          if (slice?.browser && (inTabs || inPage)) closeTab(slice.browser.viewed, true)
+          else if (store.activeHandleId) void store.closeSession(store.activeHandleId)
           break
         }
         case 'open-settings':
@@ -108,8 +114,7 @@ export function useKeyboardShortcuts(opts: {
           break
         }
         case 'browser-stop': {
-          const d = activeSlice(store)?.browser?.drive
-          if (d === 'driving' || d === 'user') void store.browserDrive('stop')
+          if (anyTabIn(activeSlice(store)?.browser, 'driving', 'user')) void store.browserDrive('stop')
           break
         }
       }

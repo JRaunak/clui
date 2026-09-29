@@ -21,7 +21,7 @@ import { StatusBar } from './StatusBar'
 import { Notice } from './Notice'
 import { IconClose, IconMaximize, IconRestore, IconShield } from './Icon'
 import { SPLIT_MIN, getStage } from '../lib/stage'
-import { diveOut, resizePane } from '../lib/dive'
+import { diveOut, focusPaneTitle, resizePane } from '../lib/dive'
 import { viaOf } from '../lib/motion'
 
 export type PaneState = 'collapsed' | 'half' | 'full'
@@ -131,8 +131,7 @@ export function Stage({
         if (kind === 'browser') useSession.getState().setBrowserPane(goingFull ? 'full' : 'half')
         else setPaneFull(goingFull)
         // Going full unmounts the transcript, so focus that was in it moves to the pane's title.
-        if (goingFull && fromTranscript)
-          requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="pane-title"]')?.focus())
+        if (goingFull && fromTranscript) requestAnimationFrame(focusPaneTitle)
       },
       close: closeSubagentView,
       needsYou: state === 'full' && gatePending,
@@ -339,8 +338,8 @@ export const PANE_BTN =
 
 /**
  * The right sidebar's 36px header under the top band, glass only while content is under it. The view
- * inside supplies the title (the element carrying data-ui="pane-title") and its status; the header
- * supplies the pane actions.
+ * inside supplies the title (the element carrying data-ui="pane-title", or the browser's tabs) and its
+ * status; the header supplies the pane actions.
  */
 export function PaneHeader({
   kind,
@@ -348,7 +347,8 @@ export function PaneHeader({
   actions,
   children
 }: {
-  kind: string
+  /** Without a kind the row starts at 8px, so the browser's first tab lines up with the toolbar's Back button. */
+  kind?: string
   status?: ReactNode
   /** The view's own buttons, before the size toggle. They also replace Close: a view with actions is
    *  the browser, which hides rather than closes so it keeps its page. */
@@ -362,7 +362,7 @@ export function PaneHeader({
     <div
       data-ui="pane-header"
       data-scrolled={scrolled || undefined}
-      className="group/pane absolute inset-x-0 top-11 z-30 flex h-9 items-center gap-2 pl-4 pr-2 text-label"
+      className={`group/pane absolute inset-x-0 top-11 z-30 flex h-9 items-center gap-2 pr-2 text-label ${kind ? 'pl-4' : 'pl-2'}`}
     >
       <div
         aria-hidden="true"
@@ -371,7 +371,7 @@ export function PaneHeader({
       />
       <div data-ui="pane-head-title" className="flex min-w-0 flex-1 items-center gap-2">
         {children}
-        <span className="shrink-0 text-meta text-dim">{kind}</span>
+        {kind && <span className="shrink-0 text-meta text-dim">{kind}</span>}
         {status && (
           <>
             <span aria-hidden="true" className="shrink-0 text-meta text-dim">·</span>

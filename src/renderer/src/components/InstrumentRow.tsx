@@ -100,7 +100,11 @@ export function InstrumentRow({
   // A pointer-opened body animates in; a keyboard toggle is instant.
   const [animateBody, setAnimateBody] = useState(false)
   const browser = isBrowserTool(tool.name)
-  const summary = browser ? browserLabel(tool.name, tool.input) : summarizeInput(tool.input)
+  // Once the session has had a second tab every browser row names its tab, earlier rows included.
+  const tabNo = useActive((s) => (browser && s?.browser?.multi ? (s.browser.toolTabs[tool.id] ?? 0) : 0))
+  const tabGone = useActive((s) => !!tabNo && !s?.browser?.tabs.some((t) => t.id === tabNo))
+  const viewTab = useSession((s) => s.viewBrowserTab)
+  const summary = browser ? browserLabel(tool.name, tool.input, tabNo) : summarizeInput(tool.input)
   // The header already shows the summary, so Input starts collapsed when there is one.
   const [inputOpen, setInputOpen] = useState(() => !summary)
   const [copied, setCopied] = useState(false)
@@ -236,10 +240,15 @@ export function InstrumentRow({
                   <button
                     type="button"
                     data-ui="row-open-browser"
-                    onClick={(e) => setBrowserPaneVia(lastOpen, viaOf(e))}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px]"
-                    title="Show in browser"
-                    aria-label="Show in browser"
+                    aria-disabled={tabGone || undefined}
+                    onClick={(e) => {
+                      if (tabGone) return
+                      if (tabNo) viewTab(tabNo)
+                      setBrowserPaneVia(lastOpen, viaOf(e))
+                    }}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px] aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:text-dim"
+                    title={tabGone ? `Tab ${tabNo} is closed` : tabNo ? `Show tab ${tabNo} in browser` : 'Show in browser'}
+                    aria-label={tabNo ? `Show tab ${tabNo} in browser` : 'Show in browser'}
                   >
                     <IconAgentBrowser className="h-4 w-4" />
                   </button>

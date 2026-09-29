@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useActive, type PerSessionState, type ToolCall } from '../store'
+import { useActive, viewedTabOf, type PerSessionState, type ToolCall } from '../store'
 
 /** Where the active session's single light sits. */
 export type LumenSite = null | { kind: 'tail' } | { kind: 'tool'; toolId: string }
@@ -17,8 +17,9 @@ export function isBackgroundedTool(t: ToolCall): boolean {
  *  Idle wins over a dangling unresolved tool: an interrupted turn can leave a result-less tool behind. */
 export function lumenKeyOf(s: PerSessionState | null): string {
   if (!s || s.pendingPermissions.length > 0) return ''
-  // With the page on screen the only light is the agent cursor; a collapsed browser hands it back to the running tool's bead.
-  if (s.browser?.drive === 'driving' && s.browserOpen) return ''
+  // With the driven page on screen the only light is the agent cursor; a collapsed browser, or Claude
+  // working in a tab the user isn't viewing, hands it back to the running tool's bead.
+  if (viewedTabOf(s.browser)?.drive === 'driving' && s.browserOpen) return ''
   if (!s.busy && !s.compacting) return ''
   const running = runningToolsOf(s)
   // One running tool is the site of work; with several in parallel there is no single site, so the turn's tail holds it.

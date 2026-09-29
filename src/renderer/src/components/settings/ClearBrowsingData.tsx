@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { BrowsingDataInfo, ClearBrowsingData as ClearWhat } from '../../../../shared/browser'
-import { useSession } from '../../store'
+import { anyTabIn, useSession } from '../../store'
 import { IconCookie, IconHistory, IconImage } from '../Icon'
 import { FieldError } from '../LoginFields'
 import { useEscape } from '../../lib/useEscape'
@@ -32,7 +32,7 @@ export function ClearBrowsingData(): JSX.Element {
   const triggerRef = useRef<HTMLButtonElement>(null)
   const firstRowRef = useRef<HTMLButtonElement>(null)
   const blocked = useSession((s) =>
-    Object.values(s.sessions).some((x) => x.browser?.drive === 'driving' || x.browser?.drive === 'user')
+    Object.values(s.sessions).some((x) => anyTabIn(x.browser, 'driving', 'user'))
   )
 
   const recount = useCallback(async () => setInfo(await window.clui.browserDataInfo().catch(() => null)), [])

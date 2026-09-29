@@ -21,7 +21,7 @@ import type { CompactionMarker, ProjectGroup } from '../../shared/sessions'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { CluiApi, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
-import type { BrowserEvent, BrowserPaneState, BrowserState } from '../../shared/browser'
+import { siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
 import { clampEffort, capBlocksUltra, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
 import type { Via } from './lib/motion'
@@ -307,9 +307,24 @@ export interface PerSessionState {
   /** Wall-clock ms of the last activity (for LRU eviction under the cap). */
   lastActivityMs: number
   /** Browser for this session; null when its process started without the browser tools. */
-  browser: BrowserState | null
+  browser: BrowserTabs | null
   /** This session's browser is showing in the right sidebar. Its size is the app-wide `browserPaneFull`. */
   browserOpen: boolean
+}
+
+/** A session's browser tabs. A closed tab is one whose id is no longer in `tabs`. */
+export interface BrowserTabs {
+  /** In open order, which is also id order. */
+  tabs: TabState[]
+  viewed: number
+  /** The session has had more than one tab at some point, so transcript rows name their tab. */
+  multi: boolean
+  /** The tab each browser tool call ran in, by tool_use id, in the order main reported them. */
+  toolTabs: Record<string, number>
+  /** Tabs Claude opened. Only these fade in. */
+  enter: number[]
+  /** Polite announcement of Claude opening and closing tabs, read by the tab strip. */
+  announce: string
 }
 
 /** What the sign-in Gates send back to main. Never stored in the slice: it can carry a password. */
@@ -527,8 +542,15 @@ interface SessionStore {
   /** Show or hide the active session's browser. `apply` makes the pane change, so a pointer caller
    *  can wrap it in a transition. A session without the tools has no browser, so this is a no-op there. */
   toggleBrowser: (apply?: (next: BrowserPaneState) => void) => void
-  /** Stop also interrupts the running turn. */
+  /** Stop and reset act on every tab and Stop also interrupts the running turn; the others act on the viewed tab. */
   browserDrive: (action: 'stop' | 'handback' | 'takeover' | 'reset') => Promise<void>
+  /** Views the tab at once; main shows its page, reloading it if it was suspended. */
+  viewBrowserTab: (tab: number) => void
+  /** Main appends and views the new tab, and its tab-opened event puts it in the strip. */
+  newBrowserTab: () => Promise<void>
+  /** A tab with a neighbour goes at once and the neighbour takes the view if it was viewed. The last
+   *  tab stays until main has opened its replacement, so the strip is never empty. */
+  closeBrowserTab: (tab: number) => void
 }
 
 /**
@@ -593,6 +615,17 @@ export const EMPTY_PENDING: PendingPermission[] = []
 
 /** The session's browser pane is open, at half or full. */
 export const selectBrowserOpen = (s: PerSessionState | null): boolean => !!s?.browserOpen
+export const EMPTY_TABS: TabState[] = []
+
+/** The tab whose page the pane shows. */
+export function viewedTabOf(b: BrowserTabs | null | undefined): TabState | null {
+  return b?.tabs.find((t) => t.id === b.viewed) ?? null
+}
+
+/** Any tab of the session's browser is in one of `drives`. */
+export function anyTabIn(b: BrowserTabs | null | undefined, ...drives: BrowserState['drive'][]): boolean {
+  return !!b?.tabs.some((t) => drives.includes(t.drive))
+}
 export const EMPTY_STRINGS: string[] = []
 /** Stable empty ref for the queued-messages list (zustand-v5 selector safety). */
 export const EMPTY_QUEUED: QueuedMessage[] = []
@@ -951,7 +984,9 @@ async function beginSession(
     exited: false,
     createdMs: now,
     lastActivityMs: now,
-    browser: browser ? { ...BLANK_BROWSER } : null,
+    browser: browser
+      ? { tabs: [{ id: 1, ...BLANK_BROWSER }], viewed: 1, multi: false, toolTabs: {}, enter: [], announce: '' }
+      : null,
     browserOpen: false
   })
 }
@@ -1022,7 +1057,8 @@ function evictIfOverCap(
   })
 }
 
-/** A session's page before anything has loaded. Its view is created the first time the pane opens. */
+/** A tab's page before anything has loaded. Main opens tab 1 with every browser session and doesn't
+ *  report it, so the renderer seeds it. Its view is created the first time the pane opens. */
 const BLANK_BROWSER: BrowserState = {
   url: 'about:blank',
   title: '',
@@ -1036,6 +1072,8 @@ const BLANK_BROWSER: BrowserState = {
 }
 
 let announceSeq = 0
+/** The toggling zero-width space makes a repeated announcement a text change, which is what gets read. */
+const toggled = (text: string): string => `${text}${'\u200b'.repeat(++announceSeq % 2)}`
 
 function basename(p: string): string {
   const parts = p.replace(/\/+$/, '').split('/')
@@ -1512,7 +1550,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     }
     // A new prompt hands a stopped browser back to Claude. It runs before the queue check because the
     // prompt after a Stop usually queues behind the interrupted turn.
-    if (active.browser?.drive === 'stopped') void window.clui.browserDrive(active.handleId, 'reset')
+    if (anyTabIn(active.browser, 'stopped')) void window.clui.browserDrive(active.handleId, 'reset')
     // Composed while a turn is running (or interrupting, or with messages already queued) →
     // HOLD it renderer-side (editable/cancelable, rendered at the tail) instead of dispatching
     // now. It's sent FIFO at the next turn boundary (see the `result` handler). Queuing while
@@ -2380,15 +2418,69 @@ export const useSession = create<SessionStore>((set, get) => ({
 
   applyBrowserEvent: (handleId, e) => {
     switch (e.type) {
-      case 'state':
+      case 'tab-state':
         set((s) => {
-          const cur = s.sessions[handleId]?.browser
-          if (!cur) return {}
-          const next = patchSlice(s, handleId, { browser: { ...cur, ...e.patch } })
+          const b = s.sessions[handleId]?.browser
+          const cur = b?.tabs.find((t) => t.id === e.tab)
+          if (!b || !cur) return {}
+          const tabs = b.tabs.map((t) => (t === cur ? { ...t, ...e.patch } : t))
+          const next = patchSlice(s, handleId, { browser: { ...b, tabs } })
           // The wall hides the page mid-drive, so it has to be said as well as shown.
-          if (e.patch.loginWall !== 'hardware' || cur.loginWall === 'hardware') return next
+          if (e.tab !== b.viewed || e.patch.loginWall !== 'hardware' || cur.loginWall === 'hardware') return next
           const text = 'This sign-in needs a hardware key or passkey. Open it in your regular browser.'
-          return { ...next, browserAnnounce: `${text}${'\u200b'.repeat(++announceSeq % 2)}` }
+          return { ...next, browserAnnounce: toggled(text) }
+        })
+        break
+      case 'tab-opened':
+        set((s) => {
+          const b = s.sessions[handleId]?.browser
+          if (!b) return {}
+          // A tab the renderer already has only moves the view.
+          if (b.tabs.some((t) => t.id === e.tab.id)) return patchSlice(s, handleId, { browser: { ...b, viewed: e.viewed } })
+          const tabs = [...b.tabs, e.tab]
+          const agent = e.by === 'agent'
+          const site = siteKeyOf(e.url ?? e.tab.url)
+          return patchSlice(s, handleId, {
+            browser: {
+              ...b,
+              tabs,
+              viewed: e.viewed,
+              multi: b.multi || tabs.length > 1,
+              enter: agent ? [...b.enter, e.tab.id] : b.enter,
+              announce: agent
+                ? toggled(site ? `Claude opened tab ${e.tab.id}: ${site}` : `Claude opened tab ${e.tab.id}, a new page`)
+                : b.announce
+            }
+          })
+        })
+        break
+      case 'tab-closed':
+        set((s) => {
+          const b = s.sessions[handleId]?.browser
+          if (!b) return {}
+          const gone = b.tabs.find((t) => t.id === e.tab)
+          const tabs = gone ? b.tabs.filter((t) => t !== gone) : b.tabs
+          let announce = b.announce
+          if (gone && e.by === 'agent') {
+            const site = siteKeyOf(gone.url) ?? 'New page'
+            if (e.tab !== b.viewed) announce = toggled(`Claude closed tab ${e.tab}: ${site}`)
+            else {
+              const now = tabs.find((t) => t.id === e.viewed)
+              const nowSite = now && siteKeyOf(now.url)
+              // A lone blank tab left behind is the one main opened to replace the last.
+              const showing =
+                !now || (!nowSite && tabs.length === 1) ? 'Showing a new page' : `Showing tab ${now.id}: ${nowSite ?? 'New page'}`
+              announce = toggled(`Claude closed tab ${e.tab}. ${showing}`)
+            }
+          }
+          return patchSlice(s, handleId, { browser: { ...b, tabs, viewed: e.viewed, announce } })
+        })
+        break
+      case 'tool-tab':
+        set((s) => {
+          const b = s.sessions[handleId]?.browser
+          if (!b) return {}
+          return patchSlice(s, handleId, { browser: { ...b, toolTabs: { ...b.toolTabs, [e.toolUseId]: e.tab } } })
         })
         break
       case 'site-request':
@@ -2423,10 +2515,7 @@ export const useSession = create<SessionStore>((set, get) => ({
         })
         break
       case 'filled':
-        // The toggling zero-width space makes a repeat fill a text change, which is what gets announced.
-        set(() => ({
-          browserAnnounce: `Clui filled your saved login for ${e.site}.${'\u200b'.repeat(++announceSeq % 2)}`
-        }))
+        set(() => ({ browserAnnounce: toggled(`Clui filled your saved login for ${e.site}.`) }))
         break
     }
   },
@@ -2471,8 +2560,40 @@ export const useSession = create<SessionStore>((set, get) => ({
   browserDrive: async (action) => {
     const active = activeSlice(get())
     if (!active?.browser) return
-    await window.clui.browserDrive(active.handleId, action)
+    const all = action === 'stop' || action === 'reset'
+    await window.clui.browserDrive(active.handleId, action, all ? undefined : active.browser.viewed)
     // Halt the turn too, or Claude reads the stop text and tries another route.
     if (action === 'stop') await get().interrupt()
+  },
+
+  viewBrowserTab: (tab) => {
+    const s = get()
+    const active = activeSlice(s)
+    const b = active?.browser
+    if (!active || !b || b.viewed === tab || !b.tabs.some((t) => t.id === tab)) return
+    set(patchSlice(s, active.handleId, { browser: { ...b, viewed: tab } }))
+    void window.clui.browserViewTab(active.handleId, tab)
+  },
+
+  newBrowserTab: async () => {
+    const active = activeSlice(get())
+    if (!active?.browser) return
+    await window.clui.browserNewTab(active.handleId)
+  },
+
+  closeBrowserTab: (tab) => {
+    const s = get()
+    const active = activeSlice(s)
+    const b = active?.browser
+    const i = b?.tabs.findIndex((t) => t.id === tab) ?? -1
+    if (!active || !b || i < 0) return
+    const next = b.tabs[i + 1] ?? b.tabs[i - 1]
+    if (next)
+      set(
+        patchSlice(s, active.handleId, {
+          browser: { ...b, tabs: b.tabs.filter((t) => t.id !== tab), viewed: b.viewed === tab ? next.id : b.viewed }
+        })
+      )
+    void window.clui.browserCloseTab(active.handleId, tab)
   }
 }))

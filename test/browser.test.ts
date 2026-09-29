@@ -53,7 +53,7 @@ ok(threw.length > 0, 'vault: an undecryptable file throws instead of reading as 
 // Boundary: the MCP server is reachable by anything on localhost, so the Origin/Host/token
 // gates and the JSON-RPC shapes the CLI relies on are pinned here against a stub manager.
 import { request } from 'node:http'
-import { BrowserMcpServer, fillAllowed, pressKeys } from '../src/main/browser/mcp.ts'
+import { BrowserMcpServer, fillAllowed, pressKeys, targetTab, TOOLS } from '../src/main/browser/mcp.ts'
 import { keyEvent } from '../src/main/browser/cdp.ts'
 
 // Boundary: press sends real key events, so a page's keydown handler sees the key, code and keyCode
@@ -82,7 +82,19 @@ ok(typeof pressKeys(['hello']) === 'string', 'press: text is refused toward type
 ok(fillAllowed('https://example.com/login') && fillAllowed('http://127.0.0.1:8080/') && fillAllowed('http://localhost/'), 'fill: https and this machine')
 ok(!fillAllowed('http://example.com/login') && !fillAllowed('http://127.0.0.1.evil.example/'), 'fill: plain http elsewhere is refused')
 
-const stubManager = { beginTool: () => 'The browser is off for this session.', endTool: () => {} }
+// Boundary: every page tool takes a tab, and a call lands in the tab it names, else the one Claude
+// last used, else the viewed one. A tab that isn't open is refused, never silently redirected.
+const PAGE = ['navigate', 'snapshot', 'click', 'type', 'scroll', 'press', 'hover', 'back', 'autofill_login']
+ok(TOOLS.filter((t) => PAGE.includes(t.name)).every((t) => (t.inputSchema.properties as Record<string, { type?: string }>).tab?.type === 'number'), 'tabs: every page tool takes an optional tab')
+ok(TOOLS.filter((t) => PAGE.includes(t.name)).every((t) => !('required' in t.inputSchema) || !(t.inputSchema.required as string[]).includes('tab')), 'tabs: tab is never required on a page tool')
+equal(JSON.stringify((TOOLS.find((t) => t.name === 'close_tab')?.inputSchema as { required?: string[] }).required), '["tab"]', 'tabs: close_tab requires its tab')
+equal(targetTab(undefined, [1, 2, 3], 2, 1), 2, 'tabs: no tab goes to the one last used')
+equal(targetTab(3, [1, 2, 3], 2, 1), 3, 'tabs: a named open tab wins')
+equal(targetTab(undefined, [1, 3], 2, 3), 3, 'tabs: a closed last-used tab falls back to the viewed one')
+equal(targetTab(2, [1, 3], 1, 1), "There's no tab 2. Call tabs to see the open tabs.", 'tabs: a closed tab is refused')
+ok(typeof targetTab('1', [1], 1, 1) === 'string', 'tabs: a non-number tab is refused')
+
+const stubManager = { tabsOf: () => null, beginTool: () => 'The browser is off for this session.', endTool: () => {} }
 const mcp = new BrowserMcpServer(stubManager as never)
 const { url, token } = await mcp.endpoint('h1')
 const { port, pathname } = new URL(url)
@@ -116,8 +128,45 @@ const init = await call({ headers: auth, body: rpc('initialize', { protocolVersi
 equal(init.json?.result?.protocolVersion, '2099-01-01', 'mcp: initialize echoes the protocol version')
 equal((await call({ headers: auth, body: rpc('server/discover') })).json?.error?.code, -32601, 'mcp: an unknown method is -32601')
 const listed = await call({ headers: auth, body: rpc('tools/list') })
-equal(listed.json?.result?.tools?.map((t: { name: string }) => t.name).join(','), 'navigate,snapshot,click,type,scroll,press,hover,back,autofill_login', 'mcp: tools/list')
+equal(listed.json?.result?.tools?.map((t: { name: string }) => t.name).join(','), 'navigate,snapshot,click,type,scroll,press,hover,back,autofill_login,tabs,new_tab,close_tab', 'mcp: tools/list')
 const called = await call({ headers: auth, body: rpc('tools/call', { name: 'snapshot', arguments: {} }) })
 equal(called.json?.result?.content?.[0]?.text, 'The browser is off for this session.', 'mcp: a refused call answers with text')
 mcp.revoke('h1')
 equal((await call({ headers: auth, body: rpc('tools/list') })).status, 401, 'mcp: a revoked token is 401')
+
+// Boundary: tab calls run in parallel across tabs but in order within one, the CLI's tool_use id
+// reaches the renderer with the tab the call resolved to, and closing a tab answers its pending
+// call at once instead of leaving it on page work that will never finish.
+const closers = new Map<number, Set<(by: 'agent' | 'user') => void>>()
+const close = (tab: number, by: 'agent' | 'user'): void => closers.get(tab)?.forEach((fn) => fn(by))
+const toolTabs: string[] = []
+const begun: number[] = []
+const tabsStub = {
+  tabsOf: () => ({ viewed: 1, lastUsed: 2, tabs: [{ id: 1 }, { id: 2 }, { id: 3 }] }),
+  used: () => {},
+  toolTab: (_h: string, id: string, tab: number) => toolTabs.push(`${id}:${tab}`),
+  onTabClosed: (_h: string, tab: number, fn: (by: 'agent' | 'user') => void) => {
+    if (!closers.has(tab)) closers.set(tab, new Set())
+    closers.get(tab)?.add(fn)
+    return () => closers.get(tab)?.delete(fn)
+  },
+  beginTool: (_h: string, tab: number) => {
+    begun.push(tab)
+    return new Promise(() => {})
+  },
+  endTool: () => {}
+}
+const tabsMcp = new BrowserMcpServer(tabsStub as never)
+const pending2 = tabsMcp.callTool('h2', 'snapshot', {}, 'toolu_1')
+const pending3 = tabsMcp.callTool('h2', 'snapshot', { tab: 3 })
+const queued2 = tabsMcp.callTool('h2', 'click', { tab: 2 })
+await new Promise((r) => setTimeout(r, 0))
+equal(toolTabs.join(','), 'toolu_1:2', 'tabs: tool-tab carries the resolved default tab')
+equal(begun.join(','), '2,3', 'tabs: calls in different tabs run in parallel, one at a time within a tab')
+const said = (r: { content: Array<{ type: string; text?: string }>; isError?: boolean }): string => `${r.isError ? 'error: ' : ''}${r.content[0]?.text}`
+close(2, 'user')
+equal(said(await pending2), 'error: The user closed tab 2.', 'tabs: the user closing a tab answers its pending call')
+equal(said(await queued2), 'error: The user closed tab 2.', 'tabs: and the call queued behind it')
+close(3, 'agent')
+equal(said(await pending3), 'error: Tab 3 was closed.', "tabs: Claude's own close answers a call queued in that tab")
+equal(said(await tabsMcp.callTool('h2', 'click', { tab: 9 })), "error: There's no tab 9. Call tabs to see the open tabs.", 'tabs: a call naming a closed tab is refused')

@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useActive, useSession } from '../store'
+import { useActive, useSession, viewedTabOf } from '../store'
 import { onOcclusion } from '../lib/browserOcclusion'
 import { getStage } from '../lib/stage'
 import { siteKeyOf } from '../../../shared/browser'
 import { PaneHeader, PANE_BTN } from './Stage'
 import { BrowserDriveStrip, BrowserToolbar } from './BrowserToolbar'
+import { BrowserTabs } from './BrowserTabs'
 import { Button } from './Button'
 import { IconExternal, IconSettings } from './Icon'
 
@@ -16,15 +17,14 @@ export function BrowserPane(): JSX.Element | null {
 /**
  * The page area is a placeholder the native view is laid over, so the page starts below the band
  * and the pane header: the view covers anything it overlaps. Whenever the view is hidden (another
- * surface overlaps it, a transition runs, the page is suspended) the last still shows in its place.
+ * surface overlaps it, a transition runs, a suspended tab is reloading) the viewed tab's last still
+ * shows in its place.
  */
 function Pane({ handleId }: { handleId: string }): JSX.Element {
   const areaRef = useRef<HTMLDivElement>(null)
-  const title = useActive((s) => s?.browser?.title ?? '')
-  const url = useActive((s) => s?.browser?.url ?? '')
-  const still = useActive((s) => s?.browser?.still ?? null)
-  const suspended = useActive((s) => s?.browser?.suspended ?? false)
-  const wall = useActive((s) => s?.browser?.loginWall === 'hardware')
+  const url = useActive((s) => viewedTabOf(s?.browser)?.url ?? '')
+  const still = useActive((s) => viewedTabOf(s?.browser)?.still ?? null)
+  const wall = useActive((s) => viewedTabOf(s?.browser)?.loginWall === 'hardware')
   const announce = useSession((s) => s.browserAnnounce)
   const openSettings = useSession((s) => s.openSettings)
   const external = !!siteKeyOf(url)
@@ -62,8 +62,8 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
 
   const [occluded, setOccluded] = useState(false)
   useEffect(() => onOcclusion(setOccluded), [])
-  // The cards sit in the page area, so the view has to step aside for them too.
-  const visible = !occluded && !suspended && !wall
+  // The card sits in the page area, so the view has to step aside for it too.
+  const visible = !occluded && !wall
   useLayoutEffect(() => {
     void window.clui.browserSetVisible(handleId, visible)
   }, [handleId, visible])
@@ -78,7 +78,6 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <PaneHeader
-        kind="Browser"
         actions={
           <>
             <button
@@ -107,40 +106,14 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
           </>
         }
       >
-        <span
-          data-ui="pane-title"
-          tabIndex={-1}
-          title={url === 'about:blank' ? undefined : url}
-          className="min-w-0 truncate text-ui font-medium text-content"
-        >
-          {title || siteKeyOf(url) || 'New page'}
-        </span>
+        <BrowserTabs key={handleId} />
       </PaneHeader>
       <div aria-hidden="true" className="shrink-0" style={{ height: 'var(--top-h, 0px)' }} />
       <BrowserToolbar handleId={handleId} />
-      <BrowserDriveStrip />
+      <BrowserDriveStrip key={handleId} />
       <div data-ui="browser-pane" ref={areaRef} className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-bg">
         {still && <img src={still} alt="" className="absolute inset-0 h-full w-full object-cover object-left-top" />}
-        {suspended ? (
-          <div className="absolute inset-0 grid place-items-center scrim">
-            <div className="surface-content flex max-w-[320px] flex-col gap-2 rounded-lg bg-bg-elev p-4">
-              <p className="text-ui font-medium text-content">Paused to save memory</p>
-              <p className="text-meta text-dim">
-                Clui keeps 3 pages live at once. Reloading opens the same address; anything typed into the page and the
-                scroll position are gone.
-              </p>
-              {/* Opening a suspended pane lands here rather than on the address. */}
-              <button
-                type="button"
-                data-pane-title=""
-                className="btn-primary self-start"
-                onClick={() => void window.clui.browserNav(handleId, 'reload')}
-              >
-                Reload page
-              </button>
-            </div>
-          </div>
-        ) : wall ? (
+        {wall && (
           <div className="absolute inset-0 grid place-items-center scrim">
             <div className="surface-content flex max-w-[320px] flex-col gap-2 rounded-lg bg-bg-elev p-4">
               <p className="text-ui font-medium text-content">This sign-in needs a hardware key or passkey</p>
@@ -153,7 +126,7 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
               </Button>
             </div>
           </div>
-        ) : null}
+        )}
         <span className="sr-only" aria-live="polite">
           {announce}
         </span>
