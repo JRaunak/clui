@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { activeSlice, anyTabIn, selectBrowserOpen, useActive, useSession } from '../store'
 import { CurrentTurnHeader } from './CurrentTurnHeader'
 import { FindBar } from './FindBar'
@@ -7,8 +7,10 @@ import { viaOf } from '../lib/motion'
 import { setBrowserPaneVia } from '../lib/dive'
 
 /**
- * The top band over the Stage's top 44px, which the transcript scrolls beneath. Its glass layer fades
- * in only while content is under it. The root is no-drag and the window drags from the empty spacer
+ * The top band over the Stage's top 44px, which the transcript scrolls beneath. Its glass layer shows
+ * only while content is under it. It comes in instantly, since the band's text is drawn from the first
+ * frame and a fade would leave it over bare content, and fades only on the way back to the top, where
+ * nothing is left under the text. The root is no-drag and the window drags from the empty spacer
  * siblings, because a no-drag control nested in a drag region doesn't reliably carve itself back out
  * on macOS. The left inset sits under the app's sidebar toggle, so it's plain no-drag space.
  */
@@ -17,7 +19,7 @@ export function TopBand({
   bleed,
   session,
   split,
-  scrolled
+  scrolled: scrolledUnder
 }: {
   leftInset: number
   /** How far the glass reaches left past the band, under the collapsed rail's empty top, so the
@@ -31,9 +33,13 @@ export function TopBand({
 }): JSX.Element {
   const reported = useSession((s) => s.activeHandleId !== null && s.primaryScrolledFor === s.activeHandleId)
   const hasBrowser = useActive((s) => !!s?.browser)
+  // An open find bar's dim text sits on the band, and a compositor-scrolled first frame can reach
+  // it before any script runs, so the band stays tinted for as long as find is open.
+  const findOpen = useSession((s) => s.findOpen && !s.viewingSubagent)
+  const scrolled = scrolledUnder || findOpen
   const [painted, setPainted] = useState(false)
-  // The fade arms a frame after the open session's first report, so a session that opens scrolled
-  // paints its tint without fading in.
+  // The fade arms a frame after the open session's first report, so a session that opens at the top
+  // drops the previous session's tint at once.
   useEffect(() => {
     if (!reported) {
       setPainted(false)
@@ -43,6 +49,24 @@ export function TopBand({
     return () => cancelAnimationFrame(raf)
   }, [reported])
   const settled = reported && painted
+
+  // Virtuoso reports leaving the top through a React commit, and a compositor-scrolled first wheel
+  // frame can paint before it, leaving the band's text over untinted content. The scroll listener
+  // marks the band first; at the top it defers to the prop, which may still be set by the other pane.
+  const bandRef = useRef<HTMLDivElement>(null)
+  const scrolledRef = useRef(scrolled)
+  scrolledRef.current = scrolled
+  useEffect(() => {
+    if (!session) return
+    const onScroll = (e: Event): void => {
+      const t = e.target
+      if (!(t instanceof HTMLElement) || !t.matches('[data-ui="pane-primary"] [data-testid="virtuoso-scroller"]')) return
+      if (t.scrollTop > 0) bandRef.current?.setAttribute('data-scrolled', 'true')
+      else if (!scrolledRef.current) bandRef.current?.removeAttribute('data-scrolled')
+    }
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    return () => document.removeEventListener('scroll', onScroll, { capture: true })
+  }, [session])
 
   if (!session) {
     return (
@@ -54,6 +78,7 @@ export function TopBand({
   }
   return (
     <div
+      ref={bandRef}
       data-ui="top-band"
       data-scrolled={scrolled || undefined}
       className="group/band absolute inset-x-0 top-0 z-40 flex h-11 items-center"
@@ -63,7 +88,7 @@ export function TopBand({
         data-ui="top-band-glass"
         style={{ left: -bleed }}
         className={`glass-bar pointer-events-none absolute inset-0 -z-10 opacity-0 [--bar-edge:var(--band-edge)] contrast-more:[--bar-edge:var(--color-control-edge)] group-data-[scrolled]/band:opacity-100 contrast-more:opacity-100 ${
-          settled ? 'transition-opacity duration-fast ease-in group-data-[scrolled]/band:ease-out motion-reduce:transition-none' : ''
+          settled ? 'transition-opacity duration-fast ease-in group-data-[scrolled]/band:transition-none motion-reduce:transition-none' : ''
         }`}
       />
       <div aria-hidden="true" className="h-full shrink-0" style={{ width: leftInset }} />
