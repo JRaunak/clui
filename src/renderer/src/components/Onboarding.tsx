@@ -18,6 +18,7 @@
  * When the CLI is healthy and the user is already onboarded, this renders nothing
  * (App falls through to its normal Welcome pane).
  */
+import { AppMark } from './AppMark'
 import { Button } from './Button'
 import { IconPlus, IconSettings, IconRefresh } from './Icon'
 import type { CliInfo } from '../../../shared/ipc'
@@ -119,6 +120,7 @@ export function Onboarding({
   if (!onboarded) {
     return (
       <div className="m-auto flex max-w-md flex-col items-center px-6 text-center">
+        <AppMark className="mb-6" />
         <div className="mb-6 flex items-baseline gap-2.5">
           <span className="font-serif text-5xl font-semibold tracking-tight text-content">Clui</span>
           <span className="h-2.5 w-2.5 translate-y-[-6px] rounded-full bg-accent" aria-hidden="true" />
