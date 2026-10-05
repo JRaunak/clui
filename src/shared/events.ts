@@ -262,6 +262,8 @@ export type DomainEvent =
       usedTokens: number
       contextWindow: number
       usedPercent: number
+      /** The window came from a result's modelUsage; until then it's a guess from the model id. */
+      measured: boolean
     }
   /**
    * A background task (e.g. a Bash `run_in_background` shell, or a backgrounded

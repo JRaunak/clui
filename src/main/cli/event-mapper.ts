@@ -176,6 +176,7 @@ export class EventMapper {
   private toolInputJson = new Map<string, string>()
   /** Model's context window (tokens); learned from the model id / result. */
   private contextWindow = 200_000
+  private windowMeasured = false
   /** Last emitted usage tuple, to skip identical context-usage events. Dedup on the full
    *  (usedTokens, contextWindow) pair, not just the rounded percent: two different token
    *  counts can round to the same percent yet be distinct. */
@@ -267,7 +268,7 @@ export class EventMapper {
     this.lastWindow = this.contextWindow
     const percent = Math.min(100, Math.round((used / this.contextWindow) * 100))
     return [
-      { type: 'context-usage', usedTokens: used, contextWindow: this.contextWindow, usedPercent: percent }
+      { type: 'context-usage', usedTokens: used, contextWindow: this.contextWindow, usedPercent: percent, measured: this.windowMeasured }
     ]
   }
 
@@ -347,7 +348,10 @@ export class EventMapper {
         // The result carries the authoritative contextWindow for the model.
         const cw = env.modelUsage ? Object.values(env.modelUsage)[0]?.contextWindow : undefined
         const windowChanged = typeof cw === 'number' && cw > 0 && cw !== this.contextWindow
-        if (typeof cw === 'number' && cw > 0) this.contextWindow = cw
+        if (typeof cw === 'number' && cw > 0) {
+          this.contextWindow = cw
+          this.windowMeasured = true
+        }
         const fromTaskNotification = env.origin?.kind === 'task-notification'
         const fromPeer = env.origin?.kind === 'peer'
         // A background-subagent-completion or peer-woken result is NOT the foreground
@@ -414,7 +418,8 @@ export class EventMapper {
             type: 'context-usage',
             usedTokens: this.lastUsed,
             contextWindow: this.contextWindow,
-            usedPercent: Math.min(100, Math.round((this.lastUsed / this.contextWindow) * 100))
+            usedPercent: Math.min(100, Math.round((this.lastUsed / this.contextWindow) * 100)),
+            measured: this.windowMeasured
           })
         }
         return out
@@ -685,7 +690,8 @@ export class EventMapper {
             type: 'context-usage',
             usedTokens: post,
             contextWindow: this.contextWindow,
-            usedPercent: Math.min(100, Math.round((post / this.contextWindow) * 100))
+            usedPercent: Math.min(100, Math.round((post / this.contextWindow) * 100)),
+            measured: this.windowMeasured
           }
         ]
       }

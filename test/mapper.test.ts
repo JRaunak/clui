@@ -251,3 +251,13 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(got?.message === copies[0], 'mapper: model-access copy is exact')
   ok(!copies.some((c) => /[–—…]/.test(c)), 'mapper: error copy has no dashes or ellipsis')
 }
+
+// The window is a guess from the model id until a result reports it; only then is it measured.
+{
+  const m = new EventMapper()
+  m.map({ type: 'system', subtype: 'init', model: 'us.anthropic.claude-opus-5-5', session_id: 's' })
+  const before = feed(m, [{ type: 'assistant', message: { content: [], usage: { input_tokens: 5000 } } }]).find((e) => e.type === 'context-usage')
+  const after = feed(m, [{ type: 'result', result: 'ok', session_id: 's', modelUsage: { 'us.anthropic.claude-opus-5-5': { contextWindow: 1_000_000 } } }]).find((e) => e.type === 'context-usage')
+  ok(before?.type === 'context-usage' && !before.measured && before.contextWindow === 200_000, 'mapper: a window from the model id is not measured')
+  ok(after?.type === 'context-usage' && after.measured && after.contextWindow === 1_000_000, 'mapper: a result-reported window is measured')
+}

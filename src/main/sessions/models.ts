@@ -19,6 +19,8 @@ import { atomicWriteFile } from '../lib/atomic'
 export interface SessionModelPrefs {
   model?: string
   effort?: string
+  /** The window the CLI last reported, which seeds a resume before its first result. */
+  contextWindow?: number
   ultracode?: boolean
 }
 
@@ -38,7 +40,8 @@ export async function readSessionModels(): Promise<Record<string, SessionModelPr
         if (typeof rec.model === 'string') prefs.model = rec.model
         if (typeof rec.effort === 'string') prefs.effort = rec.effort
         if (typeof rec.ultracode === 'boolean') prefs.ultracode = rec.ultracode
-        if (prefs.model || prefs.effort || prefs.ultracode !== undefined) out[k] = prefs
+        if (typeof rec.contextWindow === 'number' && rec.contextWindow > 0) prefs.contextWindow = rec.contextWindow
+        if (prefs.model || prefs.effort || prefs.ultracode !== undefined || prefs.contextWindow) out[k] = prefs
       }
     }
     return out
@@ -70,7 +73,8 @@ export async function setSessionModel(sessionId: string, prefs: SessionModelPref
     map[sessionId] = {
       model: prefs.model ?? cur.model,
       effort: prefs.effort ?? cur.effort,
-      ultracode: prefs.ultracode ?? cur.ultracode
+      ultracode: prefs.ultracode ?? cur.ultracode,
+      contextWindow: prefs.contextWindow ?? cur.contextWindow
     }
     await writeSessionModels(map)
   })

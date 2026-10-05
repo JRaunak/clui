@@ -746,20 +746,21 @@ let knownModelIds: string[] = []
  */
 const modelPrefsBySessionId = new Map<
   string,
-  { model?: ModelChoice; effort?: EffortChoice; ultracode?: boolean }
+  { model?: ModelChoice; effort?: EffortChoice; ultracode?: boolean; contextWindow?: number }
 >()
 
 /** Remember a session's model/effort/ultracode (in-memory + sidecar). Merges fields. */
 function rememberModelPrefs(
   sessionId: string,
-  prefs: { model?: ModelChoice; effort?: EffortChoice; ultracode?: boolean }
+  prefs: { model?: ModelChoice; effort?: EffortChoice; ultracode?: boolean; contextWindow?: number }
 ): void {
   if (!sessionId) return
   const cur = modelPrefsBySessionId.get(sessionId) ?? {}
   const next = {
     model: prefs.model ?? cur.model,
     effort: prefs.effort ?? cur.effort,
-    ultracode: prefs.ultracode ?? cur.ultracode
+    ultracode: prefs.ultracode ?? cur.ultracode,
+    contextWindow: prefs.contextWindow ?? cur.contextWindow
   }
   modelPrefsBySessionId.set(sessionId, next)
   void window.clui.setSessionModel(sessionId, next)
@@ -789,7 +790,7 @@ export function ensureModelPrefsLoaded(): Promise<void> {
             prefs.effort && (EFFORT_CHOICES as string[]).includes(prefs.effort)
               ? (prefs.effort as EffortChoice)
               : undefined
-          modelPrefsBySessionId.set(sid, { model: prefs.model, effort, ultracode: prefs.ultracode })
+          modelPrefsBySessionId.set(sid, { model: prefs.model, effort, ultracode: prefs.ultracode, contextWindow: prefs.contextWindow })
         }
       } catch {
         // best-effort: resume just falls back to the Settings default model/effort
@@ -938,7 +939,7 @@ async function beginSession(
   // shows its REAL fill (~90% for a big session) immediately, not 0% until the
   // first new turn. Window from the model id (1M for [1m], else 200K), matching
   // the live mapper; refined by the next result event once a turn runs.
-  const seededWindow = /\[1m\]/i.test(modelChoice) ? 1_000_000 : 200_000
+  const seededWindow = remembered?.contextWindow ?? contextWindowForModel(modelChoice)
   const seededTokens = resumedContextTokens
   const seededPercent =
     seededTokens != null ? Math.min(100, Math.round((seededTokens / seededWindow) * 100)) : null
@@ -1812,8 +1813,10 @@ export const useSession = create<SessionStore>((set, get) => ({
     // the `set` closure boundary (it can't see the closure mutation).
     const release: { queued: { handleId: string; msg: QueuedMessage } | null } = { queued: null }
     // Set in the session-init case, acted on post-commit (see there). Holder like `release`.
-    const flush: { prefs: { sessionId: string; model: ModelChoice; effort: EffortChoice; ultracode: boolean } | null } =
-      { prefs: null }
+    const flush: {
+      prefs: { sessionId: string; model: ModelChoice; effort: EffortChoice; ultracode: boolean } | null
+      window: { sessionId: string; contextWindow: number } | null
+    } = { prefs: null, window: null }
     // A title change on disk (a `/rename`, or a resume mirroring customTitle) emits no
     // stream event to map, so nothing else refreshes the sidebar. Detected at the turn
     // boundary below and quiet-rescanned post-commit. Holder like `release`.
@@ -2003,20 +2006,26 @@ export const useSession = create<SessionStore>((set, get) => ({
             (p) => p.requestId !== e.requestId
           )
           break
-        case 'context-usage':
-          patch.contextPercent = e.usedPercent
+        case 'context-usage': {
+          // Before a result measures it, the mapper's window is a guess from the model id, which a
+          // suffix-free 1M default on Bedrock makes wrong, so a remembered measured window wins.
+          const window = e.measured ? e.contextWindow : (slice.contextWindow ?? e.contextWindow)
+          patch.contextPercent = Math.min(100, Math.round((e.usedTokens / window) * 100))
           patch.contextTokens = e.usedTokens
-          patch.contextWindow = e.contextWindow
+          patch.contextWindow = window
+          if (e.measured && slice.sessionId && modelPrefsBySessionId.get(slice.sessionId)?.contextWindow !== window)
+            flush.window = { sessionId: slice.sessionId, contextWindow: window }
           // Reset the compact-suggestion dismissal when context drops back below the
           // trigger (a fresh fill-cycle after a manual/auto compact) so the row can
           // offer again. Uses the same window-class threshold as the suggestion.
           if (
             slice.compactDismissedAtRunway != null &&
-            e.usedPercent < suggestCompactPercent(e.contextWindow)
+            patch.contextPercent < suggestCompactPercent(window)
           ) {
             patch.compactDismissedAtRunway = null
           }
           break
+        }
         case 'reconnected':
           clearNotice = true
           break
@@ -2395,6 +2404,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       void window.clui.injectRename(handleId, pendingName)
     }
     // Side-effect, so it runs after the reducer commits, not inside the updater.
+    if (flush.window) rememberModelPrefs(flush.window.sessionId, { contextWindow: flush.window.contextWindow })
     if (flush.prefs) {
       rememberModelPrefs(flush.prefs.sessionId, {
         model: flush.prefs.model,

@@ -198,9 +198,9 @@ export interface CluiApi {
   /** Load the per-session model+effort map (sessionId → {model,effort}). Passed as
    *  --model/--effort on resume so a mid-session switch survives (the CLI otherwise
    *  reverts to the settings.json default on --resume). */
-  getSessionModels: () => Promise<Record<string, { model?: string; effort?: string; ultracode?: boolean }>>
+  getSessionModels: () => Promise<Record<string, { model?: string; effort?: string; ultracode?: boolean; contextWindow?: number }>>
   /** Persist one session's model/effort (merges provided fields). */
-  setSessionModel: (sessionId: string, prefs: { model?: string; effort?: string; ultracode?: boolean }) => Promise<void>
+  setSessionModel: (sessionId: string, prefs: { model?: string; effort?: string; ultracode?: boolean; contextWindow?: number }) => Promise<void>
   /** Remove one session's persisted model/effort (on permanent delete). */
   deleteSessionModel: (sessionId: string) => Promise<void>
   /** Read the Customizations bundle (agents/skills/hooks/mcp) for a workspace. */
