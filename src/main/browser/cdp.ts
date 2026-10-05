@@ -44,6 +44,47 @@ const LIST_INTERACTIVE = `(() => {
 
 export interface Box { x: number; y: number; password: boolean }
 
+/** url is set for a failed resource load, whose location is the request rather than a script line. */
+export interface LogEntry { n: number; level: 'error' | 'warn' | 'log' | 'nav'; text: string; where: string; url?: string }
+export interface NetEntry {
+  n: number
+  id: string
+  method: string
+  url: string
+  type: string
+  status: number | null
+  size: number | null
+  ms: number | null
+  failed: string | null
+  start: number
+}
+
+const MAX_LOG = 300
+const MAX_NET = 500
+const MAX_TEXT = 500
+
+interface RemoteObject { type: string; value?: unknown; description?: string; unserializableValue?: string }
+interface Located { url?: string; lineNumber?: number }
+
+const shown = (o: RemoteObject): string =>
+  o.type === 'string' ? String(o.value) : (o.unserializableValue ?? o.description ?? (o.value === undefined ? o.type : JSON.stringify(o.value)))
+/** console's own formatting: %c takes a CSS argument that isn't shown, the other directives take a value. */
+function formatted(args: RemoteObject[]): string {
+  const [head, ...rest] = args
+  if (head?.type !== 'string' || !/%[csdifoO]/.test(String(head.value))) return args.map(shown).join(' ')
+  const text = String(head.value).replace(/%([csdifoO%])/g, (m, d: string) => {
+    if (d === '%') return '%'
+    const a = rest.shift()
+    return !a ? m : d === 'c' ? '' : shown(a)
+  })
+  return [text, ...rest.map(shown)].join(' ')
+}
+const whereOf = (at: Located | undefined): string => {
+  if (!at?.url) return ''
+  const file = at.url.split(/[?#]/)[0].split('/').pop() || at.url
+  return at.lineNumber === undefined ? file : `${file}:${at.lineNumber + 1}`
+}
+
 export interface KeyEvent {
   key: string
   code: string
@@ -96,13 +137,22 @@ export class Cdp {
   private readonly wc: WebContents
   /** Called around every input dispatch, so the manager can tell CDP input from the user's. */
   private readonly onAct: () => void
+  /** Null until a tool asks, so a page Claude only browses runs with no extra domains: Runtime.enable has been a bot-detection
+   *  signal, and capture costs memory on every page. */
+  log: LogEntry[] | null = null
+  net: Map<string, NetEntry> | null = null
+  /** Passwords Clui filled here. Captured logs and URLs outlive the page that held them, so they're scrubbed against this. */
+  readonly secrets = new Set<string>()
+  private logSeq = 0
+  private netSeq = 0
 
   constructor(wc: WebContents, onAct: () => void, onWebAuthn: () => void) {
     this.wc = wc
     this.onAct = onAct
     const dbg = wc.debugger
-    dbg.on('message', (_e, method, params: { name?: string }) => {
+    dbg.on('message', (_e, method: string, params: { name?: string }) => {
       if (method === 'Runtime.bindingCalled' && params.name === WEBAUTHN_BINDING) onWebAuthn()
+      else this.capture(method, params)
     })
     // No re-attach on 'detach': a closing page detaches before isDestroyed() turns true, and
     // re-attaching there loops and starves main. send() re-attaches on the next command instead.
@@ -116,6 +166,9 @@ export class Cdp {
       await dbg.sendCommand('Runtime.addBinding', { name: WEBAUTHN_BINDING })
       await dbg.sendCommand('Page.enable')
       await dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: WEBAUTHN_PROBE })
+      // A detach (DevTools opening, a crashed page) drops every enabled domain.
+      if (this.log) await this.enableConsole()
+      if (this.net) await dbg.sendCommand('Network.enable')
     } catch {
       // A closing view or an attached DevTools refuses the session; tool calls report it.
     }
@@ -161,6 +214,99 @@ export class Cdp {
 
   wheel(x: number, y: number, dy: number): Promise<void> {
     return this.input('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy })
+  }
+
+  /** Starts console or network capture on this page; false means it was off until now. Chromium replays the console
+   *  messages it kept on enable, so a fresh console has the page's history, while a fresh network log is empty. */
+  async record(kind: 'console' | 'network'): Promise<boolean> {
+    if (kind === 'console' ? this.log : this.net) return true
+    // The buffer exists before the enable, so the messages Chromium replays on enable land in it.
+    if (kind === 'console') this.log = []
+    else this.net = new Map()
+    try {
+      if (kind === 'console') await this.enableConsole()
+      else await this.send('Network.enable')
+    } catch (err) {
+      if (kind === 'console') this.log = null
+      else this.net = null
+      throw err
+    }
+    return false
+  }
+
+  private async enableConsole(): Promise<void> {
+    await this.send('Log.enable')
+    await this.send('Runtime.enable')
+  }
+
+  async responseBody(id: string): Promise<{ body: string; base64Encoded: boolean }> {
+    return (await this.send('Network.getResponseBody', { requestId: id })) as { body: string; base64Encoded: boolean }
+  }
+
+  private pushLog(level: LogEntry['level'], text: string, where: string, url?: string): void {
+    if (!this.log) return
+    this.log.push({ n: ++this.logSeq, level, text: text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}…` : text, where, url })
+    if (this.log.length > MAX_LOG) this.log.shift()
+  }
+
+  private capture(method: string, params: unknown): void {
+    const p = params
+    switch (method) {
+      case 'Runtime.consoleAPICalled': {
+        const { type, args, stackTrace } = p as { type: string; args: RemoteObject[]; stackTrace?: { callFrames: Located[] } }
+        const level = type === 'error' || type === 'assert' ? 'error' : type === 'warning' ? 'warn' : 'log'
+        return this.pushLog(level, formatted(args), whereOf(stackTrace?.callFrames[0]))
+      }
+      case 'Runtime.exceptionThrown': {
+        const d = (p as { exceptionDetails: Located & { text: string; exception?: RemoteObject } }).exceptionDetails
+        return this.pushLog('error', d.exception?.description ?? d.text, whereOf(d))
+      }
+      case 'Log.entryAdded': {
+        const e = (p as { entry: Located & { level: string; text: string; source: string } }).entry
+        const level = e.level === 'error' ? 'error' : e.level === 'warning' ? 'warn' : 'log'
+        return e.source === 'network' ? this.pushLog(level, e.text, '', e.url) : this.pushLog(level, e.text, whereOf(e))
+      }
+      case 'Page.frameNavigated': {
+        const f = (p as { frame: { parentId?: string; url: string } }).frame
+        if (!f.parentId) this.pushLog('nav', f.url, '')
+        return
+      }
+    }
+    if (!this.net) return
+    const id = (p as { requestId?: string }).requestId
+    const e = id === undefined ? undefined : this.net.get(id)
+    switch (method) {
+      case 'Network.requestWillBeSent': {
+        const r = p as { request: { method: string; url: string }; type?: string; timestamp: number }
+        // A redirect reuses the request id; the entry follows it to the final URL.
+        if (e) e.url = r.request.url
+        else if (id !== undefined) {
+          this.net.set(id, { n: ++this.netSeq, id, method: r.request.method, url: r.request.url, type: r.type ?? '', status: null, size: null, ms: null, failed: null, start: r.timestamp })
+          if (this.net.size > MAX_NET) this.net.delete(this.net.keys().next().value as string)
+        }
+        return
+      }
+      case 'Network.responseReceived': {
+        if (!e) return
+        const r = p as { type?: string; response: { status: number } }
+        e.status = r.response.status
+        if (r.type) e.type = r.type
+        return
+      }
+      case 'Network.loadingFinished': {
+        if (!e) return
+        const r = p as { encodedDataLength: number; timestamp: number }
+        e.size = r.encodedDataLength
+        e.ms = Math.round((r.timestamp - e.start) * 1000)
+        return
+      }
+      case 'Network.loadingFailed': {
+        if (!e) return
+        const r = p as { errorText: string; canceled?: boolean; blockedReason?: string; timestamp: number }
+        e.failed = r.canceled ? 'canceled' : (r.blockedReason ?? r.errorText)
+        e.ms = Math.round((r.timestamp - e.start) * 1000)
+      }
+    }
   }
 
   private world<T>(code: string): Promise<T> {

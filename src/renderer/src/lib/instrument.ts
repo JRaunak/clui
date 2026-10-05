@@ -111,6 +111,12 @@ export function browserLabel(name: string, input: unknown, tab?: number): string
   return tab ? `${label} · tab ${tab}` : label
 }
 
+/** The count a debug tool leads its result with ("3 errors"); flagged means a problem count above zero. */
+export function browserResultCopy(result: string | undefined): { copy: string; flagged: boolean } | null {
+  const m = /^summary(!?): (.+)$/m.exec(result?.split('\n', 1)[0] ?? '')
+  return m ? { copy: m[2], flagged: !!m[1] } : null
+}
+
 function actionLabel(name: string, input: unknown): string {
   const action = name.slice(BROWSER_PREFIX.length)
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
@@ -127,5 +133,8 @@ function actionLabel(name: string, input: unknown): string {
     if (typeof o.x === 'number' && typeof o.y === 'number') return `hover ${o.x}, ${o.y}`
   }
   if (action === 'new_tab' && typeof o.url === 'string') return `new tab ${o.url.replace(/^https?:\/\//, '')}`
+  if (action === 'console') return o.level === 'error' ? 'console errors' : o.level === 'warn' ? 'console warnings' : 'console'
+  if (action === 'network') return o.failedOnly === true ? 'network failed' : typeof o.filter === 'string' && o.filter ? `network ${o.filter}` : 'network'
+  if (action === 'network_body' && typeof o.id === 'number') return `response ${o.id}`
   return action.replace(/_/g, ' ')
 }

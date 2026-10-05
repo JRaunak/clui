@@ -7,6 +7,7 @@ import { diveInto, setBrowserPaneVia } from '../lib/dive'
 import {
   STATE_TEXT,
   browserLabel,
+  browserResultCopy,
   isBackgroundedTool,
   isBrowserTool,
   needsYouToolIdOf,
@@ -105,6 +106,7 @@ export function InstrumentRow({
   const tabGone = useActive((s) => !!tabNo && !s?.browser?.tabs.some((t) => t.id === tabNo))
   const viewTab = useSession((s) => s.viewBrowserTab)
   const summary = browser ? browserLabel(tool.name, tool.input, tabNo) : summarizeInput(tool.input)
+  const counted = browser && !tool.isError ? browserResultCopy(tool.result) : null
   // The header already shows the summary, so Input starts collapsed when there is one.
   const [inputOpen, setInputOpen] = useState(() => !summary)
   const [copied, setCopied] = useState(false)
@@ -195,7 +197,7 @@ export function InstrumentRow({
               className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
               aria-expanded={open}
               aria-controls={bodyId}
-              aria-label={`${name}${summary ? ` ${summary}` : ''}, ${STATE_TEXT[state]}`}
+              aria-label={`${name}${summary ? ` ${summary}` : ''}${counted ? `, ${counted.copy}` : ''}, ${STATE_TEXT[state]}`}
               title={summary || undefined}
               onClick={toggleBody}
             />
@@ -208,6 +210,12 @@ export function InstrumentRow({
             <span className="text-label font-semibold text-content">{name}</span>
             <span className="flex min-w-0 items-center gap-1.5">
               {summary && <span className="truncate text-code text-dim">{summary}</span>}
+              {counted && (
+                <span className="shrink-0 text-meta">
+                  <span className="text-faint">· </span>
+                  <span className={counted.flagged ? 'font-medium text-content' : 'text-dim'}>{counted.copy}</span>
+                </span>
+              )}
               {isSubagent && subType && (
                 <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint">
                   {subType}

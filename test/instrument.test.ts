@@ -46,3 +46,12 @@ equal(browserLabel(b('hover'), { ref: 12 }), 'hover 12', 'browser label: hover b
 equal(browserLabel(b('hover'), { x: 320, y: 180 }), 'hover 320, 180', 'browser label: hover by point')
 equal(browserLabel(b('navigate'), { url: 'https://github.com' }, 2), 'navigate github.com · tab 2', 'browser label: names its tab')
 equal(browserLabel(b('navigate'), { url: 'https://github.com' }, 0), 'navigate github.com', 'browser label: no tab, no suffix')
+
+// Debug-tool rows: the label comes from the input, the count from the result's first line.
+import { browserResultCopy } from '../src/renderer/src/lib/instrument.ts'
+equal(browserLabel('mcp__clui-browser__console', { level: 'error' }), 'console errors', 'debug row: console errors label')
+equal(browserLabel('mcp__clui-browser__network', { failedOnly: true }), 'network failed', 'debug row: network failed label')
+equal(browserLabel('mcp__clui-browser__network_body', { id: 7 }), 'response 7', 'debug row: response label')
+equal(JSON.stringify(browserResultCopy('summary!: 3 errors\nPage content…')), JSON.stringify({ copy: '3 errors', flagged: true }), 'debug row: flagged count parsed')
+equal(JSON.stringify(browserResultCopy('summary: no requests')), JSON.stringify({ copy: 'no requests', flagged: false }), 'debug row: plain count parsed')
+equal(browserResultCopy('Page content from x\nsummary!: 9 errors'), null, 'debug row: only the first line counts')

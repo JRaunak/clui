@@ -128,7 +128,7 @@ const init = await call({ headers: auth, body: rpc('initialize', { protocolVersi
 equal(init.json?.result?.protocolVersion, '2099-01-01', 'mcp: initialize echoes the protocol version')
 equal((await call({ headers: auth, body: rpc('server/discover') })).json?.error?.code, -32601, 'mcp: an unknown method is -32601')
 const listed = await call({ headers: auth, body: rpc('tools/list') })
-equal(listed.json?.result?.tools?.map((t: { name: string }) => t.name).join(','), 'navigate,snapshot,click,type,scroll,press,hover,back,autofill_login,tabs,new_tab,close_tab', 'mcp: tools/list')
+equal(listed.json?.result?.tools?.map((t: { name: string }) => t.name).join(','), 'navigate,snapshot,click,type,scroll,press,hover,back,autofill_login,console,network,network_body,tabs,new_tab,close_tab', 'mcp: tools/list')
 const called = await call({ headers: auth, body: rpc('tools/call', { name: 'snapshot', arguments: {} }) })
 equal(called.json?.result?.content?.[0]?.text, 'The browser is off for this session.', 'mcp: a refused call answers with text')
 mcp.revoke('h1')
@@ -170,3 +170,14 @@ equal(said(await queued2), 'error: The user closed tab 2.', 'tabs: and the call 
 close(3, 'agent')
 equal(said(await pending3), 'error: Tab 3 was closed.', "tabs: Claude's own close answers a call queued in that tab")
 equal(said(await tabsMcp.callTool('h2', 'click', { tab: 9 })), "error: There's no tab 9. Call tabs to see the open tabs.", 'tabs: a call naming a closed tab is refused')
+
+// The debug tools put page data into the transcript, so what they hide is pinned here.
+import { requestUrl, scrub, isLocal } from '../src/main/browser/mcp.ts'
+equal(requestUrl('https://cdn.example.com/a.js?sig=SECRET&exp=1&exp=2'), 'https://cdn.example.com/a.js?sig=…&exp=…', 'debug: off-machine query keeps names only')
+equal(requestUrl('https://user:pw@example.com/x'), 'https://example.com/x', 'debug: userinfo never shown')
+equal(requestUrl('http://localhost:5173/api?token=abc'), 'http://localhost:5173/api?token=abc', 'debug: localhost keeps query values')
+equal(requestUrl('https://example.com/p#frag'), 'https://example.com/p', 'debug: fragment dropped')
+equal(requestUrl('data:image/png;base64,AAAA'), 'data:image/png;base64,…', 'debug: data URL shows only its type')
+equal(scrub('pw=hunter 2&x hunter%202', new Set(['hunter 2'])), 'pw=•••&x •••', 'debug: a filled password is scrubbed raw and URL-encoded')
+ok(isLocal(new URL('http://127.0.0.1:8080/')) && isLocal(new URL('http://[::1]/')) && isLocal(new URL('http://app.localhost/')), 'debug: loopback hosts are local')
+ok(!isLocal(new URL('https://localhost.evil.com/')) && !isLocal(new URL('https://example.com/')), 'debug: lookalike hosts are not local')
