@@ -22,6 +22,7 @@ import {
   type StartSessionOptions,
   type WireAttachment
 } from '../shared/ipc'
+import type { ElicitationResponse } from '../shared/events'
 import type { EffortChoice, ModelChoice } from '../shared/settings'
 import { detectCli } from './cli/detect'
 import { loginShellAuthEnv } from './cli/shell-env'
@@ -417,13 +418,14 @@ function registerIpc(): void {
       // Per-session override wins over the global default; 'inherit' → no flag
       // (honor ~/.claude/settings.json). Never writes any settings file.
       permissionMode: modeToFlag(opts.permissionMode ?? settings.permissionMode),
-      browserMcp: withBrowser ? await mcp.configFor(handleId) : undefined
+      browserMcp: withBrowser ? await mcp.configFor(handleId) : undefined,
+      mcpConfigPath: process.env.CLUI_TEST_MCP_CONFIG
     })
     if (withBrowser) browser.enable(handleId)
     return { handleId, browser: withBrowser }
   })
 
-  ipcMain.handle(
+  handle(
     IpcChannels.sendMessage,
     async (_e, handleId: string, text: string, attachments?: WireAttachment[]) => {
       manager.send(handleId, text, attachments)
@@ -442,7 +444,7 @@ function registerIpc(): void {
     return manager.backgroundTask(handleId, toolUseId)
   })
 
-  ipcMain.handle(
+  handle(
     IpcChannels.setPermissionMode,
     async (_e, handleId: string, mode: PermissionModeChoice) => {
       // 'inherit' has no CLI "unset" mid-session, so resolve it to the user's ACTUAL
@@ -475,7 +477,8 @@ function registerIpc(): void {
     disposeBrowser(handleId)
   })
 
-  ipcMain.on(IpcChannels.menuState, (_e, next: MenuState) => {
+  ipcMain.on(IpcChannels.menuState, (e, next: MenuState) => {
+    if (!fromTrustedFrame(e)) return
     if (next.browser === menuState.browser && next.pane === menuState.pane) return
     menuState = next
     buildMenu()
@@ -525,11 +528,15 @@ function registerIpc(): void {
     browser.clearData({ cookies: what?.cookies === true, cache: what?.cache === true, history: what?.history === true })
   )
 
-  ipcMain.handle(
+  handle(
     IpcChannels.respondPermission,
     async (_e, handleId: string, verdict: PermissionVerdict) => {
       manager.respondPermission(handleId, verdict)
     }
+  )
+
+  handle(IpcChannels.respondElicitation, (_e, handleId: string, requestId: string, response: ElicitationResponse) =>
+    manager.respondElicitation(handleId, requestId, response)
   )
 
   handle(IpcChannels.listSessions, async () => listSessions())
@@ -568,7 +575,7 @@ function registerIpc(): void {
     searchMetaCache = { at: now, map }
     return map
   }
-  ipcMain.handle(
+  handle(
     IpcChannels.searchSessions,
     async (_e, query: string, queryId: number, opts?: { scopeSlug?: string; userOnly?: boolean }) => {
       // Date.now() is fine in main (only the workflow sandbox forbids it).
@@ -619,7 +626,7 @@ function registerIpc(): void {
   })
 
   handle(IpcChannels.getSessionModels, async () => readSessionModels())
-  ipcMain.handle(
+  handle(
     IpcChannels.setSessionModel,
     async (_e, sessionId: string, prefs: { model?: string; effort?: string }) => {
       await setSessionModel(sessionId, prefs)
@@ -670,7 +677,7 @@ function registerIpc(): void {
 
   handle(IpcChannels.getSettings, async () => getResolvedSettings())
 
-  ipcMain.handle(
+  handle(
     IpcChannels.updateSettings,
     async (_e, patch: Partial<CluiSettings>, clear?: SettingsKey[]) => {
       const next = await updateSettings(patch, clear ?? [])

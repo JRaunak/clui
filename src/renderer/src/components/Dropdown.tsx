@@ -121,7 +121,8 @@ export function Dropdown<T extends string>({
             ? `group flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs transition-colors ${
                 p.open ? 'bg-control-hover' : 'bg-control hover:bg-control-hover'
               }`
-            : 'flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-bg px-2.5 text-xs transition-colors hover:border-border-strong'
+            : // control-edge is what gives the field a 3:1 boundary; the hairline border token reads ~1.2:1.
+              'flex h-8 w-full items-center justify-between gap-2 rounded-md border border-control-edge bg-bg px-2.5 text-xs transition-colors hover:border-[var(--color-dim)]'
         }
       >
         <span className="flex min-w-0 items-center gap-1.5">

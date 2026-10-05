@@ -28,7 +28,12 @@ export function sessionStatusOf(s: StatusSlice): SessionStatus {
   const pending = s.pendingPermissions.length
   if (pending > 0) {
     const p = s.pendingPermissions[0]
-    const rest = p.toolName === 'BrowserLogin' ? `Sign in to ${p.displayName}` : `Allow ${p.displayName || p.toolName}`
+    const rest =
+      p.toolName === 'BrowserLogin'
+        ? `Sign in to ${p.displayName}`
+        : p.toolName === 'McpElicitation'
+          ? `Request from ${p.displayName}`
+          : `Allow ${p.displayName || p.toolName}`
     return { kind: 'needs', lead: 'Needs you', rest, count: pending }
   }
   if (s.lastError !== null) return { kind: 'failed', lead: 'Last turn failed', rest: null, count: 0 }

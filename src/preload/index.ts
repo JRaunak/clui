@@ -16,6 +16,7 @@ import {
 } from '../shared/ipc'
 import type { CluiSettings, EffortChoice, ModelChoice, SettingsKey } from '../shared/settings'
 import type { BrowserEvent } from '../shared/browser'
+import type { ElicitationResponse } from '../shared/events'
 import type { AnnotateEvent } from '../shared/annotate'
 
 const api: CluiApi = {
@@ -48,6 +49,8 @@ const api: CluiApi = {
   stopSession: (handleId: string) => ipcRenderer.invoke(IpcChannels.stopSession, handleId),
   respondPermission: (handleId: string, verdict: PermissionVerdict) =>
     ipcRenderer.invoke(IpcChannels.respondPermission, handleId, verdict),
+  respondElicitation: (handleId: string, requestId: string, response: ElicitationResponse) =>
+    ipcRenderer.invoke(IpcChannels.respondElicitation, handleId, requestId, response),
   listSessions: () => ipcRenderer.invoke(IpcChannels.listSessions),
   deleteSession: (projectSlug: string, id: string) =>
     ipcRenderer.invoke(IpcChannels.deleteSession, projectSlug, id),

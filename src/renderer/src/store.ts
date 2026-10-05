@@ -16,7 +16,7 @@
  * each event into `sessions[handleId]`.
  */
 import { create } from 'zustand'
-import type { DomainEvent, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo, TurnUsage } from '../../shared/events'
+import type { DomainEvent, ElicitationResponse, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo, TurnUsage } from '../../shared/events'
 import type { CompactionMarker, ProjectGroup } from '../../shared/sessions'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
@@ -580,6 +580,8 @@ interface SessionStore {
   clearAnnotations: (handleId: string) => void
   /** Answer a sign-in Gate. The verdict goes straight to main. */
   respondBrowserLogin: (requestId: string, verdict: BrowserLoginVerdict) => Promise<void>
+  /** Answer an MCP elicitation Gate. */
+  respondElicitation: (requestId: string, response: ElicitationResponse) => Promise<void>
   /** Set the active session's browser pane. Opening it replaces a subagent view. Half or full is an
    *  explicit size choice and is saved for every session. */
   setBrowserPane: (next: BrowserPaneState) => void
@@ -2026,6 +2028,13 @@ export const useSession = create<SessionStore>((set, get) => ({
           ]
           patch.lastActivityMs = Date.now()
           break
+        case 'elicitation-request':
+          patch.pendingPermissions = [
+            ...slice.pendingPermissions,
+            { requestId: e.requestId, toolName: 'McpElicitation', displayName: e.request.serverName, input: e.request }
+          ]
+          patch.lastActivityMs = Date.now()
+          break
         case 'permission-cancel':
           // The CLI withdrew this pending prompt, so drop it and the dialog closes.
           patch.pendingPermissions = slice.pendingPermissions.filter(
@@ -2620,6 +2629,17 @@ export const useSession = create<SessionStore>((set, get) => ({
       })
     )
     await window.clui.browserLoginVerdict(active.handleId, requestId, verdict)
+  },
+
+  respondElicitation: async (requestId, response) => {
+    const active = activeSlice(get())
+    if (!active) return
+    set((s) =>
+      patchSlice(s, active.handleId, {
+        pendingPermissions: active.pendingPermissions.filter((p) => p.requestId !== requestId)
+      })
+    )
+    await window.clui.respondElicitation(active.handleId, requestId, response)
   },
 
   setBrowserPane: (next) => {

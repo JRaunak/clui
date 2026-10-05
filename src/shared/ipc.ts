@@ -5,7 +5,7 @@
  * happens via `onSessionEvent`, which delivers `DomainEvent`s tagged with the
  * session id they belong to.
  */
-import type { DomainEvent } from './events'
+import type { DomainEvent, ElicitationResponse } from './events'
 import type {
   ProjectGroup,
   TranscriptResult,
@@ -169,6 +169,8 @@ export interface CluiApi {
   stopSession: (handleId: string) => Promise<void>
   /** Answer a pending interactive permission request. */
   respondPermission: (handleId: string, verdict: PermissionVerdict) => Promise<void>
+  /** Answer an MCP server's elicitation (the card's Done/Decline/Cancel or form submit). */
+  respondElicitation: (handleId: string, requestId: string, response: ElicitationResponse) => Promise<void>
   /** List past sessions grouped by project. */
   listSessions: () => Promise<ProjectGroup[]>
   /** Delete a past session's transcript. */
@@ -356,6 +358,7 @@ export const IpcChannels = {
   setUltracode: 'clui:setUltracode',
   stopSession: 'clui:stopSession',
   respondPermission: 'clui:respondPermission',
+  respondElicitation: 'clui:respondElicitation',
   listSessions: 'clui:listSessions',
   deleteSession: 'clui:deleteSession',
   renameSession: 'clui:renameSession',

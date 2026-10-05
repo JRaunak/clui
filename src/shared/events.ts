@@ -27,6 +27,23 @@ export interface SessionTask {
   blockedBy?: string[]
 }
 
+/** An MCP server's `elicitation/create`, relayed by the CLI as a control_request. `requestedSchema`
+ *  is form mode's flat JSON schema, passed through unvalidated for the Gate to read. */
+export interface ElicitationRequest {
+  serverName: string
+  message: string
+  mode: 'url' | 'form'
+  url?: string
+  elicitationId?: string
+  requestedSchema?: unknown
+}
+
+/** The answer the server receives. `content` rides only on a form-mode accept. */
+export interface ElicitationResponse {
+  action: 'accept' | 'decline' | 'cancel'
+  content?: Record<string, string | number | boolean>
+}
+
 /** One slash command from the CLI's `initialize` response (dynamic discovery). */
 export interface SlashCommandInfo {
   /** Command name WITHOUT the leading slash (e.g. "compact"). */
@@ -243,6 +260,8 @@ export type DomainEvent =
       blockedPath?: string
       suppressAlwaysAllow?: boolean
     }
+  /** An MCP server asked the user to continue in the browser (url) or fill a form. */
+  | { type: 'elicitation-request'; requestId: string; request: ElicitationRequest }
   /**
    * The CLI withdrew a still-pending permission request (e.g. the turn was
    * interrupted). Correlated by the same `requestId` as the original request; the

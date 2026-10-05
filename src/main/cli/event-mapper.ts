@@ -38,6 +38,12 @@ interface RawEnvelope {
     decision_reason_type?: string
     blocked_path?: string
     suppress_always_allow_rule?: boolean
+    mcp_server_name?: string
+    message?: string
+    mode?: string
+    url?: string
+    elicitation_id?: string
+    requested_schema?: unknown
   }
   event?: {
     type?: string
@@ -883,6 +889,23 @@ export class EventMapper {
           decisionReasonType: req.decision_reason_type,
           blockedPath: req.blocked_path,
           suppressAlwaysAllow: req.suppress_always_allow_rule
+        }
+      ]
+    }
+    if (req?.subtype === 'elicitation' && env.request_id) {
+      return [
+        {
+          type: 'elicitation-request',
+          requestId: env.request_id,
+          request: {
+            serverName: req.mcp_server_name ?? '',
+            message: req.message ?? '',
+            // Anything but an explicit url request is a form, the MCP default.
+            mode: req.mode === 'url' ? 'url' : 'form',
+            url: req.url,
+            elicitationId: req.elicitation_id,
+            requestedSchema: req.requested_schema
+          }
         }
       ]
     }

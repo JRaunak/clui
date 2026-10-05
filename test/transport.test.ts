@@ -96,3 +96,42 @@ reset()
   c.stdout.emit('data', JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: initId(c) } }) + '\n')
   ok(events.includes('error') && events.includes('process-exit'), 'transport: init error ACK → error + exit')
 }
+
+// an open elicitation is answered `cancel` on interrupt and on stop, and its card is withdrawn
+reset()
+{
+  const s = mk()
+  const events: any[] = []
+  s.on('event', (e) => events.push(e))
+  s.start()
+  const c = spawns()[0]
+  ackInit(c)
+  const elicit = (id: string): void =>
+    c.stdout.emit('data', JSON.stringify({ type: 'control_request', request_id: id, request: { subtype: 'elicitation', mcp_server_name: 'stub', message: 'Sign in', mode: 'url', url: 'https://example.com' } }) + '\n')
+  const answers = (): any[] => W(c).filter((o: any) => o.type === 'control_response').map((o: any) => [o.response.request_id, o.response.response.action])
+  elicit('e1')
+  elicit('e2')
+  s.respondElicitation('e1', { action: 'accept' })
+  s.interrupt()
+  ok(JSON.stringify(answers()) === '[["e1","accept"],["e2","cancel"]]', 'transport: interrupt cancels only the unanswered elicitation')
+  ok(events.some((e) => e.type === 'permission-cancel' && e.requestId === 'e2'), 'transport: interrupt withdraws the open card')
+  const cancelIdx = W(c).findIndex((o: any) => o.type === 'control_response' && o.response.request_id === 'e2')
+  const intIdx = W(c).findIndex((o: any) => o.request?.subtype === 'interrupt')
+  ok(cancelIdx >= 0 && cancelIdx < intIdx, 'transport: the cancel is written before the interrupt')
+  s.interrupt()
+  ok(answers().length === 2, 'transport: a second interrupt answers nothing twice')
+  elicit('e3')
+  s.stop()
+  ok(answers().at(-1)?.[0] === 'e3' && answers().at(-1)?.[1] === 'cancel', 'transport: stop cancels an open elicitation')
+}
+
+// the test MCP config rides alongside the browser's in one variadic --mcp-config
+reset()
+{
+  const s = mk({ browserMcp: '{"mcpServers":{}}', mcpConfigPath: '/tmp/stub.json' })
+  s.start()
+  const a: string[] = spawns()[0].spawnargs
+  const i = a.indexOf('--mcp-config')
+  ok(i >= 0 && a[i + 2] === '/tmp/stub.json' && a.indexOf('--mcp-config', i + 1) === -1, 'transport: both MCP configs in one --mcp-config')
+  s.stop()
+}

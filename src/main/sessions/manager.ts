@@ -4,7 +4,7 @@
  * (the IPC bridge), tagged with the handle so the renderer can demux.
  */
 import { ClaudeSession, type ClaudeSessionOptions } from '../cli/session'
-import type { DomainEvent } from '../../shared/events'
+import type { DomainEvent, ElicitationResponse } from '../../shared/events'
 import type { PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { readTasks } from './tasks'
 
@@ -149,6 +149,10 @@ export class SessionManager {
         message: verdict.message
       })
     }
+  }
+
+  respondElicitation(handleId: string, requestId: string, response: ElicitationResponse): void {
+    this.sessions.get(handleId)?.respondElicitation(requestId, response)
   }
 
   stop(handleId: string): void {

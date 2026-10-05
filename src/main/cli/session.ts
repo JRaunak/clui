@@ -16,7 +16,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
-import type { DomainEvent } from '../../shared/events'
+import type { DomainEvent, ElicitationResponse } from '../../shared/events'
 import type { WireAttachment } from '../../shared/ipc'
 import { NdjsonParser } from './ndjson'
 import { EventMapper } from './event-mapper'
@@ -67,6 +67,8 @@ export interface ClaudeSessionOptions {
   name?: string
   /** In-app browser MCP config JSON (from BrowserMcpServer), or undefined when the browser is off. */
   browserMcp?: string
+  /** An MCP config file passed as-is next to the browser's (the elicitation probe's stub server). */
+  mcpConfigPath?: string
   /** Extra env for the child (merged over process.env). */
   env?: Record<string, string>
 }
@@ -145,6 +147,8 @@ export class ClaudeSession extends EventEmitter {
   /** Partial trailing stderr line held until its newline arrives, so classification
    *  runs per complete line, not per arbitrary transport chunk. */
   private stderrBuf = ''
+  /** request_ids of elicitations the user hasn't answered yet. */
+  private elicitations = new Set<string>()
   /**
    * In-flight control_requests awaiting their control_response, keyed by request_id
    * (general control-protocol client). Resolves `{ok, payload}` on the response, or
@@ -209,11 +213,11 @@ export class ClaudeSession extends EventEmitter {
       // following flag (--resume) or the end of the bare args terminates the list.
       args.push('--disallowedTools', ...EPHEMERAL_DISALLOWED_TOOLS)
     }
-    if (this.opts.browserMcp) {
-      // Both flags are variadic; the --resume that follows (or the end of args) closes each list.
-      args.push('--mcp-config', this.writeMcpConfig(this.opts.browserMcp))
-      args.push('--allowedTools', 'mcp__clui-browser')
-    }
+    const mcp = this.opts.browserMcp ? [this.writeMcpConfig(this.opts.browserMcp)] : []
+    if (this.opts.mcpConfigPath) mcp.push(this.opts.mcpConfigPath)
+    // Both flags are variadic; the --resume that follows (or the end of args) closes each list.
+    if (mcp.length) args.push('--mcp-config', ...mcp)
+    if (this.opts.browserMcp) args.push('--allowedTools', 'mcp__clui-browser')
     if (this.opts.resumeSessionId) {
       args.push('--resume', this.opts.resumeSessionId)
       // Fork branches the resumed session to a new id (original untouched). Only
@@ -381,6 +385,7 @@ export class ClaudeSession extends EventEmitter {
       this.initTimer = null
     }
     this.dropMcpConfig()
+    this.cancelElicitations()
     if (this.stderrBuf.trim()) this.classifyStderrLine(this.stderrBuf)
     this.stderrBuf = ''
     for (const raw of this.parser.flush()) {
@@ -398,6 +403,8 @@ export class ClaudeSession extends EventEmitter {
       for (const ev of this.mapper.map(raw)) {
         if (ev.type === 'session-init' && ev.sessionId) this.sessionId = ev.sessionId
         if (ev.type === 'session-init') this.dropMcpConfig()
+        if (ev.type === 'elicitation-request') this.elicitations.add(ev.requestId)
+        if (ev.type === 'permission-cancel') this.elicitations.delete(ev.requestId)
         this.emitEvent(ev)
       }
     }
@@ -684,6 +691,7 @@ export class ClaudeSession extends EventEmitter {
     this.reconnecting = true
     this.respawned = true
     this.initAcked = false
+    this.cancelElicitations()
     // Resume the CURRENT confirmed id (not one snapshotted before init arrived); never
     // re-fork. Keep `name`: the idempotent `-n` preserves the peer name / mirror.
     this.opts = {
@@ -708,6 +716,7 @@ export class ClaudeSession extends EventEmitter {
     // Nothing was written to the CLI yet (still initializing / reconnecting): no running
     // turn to interrupt, and the control channel isn't ready.
     if (!this.initAcked) return
+    this.cancelElicitations()
     // Flag the mapper so the interrupt's is_error result isn't surfaced as an error box.
     this.mapper.markInterrupted()
     this.writeLine({
@@ -751,6 +760,20 @@ export class ClaudeSession extends EventEmitter {
     })
   }
 
+  respondElicitation(requestId: string, response: ElicitationResponse): void {
+    this.elicitations.delete(requestId)
+    this.writeLine({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } })
+  }
+
+  /** A stopped turn or session must not leave an MCP server blocked on an unanswered card, and
+   *  the CLI isn't known to withdraw elicitations itself, so each gets an explicit cancel. */
+  private cancelElicitations(): void {
+    for (const requestId of [...this.elicitations]) {
+      this.respondElicitation(requestId, { action: 'cancel' })
+      this.emitEvent({ type: 'permission-cancel', requestId })
+    }
+  }
+
   stop(): void {
     // Cancel any in-flight effort-respawn: without this, a 'close' still pending from
     // respawnWith's SIGTERM would resurrect the child even though we're tearing it
@@ -758,6 +781,7 @@ export class ClaudeSession extends EventEmitter {
     // belt to that suspenders, since a pending respawn must not survive an explicit stop.)
     this.respawning = false
     this.dropMcpConfig()
+    this.cancelElicitations()
     // Resolve any awaited control_requests as failed + clear their timers.
     for (const [, p] of this.pendingControl) {
       clearTimeout(p.timer)

@@ -56,6 +56,9 @@ export function GateFrame({
 
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === 'Escape') {
+      // An open dropdown closes first through its own Esc layer, whether focus sits in its list or still on its trigger.
+      // Lists stay mounted, so only one that's open counts.
+      if (document.querySelector('[role="listbox"]:popover-open')) return
       e.preventDefault()
       e.stopPropagation()
       focusComposer()

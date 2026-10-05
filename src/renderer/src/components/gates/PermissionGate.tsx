@@ -62,32 +62,13 @@ export function PermissionGate({
       footer={
         <>
           {suggestion && (
-            <button
-              type="button"
-              role="checkbox"
-              aria-checked={armed}
-              aria-describedby="perm-quickaction-desc"
-              onClick={() => setArmed((v) => !v)}
-              className="group flex min-w-0 items-start gap-2 rounded-md py-1 pr-1 text-left"
-            >
-              <span
-                className={`mt-px flex h-4 w-4 flex-none items-center justify-center rounded-[4px] border transition-colors duration-150 ${
-                  armed
-                    ? 'border-warn bg-warn/15 text-warn'
-                    : 'border-control-edge text-transparent group-hover:border-warn'
-                }`}
-              >
-                <IconCheck className="h-3 w-3" />
-              </span>
-              <span className="min-w-0">
-                <span className="block text-label leading-tight text-content">
-                  Also switch to {suggestion.label} for this session
-                </span>
-                <span id="perm-quickaction-desc" className="mt-0.5 block text-meta leading-tight text-dim">
-                  {suggestion.description}
-                </span>
-              </span>
-            </button>
+            <GateCheckbox
+              checked={armed}
+              onToggle={() => setArmed((v) => !v)}
+              label={`Also switch to ${suggestion.label} for this session`}
+              description={suggestion.description}
+              descriptionId="perm-quickaction-desc"
+            />
           )}
           {/* Deny is equal-size and nothing is autofocused, so a reflexive Enter
               can't grant a write or exec. The quick action only arms; plain Allow stays a one-off. */}
@@ -128,6 +109,48 @@ export function PermissionGate({
         </div>
       )}
     </GateFrame>
+  )
+}
+
+/** The Gates' checkbox: a warn-toned box beside a label and an optional hint. */
+export function GateCheckbox({
+  checked,
+  onToggle,
+  label,
+  description,
+  descriptionId
+}: {
+  checked: boolean
+  onToggle: () => void
+  label: ReactNode
+  description?: ReactNode
+  descriptionId?: string
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-describedby={description ? descriptionId : undefined}
+      onClick={onToggle}
+      className="group flex w-fit min-w-0 items-start gap-2 rounded-md py-1 pr-1 text-left"
+    >
+      <span
+        className={`mt-px flex h-4 w-4 flex-none items-center justify-center rounded-[4px] border transition-colors duration-150 ${
+          checked ? 'border-warn bg-warn/15 text-warn' : 'border-control-edge text-transparent group-hover:border-warn'
+        }`}
+      >
+        <IconCheck className="h-3 w-3" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-label leading-tight text-content">{label}</span>
+        {description && (
+          <span id={descriptionId} className="mt-0.5 block text-meta leading-tight text-dim">
+            {description}
+          </span>
+        )}
+      </span>
+    </button>
   )
 }
 

@@ -84,6 +84,25 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   )
 }
 
+// an MCP elicitation control_request becomes an elicitation-request
+{
+  const m = new EventMapper()
+  const schema = { type: 'object', properties: { name: { type: 'string' } } }
+  const [url] = m.map({
+    type: 'control_request',
+    request_id: 'el1',
+    request: { subtype: 'elicitation', mcp_server_name: 'stub', message: 'Sign in', mode: 'url', url: 'https://example.com/auth', elicitation_id: 'x1' }
+  }) as any[]
+  ok(
+    url?.type === 'elicitation-request' && url.requestId === 'el1' && url.request.serverName === 'stub' &&
+      url.request.mode === 'url' && url.request.url === 'https://example.com/auth' && url.request.elicitationId === 'x1',
+    'mapper: url elicitation forwarded'
+  )
+  const [form] = m.map({ type: 'control_request', request_id: 'el2', request: { subtype: 'elicitation', mcp_server_name: 'stub', message: 'Who?', requested_schema: schema } }) as any[]
+  ok(form?.request.mode === 'form' && form.request.requestedSchema === schema, 'mapper: elicitation without a mode is a form, schema passed through')
+  ok(m.map({ type: 'control_request', request: { subtype: 'elicitation' } }).length === 0, 'mapper: elicitation without a request_id is dropped')
+}
+
 // thinking_tokens heartbeats are throttled to one per 500ms
 {
   const m = new EventMapper()

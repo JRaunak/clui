@@ -5,6 +5,7 @@ import { PermissionGate } from './gates/PermissionGate'
 import { PlanGate } from './gates/PlanGate'
 import { QuestionGate } from './gates/QuestionGate'
 import { LoginGate } from './gates/LoginGate'
+import { ElicitGate } from './gates/ElicitGate'
 import { focusComposer, type GateCount } from './gates/GateFrame'
 import { cssMs, cssVar } from '../lib/motion'
 
@@ -153,6 +154,8 @@ export function GateHost(): JSX.Element | null {
         <SiteGate key={key} request={shown} count={count} />
       ) : shown.toolName === 'BrowserLogin' ? (
         <LoginGate key={key} request={shown} count={count} />
+      ) : shown.toolName === 'McpElicitation' ? (
+        <ElicitGate key={key} request={shown} count={count} />
       ) : (
         <PermissionGate key={key} request={shown} count={count} />
       )}
@@ -212,6 +215,7 @@ function announcementOf(p: PendingPermission): string {
   if (p.toolName === 'ExitPlanMode') return 'Plan ready: review the plan'
   if (p.toolName === 'BrowserSite') return `Permission required: open ${p.displayName}`
   if (p.toolName === 'BrowserLogin') return `Sign-in needed: ${p.displayName}`
+  if (p.toolName === 'McpElicitation') return `Request from ${p.displayName}`
   if (p.toolName === 'AskUserQuestion') {
     const q = (p.input as { questions?: { question?: unknown }[] } | null)?.questions?.[0]?.question
     return typeof q === 'string' ? `Question: ${q}` : 'Question from Claude'
