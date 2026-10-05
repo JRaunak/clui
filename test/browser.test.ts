@@ -70,11 +70,13 @@ import { keyEvent } from '../src/main/browser/cdp.ts'
 
 // Boundary: press sends real key events, so a page's keydown handler sees the key, code and keyCode
 // a keyboard would give it, and only printables carry text (text is what makes a character).
-equal(JSON.stringify(keyEvent('Enter')), JSON.stringify({ key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r' }), 'key: Enter types a carriage return')
-equal(JSON.stringify(keyEvent('ArrowLeft')), JSON.stringify({ key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37, nativeVirtualKeyCode: 37 }), 'key: arrows carry no text')
+equal(JSON.stringify(keyEvent('Enter')), JSON.stringify({ key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }), 'key: Enter types a carriage return')
+equal(JSON.stringify(keyEvent('ArrowLeft')), JSON.stringify({ key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37, }), 'key: arrows carry no text')
+// No physical-key code rides along: macOS would read it as a Globe shortcut (emoji picker, Dictation).
+ok(['a', 'e', 'Enter', 'ArrowLeft', ' ', '5'].every((k) => keyEvent(k) && !('nativeVirtualKeyCode' in keyEvent(k)!)), 'key: no nativeVirtualKeyCode')
 equal(keyEvent('Backspace')?.windowsVirtualKeyCode, 8, 'key: Backspace')
 equal(keyEvent('Tab')?.text, undefined, 'key: Tab carries no text')
-equal(JSON.stringify(keyEvent('a')), JSON.stringify({ key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, text: 'a' }), 'key: a lowercase letter')
+equal(JSON.stringify(keyEvent('a')), JSON.stringify({ key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, text: 'a' }), 'key: a lowercase letter')
 equal(keyEvent('A')?.modifiers, 8, 'key: an uppercase letter holds shift')
 equal(keyEvent('a')?.modifiers, undefined, 'key: a lowercase letter holds nothing')
 equal(keyEvent('1')?.code, 'Digit1', 'key: digit code')

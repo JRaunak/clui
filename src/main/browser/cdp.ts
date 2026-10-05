@@ -92,7 +92,6 @@ export interface KeyEvent {
   key: string
   code: string
   windowsVirtualKeyCode?: number
-  nativeVirtualKeyCode?: number
   text?: string
   modifiers?: number
 }
@@ -114,25 +113,28 @@ const NAMED: Record<string, [vk: number, text?: string]> = {
 }
 const SHIFT = 8
 
-/** A DOM key name as CDP key-event fields, or null for a name this doesn't know. */
+
+/** A DOM key name as CDP key-event fields, or null for a name this doesn't know. No nativeVirtualKeyCode: macOS reads
+ *  that physical-key code before the page does and treats a synthetic key as a Globe shortcut (🌐E opened Emoji &
+ *  Symbols, 🌐D Dictation), while the page only needs key, code and keyCode. */
 export function keyEvent(name: string): KeyEvent | null {
   const named = NAMED[name]
   if (named) {
     const [vk, text] = named
-    return { key: name, code: name, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, ...(text ? { text } : {}) }
+    return { key: name, code: name, windowsVirtualKeyCode: vk, ...(text ? { text } : {}) }
   }
   if ([...name].length !== 1) return null
   // Pages that still read keyCode or code need them on letters, digits and space too.
   if (/^[a-z]$/i.test(name)) {
     const vk = name.toUpperCase().charCodeAt(0)
     const upper = name !== name.toLowerCase()
-    return { key: name, code: `Key${name.toUpperCase()}`, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, text: name, ...(upper ? { modifiers: SHIFT } : {}) }
+    return { key: name, code: `Key${name.toUpperCase()}`, windowsVirtualKeyCode: vk, text: name, ...(upper ? { modifiers: SHIFT } : {}) }
   }
   if (/^\d$/.test(name)) {
     const vk = name.charCodeAt(0)
-    return { key: name, code: `Digit${name}`, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, text: name }
+    return { key: name, code: `Digit${name}`, windowsVirtualKeyCode: vk, text: name }
   }
-  if (name === ' ') return { key: name, code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32, text: name }
+  if (name === ' ') return { key: name, code: 'Space', windowsVirtualKeyCode: 32, text: name }
   return { key: name, code: '', text: name }
 }
 
