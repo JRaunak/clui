@@ -410,14 +410,19 @@ export class BrowserMcpServer {
       }
 
       case 'snapshot': {
-        const { list, shown } = await cdp.listInteractive()
+        const { list, shown, keys } = await cdp.listInteractive()
         const content: Content[] = []
         if (!shown) {
           const img = await wc.capturePage()
           if (!img.isEmpty()) content.push({ type: 'image', data: img.toPNG().toString('base64'), mimeType: 'image/png' })
         }
         const note = shown ? '\n\nNo screenshot: a saved password Clui filled is visible on the page.' : ''
-        content.push({ type: 'text', text: `${this.pageLine(handleId, tab, wc)}${note}\n\n${list || '(no interactive elements)'}` })
+        // Left to itself the model clicks an on-screen keyboard key by key, and parallel clicks land out of order.
+        const keyboard =
+          keys >= 10 && (await cdp.takesKeys())
+            ? '\n\nThis page reads keys typed on it and shows an on-screen keyboard: enter letters with press, the whole word and then Enter in one call, not by clicking key buttons.'
+            : ''
+        content.push({ type: 'text', text: `${this.pageLine(handleId, tab, wc)}${note}${keyboard}\n\n${list || '(no interactive elements)'}` })
         return { content }
       }
 

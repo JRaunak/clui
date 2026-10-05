@@ -38,7 +38,8 @@ const LIST_INTERACTIVE = `(() => {
     secrets.some((v) => (document.body?.innerText || '').includes(v)) ||
     [...document.querySelectorAll('input,textarea')].some((e) => e.type !== 'password' && vis(e) && secrets.some((v) => e.value.includes(v))))
   const list = els.map((e, i) => \`\${i + 1} \${e.getAttribute('role') || e.tagName.toLowerCase()} "\${scrub((e.getAttribute('aria-label') || e.innerText || (e.type === 'password' || window.__cluiFilled?.has(e) ? '' : e.value) || e.placeholder || '').trim()).slice(0, 80)}"\`).join('\\n')
-  return { list, shown }
+  const keys = els.filter((e) => (e.tagName === 'BUTTON' || e.getAttribute('role') === 'button') && /^\\S$/u.test(e.innerText.trim())).length
+  return { list, shown, keys }
 })()`
 
 export interface Box { x: number; y: number; password: boolean }
@@ -167,8 +168,26 @@ export class Cdp {
   }
 
   /** `shown`: a password autofill wrote is visible somewhere on the page. */
-  listInteractive(): Promise<{ list: string; shown: boolean }> {
-    return this.world<{ list: string; shown: boolean }>(LIST_INTERACTIVE)
+  /** keys counts single-character buttons, the shape of an on-screen keyboard or keypad. */
+  listInteractive(): Promise<{ list: string; shown: boolean; keys: number }> {
+    return this.world<{ list: string; shown: boolean; keys: number }>(LIST_INTERACTIVE)
+  }
+
+  /** Whether the page itself listens for key presses, as games and keypads do. Page script can't read listeners, so this asks the debugger. */
+  async takesKeys(): Promise<boolean> {
+    try {
+      for (const expression of ['window', 'document', 'document.body']) {
+        const { result } = (await this.send('Runtime.evaluate', { expression, objectGroup: 'clui-keys' })) as { result: { objectId?: string } }
+        if (!result.objectId) continue
+        const { listeners } = (await this.send('DOMDebugger.getEventListeners', { objectId: result.objectId })) as { listeners: { type: string }[] }
+        if (listeners.some((l) => l.type === 'keydown' || l.type === 'keypress')) return true
+      }
+      return false
+    } catch {
+      return false
+    } finally {
+      void this.send('Runtime.releaseObjectGroup', { objectGroup: 'clui-keys' }).catch(() => {})
+    }
   }
 
   boxOf(ref: number): Promise<Box | null> {
