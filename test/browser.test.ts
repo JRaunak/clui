@@ -1,6 +1,6 @@
 // Boundary: the site key decides which Gate and which saved login apply, and the one-time
 // code must match what an authenticator shows, so both are pinned here.
-import { siteKeyOf } from '../src/shared/browser.ts'
+import { localNetVerdict, siteKeyOf } from '../src/shared/browser.ts'
 import { totp } from '../src/main/browser/totp.ts'
 import { equal } from './support/harness.mjs'
 
@@ -12,6 +12,18 @@ equal(siteKeyOf('http://127.0.0.1:8080/a'), '127.0.0.1:8080', 'site: IP literal 
 equal(siteKeyOf('file:///etc/passwd'), null, 'site: file URLs have no site')
 equal(siteKeyOf('javascript:alert(1)'), null, 'site: javascript URLs have no site')
 equal(siteKeyOf('not a url'), null, 'site: garbage has no site')
+// Boundary: local network access is per site, asked only by a top frame, and an embedded frame
+// never rides on its page's grant.
+const decided = (m: Record<string, boolean>) => (site: string): boolean | undefined => m[site]
+const top = 'https://www.example.com/login'
+equal(JSON.stringify(localNetVerdict(top, true, 'https://www.example.com', decided({}))), JSON.stringify({ grant: false, ask: 'example.com' }), 'net: undecided top frame asks under the site key')
+equal(JSON.stringify(localNetVerdict(top, true, 'https://example.com', decided({ 'example.com': true }))), JSON.stringify({ grant: true, ask: null }), 'net: allowed top frame is granted')
+equal(JSON.stringify(localNetVerdict(top, true, 'https://example.com', decided({ 'example.com': false }))), JSON.stringify({ grant: false, ask: null }), 'net: blocked top frame is denied without asking')
+equal(JSON.stringify(localNetVerdict(top, false, 'https://example.com', decided({ 'example.com': true }))), JSON.stringify({ grant: true, ask: null }), 'net: same-site frame of an allowed page is granted')
+equal(JSON.stringify(localNetVerdict(top, false, 'https://evil.test', decided({ 'example.com': true, 'evil.test': true }))), JSON.stringify({ grant: false, ask: null }), 'net: cross-site frame is denied even when its own site is allowed')
+equal(JSON.stringify(localNetVerdict(top, false, 'https://example.com', decided({}))), JSON.stringify({ grant: false, ask: null }), 'net: a frame never asks')
+equal(JSON.stringify(localNetVerdict('https://a.test/', false, 'https://example.com', decided({ 'example.com': true }))), JSON.stringify({ grant: false, ask: null }), 'net: a frame is judged by the top site, not its own')
+equal(JSON.stringify(localNetVerdict('about:blank', true, 'null', decided({}))), JSON.stringify({ grant: false, ask: null }), 'net: an opaque origin has no site and never asks')
 // RFC 6238 appendix B: secret "12345678901234567890", T=59s gives 94287082 at 8 digits.
 equal(totp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', 59_000, 8), '94287082', 'totp: RFC 6238 vector')
 equal(totp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', 59_000), '287082', 'totp: six digits')
@@ -190,3 +202,23 @@ equal(siteFromInput('127.0.0.1:8080'), '127.0.0.1:8080', 'site input: IP with po
 equal(siteFromInput('not a site'), null, 'site input: words with spaces are not a site')
 equal(siteFromInput('intranet'), null, 'site input: a bare word is not a site')
 equal(siteFromInput('   '), null, 'site input: blank is not a site')
+
+// Boundary: browser-sites.json carries Claude's approvals and the pages' local network decisions
+// side by side; an older file loads unchanged and the new map never reads as an approved site.
+{
+  const { readFile: read } = await import('node:fs/promises')
+  const path = join(app.getPath('userData'), 'browser-sites.json')
+  await writeFile(path, JSON.stringify({ 'github.com': { approvedMs: 5 } }))
+  const sites = await import('../src/main/browser/sites.ts')
+  equal(await sites.listLocalNet().then(() => sites.localNetCached('github.com')), undefined, 'sites: an old file has no local network decisions')
+  await sites.decideLocalNet('example.com', true)
+  await sites.decideLocalNet('evil.test', false)
+  const onDisk = JSON.parse(await read(path, 'utf8'))
+  equal(JSON.stringify(onDisk['github.com']), '{"approvedMs":5}', 'sites: approvals keep their old shape')
+  equal(Object.keys(onDisk.localNetwork).sort().join(), 'evil.test,example.com', 'sites: decisions live under localNetwork')
+  equal((await sites.listSites()).map((s) => s.site).join(), 'github.com', 'sites: a decision is not an approval')
+  equal(`${sites.localNetCached('example.com')} ${sites.localNetCached('evil.test')}`, 'true false', 'sites: allow and block read back')
+  await sites.forgetLocalNet('example.com')
+  equal(sites.localNetCached('example.com'), undefined, 'sites: forget makes the site ask again')
+  equal((await sites.listLocalNet()).map((s) => s.site).join(), 'evil.test', 'sites: forget removes the row')
+}

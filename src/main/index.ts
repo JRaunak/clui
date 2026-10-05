@@ -51,7 +51,7 @@ import { BrowserManager } from './browser/manager'
 import { BrowserMcpServer } from './browser/mcp'
 import { Annotator } from './browser/annotate'
 import { WORLD } from './browser/cursor'
-import { approve as approveSite, listSites, removeSite } from './browser/sites'
+import { approve as approveSite, listLocalNet, listSites, removeSite } from './browser/sites'
 import { listLogins, removeLogin, saveLogin, vaultAvailable } from './browser/vault'
 import { siteFromInput, type ClearBrowsingData, type DriveState, type PaneBounds, type TabActor } from '../shared/browser'
 import type { CluiSettings, SettingsKey } from '../shared/settings'
@@ -514,6 +514,11 @@ function registerIpc(): void {
   )
   handle(IpcChannels.browserListSites, () => listSites())
   handle(IpcChannels.browserRemoveSite, (_e, site: string) => removeSite(site))
+  handle(IpcChannels.browserLocalNetDecide, (_e, site: string, allow: boolean) =>
+    typeof site === 'string' && typeof allow === 'boolean' ? browser.localNetDecide(site, allow) : undefined
+  )
+  handle(IpcChannels.browserListLocalNet, () => listLocalNet())
+  handle(IpcChannels.browserForgetLocalNet, (_e, site: string) => (typeof site === 'string' ? browser.localNetForget(site) : undefined))
   handle(IpcChannels.browserListLogins, () => listLogins())
   handle(IpcChannels.browserSaveLogin, (_e, input: Parameters<typeof saveLogin>[0]) => saveLogin(input))
   handle(IpcChannels.browserRemoveLogin, (_e, id: string) => removeLogin(id))

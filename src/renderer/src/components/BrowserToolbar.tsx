@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { FieldError } from './LoginFields'
 import { DRIVING_NOTE, useActive, useSession, viewedTabOf, type BrowserTabs } from '../store'
 import type { DriveState } from '../../../shared/browser'
 import { CAP_NOTE, MAX_PINS } from '../../../shared/annotate'
@@ -7,6 +8,9 @@ import { PANE_BTN } from './Stage'
 
 // The toolbar sits over the pane's flat floor, where the solid form is pixel-identical and skips a filter.
 const SOLID = { ['--control-material' as string]: 'solid' } as CSSProperties
+
+const STRIP_BTN =
+  'flex h-7 shrink-0 items-center justify-center rounded-md border border-control-edge bg-control px-2.5 text-label text-content transition-colors pointer-fine:hover:bg-control-hover active:bg-border-strong'
 
 const ANNOUNCE: Partial<Record<DriveState, string>> = {
   user: 'You took over. Claude is paused.',
@@ -188,6 +192,57 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
  * between tabs moves the page once rather than on every switch. The live region sits outside the
  * strip so it's still mounted to say "finished" once the strip has gone.
  */
+/** A page's ask to reach the local network. Ignoring it leaves the page denied, so it has no close. */
+export function BrowserNetStrip(): JSX.Element | null {
+  const site = useActive((s) => viewedTabOf(s?.browser)?.netAsk ?? null)
+  const decide = useSession((s) => s.decideLocalNet)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const refocus = useRef(false)
+  const [failed, setFailed] = useState<string | null>(null)
+  useLayoutEffect(() => {
+    if (site || !refocus.current) return
+    refocus.current = false
+    document.querySelector<HTMLElement>('[data-ui="browser-url"]')?.focus()
+  }, [site])
+  if (!site) return null
+  const act = async (allow: boolean): Promise<void> => {
+    refocus.current = !!rootRef.current?.contains(document.activeElement)
+    setFailed(null)
+    if (!(await decide(site, allow))) {
+      refocus.current = false
+      setFailed(site)
+    }
+  }
+  return (
+    <div
+      ref={rootRef}
+      role="region"
+      aria-label="Local network request"
+      data-ui="browser-net-strip"
+      className="flex shrink-0 items-center gap-2 border-b border-border bg-tool px-3 py-1.5"
+    >
+      <div className="flex min-w-0 flex-1 flex-col">
+        <p className="break-words text-label font-medium text-content">
+          <span className="font-mono text-code">{site}</span> wants to connect to apps on this Mac and devices on your network
+        </p>
+        <p className="text-label text-dim">
+          Device sign-in and local dev tools need this. Allow only sites you trust, since a site could use it to find
+          devices on your network.
+        </p>
+        {failed === site && <FieldError id="browser-net-err" text="Couldn't save your choice. Try again." />}
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <button type="button" data-ui="browser-net-block" onClick={() => void act(false)} className={STRIP_BTN}>
+          Block
+        </button>
+        <button type="button" data-ui="browser-net-allow" onClick={() => void act(true)} className={STRIP_BTN}>
+          Allow
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function BrowserDriveStrip(): JSX.Element {
   const viewed = useActive((s) => s?.browser?.viewed ?? 0)
   const drive = useActive((s) => viewedTabOf(s?.browser)?.drive ?? 'idle')
@@ -312,7 +367,7 @@ export function BrowserDriveStrip(): JSX.Element {
                   keepFocus('[data-ui="browser-stop"]')
                   viewTab(shown.recent)
                 }}
-                className="flex h-7 shrink-0 items-center justify-center rounded-md border border-control-edge bg-control px-2.5 text-label text-content transition-colors pointer-fine:hover:bg-control-hover active:bg-border-strong"
+                className={STRIP_BTN}
               >
                 Show tab {shown.recent}
               </button>

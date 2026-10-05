@@ -18,6 +18,8 @@ export interface BrowserState {
   still: string | null
   /** A sign-in Clui can't complete (security keys, device-bound passkeys). */
   loginWall: 'hardware' | null
+  /** The site whose page asked to reach the local network, until the user decides or the tab leaves that site. */
+  netAsk: string | null
 }
 
 export type LoginRequest =
@@ -53,6 +55,30 @@ export interface PaneBounds { x: number; y: number; width: number; height: numbe
 export interface SavedLoginInfo { id: string; site: string; username: string; hasTotp: boolean; createdMs: number }
 
 export interface ApprovedSite { site: string; approvedMs: number }
+
+/** What a page may reach on this Mac and its network. Separate from ApprovedSite, which is what Claude may act on. */
+export interface LocalNetSite { site: string; allow: boolean; atMs: number }
+
+/** Chromium's names for local network access across versions; one decision covers all three. */
+export const LOCAL_NET_PERMS: ReadonlySet<string> = new Set(['local-network-access', 'loopback-network', 'local-network'])
+
+/**
+ * A local-network permission check or request. `decision` is the stored answer for a site: true allow,
+ * false block, undefined not asked. Only a top frame asks, and a frame is granted only when it's the same
+ * site as an allowed top page, so an embedded third party never rides on the page's grant.
+ */
+export function localNetVerdict(
+  topUrl: string,
+  isMainFrame: boolean,
+  frameUrl: string,
+  decision: (site: string) => boolean | undefined
+): { grant: boolean; ask: string | null } {
+  const top = siteKeyOf(isMainFrame ? frameUrl : topUrl)
+  if (!top) return { grant: false, ask: null }
+  const d = decision(top)
+  if (isMainFrame) return { grant: d === true, ask: d === undefined ? top : null }
+  return { grant: d === true && siteKeyOf(frameUrl) === top, ask: null }
+}
 
 /** What Clear browsing data would remove, shared by every session's page. */
 export interface BrowsingDataInfo { cookieSites: number; cacheBytes: number; openPages: number }

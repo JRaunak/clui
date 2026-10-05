@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import type { ApprovedSite, SavedLoginInfo } from '../../../../shared/browser'
+import type { ApprovedSite, LocalNetSite, SavedLoginInfo } from '../../../../shared/browser'
 import { ToastStack } from '../Toast'
 import { FieldError, LOGIN_INPUT } from '../LoginFields'
 import { IconEdit, IconPlus, IconTrash } from '../Icon'
@@ -38,9 +38,11 @@ const bySiteAge = (a: ApprovedSite, b: ApprovedSite): number => b.approvedMs - a
 const byLoginAge = (a: SavedLoginInfo, b: SavedLoginInfo): number => b.createdMs - a.createdMs || a.site.localeCompare(b.site)
 const siteKey = (s: ApprovedSite): string => `site:${s.site}`
 const loginKey = (l: SavedLoginInfo): string => `login:${l.id}`
+const netKey = (s: LocalNetSite): string => `net:${s.site}`
 
 /** `hides` are the row keys the removal takes out of view, which are also their Remove buttons' focus keys. */
-type PendingRemoval = { id: string; hides: string[]; title: string; commit: () => Promise<void> }
+/** `verb` is the toast's quiet suffix, so it matches the button that removed the row. */
+type PendingRemoval = { id: string; hides: string[]; title: string; verb?: string; commit: () => Promise<void> }
 type FocusRequest = { key: string; fallback?: string; reveal?: boolean; top?: boolean }
 
 /** The browser switch, approved sites and saved logins. Changes go straight to main without waiting
@@ -60,6 +62,7 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
     })
   }
   const [sites, setSites] = useState<ApprovedSite[]>([])
+  const [netSites, setNetSites] = useState<LocalNetSite[]>([])
   const [logins, setLogins] = useState<SavedLoginInfo[]>([])
   const [vault, setVault] = useState<boolean | null>(null)
   const [form, setForm] = useState<{ edit: SavedLoginInfo | null; opener: string } | null>(null)
@@ -84,8 +87,9 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   }, [])
 
   const relist = useCallback(async () => {
-    const [s, v] = await Promise.all([window.clui.browserListSites(), window.clui.browserVaultAvailable()])
+    const [s, n, v] = await Promise.all([window.clui.browserListSites(), window.clui.browserListLocalNet(), window.clui.browserVaultAvailable()])
     setSites(s.sort(bySiteAge))
+    setNetSites(n)
     setVault(v)
     // Listing logins throws without Keychain access, which the unavailable line already explains.
     setLogins(v ? (await window.clui.browserListLogins().catch(() => [])).sort(byLoginAge) : [])
@@ -149,6 +153,7 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   const loginMatch = (l: SavedLoginInfo): boolean => has(l.site, loginQuery) || has(l.username, loginQuery)
   const liveSites = sites.filter((s) => !hidden.has(siteKey(s)))
   const liveLogins = logins.filter((l) => !hidden.has(loginKey(l)))
+  const netRows = netSites.filter((s) => !hidden.has(netKey(s)))
   const siteRows = liveSites.filter(siteMatch)
   const loginRows = liveLogins.filter(loginMatch)
   const sitesWindowed = liveSites.length >= WINDOW_AT || !!siteQuery
@@ -166,6 +171,14 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
       title: s.site,
       commit: () => window.clui.browserRemoveSite(s.site)
     }, `Removed ${s.site}.`)
+  const forgetNet = (s: LocalNetSite, i: number): void =>
+    removeRow(netRows.map(netKey), i, 'net-h3', {
+      id: netKey(s),
+      hides: [netKey(s)],
+      title: s.site,
+      verb: 'forgotten',
+      commit: () => window.clui.browserForgetLocalNet(s.site)
+    }, `Forgot ${s.site}.`)
   const removeLogin = (l: SavedLoginInfo, i: number): void =>
     removeRow(loginRows.map(loginKey), i, 'logins-h3', {
       id: loginKey(l),
@@ -195,9 +208,10 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
     const el = document.activeElement
     if (!p || !el?.closest('[data-toast-id]') || !el.matches(':focus-visible')) return
     const isSite = p.id.startsWith('site')
-    const visible = isSite ? sites.filter(siteMatch).map(siteKey) : logins.filter(loginMatch).map(loginKey)
+    const isNet = p.id.startsWith('net:')
+    const visible = isNet ? netSites.map(netKey) : isSite ? sites.filter(siteMatch).map(siteKey) : logins.filter(loginMatch).map(loginKey)
     const key = visible.find((k) => p.hides.includes(k))
-    setFocus(key ? { key, reveal: true } : { key: isSite ? 'sites-filter' : 'logins-filter' })
+    setFocus(key ? { key, reveal: true } : { key: isNet ? 'net-h3' : isSite ? 'sites-filter' : 'logins-filter' })
   }
 
   const openForm = (edit: SavedLoginInfo | null, opener: string): void => {
@@ -307,6 +321,51 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
                     aria-label={`Remove ${s.site}`}
                     className={`${ICON_BTN} ${DANGER_HOVER} ml-auto`}
                     onClick={() => removeSite(s, i)}
+                  >
+                    <IconTrash className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="flex flex-col gap-2" aria-labelledby={`${uid}-net`} aria-describedby={`${uid}-net-hint`}>
+          <div className="flex flex-col">
+            <div className="flex min-h-7 items-center gap-2">
+              <h3
+                id={`${uid}-net`}
+                tabIndex={-1}
+                data-focus="net-h3"
+                className="text-ui font-semibold text-content focus-visible:outline-none"
+              >
+                Local network access
+              </h3>
+              <span className="text-meta text-dim">{netRows.length}</span>
+            </div>
+            <p id={`${uid}-net-hint`} className="text-meta text-dim">
+              What pages may reach on this Mac and your network. Separate from what Claude may do.
+            </p>
+          </div>
+          {!netRows.length ? (
+            <p className="text-meta text-dim">No sites have asked. Clui asks you the first time one does.</p>
+          ) : (
+            <ul className="flex flex-col">
+              {netRows.map((s, i) => (
+                <li key={s.site} className="flex h-9 items-center gap-3">
+                  <span title={s.site} className="min-w-0 truncate font-mono text-code text-content">
+                    {s.site}
+                  </span>
+                  <span className="shrink-0 text-meta text-dim">
+                    {s.allow ? 'Allowed' : 'Blocked'} {approvedDate(s.atMs)}
+                  </span>
+                  <button
+                    type="button"
+                    data-focus={netKey(s)}
+                    title="Forget site"
+                    aria-label={`Forget ${s.site}`}
+                    className={`${ICON_BTN} ${DANGER_HOVER} ml-auto`}
+                    onClick={() => forgetNet(s, i)}
                   >
                     <IconTrash className="h-3.5 w-3.5" />
                   </button>
@@ -440,7 +499,7 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
       </Pane>
 
       <ToastStack
-        items={pending.map((p) => ({ id: p.id, title: p.title, suffix: 'removed' }))}
+        items={pending.map((p) => ({ id: p.id, title: p.title, suffix: p.verb ?? 'removed' }))}
         durationMs={UNDO_MS}
         announce={announce}
         onUndo={undo}

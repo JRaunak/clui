@@ -580,6 +580,9 @@ interface SessionStore {
   clearAnnotations: (handleId: string) => void
   /** Answer a sign-in Gate. The verdict goes straight to main. */
   respondBrowserLogin: (requestId: string, verdict: BrowserLoginVerdict) => Promise<void>
+  /** Answers a page's local network ask; the strip goes once main clears the tab's netAsk. */
+  /** False when the choice couldn't be saved: the strip stays up and says so. */
+  decideLocalNet: (site: string, allow: boolean) => Promise<boolean>
   /** Answer an MCP elicitation Gate. */
   respondElicitation: (requestId: string, response: ElicitationResponse) => Promise<void>
   /** Set the active session's browser pane. Opening it replaces a subagent view. Half or full is an
@@ -1119,7 +1122,8 @@ const BLANK_BROWSER: BrowserState = {
   drive: 'idle',
   suspended: false,
   still: null,
-  loginWall: null
+  loginWall: null,
+  netAsk: null
 }
 
 let announceSeq = 0
@@ -2525,8 +2529,12 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (!b || !cur) return {}
           const tabs = b.tabs.map((t) => (t === cur ? { ...t, ...e.patch } : t))
           const next = patchSlice(s, handleId, { browser: { ...b, tabs } })
+          if (e.tab !== b.viewed) return next
+          // The strip takes no focus when it appears, so it's said instead.
+          const ask = e.patch.netAsk
+          if (ask && ask !== cur.netAsk) return { ...next, browserAnnounce: toggled(`${ask} asks to use your local network. Allow or Block above the page.`) }
           // The wall hides the page mid-drive, so it has to be said as well as shown.
-          if (e.tab !== b.viewed || e.patch.loginWall !== 'hardware' || cur.loginWall === 'hardware') return next
+          if (e.patch.loginWall !== 'hardware' || cur.loginWall === 'hardware') return next
           const text = 'This sign-in needs a hardware key or passkey. Open it in your regular browser.'
           return { ...next, browserAnnounce: toggled(text) }
         })
@@ -2629,6 +2637,20 @@ export const useSession = create<SessionStore>((set, get) => ({
       })
     )
     await window.clui.browserLoginVerdict(active.handleId, requestId, verdict)
+  },
+
+  decideLocalNet: async (site, allow) => {
+    try {
+      await window.clui.browserLocalNetDecide(site, allow)
+    } catch {
+      set(() => ({ browserAnnounce: toggled(`Couldn't save your choice for ${site}. Try again.`) }))
+      return false
+    }
+    const text = allow
+      ? `Allowed ${site} to use your local network. Reloading.`
+      : `Blocked ${site} from your local network. Change this in Settings, Browser.`
+    set(() => ({ browserAnnounce: toggled(text) }))
+    return true
   },
 
   respondElicitation: async (requestId, response) => {

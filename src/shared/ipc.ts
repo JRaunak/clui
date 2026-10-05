@@ -14,7 +14,7 @@ import type {
   WorkspaceOption
 } from './sessions'
 import type { ConfigBundle } from './config'
-import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, PaneBounds, SavedLoginInfo } from './browser'
+import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, LocalNetSite, PaneBounds, SavedLoginInfo } from './browser'
 import type { AnnotateEvent } from './annotate'
 import type {
   CluiSettings,
@@ -309,6 +309,11 @@ export interface CluiApi {
   ) => Promise<void>
   browserListSites: () => Promise<ApprovedSite[]>
   browserRemoveSite: (site: string) => Promise<void>
+  /** Answers a tab's local network ask for `site`; ignored when no tab is asking. Allow reloads the site's pages. */
+  browserLocalNetDecide: (site: string, allow: boolean) => Promise<void>
+  browserListLocalNet: () => Promise<LocalNetSite[]>
+  /** The site's next top-frame check asks again. */
+  browserForgetLocalNet: (site: string) => Promise<void>
   browserListLogins: () => Promise<SavedLoginInfo[]>
   browserSaveLogin: (input: { id?: string; site: string; username: string; password?: string; totpSeed?: string }) => Promise<SavedLoginInfo>
   browserRemoveLogin: (id: string) => Promise<void>
@@ -416,6 +421,9 @@ export const IpcChannels = {
   browserLoginVerdict: 'clui:browserLoginVerdict',
   browserListSites: 'clui:browserListSites',
   browserRemoveSite: 'clui:browserRemoveSite',
+  browserLocalNetDecide: 'clui:browserLocalNetDecide',
+  browserListLocalNet: 'clui:browserListLocalNet',
+  browserForgetLocalNet: 'clui:browserForgetLocalNet',
   browserListLogins: 'clui:browserListLogins',
   browserSaveLogin: 'clui:browserSaveLogin',
   browserRemoveLogin: 'clui:browserRemoveLogin',

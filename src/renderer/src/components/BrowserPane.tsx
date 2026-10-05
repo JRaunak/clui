@@ -4,7 +4,7 @@ import { onOcclusion } from '../lib/browserOcclusion'
 import { getStage } from '../lib/stage'
 import { siteKeyOf } from '../../../shared/browser'
 import { PaneHeader, PANE_BTN } from './Stage'
-import { BrowserDriveStrip, BrowserToolbar } from './BrowserToolbar'
+import { BrowserDriveStrip, BrowserNetStrip, BrowserToolbar } from './BrowserToolbar'
 import { BrowserTabs } from './BrowserTabs'
 import { Button } from './Button'
 import { IconExternal, IconSettings } from './Icon'
@@ -110,6 +110,7 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
       </PaneHeader>
       <div aria-hidden="true" className="shrink-0" style={{ height: 'var(--top-h, 0px)' }} />
       <BrowserToolbar handleId={handleId} />
+      <BrowserNetStrip />
       <BrowserDriveStrip key={handleId} />
       <div data-ui="browser-pane" ref={areaRef} className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-bg">
         {still && <img src={still} alt="" className="absolute inset-0 h-full w-full object-cover object-left-top" />}

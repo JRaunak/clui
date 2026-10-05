@@ -6,6 +6,8 @@
  */
 import { session, WebContentsView, type BrowserWindow, type WebContents } from 'electron'
 import {
+  LOCAL_NET_PERMS,
+  localNetVerdict,
   siteKeyOf,
   type BrowserEvent,
   type BrowserState,
@@ -19,7 +21,7 @@ import {
 import type { DomainEvent } from '../../shared/events'
 import { Cdp } from './cdp'
 import { hideCursor, injectCursor, restCursor } from './cursor'
-import { approve, isApproved, isApprovedCached, listSites } from './sites'
+import { approve, decideLocalNet, forgetLocalNet, isApproved, isApprovedCached, listSites, localNetCached } from './sites'
 import { IpcChannels, type CluiApi } from '../../shared/ipc'
 import { saveLogin } from './vault'
 
@@ -78,6 +80,8 @@ interface Tab {
   /** Resolves the wait for the renderer's next bounds report. */
   onBounds: (() => void) | null
   closers: Set<(by: TabActor) => void>
+  /** Sites this tab has asked about local network access, so a page that re-checks doesn't ask again. */
+  netAsked: Set<string>
 }
 
 interface Entry {
@@ -114,7 +118,8 @@ function initialState(): BrowserState {
     drive: 'idle',
     suspended: false,
     still: null,
-    loginWall: null
+    loginWall: null,
+    netAsk: null
   }
 }
 
@@ -144,8 +149,12 @@ export class BrowserManager {
     this.window = window
     this.background = background
     const ses = session.fromPartition(PARTITION)
-    ses.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'clipboard-sanitized-write' || perm === 'fullscreen'))
-    ses.setPermissionCheckHandler((_wc, perm) => perm === 'clipboard-sanitized-write' || perm === 'fullscreen')
+    ses.setPermissionRequestHandler((wc, perm, cb, d) =>
+      cb(LOCAL_NET_PERMS.has(perm) ? this.localNet(wc, d.isMainFrame, d.requestingUrl) : perm === 'clipboard-sanitized-write' || perm === 'fullscreen')
+    )
+    ses.setPermissionCheckHandler((wc, perm, origin, d) =>
+      LOCAL_NET_PERMS.has(perm) ? this.localNet(wc, d.isMainFrame, origin) : perm === 'clipboard-sanitized-write' || perm === 'fullscreen'
+    )
     ses.on('will-download', (_e, item) => item.cancel())
     // Warm the approvals cache so the synchronous in-page navigation guard can read it.
     void listSites()
@@ -185,7 +194,8 @@ export class BrowserManager {
       agentActingUntil: 0,
       stillTimer: null,
       onBounds: null,
-      closers: new Set()
+      closers: new Set(),
+      netAsked: new Set()
     }
     e.tabs.push(t)
     return t
@@ -302,6 +312,7 @@ export class BrowserManager {
     wc.on('did-navigate', (_ev, url) => {
       navigated(url)
       if (mine() && t.state.loginWall) this.patch(handleId, t, { loginWall: null })
+      if (mine() && t.state.netAsk && t.state.netAsk !== siteKeyOf(url)) this.patch(handleId, t, { netAsk: null })
       void injectCursor(wc)
     })
     wc.on('did-navigate-in-page', (_ev, url, isMainFrame) => isMainFrame && navigated(url))
@@ -699,6 +710,36 @@ export class BrowserManager {
       if (t) this.setDrive(handleId, t, 'user')
     }
     a.resolve(verdict)
+  }
+
+  // --- local network access ---
+
+  /** Chromium checks synchronously, so the decision comes from the warm cache; a cold one denies without asking. */
+  private localNet(wc: WebContents | null, isMainFrame: boolean, frameUrl: string): boolean {
+    const hit = wc && this.liveTabs().find(([, , w]) => w === wc)
+    if (!hit) return false
+    const [handleId, t] = hit
+    const { grant, ask } = localNetVerdict(wc.getURL(), isMainFrame, frameUrl, (site) => localNetCached(site) ?? undefined)
+    // A cold cache can't tell a site never asked from one not read yet.
+    if (ask && localNetCached(ask) !== null && !t.netAsked.has(ask)) {
+      t.netAsked.add(ask)
+      this.patch(handleId, t, { netAsk: ask })
+    }
+    return grant
+  }
+
+  /** Answers an open ask only, so nothing but the strip records a decision. Allow reloads the site's pages to re-check. */
+  async localNetDecide(site: string, allow: boolean): Promise<void> {
+    const asking = [...this.entries].flatMap(([h, e]) => e.tabs.filter((t) => t.state.netAsk === site).map((t) => [h, t] as const))
+    if (!asking.length) return
+    await decideLocalNet(site, allow)
+    for (const [handleId, t] of asking) this.patch(handleId, t, { netAsk: null })
+    if (allow) for (const [, , wc] of this.liveTabs()) if (siteKeyOf(wc.getURL()) === site) wc.reload()
+  }
+
+  async localNetForget(site: string): Promise<void> {
+    await forgetLocalNet(site)
+    for (const e of this.entries.values()) for (const t of e.tabs) t.netAsked.delete(site)
   }
 
   // --- drive state and tool calls ---
