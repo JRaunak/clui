@@ -120,6 +120,14 @@ export function Stage({
   useEffect(() => {
     if (!kind) setFocusInSecondary(false)
   }, [kind])
+  const hasBrowser = useActive((s) => !!s?.browser)
+  // The native menu can't read the renderer, so its pane and browser items follow what this Stage shows.
+  useEffect(() => {
+    window.clui.menuState({
+      browser: !hasBrowser ? 'none' : browserOpen ? 'shown' : 'hidden',
+      pane: !kind || !wide ? 'none' : state === 'full' ? 'full' : 'split'
+    })
+  }, [hasBrowser, browserOpen, kind, wide, state])
 
   const pane = useMemo<PaneApi>(
     () => ({

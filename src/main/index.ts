@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto'
 import {
   IpcChannels,
   type EffortCaps,
+  type MenuState,
   type PermissionModeChoice,
   type PermissionVerdict,
   type StartSessionOptions,
@@ -99,6 +100,8 @@ function resolveTheme(): 'dark' | 'light' {
  * and standard window commands keep working in text fields (a custom menu that
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
+let menuState: MenuState = { browser: 'none', pane: 'none' }
+
 function buildMenu(): void {
   const send = (action: string): void => {
     const win = BrowserWindow.getFocusedWindow() ?? mainWindow
@@ -143,8 +146,18 @@ function buildMenu(): void {
         { label: 'Command Palette…', accelerator: 'CmdOrCtrl+Shift+K', click: () => send('open-command-palette') },
         { label: 'Close Session', accelerator: 'CmdOrCtrl+W', click: () => send('close-session') },
         // A native accelerator, not a DOM key, so it still fires while focus sits inside a native view.
-        { label: 'Expand or Split Pane', accelerator: 'Alt+CmdOrCtrl+B', click: () => send('toggle-pane-size') },
-        { label: 'Show Browser', accelerator: 'CmdOrCtrl+Shift+B', click: () => send('browser-toggle') },
+        {
+          label: menuState.pane === 'full' ? 'Split Pane' : 'Expand Pane',
+          accelerator: 'Alt+CmdOrCtrl+B',
+          enabled: menuState.pane !== 'none',
+          click: () => send('toggle-pane-size')
+        },
+        {
+          label: menuState.browser === 'shown' ? 'Hide Browser' : 'Show Browser',
+          accelerator: 'CmdOrCtrl+Shift+B',
+          enabled: menuState.browser !== 'none',
+          click: () => send('browser-toggle')
+        },
         { label: 'Stop Browser Agent', accelerator: 'CmdOrCtrl+.', click: () => send('browser-stop') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
         { type: 'separator' },
@@ -448,6 +461,11 @@ function registerIpc(): void {
     disposeBrowser(handleId)
   })
 
+  ipcMain.on(IpcChannels.menuState, (_e, next: MenuState) => {
+    if (next.browser === menuState.browser && next.pane === menuState.pane) return
+    menuState = next
+    buildMenu()
+  })
   ipcMain.on(IpcChannels.browserSetBounds, (e, handleId: string, b: PaneBounds | null) => {
     if (fromTrustedFrame(e)) browser.setBounds(handleId, b)
   })
