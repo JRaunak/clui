@@ -48,6 +48,7 @@ import { readCliSettings } from './settings/cli-settings'
 import { listModels } from './models/list'
 import { BrowserManager } from './browser/manager'
 import { BrowserMcpServer } from './browser/mcp'
+import { Annotator } from './browser/annotate'
 import { WORLD } from './browser/cursor'
 import { approve as approveSite, listSites, removeSite } from './browser/sites'
 import { listLogins, removeLogin, saveLogin, vaultAvailable } from './browser/vault'
@@ -159,6 +160,7 @@ function buildMenu(): void {
           click: () => send('browser-toggle')
         },
         { label: 'Stop Browser Agent', accelerator: 'CmdOrCtrl+.', click: () => send('browser-stop') },
+        { label: 'Annotate', accelerator: 'CmdOrCtrl+Shift+A', click: () => send('browser-annotate') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
         { type: 'separator' },
         ...(isMac ? ([{ role: 'close' }] as MenuItemConstructorOptions[]) : ([{ role: 'quit' }] as MenuItemConstructorOptions[]))
@@ -268,8 +270,11 @@ function createWindow(): void {
 function registerIpc(): void {
   const browser = new BrowserManager(() => mainWindow, () => THEME_BG[resolveTheme()])
   const mcp = new BrowserMcpServer(browser)
+  const annotator = new Annotator(browser, () => mainWindow)
+  browser.onLeave = (handleId, tab, why) => annotator.leave(handleId, tab, why)
   browserManager = browser
   const disposeBrowser = (handleId: string): void => {
+    annotator.dispose(handleId)
     browser.dispose(handleId)
     mcp.revoke(handleId)
   }
@@ -297,6 +302,15 @@ function registerIpc(): void {
         },
         closeTab: (handleId: string, tab: number, by: TabActor) => browser.closeTab(handleId, tab, by),
         setDrive: (handleId: string, tab: number, drive: DriveState) => browser.setTabDrive(handleId, tab, drive),
+        click: (handleId: string, x: number, y: number, tab?: number) => browser.page(handleId, tab ?? browser.tabsOf(handleId)?.viewed ?? 1)?.cdp.click(x, y),
+        hover: (handleId: string, x: number, y: number, tab?: number) => browser.page(handleId, tab ?? browser.tabsOf(handleId)?.viewed ?? 1)?.cdp.hover(x, y),
+        // Native input, unlike CDP's: only it raises before-input-event, as the user's keys do.
+        key: (handleId: string, key: string, tab?: number) => {
+          const wc = browser.page(handleId, tab ?? browser.tabsOf(handleId)?.viewed ?? 1)?.wc
+          wc?.sendInputEvent({ type: 'keyDown', keyCode: key })
+          wc?.sendInputEvent({ type: 'keyUp', keyCode: key })
+        },
+        annotated: (handleId: string, tab: number) => annotator.count(handleId, tab),
         suspend: (handleId: string, tab: number) => browser.suspendTab(handleId, tab),
         tabs: (handleId: string) =>
           browser.tabsOf(handleId)?.tabs.map(({ id, url, title, drive, suspended, attached, parked }) => ({ id, url, title, drive, suspended, attached, parked })) ?? null,
@@ -484,6 +498,11 @@ function registerIpc(): void {
   handle(IpcChannels.browserDrive, (_e, handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset', tab?: number) =>
     browser.drive(handleId, action, tab)
   )
+  handle(IpcChannels.browserAnnotate, (_e, handleId: string, tab: number, on: boolean) =>
+    on === true ? annotator.start(handleId, tab) : annotator.stop(handleId, 'user')
+  )
+  handle(IpcChannels.browserAnnotateRemove, (_e, handleId: string, id: number) => annotator.remove(handleId, id))
+  handle(IpcChannels.browserAnnotateClear, (_e, handleId: string) => annotator.clear(handleId))
   handle(IpcChannels.browserSiteVerdict, (_e, handleId: string, requestId: string, allow: boolean) =>
     browser.siteVerdict(handleId, requestId, allow)
   )

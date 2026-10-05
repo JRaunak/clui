@@ -24,6 +24,7 @@ import type { CluiApi, EffortCaps, PermissionModeChoice, PermissionVerdict, Wire
 import { siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
 import { clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
+import { CAP_NOTE, pinWords, clipName, messageGist, type AnnotateEvent, type AnnotationPin } from '../../shared/annotate'
 import type { Via } from './lib/motion'
 
 export type SettingsSection = 'general' | 'sessions' | 'browser'
@@ -317,6 +318,25 @@ export interface PerSessionState {
   browser: BrowserTabs | null
   /** This session's browser is showing in the right sidebar. Its size is the app-wide `browserPaneFull`. */
   browserOpen: boolean
+  annotate: AnnotateDraft
+}
+
+/** Elements pinned for the next message. `tab` is the tab being annotated now; `note` replaces the status
+ *  line's hint after a refused pick, until the next pick. */
+export interface AnnotateDraft {
+  tab: number | null
+  pins: AnnotationPin[]
+  note: string | null
+}
+
+const IDLE_ANNOTATE: AnnotateDraft = { tab: null, pins: [], note: null }
+
+export const DRIVING_NOTE = "Annotate when it's done."
+
+const REFUSED: Record<Extract<AnnotateEvent, { type: 'refused' }>['why'], string> = {
+  password: "Password fields can't be annotated.",
+  cap: CAP_NOTE,
+  failed: "That element can't be annotated."
 }
 
 /** A session's browser tabs. A closed tab is one whose id is no longer in `tabs`. */
@@ -553,6 +573,11 @@ interface SessionStore {
   closeSubagentView: () => void
   /** Route one browser event from main into its session's slice. */
   applyBrowserEvent: (handleId: string, e: BrowserEvent) => void
+  applyAnnotateEvent: (handleId: string, e: AnnotateEvent) => void
+  /** Annotate on or off in the active session's viewed tab; refused while Claude drives it. */
+  toggleAnnotate: () => void
+  removeAnnotation: (id: number) => void
+  clearAnnotations: (handleId: string) => void
   /** Answer a sign-in Gate. The verdict goes straight to main. */
   respondBrowserLogin: (requestId: string, verdict: BrowserLoginVerdict) => Promise<void>
   /** Set the active session's browser pane. Opening it replaces a subagent view. Half or full is an
@@ -592,7 +617,7 @@ export function activeSlice(store: SessionStore): PerSessionState | null {
  *  (truncated), else 'Untitled'. One derivation so the footer and the sidebar row can't drift. */
 export function sessionDisplayTitle(slice: Pick<PerSessionState, 'title' | 'messages'> | null): string {
   if (!slice) return 'Untitled'
-  const firstUser = slice.messages.find((m) => m.role === 'user')?.text.trim()
+  const firstUser = messageGist(slice.messages.find((m) => m.role === 'user')?.text ?? '').trim()
   return slice.title ?? (firstUser ? firstUser.slice(0, 80) : 'Untitled')
 }
 
@@ -1010,7 +1035,8 @@ async function beginSession(
     browser: browser
       ? { tabs: [{ id: 1, ...BLANK_BROWSER }], viewed: 1, multi: false, toolTabs: {}, enter: [], announce: '' }
       : null,
-    browserOpen: false
+    browserOpen: false,
+    annotate: IDLE_ANNOTATE
   })
 }
 
@@ -2629,6 +2655,77 @@ export const useSession = create<SessionStore>((set, get) => ({
     await window.clui.browserDrive(active.handleId, action, all ? undefined : active.browser.viewed)
     // Halt the turn too, or Claude reads the stop text and tries another route.
     if (action === 'stop') await get().interrupt()
+  },
+
+  applyAnnotateEvent: (handleId, e) => {
+    set((s) => {
+      const a = s.sessions[handleId]?.annotate
+      if (!a) return {}
+      const put = (next: Partial<AnnotateDraft>, say: string): Partial<SessionStore> => ({
+        ...patchSlice(s, handleId, { annotate: { ...a, ...next } }),
+        browserAnnounce: toggled(say)
+      })
+      switch (e.type) {
+        case 'on':
+          return put({ tab: e.tab, note: null }, 'Annotate on.')
+        case 'off': {
+          const n = a.pins.length
+          const say =
+            e.why === 'driving' ? 'Annotate off, Claude is using this tab.' : n ? `Annotate off. ${n} element${n === 1 ? '' : 's'} in the composer.` : 'Annotate off.'
+          return put({ tab: null, note: null }, say)
+        }
+        case 'pinned': {
+          const { kind, name } = pinWords(e.pin.target)
+          const n = a.pins.length + 1
+          return put({ pins: [...a.pins, e.pin], note: null }, `Pinned ${n}: ${kind}${name ? ` ${clipName(name)}` : ''}.`)
+        }
+        case 'refused':
+          return put({ note: e.why === 'cap' ? null : REFUSED[e.why] }, REFUSED[e.why])
+      }
+    })
+    // A refusal note gives way to the hint after a few seconds (the next pin clears it sooner): Chromium's
+    // inspect mode reports no hover, so moving on can't be seen.
+    if (e.type === 'refused' && e.why !== 'cap') {
+      const note = REFUSED[e.why]
+      setTimeout(() => {
+        const a = get().sessions[handleId]?.annotate
+        if (a?.note === note) set((s) => patchSlice(s, handleId, { annotate: { ...a, note: null } }))
+      }, 3000)
+    }
+  },
+
+  toggleAnnotate: () => {
+    const active = activeSlice(get())
+    const tab = viewedTabOf(active?.browser)
+    if (!active || !tab) return
+    if (tab.drive === 'driving') {
+      // A shortcut that does nothing reads as broken, so say why, and leave the note on the strip briefly.
+      const handleId = active.handleId
+      set((s) => ({
+        ...patchSlice(s, handleId, { annotate: { ...active.annotate, note: DRIVING_NOTE } }),
+        browserAnnounce: toggled("Claude is using this tab. Annotate when it's done.")
+      }))
+      setTimeout(() => {
+        const a = get().sessions[handleId]?.annotate
+        if (a?.note === DRIVING_NOTE) set((s) => patchSlice(s, handleId, { annotate: { ...a, note: null } }))
+      }, 3000)
+      return
+    }
+    void window.clui.browserAnnotate(active.handleId, tab.id, active.annotate.tab !== tab.id)
+  },
+
+  removeAnnotation: (id) => {
+    const active = activeSlice(get())
+    if (!active) return
+    set((s) => patchSlice(s, active.handleId, { annotate: { ...active.annotate, pins: active.annotate.pins.filter((p) => p.id !== id) } }))
+    void window.clui.browserAnnotateRemove(active.handleId, id)
+  },
+
+  clearAnnotations: (handleId) => {
+    const a = get().sessions[handleId]?.annotate
+    if (!a?.pins.length) return
+    set((s) => patchSlice(s, handleId, { annotate: { ...a, pins: [], note: null } }))
+    void window.clui.browserAnnotateClear(handleId)
   },
 
   viewBrowserTab: (tab) => {

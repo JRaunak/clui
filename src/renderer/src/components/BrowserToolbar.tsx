@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { useActive, useSession, viewedTabOf, type BrowserTabs } from '../store'
+import { DRIVING_NOTE, useActive, useSession, viewedTabOf, type BrowserTabs } from '../store'
 import type { DriveState } from '../../../shared/browser'
-import { IconChevron, IconClose, IconRefresh, IconStop } from './Icon'
+import { CAP_NOTE, MAX_PINS } from '../../../shared/annotate'
+import { IconChevron, IconClose, IconRefresh, IconStop, IconTarget } from './Icon'
 import { PANE_BTN } from './Stage'
 
 // The toolbar sits over the pane's flat floor, where the solid form is pixel-identical and skips a filter.
@@ -77,7 +78,9 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
   const canForward = useActive((s) => viewedTabOf(s?.browser)?.canForward ?? false)
   const driving = useActive((s) => viewedTabOf(s?.browser)?.drive === 'driving')
   const wall = useActive((s) => viewedTabOf(s?.browser)?.loginWall === 'hardware')
+  const annotating = useActive((s) => !!s && s.annotate.tab === s.browser?.viewed)
   const setNotice = useSession((s) => s.setNotice)
+  const toggleAnnotate = useSession((s) => s.toggleAnnotate)
 
   const shown = url === 'about:blank' ? '' : url
   const [focused, setFocused] = useState(false)
@@ -110,6 +113,27 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
         className={navBtn}
       >
         {loading ? <IconClose className="h-4 w-4" /> : <IconRefresh className="h-4 w-4" />}
+      </button>
+      <button
+        type="button"
+        data-ui="browser-annotate"
+        aria-label="Annotate"
+        aria-pressed={annotating}
+        aria-keyshortcuts="Meta+Shift+A"
+        aria-disabled={driving || undefined}
+        title={driving ? "Claude is using this tab. Annotate when it's done." : 'Annotate ⌘⇧A'}
+        onClick={() => {
+          if (!driving) toggleAnnotate()
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== 'Escape' || !annotating) return
+          e.preventDefault()
+          toggleAnnotate()
+          document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
+        }}
+        className={`${PANE_BTN} relative aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:pointer-fine:hover:bg-transparent aria-disabled:pointer-fine:hover:text-dim aria-pressed:bg-control-hover aria-pressed:text-content aria-pressed:after:absolute aria-pressed:after:inset-x-1.5 aria-pressed:after:bottom-0 aria-pressed:after:h-0.5 aria-pressed:after:rounded-full aria-pressed:after:bg-accent`}
+      >
+        <IconTarget className="h-4 w-4" />
       </button>
 
       <div className="relative flex min-w-40 flex-1">
@@ -171,6 +195,7 @@ export function BrowserDriveStrip(): JSX.Element {
   const recent = useActive((s) => recentOf(s?.browser))
   const several = useActive((s) => (s?.browser?.tabs.length ?? 0) > 1)
   const busy = useActive((s) => !!s?.busy)
+  const annotating = useActive((s) => !!s && s.annotate.tab === s.browser?.viewed)
   const browserDrive = useSession((s) => s.browserDrive)
   const viewTab = useSession((s) => s.viewBrowserTab)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -217,7 +242,9 @@ export function BrowserDriveStrip(): JSX.Element {
     keepFocus(action === 'stop' ? '[data-ui="browser-url"]' : '[data-ui="browser-stop"]')
     void browserDrive(action)
   }
-  const copy = shown && copyOf(shown)
+  const drivingNote = useActive((s) => (s?.annotate.note === DRIVING_NOTE ? DRIVING_NOTE : null))
+  const base = shown && copyOf(shown)
+  const copy = base && drivingNote && shown.mode === 'driving' ? { ...base, hint: drivingNote } : base
   // A status hint cut mid-word reads as broken, so one that doesn't fit is hidden whole. It stays in
   // layout while hidden, so its widths keep measuring and it comes back once there's room.
   const [hintEl, setHintEl] = useState<HTMLSpanElement | null>(null)
@@ -234,7 +261,9 @@ export function BrowserDriveStrip(): JSX.Element {
 
   return (
     <>
-      {shown && copy && (
+      {annotating ? (
+        <AnnotateStrip />
+      ) : shown && copy && (
         <div
           ref={rootRef}
           data-ui="browser-drive-strip"
@@ -309,5 +338,26 @@ export function BrowserDriveStrip(): JSX.Element {
         {announce}
       </span>
     </>
+  )
+}
+
+/** Takes the drive strip's place while the user annotates the viewed tab, which Claude isn't driving. */
+function AnnotateStrip(): JSX.Element {
+  const pinned = useActive((s) => s?.annotate.pins.length ?? 0)
+  const note = useActive((s) => s?.annotate.note ?? null)
+  const say = note ?? (pinned >= MAX_PINS ? CAP_NOTE : null)
+  return (
+    <div data-ui="browser-annotate-strip" className="@container flex h-9 shrink-0 items-center gap-2 border-b border-border bg-tool px-3">
+      {say ? (
+        <span className="min-w-0 flex-1 truncate text-label text-content">{say}</span>
+      ) : (
+        <span className="min-w-0 flex-1 truncate text-label text-dim">
+          <span className="font-medium text-content">Annotating</span>
+          {/* A hint cut mid-word reads as broken, so the long clause goes whole when the pane is narrow. */}
+          <span className="@max-[640px]:hidden"> · click an element, or Return on the focused one</span> · Esc to finish
+        </span>
+      )}
+      {pinned > 0 && <span className="shrink-0 text-label tabular-nums text-dim">{pinned} pinned</span>}
+    </div>
   )
 }

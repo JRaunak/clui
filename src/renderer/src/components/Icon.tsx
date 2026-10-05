@@ -371,6 +371,16 @@ export function IconPin(p: IconProps): JSX.Element {
   )
 }
 
+/** A dashed square with a pointer over its corner: annotate an element of the page. */
+export function IconTarget(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M12.03 12.68a.5.5 0 0 1 .65-.65l9 3.5a.5.5 0 0 1-.03.95l-3.45 1.06a1 1 0 0 0-.66.66l-1.06 3.45a.5.5 0 0 1-.95.03Z" />
+      <path d="M5 3a2 2 0 0 0-2 2M19 3a2 2 0 0 1 2 2M5 21a2 2 0 0 1-2-2M9 3h1M9 21h2M14 3h1M3 9v1M21 9v2M3 14v1" />
+    </Svg>
+  )
+}
+
 /** Vertical kebab (⋮): the session-row overflow menu trigger for rare actions. */
 export function IconMore(p: IconProps): JSX.Element {
   return (

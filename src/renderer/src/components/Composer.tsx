@@ -10,6 +10,8 @@ import {
   type CSSProperties
 } from 'react'
 import { useActive, useSession, EMPTY_ATTACHMENTS, type SendAttachment } from '../store'
+import { annotationsText, hostOf, pinWords, type AnnotationPin } from '../../../shared/annotate'
+import { AnnotationChip } from './AnnotationChip'
 import { useComposerAutocomplete } from './ComposerAutocomplete'
 import { ModelEffortPicker } from './ModelEffortPicker'
 import { UltracodeToggle } from './UltracodeToggle'
@@ -31,7 +33,8 @@ import {
   IconClose,
   IconFolder,
   IconFolderOpen,
-  IconGhost
+  IconGhost,
+  IconTarget
 } from './Icon'
 import { processDroppedFiles, toWireAttachment, type ProcessedAttachment } from '../lib/images'
 import {
@@ -62,6 +65,9 @@ export function Composer(): JSX.Element {
   const addDraftAttachments = useSession((s) => s.addDraftAttachments)
   const removeDraftAttachment = useSession((s) => s.removeDraftAttachment)
   const clearDraft = useSession((s) => s.clearDraft)
+  const pins = useActive((s) => s?.annotate.pins ?? NO_PINS)
+  const removeAnnotation = useSession((s) => s.removeAnnotation)
+  const clearAnnotations = useSession((s) => s.clearAnnotations)
   const [caret, setCaret] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -257,9 +263,21 @@ export function Composer(): JSX.Element {
   }
 
   const submit = async (): Promise<void> => {
-    const t = text.trim()
-    if ((!t && attachments.length === 0) || !handleId) return
-    const send: SendAttachment[] = attachments.map((a) => ({
+    const typed = text.trim()
+    if ((!typed && attachments.length === 0 && pins.length === 0) || !handleId) return
+    const lead = pins.length ? annotationsText(pins) : ''
+    const t = lead && typed ? `${lead}\n\n${typed}` : lead || typed
+    const crops: SendAttachment[] = pins.flatMap((p, i) =>
+      p.crop
+        ? [
+            {
+              wire: { kind: 'image', mediaType: 'image/jpeg', data: p.crop.data },
+              display: { kind: 'image', previewUrl: `data:image/jpeg;base64,${p.crop.data}`, name: `Annotation ${i + 1}`, w: p.crop.w, h: p.crop.h }
+            }
+          ]
+        : []
+    )
+    const files: SendAttachment[] = attachments.map((a) => ({
       wire: toWireAttachment(a),
       display:
         a.kind === 'image'
@@ -269,7 +287,9 @@ export function Composer(): JSX.Element {
             : { kind: 'text', name: a.name, bytes: a.bytes, lines: a.lines }
     }))
     // Clear only THIS session's draft, the one the send consumed.
+    const send = [...crops, ...files]
     clearDraft(handleId)
+    clearAnnotations(handleId)
     setCaret(0)
     await sendMessage(t, send.length ? send : undefined)
   }
@@ -325,8 +345,19 @@ export function Composer(): JSX.Element {
             </div>
           )}
           {/* Attachment thumbnails: a strip above the textarea, neutral surfaces. */}
-          {attachments.length > 0 && (
+          {(attachments.length > 0 || pins.length > 0) && (
             <div className="flex flex-wrap gap-2 px-1 pt-1">
+              {pins.map((p, i) => (
+                <AnnotationPill
+                  key={p.id}
+                  n={i + 1}
+                  pin={p}
+                  onRemove={() => {
+                    removeAnnotation(p.id)
+                    textareaRef.current?.focus()
+                  }}
+                />
+              ))}
               {attachments.map((a) => (
                 <AttachmentPill key={a.id} att={a} onRemove={() => removeAttachment(a.id)} />
               ))}
@@ -435,7 +466,7 @@ export function Composer(): JSX.Element {
                 contextWindow={contextWindow}
               />
               {(() => {
-                const empty = !text.trim() && attachments.length === 0
+                const empty = !text.trim() && attachments.length === 0 && pins.length === 0
                 const inert = !busy && empty
                 return (
                   <button
@@ -567,6 +598,14 @@ function PermissionIcon({
 }): JSX.Element {
   const Glyph = PERMISSION_MODE_ICONS[mode]
   return <Glyph className={`${className} shrink-0 ${PERMISSION_MODE_COLORS[mode]}`} />
+}
+
+const NO_PINS: AnnotationPin[] = []
+
+function AnnotationPill({ n, pin, onRemove }: { n: number; pin: AnnotationPin; onRemove: () => void }): JSX.Element {
+  const { kind, name } = pinWords(pin.target)
+  const thumb = pin.crop ? `data:image/jpeg;base64,${pin.crop.data}` : undefined
+  return <AnnotationChip n={n} kind={kind} name={name} host={hostOf(pin.target.url)} thumb={thumb} onRemove={onRemove} />
 }
 
 // A thumbnail chip for one staged attachment: image preview + filename + remove button.

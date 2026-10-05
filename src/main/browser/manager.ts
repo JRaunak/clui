@@ -134,6 +134,8 @@ export class BrowserManager {
   private readonly entries = new Map<string, Entry>()
   private readonly asks = new Map<string, Ask<unknown>>()
   private seq = 0
+  /** Told when a tab can't be annotated any more: Claude starts driving it, or the user views another tab. */
+  onLeave: ((handleId: string, tab: number, why: 'driving' | 'away') => void) | null = null
 
   private readonly window: () => BrowserWindow | null
   private readonly background: () => string
@@ -327,6 +329,7 @@ export class BrowserManager {
 
   private setDrive(handleId: string, t: Tab, drive: DriveState): void {
     if (t.state.drive === drive) return
+    if (drive === 'driving') this.onLeave?.(handleId, t.id, 'driving')
     this.patch(handleId, t, { drive })
     const wc = t.view?.webContents
     if (drive !== 'driving' && wc) void hideCursor(wc)
@@ -366,6 +369,7 @@ export class BrowserManager {
     const now = Date.now()
     const prev = e.tabs.find((x) => x.id === e.viewed)
     if (prev) prev.lastViewedMs = now
+    if (prev && prev !== t) this.onLeave?.(handleId, prev.id, 'away')
     e.viewed = t.id
     t.lastViewedMs = now
     if (e.shown) this.ensureView(handleId, e, t)

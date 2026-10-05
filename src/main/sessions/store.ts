@@ -16,6 +16,7 @@ import { basename, join, resolve, sep } from 'node:path'
 import { atomicWriteFile } from '../lib/atomic'
 import { claudeHome } from '../lib/claude-home'
 import type { ProjectGroup, SessionSummary } from '../../shared/sessions'
+import { messageGist } from '../../shared/annotate'
 
 const projectsRoot = (): string => join(claudeHome(), 'projects')
 
@@ -177,7 +178,7 @@ function titleFrom(scan: ScanResult, sidecarName: string | undefined, id: string
     scan.firstUserMessage ??
     scan.lastPrompt ??
     id
-  return truncate(raw.replace(/\s+/g, ' ').trim(), 80)
+  return truncate((messageGist(raw) || raw).replace(/\s+/g, ' ').trim(), 80)
 }
 
 function truncate(s: string, n: number): string {

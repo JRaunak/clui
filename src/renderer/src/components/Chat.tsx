@@ -1,3 +1,4 @@
+import { messageGist, splitAnnotations } from '../../../shared/annotate'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type StateSnapshot, type VirtuosoHandle } from 'react-virtuoso'
 import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
@@ -506,7 +507,9 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
   const edit = useSession((s) => s.editQueuedMessage)
   const cancel = useSession((s) => s.cancelQueuedMessage)
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(q.text)
+  // The annotation block isn't editable here: edits change the typed text, and the block rides along.
+  const { block, text: typed } = splitAnnotations(q.text)
+  const [draft, setDraft] = useState(typed)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -521,7 +524,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
 
   const commit = (): void => {
     const t = draft.trim()
-    if (t && t !== q.text) edit(q.id, t)
+    if (t && t !== typed) edit(q.id, block ? `${block}\n\n${t}` : t)
     setEditing(false)
   }
 
@@ -543,7 +546,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
               commit()
             } else if (e.key === 'Escape') {
               e.preventDefault()
-              setDraft(q.text)
+              setDraft(typed)
               setEditing(false)
             }
           }}
@@ -554,7 +557,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
           <span className="mr-auto">Enter to save · Esc to discard</span>
           <button
             className="rounded p-1 text-faint hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            onClick={() => { setDraft(q.text); setEditing(false) }}
+            onClick={() => { setDraft(typed); setEditing(false) }}
             aria-label="Discard edit"
           >
             <IconClose className="h-3.5 w-3.5" />
@@ -583,7 +586,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         {q.attachments && q.attachments.length > 0 && <QueuedAttachments atts={q.attachments} />}
         {q.text && (
-          <span className="whitespace-pre-wrap text-sm leading-relaxed text-content">{q.text}</span>
+          <span className="whitespace-pre-wrap text-sm leading-relaxed text-content">{messageGist(q.text)}</span>
         )}
       </div>
       {/* Shown at opacity-70 at rest, not hover-only: hover-only edit/cancel is undiscoverable,
@@ -591,7 +594,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
       <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
         <button
           className="rounded p-1 text-faint hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          onClick={() => { setDraft(q.text); setEditing(true) }}
+          onClick={() => { setDraft(typed); setEditing(true) }}
           aria-label="Edit queued message"
           title="Edit before it sends"
         >

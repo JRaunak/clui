@@ -15,6 +15,7 @@ import type {
 } from './sessions'
 import type { ConfigBundle } from './config'
 import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, PaneBounds, SavedLoginInfo } from './browser'
+import type { AnnotateEvent } from './annotate'
 import type {
   CluiSettings,
   EffortChoice,
@@ -288,6 +289,11 @@ export interface CluiApi {
   browserNav: (handleId: string, tab: number, action: 'back' | 'forward' | 'reload' | 'stop') => Promise<void>
   /** stop and reset apply to every tab; handback and takeover to `tab`, which they require. */
   browserDrive: (handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset', tab?: number) => Promise<void>
+  /** Starts or ends annotate in `tab`; main answers with annotate events. */
+  browserAnnotate: (handleId: string, tab: number, on: boolean) => Promise<void>
+  browserAnnotateRemove: (handleId: string, id: number) => Promise<void>
+  browserAnnotateClear: (handleId: string) => Promise<void>
+  onAnnotateEvent: (cb: (handleId: string, e: AnnotateEvent) => void) => () => void
   browserSiteVerdict: (handleId: string, requestId: string, allow: boolean) => Promise<void>
   /** choose: `loginId`; save: the user's fields (the password crosses IPC only here); decline: neither. */
   browserLoginVerdict: (
@@ -329,6 +335,7 @@ export type MenuAction =
   | 'search-global'
   | 'toggle-pane-size'
   | 'browser-stop'
+  | 'browser-annotate'
   | 'browser-toggle'
 
 /** IPC channel names (single source of truth). */
@@ -398,6 +405,10 @@ export const IpcChannels = {
   browserNavigate: 'clui:browserNavigate',
   browserNav: 'clui:browserNav',
   browserDrive: 'clui:browserDrive',
+  browserAnnotate: 'clui:browserAnnotate',
+  browserAnnotateRemove: 'clui:browserAnnotateRemove',
+  browserAnnotateClear: 'clui:browserAnnotateClear',
+  annotateEvent: 'clui:annotateEvent',
   browserSiteVerdict: 'clui:browserSiteVerdict',
   browserLoginVerdict: 'clui:browserLoginVerdict',
   browserListSites: 'clui:browserListSites',

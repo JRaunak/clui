@@ -113,6 +113,9 @@ export function useKeyboardShortcuts(opts: {
             document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
           break
         }
+        case 'browser-annotate':
+          if (activeSlice(store)?.browserOpen && !store.viewingSubagent) store.toggleAnnotate()
+          break
         case 'browser-stop': {
           if (anyTabIn(activeSlice(store)?.browser, 'driving', 'user')) void store.browserDrive('stop')
           break

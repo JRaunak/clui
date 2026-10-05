@@ -16,6 +16,7 @@ import {
 } from '../shared/ipc'
 import type { CluiSettings, EffortChoice, ModelChoice, SettingsKey } from '../shared/settings'
 import type { BrowserEvent } from '../shared/browser'
+import type { AnnotateEvent } from '../shared/annotate'
 
 const api: CluiApi = {
   pickWorkspace: () => ipcRenderer.invoke(IpcChannels.pickWorkspace),
@@ -120,6 +121,14 @@ const api: CluiApi = {
   browserNavigate: (handleId, tab, url) => ipcRenderer.invoke(IpcChannels.browserNavigate, handleId, tab, url),
   browserNav: (handleId, tab, action) => ipcRenderer.invoke(IpcChannels.browserNav, handleId, tab, action),
   browserDrive: (handleId, action, tab) => ipcRenderer.invoke(IpcChannels.browserDrive, handleId, action, tab),
+  browserAnnotate: (handleId, tab, on) => ipcRenderer.invoke(IpcChannels.browserAnnotate, handleId, tab, on),
+  browserAnnotateRemove: (handleId, id) => ipcRenderer.invoke(IpcChannels.browserAnnotateRemove, handleId, id),
+  browserAnnotateClear: (handleId) => ipcRenderer.invoke(IpcChannels.browserAnnotateClear, handleId),
+  onAnnotateEvent: (cb) => {
+    const listener = (_e: unknown, handleId: string, ev: AnnotateEvent): void => cb(handleId, ev)
+    ipcRenderer.on(IpcChannels.annotateEvent, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.annotateEvent, listener)
+  },
   browserSiteVerdict: (handleId, requestId, allow) =>
     ipcRenderer.invoke(IpcChannels.browserSiteVerdict, handleId, requestId, allow),
   browserLoginVerdict: (handleId, requestId, verdict) =>

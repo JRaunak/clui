@@ -1,3 +1,4 @@
+import { messageGist } from '../../../shared/annotate'
 import type { ChatMessage, PerSessionState, ToolCall } from '../store'
 import { isBackgroundedTool } from './lumen'
 
@@ -67,7 +68,7 @@ const AGENT_MENTION = /@"([^"]+?) \(agent\)"/g
 
 /** Up to 300 chars of a prompt for the header's tooltip; the header itself shows line one. */
 export function promptPreview(text: string): string {
-  return text.replace(AGENT_MENTION, '@$1').trim().slice(0, 300) || 'Attachments only'
+  return messageGist(text).replace(AGENT_MENTION, '@$1').trim().slice(0, 300) || 'Attachments only'
 }
 
 const isPrompt = (m: ChatMessage): boolean => m.role === 'user' && !m.compaction

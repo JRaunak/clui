@@ -3,6 +3,8 @@ import type { CompactionMarker } from '../../../shared/sessions'
 import { fmtTokens } from '../lib/formatTokens'
 import { type ChatMessage, type MessageAttachment, type PeerMessage, type ToolCall } from '../store'
 import { Markdown } from './Markdown'
+import { AnnotationChip } from './AnnotationChip'
+import { splitAnnotations } from '../../../shared/annotate'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
 import { IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconShieldOff } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
@@ -124,18 +126,7 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
           </div>
         )}
         {isUser ? (
-          <>
-            {message.attachments && message.attachments.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {message.attachments.map((att, i) => (
-                  <MessageAttachmentView key={i} att={att} />
-                ))}
-              </div>
-            )}
-            {message.text && (
-              <div className="whitespace-pre-wrap text-sm leading-relaxed text-content">{renderUserText(message.text)}</div>
-            )}
-          </>
+          <UserContent message={message} />
         ) : (
           <SpineItems entries={entries} />
         )}
@@ -554,5 +545,37 @@ function ThinkingBlock({ text }: { text: string }): JSX.Element {
         </div>
       )}
     </div>
+  )
+}
+
+/** A sent message's annotation block shows as chips; the block itself went to Claude only. Crops travel first
+ *  among the images, in pin order, so the first ones are the chips' thumbnails. */
+function UserContent({ message }: { message: ChatMessage }): JSX.Element {
+  const { pins, text } = splitAnnotations(message.text)
+  const all = message.attachments ?? []
+  const images = all.filter((a) => a.kind === 'image')
+  const thumbs = images.slice(0, pins.filter((p) => p.crop).length)
+  const used = new Set<MessageAttachment>(thumbs)
+  const rest = all.filter((a) => !used.has(a))
+  let next = 0
+  return (
+    <>
+      {pins.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {pins.map((p) => {
+            const crop = p.crop ? thumbs[next++] : undefined
+            return <AnnotationChip key={p.n} n={p.n} kind={p.kind} name={p.name} host={p.host} thumb={crop?.kind === 'image' ? crop.previewUrl : undefined} />
+          })}
+        </div>
+      )}
+      {rest.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {rest.map((att, i) => (
+            <MessageAttachmentView key={i} att={att} />
+          ))}
+        </div>
+      )}
+      {text && <div className="whitespace-pre-wrap text-sm leading-relaxed text-content">{renderUserText(text)}</div>}
+    </>
   )
 }

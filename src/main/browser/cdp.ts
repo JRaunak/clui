@@ -399,4 +399,9 @@ export class Cdp {
       return !!e && e.tagName === 'INPUT' && e.type === 'password'
     })()`)
   }
+
+  /** Raw protocol access for a feature that runs its own domains, as annotate does with DOM and Overlay. */
+  command<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
+    return this.send(method, params) as Promise<T>
+  }
 }
