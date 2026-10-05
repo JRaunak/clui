@@ -908,21 +908,6 @@ export class BrowserManager {
     }
   }
 
-  /** One site's cookies and storage, over http and https and its www form. Its open pages reload so none
-   *  keeps running on the cleared state. */
-  async clearSite(site: string): Promise<void> {
-    for (const e of this.entries.values()) {
-      if (e.tabs.some((t) => t.state.drive === 'driving' || t.state.drive === 'user')) throw new Error('browser in use')
-    }
-    const hosts = /^[\d.]+(:\d+)?$|^\[|^localhost(:\d+)?$/.test(site) ? [site] : [site, `www.${site}`]
-    const origins = hosts.flatMap((h) => [`https://${h}`, `http://${h}`])
-    await session.fromPartition(PARTITION).clearData({
-      origins,
-      dataTypes: ['cookies', 'localStorage', 'indexedDB', 'serviceWorkers', 'fileSystems', 'webSQL', 'backgroundFetch']
-    })
-    for (const [, , wc] of this.liveTabs()) if (siteKeyOf(wc.getURL()) === site) wc.reload()
-  }
-
   disposeAll(): void {
     for (const h of [...this.entries.keys()]) this.dispose(h)
   }
