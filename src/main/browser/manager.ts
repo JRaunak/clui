@@ -309,7 +309,11 @@ export class BrowserManager {
     // CDP mouse and key events raise these the same as real input, so only input outside the
     // quiet window around our own dispatches counts as the user.
     wc.on('input-event', (_ev, input) => {
-      if (USER_INPUT.has(input.type) && Date.now() > t.agentActingUntil) this.userActed(handleId, t)
+      if (!USER_INPUT.has(input.type) || Date.now() <= t.agentActingUntil) return
+      // macOS scrolls whatever window is under the pointer, so a wheel over Clui while another app
+      // is frontmost is the user passing by, not taking over.
+      if (input.type === 'mouseWheel' && !this.window()?.isFocused()) return
+      this.userActed(handleId, t)
     })
     wc.on('before-input-event', (_ev, input) => {
       if (input.type === 'keyDown' && !input.meta && !input.control && Date.now() > t.agentActingUntil) this.userActed(handleId, t)
