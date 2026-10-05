@@ -80,6 +80,8 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   const uid = useId()
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [enableFailed, setEnableFailed] = useState(false)
+  const [shots, setShots] = useState<boolean | null>(null)
+  const [shotsFailed, setShotsFailed] = useState(false)
 
   const setPending = useCallback((next: PendingRemoval[]) => {
     pendingRef.current = next
@@ -96,7 +98,10 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   }, [])
   useEffect(() => {
     void relist()
-    void window.clui.getSettings().then(({ values }) => setEnabled(values.browserEnabled))
+    void window.clui.getSettings().then(({ values }) => {
+      setEnabled(values.browserEnabled)
+      setShots(values.annotateScreenshots)
+    })
   }, [relist])
 
   // Focus moves only after the render that shows its target.
@@ -115,6 +120,15 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
 
   const sayFilter = useCallback((text: string) => setFilterSay(`${text}${'\u200b'.repeat(++filterSeq.current % 2)}`), [])
 
+  const toggleShots = (): void => {
+    if (shots === null) return
+    setShots(!shots)
+    setShotsFailed(false)
+    void window.clui.updateSettings({ annotateScreenshots: !shots }).catch(() => {
+      setShots(shots)
+      setShotsFailed(true)
+    })
+  }
   const toggleEnabled = (): void => {
     if (enabled === null) return
     setEnabled(!enabled)
@@ -263,6 +277,26 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
             ]}
             onChange={(v) => saveTarget(v)}
           />
+        </Field>
+        <Field
+          label="Annotation screenshots"
+          hint="A small screenshot of each annotated element goes to Claude. Off sends only its text and HTML."
+          hintId={`${uid}-shots`}
+          note={shotsFailed && <FieldError id={`${uid}-shots-err`} text="Couldn't save this setting. Try again." />}
+        >
+          <button
+            type="button"
+            role="checkbox"
+            data-ui="annotate-screenshots"
+            aria-checked={!!shots}
+            aria-disabled={shots === null || undefined}
+            aria-describedby={`${uid}-shots${shotsFailed ? ` ${uid}-shots-err` : ''}`}
+            onClick={toggleShots}
+            className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
+          >
+            <CheckBox checked={!!shots} />
+            <span className="text-label text-content">Send a screenshot with each element</span>
+          </button>
         </Field>
 
         <section className="flex flex-col gap-2" aria-labelledby={`${uid}-sites`}>

@@ -65,6 +65,8 @@ export interface CluiSettings {
   /** Where a link Clui renders opens: a new tab in the session's own browser, or the default browser.
    *  'clui' takes effect only in a session with the browser tools; elsewhere links go to the default browser. */
   linkTarget: LinkTarget
+  /** Send each annotated element with a small screenshot of it, besides its text and HTML. */
+  annotateScreenshots: boolean
   /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
    *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
@@ -463,6 +465,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   browserPaneFull: false,
   browserEnabled: false,
   linkTarget: 'clui',
+  annotateScreenshots: true,
   enableTaskTools: false,
   // Empty → resolves to ~/.clui in main (getChatDir).
   defaultChatDir: '',

@@ -9,6 +9,7 @@ import { MAX_PINS, type AnnotateEvent, type AnnotateTarget, type AnnotationPin }
 import { IpcChannels } from '../../shared/ipc'
 import type { Cdp } from './cdp'
 import type { BrowserManager } from './manager'
+import { getSettingsSync } from '../settings/store'
 
 const MARGIN = 24
 const CROP_MAX_W = 800
@@ -298,6 +299,7 @@ export class Annotator {
 
   /** Taken before the outline is drawn, with the hover highlight hidden, so the crop shows the page as it is. */
   private async crop(wc: WebContents, cdp: Cdp, b: AnnotateTarget['bbox'], vw: number, vh: number): Promise<AnnotationPin['crop']> {
+    if (!getSettingsSync().annotateScreenshots) return null
     const x = Math.max(0, Math.floor(b.x - MARGIN))
     const y = Math.max(0, Math.floor(b.y - MARGIN))
     const width = Math.min(vw, Math.ceil(b.x + b.width + MARGIN)) - x
