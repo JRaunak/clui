@@ -109,6 +109,21 @@ const PAGE_TOOLS = [
       'Read the response body of a request by its number from network, as text. Only requests to this machine ' +
       "(localhost, 127.0.0.1, [::1]) are readable: a real site's response is the user's data.",
     inputSchema: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] }
+  },
+  {
+    name: 'cookies',
+    description:
+      "List the cookies a request to the page's URL would carry, as metadata: name, domain, path, expiry, size and the " +
+      'HttpOnly, Secure and SameSite flags. Values are never shown: a cookie value is a session credential.',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'storage',
+    description:
+      "List the page's storage. local and session give each key with its size, and its value only on this machine's dev " +
+      'servers (localhost, 127.0.0.1, [::1]). indexeddb gives each database with its object stores and entry counts. ' +
+      'With no area, lists local and session storage.',
+    inputSchema: { type: 'object', properties: { area: { type: 'string', enum: ['local', 'session', 'indexeddb'] } } }
   }
 ]
 
@@ -534,6 +549,37 @@ export class BrowserMcpServer {
         if (res.base64Encoded) return text(`${summary(bytes(size))}\n#${n} is binary (${bytes(size)}), so it isn't shown.`)
         const cut = res.body.length > BODY_CAP ? `\n\n(cut at ${BODY_CAP} of ${res.body.length} characters)` : ''
         return text(scrub(`${summary(bytes(size))}\n${untrusted(e.url)}\n\n${res.body.slice(0, BODY_CAP)}${cut}`, cdp.secrets))
+      }
+
+      case 'cookies': {
+        const list = await cdp.cookies(wc.getURL())
+        const copy = list.length ? plural(list.length, 'cookie') : 'no cookies'
+        const lines = list.map((c) => {
+          const expires = c.expires > 0 ? `expires ${new Date(c.expires * 1000).toISOString().slice(0, 10)}` : 'session'
+          const flags = [c.httpOnly && 'HttpOnly', c.secure && 'Secure', c.sameSite && `SameSite=${c.sameSite}`].filter(Boolean).join(' ')
+          return `${c.name}  ${c.domain}${c.path}  ${expires}  ${bytes(c.size)}${flags ? `  ${flags}` : ''}`
+        })
+        return text(`${summary(copy)}\n${untrusted(wc.getURL())}\n\n${lines.join('\n') || '(none)'}`)
+      }
+
+      case 'storage': {
+        let page: URL | null = null
+        try {
+          page = new URL(wc.getURL())
+        } catch {
+          /* no origin: refused below */
+        }
+        if (!page || (page.protocol !== 'http:' && page.protocol !== 'https:')) return text('This page has no web storage to read.', true)
+        if (args.area === 'indexeddb') {
+          const dbs = await cdp.indexedDb(page.origin)
+          const lines = dbs.flatMap((d) => [d.name, ...d.stores.map((st) => `  ${st.name}${st.count === null ? '' : `  ${plural(st.count, 'entry', 'entries')}`}`)])
+          return text(`${summary(dbs.length ? plural(dbs.length, 'database') : 'no databases')}\n${untrusted(page.href)}\n\n${lines.join('\n') || '(none)'}`)
+        }
+        const items = await cdp.storageItems(isLocal(page))
+        if (!items) return text("This page's storage can't be read.", true)
+        const keep = items.filter((i) => args.area !== 'local' && args.area !== 'session' ? true : i.area === args.area)
+        const lines = keep.map((i) => `${i.area}  ${i.key}  ${plural(i.size, 'char')}${i.value === undefined ? '' : `  ${JSON.stringify(i.value)}`}`)
+        return text(scrub(`${summary(keep.length ? plural(keep.length, 'key') : 'no keys')}\n${untrusted(page.href)}\n\n${lines.join('\n') || '(none)'}`, cdp.secrets))
       }
 
       case 'snapshot': {

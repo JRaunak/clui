@@ -55,3 +55,6 @@ equal(browserLabel('mcp__clui-browser__network_body', { id: 7 }), 'response 7', 
 equal(JSON.stringify(browserResultCopy('summary!: 3 errors\nPage content…')), JSON.stringify({ copy: '3 errors', flagged: true }), 'debug row: flagged count parsed')
 equal(JSON.stringify(browserResultCopy('summary: no requests')), JSON.stringify({ copy: 'no requests', flagged: false }), 'debug row: plain count parsed')
 equal(browserResultCopy('Page content from x\nsummary!: 9 errors'), null, 'debug row: only the first line counts')
+equal(browserLabel('mcp__clui-browser__storage', { area: 'indexeddb' }), 'IndexedDB', 'debug row: IndexedDB label')
+equal(browserLabel('mcp__clui-browser__storage', {}), 'storage', 'debug row: storage label')
+equal(browserLabel('mcp__clui-browser__cookies', {}), 'cookies', 'debug row: cookies label')

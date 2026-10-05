@@ -136,5 +136,6 @@ function actionLabel(name: string, input: unknown): string {
   if (action === 'console') return o.level === 'error' ? 'console errors' : o.level === 'warn' ? 'console warnings' : 'console'
   if (action === 'network') return o.failedOnly === true ? 'network failed' : typeof o.filter === 'string' && o.filter ? `network ${o.filter}` : 'network'
   if (action === 'network_body' && typeof o.id === 'number') return `response ${o.id}`
+  if (action === 'storage') return o.area === 'local' ? 'local storage' : o.area === 'session' ? 'session storage' : o.area === 'indexeddb' ? 'IndexedDB' : 'storage'
   return action.replace(/_/g, ' ')
 }

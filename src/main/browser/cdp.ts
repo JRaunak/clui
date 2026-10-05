@@ -46,6 +46,9 @@ export interface Box { x: number; y: number; password: boolean }
 
 /** url is set for a failed resource load, whose location is the request rather than a script line. */
 export interface LogEntry { n: number; level: 'error' | 'warn' | 'log' | 'nav'; text: string; where: string; url?: string }
+export interface CookieInfo { name: string; domain: string; path: string; expires: number; size: number; httpOnly: boolean; secure: boolean; sameSite?: string }
+export interface StoreInfo { name: string; count: number | null }
+
 export interface NetEntry {
   n: number
   id: string
@@ -237,6 +240,49 @@ export class Cdp {
   private async enableConsole(): Promise<void> {
     await this.send('Log.enable')
     await this.send('Runtime.enable')
+  }
+
+  /** The cookies a request to url would carry, without their values: the value never leaves this method. */
+  async cookies(url: string): Promise<CookieInfo[]> {
+    const { cookies } = (await this.send('Network.getCookies', { urls: [url] })) as { cookies: (CookieInfo & { value: string })[] }
+    return cookies.map(({ name, domain, path, expires, size, httpOnly, secure, sameSite }) => ({ name, domain, path, expires, size, httpOnly, secure, sameSite }))
+  }
+
+  /** Read through the debugger: opening a database from page script creates it if it's gone, a write to the site's storage. */
+  async indexedDb(origin: string): Promise<{ name: string; stores: StoreInfo[] }[]> {
+    await this.send('IndexedDB.enable')
+    const { databaseNames } = (await this.send('IndexedDB.requestDatabaseNames', { securityOrigin: origin })) as { databaseNames: string[] }
+    const out: { name: string; stores: StoreInfo[] }[] = []
+    for (const databaseName of databaseNames.slice(0, 20)) {
+      const { databaseWithObjectStores: db } = (await this.send('IndexedDB.requestDatabase', { securityOrigin: origin, databaseName })) as {
+        databaseWithObjectStores: { objectStores: { name: string }[] }
+      }
+      const stores: StoreInfo[] = []
+      for (const { name } of db.objectStores.slice(0, 30)) {
+        const meta = (await this.send('IndexedDB.getMetadata', { securityOrigin: origin, databaseName, objectStoreName: name }).catch(() => null)) as { entriesCount: number } | null
+        stores.push({ name, count: meta?.entriesCount ?? null })
+      }
+      out.push({ name: databaseName, stores })
+    }
+    return out
+  }
+
+  /** Local and session storage keys with their sizes, and values only when asked. The isolated world shares the page's storage. */
+  storageItems(withValues: boolean): Promise<{ area: 'local' | 'session'; key: string; size: number; value?: string }[] | null> {
+    return this.world(`(() => {
+      try {
+        const out = [];
+        for (const [area, st] of [['local', localStorage], ['session', sessionStorage]]) {
+          for (let i = 0; i < Math.min(st.length, 200); i++) {
+            const key = st.key(i), v = st.getItem(key) ?? '';
+            out.push({ area, key, size: v.length, ...(${withValues} ? { value: v.slice(0, 200) } : {}) });
+          }
+        }
+        return out;
+      } catch {
+        return null;
+      }
+    })()`)
   }
 
   async responseBody(id: string): Promise<{ body: string; base64Encoded: boolean }> {
