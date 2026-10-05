@@ -890,7 +890,9 @@ interface ApiError {
   text: string
 }
 
-const MODEL_ACCESS_TEXT = /model access|marketplace|not enabled|enable this model/i
+// An IAM deny on the model ("not authorized to perform … explicit deny") is model access too; an expired
+// sign-in reads "security token … expired" instead.
+const MODEL_ACCESS_TEXT = /model access|marketplace|not enabled|enable this model|not authorized to perform|explicit deny/i
 
 /** The provider's own message, after the CLI's `API Error:` marker. The CLI's Bedrock
  *  credentials template itself says "check AWS permissions and model access", so matching

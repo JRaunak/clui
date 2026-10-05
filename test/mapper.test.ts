@@ -171,6 +171,19 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(errors[1]?.message === 'API Error 500', 'mapper: the API error does not leak into the next turn')
 }
 
+// An IAM explicit deny on one model (shape captured live on 2.1.289, identifiers replaced) is model access, not an expired sign-in.
+{
+  const text =
+    'AWS authentication failed · run `claude_aws_auth_local` and retry · if credentials are current, check AWS permissions and model access · API Error: 403 {"Message":"User: arn:aws:sts::123456789012:assumed-role/example-role/user@example.com is not authorized to perform: bedrock:InvokeModelWithResponseStream on resource: arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-fable-5-1 with an explicit deny in an identity-based policy"}'
+  const m = new EventMapper()
+  m.map({ type: 'system', subtype: 'init', model: 'us.anthropic.claude-fable-5-1', session_id: 's' })
+  const errors = feed(m, [
+    { type: 'assistant', message: { content: [{ type: 'text', text }] }, is_api_error_message: true, api_error_status: 403, api_error: 'provider_credentials', api_error_params: { provider: 'bedrock', remedy: 'refresh_command' } },
+    { type: 'result', is_error: true, api_error_status: 403, result: text, session_id: 's' }
+  ]).filter((e) => e.type === 'error')
+  ok(errors.length === 1 && errors[0].message.startsWith("Fable 5.1 isn't enabled on your AWS account"), 'mapper: an IAM explicit deny is a model-access error')
+}
+
 // remedy:refresh_command without model-access text → the sign-in copy with the CLI's command.
 // The CLI's own template says "check AWS permissions and model access", which must not count.
 {
