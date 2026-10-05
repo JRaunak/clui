@@ -62,6 +62,9 @@ export interface CluiSettings {
   /** Give new and resumed sessions Claude's browser tools. Read once at spawn: a running session
    *  keeps whatever it started with, because MCP servers are fixed for the life of the process. */
   browserEnabled: boolean
+  /** Where a link Clui renders opens: a new tab in the session's own browser, or the default browser.
+   *  'clui' takes effect only in a session with the browser tools; elsewhere links go to the default browser. */
+  linkTarget: LinkTarget
   /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
    *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
@@ -97,6 +100,9 @@ export interface ResolvedSettings {
 export type ThemeChoice = 'dark' | 'light' | 'system'
 
 export const THEME_CHOICES: ThemeChoice[] = ['dark', 'light', 'system']
+
+export type LinkTarget = 'clui' | 'system'
+export const LINK_TARGETS: LinkTarget[] = ['clui', 'system']
 
 export const THEME_LABELS: Record<ThemeChoice, string> = {
   dark: 'Dark',
@@ -456,6 +462,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   subagentPaneFull: false,
   browserPaneFull: false,
   browserEnabled: false,
+  linkTarget: 'clui',
   enableTaskTools: false,
   // Empty → resolves to ~/.clui in main (getChatDir).
   defaultChatDir: '',

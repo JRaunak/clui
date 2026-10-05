@@ -1,3 +1,4 @@
+import { LinkedText } from '../lib/openLink'
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { activeSlice, useActive, useSession, type ToolCall } from '../store'
 import { Lumen } from './Lumen'
@@ -311,7 +312,7 @@ export function InstrumentRow({
             </div>
             {tool.result !== undefined && (
               <pre className="whitespace-pre-wrap break-words font-mono text-code text-content">
-                {truncate(tool.result, 4000)}
+                <LinkedText text={truncate(tool.result, 4000)} truncated={tool.result.length > 4000} />
               </pre>
             )}
             <button

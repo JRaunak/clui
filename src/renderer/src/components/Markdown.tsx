@@ -10,11 +10,13 @@
  * renders whatever currently parses, and the highlighter is wrapped in try/catch, so a
  * partial document never throws.
  */
-import { memo, useCallback, useState } from 'react'
+import { memo, useCallback, useState, type MouseEvent, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import hljs from '../lib/hljs'
 import { IconCopy, IconCheck } from './Icon'
+import { linkHandlers, linkTitle, useLinkTarget } from '../lib/openLink'
+import { useActive } from '../store'
 import { parseUsageReport, UsageCard, parseContextReport, ContextCard } from './CommandOutput'
 
 /** Highlight to an HTML string, defensively. Unknown/absent language triggers auto-detect;
@@ -112,18 +114,7 @@ const COMPONENTS: Components = {
     )
   },
   a({ href, children }) {
-    return (
-      <a
-        href={href}
-        onClick={(e) => {
-          e.preventDefault()
-          if (href) void window.clui.openExternal(href)
-        }}
-        className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
-      >
-        {children}
-      </a>
-    )
+    return <MdLink href={href}>{children}</MdLink>
   },
   // Block spacing tuned to the chat density; lists/tables/quotes themed to tokens.
   // max-w-[70ch] caps prose at a comfortable reading measure while code/tables stay full-width.
@@ -189,3 +180,19 @@ export const Markdown = memo(function Markdown({
     </div>
   )
 })
+
+/** Claude's own links keep the accent; where they open follows the "Open links in" setting. */
+function MdLink({ href, children }: { href?: string; children?: ReactNode }): JSX.Element {
+  const hasBrowser = useActive((s) => !!s?.browser)
+  const target = useLinkTarget((s) => s.target)
+  return (
+    <a
+      href={href}
+      title={href ? linkTitle(href, hasBrowser, target) : undefined}
+      {...(href ? linkHandlers(href) : { onClick: (e: MouseEvent) => e.preventDefault() })}
+      className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+    >
+      {children}
+    </a>
+  )
+}

@@ -58,3 +58,12 @@ equal(browserResultCopy('Page content from x\nsummary!: 9 errors'), null, 'debug
 equal(browserLabel('mcp__clui-browser__storage', { area: 'indexeddb' }), 'IndexedDB', 'debug row: IndexedDB label')
 equal(browserLabel('mcp__clui-browser__storage', {}), 'storage', 'debug row: storage label')
 equal(browserLabel('mcp__clui-browser__cookies', {}), 'cookies', 'debug row: cookies label')
+
+// URLs in tool output: what becomes a link, and where it ends.
+import { urlSpans } from '../src/renderer/src/lib/urlSpans.ts'
+const urls = (t: string, cut = false): string => urlSpans(t, cut).map((s) => s.url).join(' ')
+equal(urls('Created https://github.com/o/r/pull/14686.'), 'https://github.com/o/r/pull/14686', 'links: trailing period dropped')
+equal(urls('(see https://example.com/a_(b))'), 'https://example.com/a_(b)', 'links: a balanced paren stays, the outer one goes')
+equal(urls('one http://localhost:5173/x, two https://a.io'), 'http://localhost:5173/x https://a.io', 'links: several in one line')
+equal(urls('ftp://x.io and mailto:me@x.io'), '', 'links: only http(s)')
+equal(urls('tail https://example.com/very/lo', true), '', 'links: a URL cut by truncation stays text')

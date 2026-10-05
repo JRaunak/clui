@@ -5,6 +5,9 @@ import { FieldError, LOGIN_INPUT } from '../LoginFields'
 import { IconEdit, IconPlus, IconTrash } from '../Icon'
 import { useEscape } from '../../lib/useEscape'
 import { CheckBox, Field, Pane } from './shared'
+import { Dropdown } from '../Dropdown'
+import { LINK, LINK_MOD, useLinkTarget } from '../../lib/openLink'
+import type { LinkTarget } from '../../../../shared/settings'
 import { LoginForm } from './LoginForm'
 import { ClearBrowsingData } from './ClearBrowsingData'
 
@@ -21,8 +24,6 @@ const DANGER_HOVER =
   'pointer-fine:hover:bg-[var(--color-control-danger-hover)] pointer-fine:hover:text-err active:bg-[var(--color-control-danger-hover)] active:text-err'
 // 236px is six and a half rows plus the borders; the cut row is the scroll cue.
 const WINDOW = 'h-[236px] overflow-y-auto [scrollbar-gutter:stable] overscroll-contain border-y border-border'
-const LINK =
-  'rounded-sm text-content underline decoration-[var(--color-dim)] underline-offset-2 pointer-fine:hover:decoration-[var(--color-content)]'
 
 const shortMonth = new Intl.DateTimeFormat('en-US', { month: 'short' })
 // en-GB would give the day-first order but spells September "Sept".
@@ -46,6 +47,18 @@ type FocusRequest = { key: string; fallback?: string; reveal?: boolean; top?: bo
  *  for Save; a removal commits once its undo toast runs out. The toasts sit outside the pane, so a
  *  pending removal stays undoable from another section. */
 export function BrowserSection({ active }: { active: boolean }): JSX.Element {
+  const target = useLinkTarget((st) => st.target)
+  const [targetFailed, setTargetFailed] = useState(false)
+  // Saved on change, like the browser toggle above; the mirror updates first so open links' titles follow at once.
+  const saveTarget = (next: LinkTarget, reset = false): void => {
+    const prev = useLinkTarget.getState().target
+    useLinkTarget.setState({ target: next })
+    setTargetFailed(false)
+    void window.clui.updateSettings(reset ? {} : { linkTarget: next }, reset ? ['linkTarget'] : undefined).catch(() => {
+      useLinkTarget.setState({ target: prev })
+      setTargetFailed(true)
+    })
+  }
   const [sites, setSites] = useState<ApprovedSite[]>([])
   const [logins, setLogins] = useState<SavedLoginInfo[]>([])
   const [vault, setVault] = useState<boolean | null>(null)
@@ -215,6 +228,27 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
             <CheckBox checked={!!enabled} />
             <span className="text-label text-content">Enable for new and resumed sessions</span>
           </button>
+        </Field>
+        <Field
+          label="Open links in"
+          hint={
+            enabled
+              ? `Applies to links in Claude's replies and tool output. ${LINK_MOD}-click opens the other way.`
+              : 'Takes effect when the agentic browser is on. Until then, links open in your default browser.'
+          }
+          hintId={`${uid}-links`}
+          onReset={target !== 'clui' ? () => saveTarget('clui', true) : undefined}
+          note={targetFailed && <FieldError id={`${uid}-links-err`} text="Couldn't save this setting. Try again." />}
+        >
+          <Dropdown<LinkTarget>
+            value={target}
+            ariaLabel="Open links in"
+            options={[
+              { value: 'clui', label: "Clui's browser" },
+              { value: 'system', label: 'Default browser' }
+            ]}
+            onChange={(v) => saveTarget(v)}
+          />
         </Field>
 
         <section className="flex flex-col gap-2" aria-labelledby={`${uid}-sites`}>

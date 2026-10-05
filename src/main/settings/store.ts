@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import {
   DEFAULT_SETTINGS,
   THEME_CHOICES,
+  LINK_TARGETS,
   PERMISSION_MODES,
   clampEffort,
   isEffortChoice,
@@ -42,6 +43,7 @@ const SCHEMA_VERSION = 1
 function isValidValue(key: SettingsKey, v: unknown): boolean {
   if (typeof v !== typeof DEFAULT_SETTINGS[key]) return false
   if (key === 'theme') return (THEME_CHOICES as readonly string[]).includes(v as string)
+  if (key === 'linkTarget') return (LINK_TARGETS as readonly string[]).includes(v as string)
   if (key === 'permissionMode') return (PERMISSION_MODES as readonly string[]).includes(v as string)
   if (key === 'effort') return isEffortChoice(v)
   return true
