@@ -213,7 +213,7 @@ export function InstrumentRow({
               {counted && (
                 <span className="shrink-0 text-meta">
                   <span className="text-faint">· </span>
-                  <span className={counted.flagged ? 'font-medium text-content' : 'text-dim'}>{counted.copy}</span>
+                  {counted.flagged ? <Flagged copy={counted.copy} /> : <span className="text-dim">{counted.copy}</span>}
                 </span>
               )}
               {isSubagent && subType && (
@@ -497,4 +497,16 @@ function subagentType(input: unknown): string | null {
     if (typeof t === 'string' && t) return t
   }
   return null
+}
+
+/** In "16 messages, 8 errors" the problem is the last clause, so only it takes the emphasis. */
+function Flagged({ copy }: { copy: string }): JSX.Element {
+  const cut = copy.lastIndexOf(', ')
+  if (cut < 0) return <span className="font-medium text-content">{copy}</span>
+  return (
+    <span className="text-dim">
+      {copy.slice(0, cut + 2)}
+      <span className="font-medium text-content">{copy.slice(cut + 2)}</span>
+    </span>
+  )
 }
