@@ -280,3 +280,23 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(before?.type === 'context-usage' && !before.measured && before.contextWindow === 200_000, 'mapper: a window from the model id is not measured')
   ok(after?.type === 'context-usage' && after.measured && after.contextWindow === 1_000_000, 'mapper: a result-reported window is measured')
 }
+
+// Resume: the CLI's meta note of where it saved images isn't a user message; a peer message (also meta) still is.
+{
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { readTranscriptAtPath } = await import('../src/main/sessions/transcript.ts')
+  const dir = mkdtempSync(join(tmpdir(), 'clui-tx-'))
+  const file = join(dir, 's.jsonl')
+  const rec = (o: object): string => JSON.stringify({ sessionId: 's', cwd: dir, ...o })
+  writeFileSync(file, [
+    rec({ type: 'user', uuid: 'u1', message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/' } }, { type: 'text', text: 'what are these?' }] } }),
+    rec({ type: 'user', uuid: 'u2', isMeta: true, message: { role: 'user', content: [{ type: 'text', text: '[Image: source: /tmp/x/images/8.jpg][Image: source: /tmp/x/images/9.jpg]' }] } }),
+    rec({ type: 'user', uuid: 'u3', isMeta: true, message: { role: 'user', content: '<cross-session-message from-name="peer">hi</cross-session-message>' } })
+  ].join('\n') + '\n')
+  const { messages } = await readTranscriptAtPath(file)
+  ok(!messages.some((m) => m.text.includes('[Image: source:')), 'resume: the CLI image-source note is not a bubble')
+  ok(messages.some((m) => m.text === 'what are these?'), 'resume: the real message stays')
+  ok(messages.length === 2, 'resume: the peer message still renders', `${messages.length}`)
+}

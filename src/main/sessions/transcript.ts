@@ -44,6 +44,7 @@ interface RawEntry {
   /** Record-level effort on an agent transcript's assistant entries (effort-capable models). */
   effort?: string
   isCompactSummary?: boolean
+  isMeta?: boolean
   compactMetadata?: { trigger?: string; preTokens?: number; postTokens?: number }
 }
 
@@ -70,6 +71,11 @@ function isCommandPlumbing(text: string): boolean {
   return /^\s*<(command-(message|name|args)|local-command-(caveat|stdout)|task-notification)>/.test(
     text
   )
+}
+
+function isImageSourceNote(content: unknown): boolean {
+  const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((c) => (c && typeof c === 'object' && 'text' in c ? String(c.text) : '')).join('') : ''
+  return /^(\[Image: source: [^\]]+\]\s*)+$/.test(text.trim())
 }
 
 /**
@@ -394,6 +400,9 @@ async function parseTranscriptFile(
         continue
       }
       if (entry.isCompactSummary) continue
+      // The CLI notes where it saved a message's images as a meta "user" record of bare `[Image: source: …]`
+      // placeholders. The images are already on the real message, so the note isn't something the user said.
+      if (entry.isMeta && entry.type === 'user' && isImageSourceNote(entry.message?.content)) continue
 
       // Slash-command output is logged as a `system` record of subtype
       // `local_command` carrying <local-command-stdout>…</local-command-stdout>
