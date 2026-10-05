@@ -1,11 +1,10 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
-import { siteKeyOf, type SavedLoginInfo } from '../../../../shared/browser'
+import { siteFromInput, type SavedLoginInfo } from '../../../../shared/browser'
 import { Button } from '../Button'
 import { IconWarn } from '../Icon'
 import { FieldError, LOGIN_INPUT, RevealButton } from '../LoginFields'
 
 /** The same normalisation main applies when it saves, so the hint shows the site that will be stored. */
-const normalizeSite = (raw: string): string | null => siteKeyOf(`https://${raw.trim().replace(/^https?:\/\//, '')}`)
 
 /** Add or edit a saved login. An edit never shows the stored password: leaving it blank keeps it.
  *  Field values stay in this component; the password goes to main in the save call only. */
@@ -37,7 +36,7 @@ export function LoginForm({
     siteRef.current?.focus({ preventScroll: true })
   }, [])
 
-  const normalized = normalizeSite(site)
+  const normalized = siteFromInput(site)
   const siteErr = touched.site && !normalized
   const userErr = touched.username && !username.trim()
   // Required when adding; on edit a blank password keeps the stored one.

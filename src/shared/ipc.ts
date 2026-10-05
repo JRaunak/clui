@@ -308,6 +308,7 @@ export interface CluiApi {
   browserDataInfo: () => Promise<BrowsingDataInfo>
   /** Rejects while Claude drives any page; approved sites and saved logins are never touched. */
   browserClearData: (what: ClearBrowsingData) => Promise<void>
+  browserClearSite: (site: string) => Promise<void>
   /** What the native menu's pane and browser items act on, pushed whenever it changes. */
   menuState: (state: MenuState) => void
   onBrowserEvent: (cb: (handleId: string, e: BrowserEvent) => void) => () => void
@@ -407,6 +408,7 @@ export const IpcChannels = {
   browserVaultAvailable: 'clui:browserVaultAvailable',
   browserDataInfo: 'clui:browserDataInfo',
   browserClearData: 'clui:browserClearData',
+  browserClearSite: 'clui:browserClearSite',
   menuState: 'clui:menuState'
 } as const
 

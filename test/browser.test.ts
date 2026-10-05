@@ -181,3 +181,12 @@ equal(requestUrl('data:image/png;base64,AAAA'), 'data:image/png;base64,…', 'de
 equal(scrub('pw=hunter 2&x hunter%202', new Set(['hunter 2'])), 'pw=•••&x •••', 'debug: a filled password is scrubbed raw and URL-encoded')
 ok(isLocal(new URL('http://127.0.0.1:8080/')) && isLocal(new URL('http://[::1]/')) && isLocal(new URL('http://app.localhost/')), 'debug: loopback hosts are local')
 ok(!isLocal(new URL('https://localhost.evil.com/')) && !isLocal(new URL('https://example.com/')), 'debug: lookalike hosts are not local')
+
+// A typed site for the per-site clear and the login form: one word with a dot, or localhost or an IP.
+import { siteFromInput } from '../src/shared/browser.ts'
+equal(siteFromInput('localhost:5173'), 'localhost:5173', 'site input: localhost keeps its port')
+equal(siteFromInput('https://www.GitHub.com/org'), 'github.com', 'site input: URL folds to its site')
+equal(siteFromInput('127.0.0.1:8080'), '127.0.0.1:8080', 'site input: IP with port')
+equal(siteFromInput('not a site'), null, 'site input: words with spaces are not a site')
+equal(siteFromInput('intranet'), null, 'site input: a bare word is not a site')
+equal(siteFromInput('   '), null, 'site input: blank is not a site')

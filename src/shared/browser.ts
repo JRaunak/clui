@@ -77,3 +77,13 @@ export function siteKeyOf(raw: string): string | null {
   if (literal || !host.includes('.')) return u.port ? `${host}:${u.port}` : host
   return host.startsWith('www.') ? host.slice(4) : host
 }
+
+/** A site typed by the user (host, host:port or URL) as its site key, or null when it isn't one. The URL
+ *  parser percent-encodes a space rather than refusing it, so a host must be one word with a dot, unless it's
+ *  localhost or an IP. */
+export function siteFromInput(raw: string): string | null {
+  const text = raw.trim().replace(/^https?:\/\//, '')
+  const host = text.split(/[/:?#]/, 1)[0]
+  if (!host || /\s/.test(text) || !(host.includes('.') || host === 'localhost' || host.startsWith('['))) return null
+  return siteKeyOf(`https://${text}`)
+}

@@ -51,7 +51,7 @@ import { BrowserMcpServer } from './browser/mcp'
 import { WORLD } from './browser/cursor'
 import { approve as approveSite, listSites, removeSite } from './browser/sites'
 import { listLogins, removeLogin, saveLogin, vaultAvailable } from './browser/vault'
-import type { ClearBrowsingData, DriveState, PaneBounds, TabActor } from '../shared/browser'
+import { siteFromInput, type ClearBrowsingData, type DriveState, type PaneBounds, type TabActor } from '../shared/browser'
 import type { CluiSettings, SettingsKey } from '../shared/settings'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -497,6 +497,11 @@ function registerIpc(): void {
   handle(IpcChannels.browserRemoveLogin, (_e, id: string) => removeLogin(id))
   handle(IpcChannels.browserVaultAvailable, () => vaultAvailable())
   handle(IpcChannels.browserDataInfo, () => browser.dataInfo())
+  handle(IpcChannels.browserClearSite, async (_e, raw: string) => {
+    const site = typeof raw === 'string' ? siteFromInput(raw) : null
+    if (!site) throw new Error('not a site')
+    await browser.clearSite(site)
+  })
   handle(IpcChannels.browserClearData, (_e, what: ClearBrowsingData) =>
     browser.clearData({ cookies: what?.cookies === true, cache: what?.cache === true, history: what?.history === true })
   )

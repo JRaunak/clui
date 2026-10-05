@@ -132,6 +132,7 @@ const api: CluiApi = {
   browserVaultAvailable: () => ipcRenderer.invoke(IpcChannels.browserVaultAvailable),
   browserDataInfo: () => ipcRenderer.invoke(IpcChannels.browserDataInfo),
   browserClearData: (what) => ipcRenderer.invoke(IpcChannels.browserClearData, what),
+  browserClearSite: (site) => ipcRenderer.invoke(IpcChannels.browserClearSite, site),
   menuState: (state) => ipcRenderer.send(IpcChannels.menuState, state),
   onBrowserEvent: (cb: (handleId: string, e: BrowserEvent) => void) => {
     const listener = (_e: unknown, handleId: string, ev: BrowserEvent): void => cb(handleId, ev)
