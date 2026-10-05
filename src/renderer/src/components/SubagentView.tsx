@@ -209,7 +209,7 @@ function WorkflowAgentDetail({ agent }: { agent: WorkflowAgent }): JSX.Element {
   }, [agent.agentId, running])
 
   return (
-    <div className="max-w-3xl">
+    <div className="mx-auto w-full max-w-5xl">
       <div className="mb-4 flex items-center gap-2.5">
         <span className="font-mono text-ui font-semibold text-content">{agent.label}</span>
         <span className="flex items-center gap-1.5 font-mono text-meta">
@@ -739,13 +739,13 @@ export function SubagentView(): JSX.Element | null {
       <div className="scroll-edge min-h-0 flex-1 overflow-y-auto px-8 py-6">
         <div aria-hidden="true" style={{ height: 'calc(var(--bar-h, 44px) + 36px)' }} />
         {desc && (
-          <div className="mb-5 max-w-3xl font-mono text-code text-faint">
+          <div className="mx-auto mb-5 w-full max-w-5xl font-mono text-code text-faint">
             {desc}
           </div>
         )}
         {/* A nested child has no live stream; render its on-disk transcript (loaded by tool_use_id). */}
         {subMsgs.length === 0 && diskLoadedFor === parentId && diskMsgs && diskMsgs.length > 0 ? (
-          <div className="flex max-w-3xl flex-col gap-4">
+          <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
             {diskMsgs.map((m) => (
               <HistoryBlock key={m.id} msg={m} hideAgentTools />
             ))}
@@ -760,7 +760,7 @@ export function SubagentView(): JSX.Element | null {
                 : 'No transcript was captured for this subagent.'}
           </div>
         ) : (
-          <div className="flex max-w-3xl flex-col gap-4">
+          <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
             <SubagentStream entries={subMsgs} />
             {running && <WorkingTail bg={!!bgTask} />}
             <SpawnedChildren items={shownChildren} onOpen={pushSubagent} />
