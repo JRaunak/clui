@@ -71,6 +71,9 @@ export interface PermissionDenial {
 
 /** One model's slice of a turn's usage (a turn can span models via subagents/switches). */
 export interface TurnUsageModel {
+  /** The CLI's raw modelUsage key. The live result also names a canonicalModel but the persisted
+   *  cost-state doesn't, so deltas match on this. */
+  id?: string
   model: string
   provider?: string
   costUSD?: number
@@ -86,6 +89,34 @@ export interface TurnUsage {
   cacheCreationInputTokens: number
   thinkingTokens: number
   models: TurnUsageModel[]
+}
+
+export const ZERO_USAGE: TurnUsage = {
+  costUSD: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadInputTokens: 0,
+  cacheCreationInputTokens: 0,
+  thinkingTokens: 0,
+  models: []
+}
+
+/** The CLI reports every modelUsage field cumulatively for the process, so a turn's own
+ *  usage is the current envelope minus the previous one. max(0, …) guards a transient lower
+ *  report; per-model cost deltas off the prior snapshot's same model so the whole card
+ *  stays one scope. */
+export function perTurnUsage(cur: TurnUsage, prev: TurnUsage): TurnUsage {
+  const d = (a: number | undefined, b: number | undefined): number => Math.max(0, (a ?? 0) - (b ?? 0))
+  const prevByModel = new Map(prev.models.map((m) => [m.id ?? m.model, m.costUSD]))
+  return {
+    costUSD: d(cur.costUSD, prev.costUSD),
+    inputTokens: d(cur.inputTokens, prev.inputTokens),
+    outputTokens: d(cur.outputTokens, prev.outputTokens),
+    cacheReadInputTokens: d(cur.cacheReadInputTokens, prev.cacheReadInputTokens),
+    cacheCreationInputTokens: d(cur.cacheCreationInputTokens, prev.cacheCreationInputTokens),
+    thinkingTokens: d(cur.thinkingTokens, prev.thinkingTokens),
+    models: cur.models.map((m) => ({ ...m, costUSD: d(m.costUSD, prevByModel.get(m.id ?? m.model)) }))
+  }
 }
 
 export type DomainEvent =
@@ -232,8 +263,10 @@ export type DomainEvent =
       fromPeer?: boolean
       /** Rule-denied tool calls this turn (past-tense enforcement, not the interactive ask). */
       denials?: PermissionDenial[]
-      /** This turn's usage breakdown. Foreground turns only; absent on bg/peer results. */
+      /** This turn's own usage (already a delta). Foreground turns only; absent on bg/peer results. */
       usage?: TurnUsage
+      /** The API id of the turn's last main-thread assistant message, which keys its saved usage. */
+      messageId?: string
     }
   /** A peer began messaging this session (`command_lifecycle:started`): insert the
    *  anonymous placeholder, backfilled by `peer-message` at the result. */

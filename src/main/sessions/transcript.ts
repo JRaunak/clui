@@ -14,7 +14,8 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { claudeHome } from '../lib/claude-home'
 import type { HistoryMessage, HistoryToolCall, TranscriptResult } from '../../shared/sessions'
-import { parseCliMessage } from '../../shared/events'
+import { parseCliMessage, type TurnUsage } from '../../shared/events'
+import { readSessionUsage } from './usage'
 
 const projectsRoot = (): string => join(claudeHome(), 'projects')
 
@@ -37,6 +38,7 @@ interface RawEntry {
   isSidechain?: boolean
   message?: {
     role?: string
+    id?: string
     content?: unknown
     usage?: RawUsage
     model?: string
@@ -297,7 +299,50 @@ export async function readTranscript(
 ): Promise<TranscriptResult> {
   const file = await findTranscriptFile(sessionId)
   if (!file) return { messages: [], total: 0, capped: false, contextTokens: null }
-  return parseTranscriptFile(file, cap)
+  // Every session's entries, not just this one's: a fork's early turns were recorded under its parent.
+  const turnUsage = new Map(Object.values(await readSessionUsage()).flatMap((m) => Object.entries(m)))
+  return parseTranscriptFile(file, cap, { turnUsage })
+}
+
+/** The running total a `--resume` spawn starts from: the transcript's last cost-state, which the
+ *  CLI seeds its own count with. Null when there's none (the last process never exited cleanly). */
+export async function readCostBaseline(sessionId: string): Promise<TurnUsage | null> {
+  const file = await findTranscriptFile(sessionId)
+  if (!file) return null
+  let last: { totalCostUSD?: number; modelUsage?: Record<string, Record<string, number | undefined>> } | null = null
+  const rl = createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity })
+  try {
+    for await (const line of rl) {
+      if (!line.includes('"cost-state"')) continue
+      try {
+        const o = JSON.parse(line)
+        if (o?.type === 'cost-state') last = o
+      } catch {
+        /* a torn line */
+      }
+    }
+  } finally {
+    rl.close()
+  }
+  if (!last) return null
+  const usage: TurnUsage = {
+    costUSD: last.totalCostUSD ?? 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+    thinkingTokens: 0,
+    models: []
+  }
+  for (const [id, u] of Object.entries(last.modelUsage ?? {})) {
+    usage.inputTokens += u.inputTokens ?? 0
+    usage.outputTokens += u.outputTokens ?? 0
+    usage.cacheReadInputTokens += u.cacheReadInputTokens ?? 0
+    usage.cacheCreationInputTokens += u.cacheCreationInputTokens ?? 0
+    usage.thinkingTokens += u.thinkingTokens ?? 0
+    usage.models.push({ id, model: id, costUSD: u.costUSD })
+  }
+  return usage
 }
 
 /**
@@ -344,9 +389,12 @@ export async function readTranscriptAtPath(file: string): Promise<TranscriptResu
 async function parseTranscriptFile(
   file: string,
   cap: number,
-  opts: { includeSidechain?: boolean } = {}
+  opts: { includeSidechain?: boolean; turnUsage?: Map<string, TurnUsage> } = {}
 ): Promise<TranscriptResult> {
   const messages: HistoryMessage[] = []
+  /** API message id → the last rendered message carrying it (the CLI splits one reply over
+   *  several entries), where that turn's saved usage lands. */
+  const lastByMessageId = new Map<string, HistoryMessage>()
   /** tool_use id → the ToolCall object, so tool_results can be attached later. */
   const toolCallsById = new Map<string, HistoryToolCall>()
   let seq = 0
@@ -579,9 +627,16 @@ async function parseTranscriptFile(
         continue
       }
       messages.push(msg)
+      if (role === 'assistant' && entry.message?.id) lastByMessageId.set(entry.message.id, msg)
     }
   } finally {
     rl.close()
+  }
+  if (opts.turnUsage) {
+    for (const [id, msg] of lastByMessageId) {
+      const usage = opts.turnUsage.get(id)
+      if (usage) msg.usage = usage
+    }
   }
 
   const contextTokens = lastContextTokens > 0 ? lastContextTokens : null

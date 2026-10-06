@@ -1,6 +1,7 @@
 /**
  * Shared types for session history.
  */
+import type { TurnUsage } from './events'
 
 /** One past session, summarized from its on-disk `.jsonl`. */
 export interface SessionSummary {
@@ -100,6 +101,8 @@ export interface HistoryMessage {
    *  holds the body. Role stays 'user' so search/export are untouched; the renderer promotes
    *  it to a 'peer' block on resume. */
   peer?: { from: string }
+  /** The turn's own usage, saved by Clui when it finished (assistant messages only). */
+  usage?: TurnUsage
   compaction?: CompactionMarker
   /** Set on a user turn a hook blocked. The CLI never writes the prompt itself, so `text` is the
    *  prompt quoted in the hook's message. */

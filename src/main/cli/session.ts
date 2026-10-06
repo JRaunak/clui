@@ -21,6 +21,8 @@ import type { ModeChangeResult, WireAttachment } from '../../shared/ipc'
 import { NdjsonParser } from './ndjson'
 import { EventMapper } from './event-mapper'
 import { stripRuntimeMarkers } from './shell-env'
+import { readCostBaseline } from '../sessions/transcript'
+import { recordTurnUsage } from '../sessions/usage'
 
 /** A queued/outgoing user turn: text plus any inlined attachment content blocks. */
 interface UserTurn {
@@ -258,6 +260,15 @@ export class ClaudeSession extends EventEmitter {
     this.reconnecting = false
     this.parser = new NdjsonParser()
     this.mapper = new EventMapper()
+    // The transcript's last cost-state is what this process starts counting from. It's read while the
+    // CLI boots, and no result can land before the first turn, which is seconds away.
+    const resumeId = this.opts.resumeSessionId
+    if (resumeId) {
+      const mapper = this.mapper
+      void readCostBaseline(resumeId)
+        .then((b) => b && mapper.setUsageBaseline(b))
+        .catch(() => {})
+    }
     this.stderrBuf = ''
     if (this.initTimer) {
       clearTimeout(this.initTimer)
@@ -544,6 +555,7 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private emitEvent(e: DomainEvent): void {
+    if (e.type === 'result' && e.usage && e.messageId) void recordTurnUsage(e.sessionId, e.messageId, e.usage).catch(() => {})
     this.emit('event', e)
   }
 

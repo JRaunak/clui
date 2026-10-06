@@ -36,6 +36,7 @@ import {
 import { searchSessions, warmSearchCache } from './sessions/search'
 import { exportSessionMarkdown, exportFilename } from './sessions/export'
 import { readSessionModels, setSessionModel, deleteSessionModel } from './sessions/models'
+import { deleteSessionUsage } from './sessions/usage'
 import { readConfig } from './config/reader'
 import { openInEditor, openDiff } from './ide/open'
 import { listWorkspaceFiles } from './workspace/files'
@@ -633,7 +634,7 @@ function registerIpc(): void {
     }
   )
   handle(IpcChannels.deleteSessionModel, async (_e, sessionId: string) => {
-    await deleteSessionModel(sessionId)
+    await Promise.all([deleteSessionModel(sessionId), deleteSessionUsage(sessionId)])
   })
 
   handle(IpcChannels.readConfig, async (_e, cwd: string | null) => readConfig(cwd))

@@ -5,7 +5,7 @@
  * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
  * drift skips the envelope instead of crashing the app.
  */
-import { parseCliMessage, type DomainEvent, type PermissionSuggestion, type TurnUsage } from '../../shared/events'
+import { parseCliMessage, perTurnUsage, ZERO_USAGE, type DomainEvent, type PermissionSuggestion, type TurnUsage } from '../../shared/events'
 import { deriveModelInfo } from '../../shared/settings'
 
 // Minimal structural typing of the raw envelopes we care about.
@@ -64,6 +64,7 @@ interface RawEnvelope {
   }
   message?: {
     role?: string
+    id?: string
     content?: Array<{
       type?: string
       text?: string
@@ -175,13 +176,23 @@ function turnUsageFrom(env: RawEnvelope): TurnUsage | undefined {
     usage.cacheReadInputTokens += u.cacheReadInputTokens ?? 0
     usage.cacheCreationInputTokens += u.cacheCreationInputTokens ?? 0
     usage.thinkingTokens += u.thinkingTokens ?? 0
-    usage.models.push({ model: u.canonicalModel ?? id, provider: u.provider, costUSD: u.costUSD })
+    usage.models.push({ id, model: u.canonicalModel ?? id, provider: u.provider, costUSD: u.costUSD })
   }
   return usage
 }
 
 /** Track in-flight tool_use blocks by their stream index → id, to attach input deltas. */
 export class EventMapper {
+  /** This process's cumulative usage at the previous result. A resumed process starts its count
+   *  from the transcript's last cost-state, so the session seeds it from there. */
+  private usageBaseline: TurnUsage = ZERO_USAGE
+  /** The current turn's latest main-thread assistant message id. */
+  private lastMessageId: string | undefined
+
+  setUsageBaseline(usage: TurnUsage): void {
+    this.usageBaseline = usage
+  }
+
   /** content-block index → tool_use id (for input-delta association). */
   private indexToToolId = new Map<number, string>()
   private toolInputJson = new Map<string, string>()
@@ -324,6 +335,7 @@ export class EventMapper {
         return env.request_id ? [{ type: 'permission-cancel', requestId: env.request_id }] : []
       case 'assistant': {
         const out: DomainEvent[] = []
+        if (env.message?.id) this.lastMessageId = env.message.id
         if (env.is_api_error_message) {
           const content = Array.isArray(env.message?.content) ? env.message.content : []
           this.apiError = {
@@ -381,6 +393,13 @@ export class EventMapper {
           this.turnText = ''
           this.apiError = null
         }
+        // Background and peer turns still advance the process total, so the baseline moves on every
+        // result while only a foreground one reports its delta.
+        const cumulative = turnUsageFrom(env)
+        const prevUsage = this.usageBaseline
+        if (cumulative) this.usageBaseline = cumulative
+        const messageId = isForeground ? this.lastMessageId : undefined
+        if (isForeground) this.lastMessageId = undefined
         const out: DomainEvent[] = [
           {
             type: 'result',
@@ -401,7 +420,8 @@ export class EventMapper {
               isForeground && env.permission_denials?.length
                 ? env.permission_denials.map((d) => ({ toolName: d.tool_name ?? 'a tool', input: d.tool_input }))
                 : undefined,
-            usage: isForeground ? turnUsageFrom(env) : undefined
+            usage: isForeground && cumulative ? perTurnUsage(cumulative, prevUsage) : undefined,
+            messageId
           }
         ]
         // Backfill the pending placeholder (or insert a resolved block) with the peer's sender + body.
