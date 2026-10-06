@@ -25,6 +25,7 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>({
   align = 'start',
   solid = false,
   above,
+  maxHeight,
   onOpenChange
 }: {
   placement?: PopoverPlacement
@@ -33,6 +34,9 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>({
   solid?: boolean
   /** Clear this anchor's top edge instead of the trigger's, so a chip inside the dock opens above the whole dock. */
   above?: string
+  /** The menu's max height. Above the dock it's enforced through the top inset, so a tall dock (a
+   *  Gate open) shrinks the menu to the space left instead of pushing it off screen. */
+  maxHeight?: string
   onOpenChange?: (open: boolean) => void
 } = {}) {
   const id = `pop${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
@@ -124,10 +128,15 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>({
       ...(above
         ? {
             bottom: `calc(anchor(${above} top) + 8px)`,
+            ...(maxHeight && {
+              top: `max(8px, calc(anchor(${above} top) - 8px - ${maxHeight}))`,
+              maxHeight: 'stretch',
+              alignSelf: 'end'
+            }),
             ...(align === 'start' ? { left: 'anchor(left)' } : { right: 'anchor(right)' }),
             marginBottom: 0
           }
-        : { positionArea: AREA[placement][align] }),
+        : { positionArea: AREA[placement][align], maxHeight }),
       ...(solid ? { '--control-material': 'solid' } : {})
     } as CSSProperties
   }

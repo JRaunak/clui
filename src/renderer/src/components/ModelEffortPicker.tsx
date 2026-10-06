@@ -82,6 +82,7 @@ export function ModelEffortPicker(): JSX.Element {
   const p = usePopover({
     placement: 'up',
     above: '--composer-dock',
+    maxHeight: '60vh',
     onOpenChange: (o) => {
       if (!o) {
         clearHoverTimer()
@@ -182,7 +183,7 @@ export function ModelEffortPicker(): JSX.Element {
       <div
         {...p.popoverProps}
         aria-label="Model and effort"
-        className="pop-base pop glass-thick flex max-h-[min(60vh,calc(100vh-24px))] w-[196px] flex-col rounded-xl py-1 text-xs"
+        className="pop-base pop glass-thick flex w-[196px] flex-col rounded-xl py-1 text-xs"
         onMouseLeave={scheduleHide}
       >
           <div className="flex shrink-0 items-center justify-between px-3 py-1 text-caps uppercase text-dim">

@@ -72,7 +72,8 @@ export function Dropdown<T extends string>({
     placement: direction === 'up' ? 'up' : 'down',
     align: align === 'right' ? 'end' : 'start',
     solid,
-    above: direction === 'up' ? '--composer-dock' : undefined
+    above: direction === 'up' ? '--composer-dock' : undefined,
+    maxHeight: 'min(60vh, 420px)'
   })
   const optRefs = useRef<(HTMLButtonElement | null)[]>([])
   const selectedIdx = Math.max(0, options.findIndex((o) => o.value === value))
@@ -157,7 +158,7 @@ export function Dropdown<T extends string>({
         role="listbox"
         aria-label={ariaLabel ?? title}
         onKeyDown={onListKey}
-        className={`pop-base pop glass-thick max-h-[min(60vh,420px)] overflow-y-auto ${
+        className={`pop-base pop glass-thick overflow-y-auto ${
           isPill ? 'rounded-xl p-1.5' : 'rounded-lg py-1'
         } ${menuClassName ?? ''}`}
         style={{ ...p.popoverProps.style, minWidth: 'anchor-size(width)' }}
