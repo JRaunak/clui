@@ -20,6 +20,7 @@ export function GateFrame({
   icon,
   kicker,
   title,
+  source,
   count,
   tabs,
   footer,
@@ -30,6 +31,8 @@ export function GateFrame({
   icon: ReactNode
   kicker: string
   title: ReactNode
+  /** Who is asking, under the title. */
+  source?: ReactNode
   count: GateCount
   tabs?: ReactNode
   footer: ReactNode
@@ -97,6 +100,7 @@ export function GateFrame({
         >
           {title}
         </div>
+        {source}
       </header>
       {tabs}
       <div className="min-h-0 flex-1 overflow-y-auto px-5">{children}</div>

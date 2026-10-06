@@ -492,7 +492,7 @@ function firstLine(s: string): string {
   return ''
 }
 
-function subagentType(input: unknown): string | null {
+export function subagentType(input: unknown): string | null {
   if (input && typeof input === 'object') {
     const t = (input as Record<string, unknown>).subagent_type
     if (typeof t === 'string' && t) return t

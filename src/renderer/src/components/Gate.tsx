@@ -220,7 +220,8 @@ function announcementOf(p: PendingPermission): string {
     const q = (p.input as { questions?: { question?: unknown }[] } | null)?.questions?.[0]?.question
     return typeof q === 'string' ? `Question: ${q}` : 'Question from Claude'
   }
-  return `Permission required: Allow ${p.displayName || p.toolName}`
+  const from = p.agentDescription ? ` from subagent ${p.agentDescription}` : ''
+  return `Permission required: Allow ${p.displayName || p.toolName}${from}`
 }
 
 /**

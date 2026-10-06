@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { DomainEvent, ElicitationResponse } from '../../shared/events'
-import type { WireAttachment } from '../../shared/ipc'
+import type { ModeChangeResult, WireAttachment } from '../../shared/ipc'
 import { NdjsonParser } from './ndjson'
 import { EventMapper } from './event-mapper'
 import { stripRuntimeMarkers } from './shell-env'
@@ -83,6 +83,7 @@ export declare interface ClaudeSession {
 interface ControlResult {
   ok: boolean
   payload?: Record<string, unknown>
+  errorCode?: string
 }
 
 /**
@@ -456,7 +457,7 @@ export class ClaudeSession extends EventEmitter {
     if (!raw || typeof raw !== 'object') return
     const env = raw as {
       type?: string
-      response?: { subtype?: string; request_id?: string; response?: Record<string, unknown> }
+      response?: { subtype?: string; request_id?: string; response?: Record<string, unknown>; error_code?: string }
     }
     if (env.type !== 'control_response') return
     const reqId = env.response?.request_id
@@ -508,7 +509,7 @@ export class ClaudeSession extends EventEmitter {
       const p = this.pendingControl.get(reqId)!
       this.pendingControl.delete(reqId)
       clearTimeout(p.timer)
-      p.resolve({ ok, payload: env.response?.response })
+      p.resolve({ ok, payload: env.response?.response, errorCode: env.response?.error_code })
     }
   }
 
@@ -625,14 +626,14 @@ export class ClaudeSession extends EventEmitter {
    * silently revert to the launch-time mode. The renderer maps 'inherit' → 'default'
    * before calling this (there's no mid-session "unset"), so `mode` is concrete here.
    */
-  async setPermissionMode(mode: string): Promise<boolean> {
-    if (!this.child) return false
+  async setPermissionMode(mode: string): Promise<ModeChangeResult> {
+    if (!this.child) return { ok: false }
     // Await the control ACK and commit opts ONLY on success (a rejected change must not
     // update the launch mode a later respawn would rebuild from). Both set_* subtypes
     // are verified to emit a success/error control_response.
-    const ok = await this.sendControl('set_permission_mode', { mode })
+    const { ok, errorCode } = await this.sendControlResult('set_permission_mode', { mode })
     if (ok) this.opts = { ...this.opts, permissionMode: mode }
-    return ok
+    return { ok, errorCode }
   }
 
   /**

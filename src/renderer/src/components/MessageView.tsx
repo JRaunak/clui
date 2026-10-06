@@ -1,12 +1,22 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import type { CompactionMarker } from '../../../shared/sessions'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import type { BlockedPrompt, CompactionMarker } from '../../../shared/sessions'
 import { fmtTokens } from '../lib/formatTokens'
-import { type ChatMessage, type MessageAttachment, type PeerMessage, type ToolCall } from '../store'
+import {
+  activeSlice,
+  useActive,
+  useSession,
+  type ChatMessage,
+  type HookNote,
+  type MessageAttachment,
+  type PeerMessage,
+  type ToolCall
+} from '../store'
 import { Markdown } from './Markdown'
 import { AnnotationChip } from './AnnotationChip'
+import { Button } from './Button'
 import { splitAnnotations } from '../../../shared/annotate'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
-import { IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconShieldOff } from './Icon'
+import { IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconShieldOff } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
 import { formatCost } from '../lib/formatCost'
 import type { PermissionDenial, TurnUsage } from '../../../shared/events'
@@ -85,6 +95,7 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
   if (message.role === 'peer' && message.peer) return <PeerMessageView message={message} peer={message.peer} />
   if (message.compaction) return <CompactionDivider marker={message.compaction} />
   const isUser = message.role === 'user'
+  if (!isUser && message.hookNotes) return <HookNotes notes={message.hookNotes} />
   // An assistant turn whose only content is entering plan mode renders as a bare full-width
   // marker, not an empty "Claude" bubble.
   if (
@@ -119,18 +130,23 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
         )}
         {isUser ? 'You' : 'Claude'}
       </div>
-      <div className={isUser ? 'max-w-[80%] self-start rounded-lg rounded-tl-sm bg-user px-3.5 py-2.5' : 'flex flex-col gap-2'}>
-        {message.thinking && !(hideThinking && !message.text && message.tools.length === 0) && (
-          <div className={isUser ? undefined : 'spine-seg'} data-seg={isUser ? undefined : hasSpine ? 'through' : 'none'}>
-            <ThinkingBlock text={message.thinking} />
-          </div>
-        )}
-        {isUser ? (
-          <UserContent message={message} />
-        ) : (
-          <SpineItems entries={entries} />
-        )}
-      </div>
+      {/* A blocked prompt read back from disk whose wording didn't parse has no text to show. */}
+      {(!isUser || message.text || message.attachments?.length) && (
+        <div className={isUser ? 'max-w-[80%] self-start rounded-lg rounded-tl-sm bg-user px-3.5 py-2.5' : 'flex flex-col gap-2'}>
+          {message.thinking && !(hideThinking && !message.text && message.tools.length === 0) && (
+            <div className={isUser ? undefined : 'spine-seg'} data-seg={isUser ? undefined : hasSpine ? 'through' : 'none'}>
+              <ThinkingBlock text={message.thinking} />
+            </div>
+          )}
+          {isUser ? (
+            <UserContent message={message} />
+          ) : (
+            <SpineItems entries={entries} />
+          )}
+        </div>
+      )}
+      {isUser && message.hookNotes && <HookNotes notes={message.hookNotes} />}
+      {isUser && message.blocked && <BlockedPromptNotice prompt={splitAnnotations(message.text).text} blocked={message.blocked} />}
       {!isUser && message.denials && message.denials.length > 0 && <BlockedActionsNotice denials={message.denials} />}
       {!isUser && message.usage && <TurnUsageTrailer usage={message.usage} id={message.id} />}
     </div>
@@ -258,6 +274,147 @@ function BlockedActionsNotice({ denials }: { denials: PermissionDenial[] }): JSX
             </li>
           ))}
         </ul>
+      )}
+    </section>
+  )
+}
+
+/** True while the element's clamped content is taller than its box. Re-measured on resize, since
+ *  opening a pane narrows the transcript and can clamp text that fit before. */
+function useOverflows(ref: RefObject<HTMLElement>, text: string): boolean {
+  const [overflows, setOverflows] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = (): void => setOverflows(el.scrollHeight > el.clientHeight)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [ref, text])
+  return overflows
+}
+
+function HookNotes({ notes }: { notes: HookNote[] }): JSX.Element {
+  return (
+    <div className="flex flex-col gap-1">
+      {notes.map((n, i) => (
+        <HookNoteRow key={i} note={n} />
+      ))}
+    </div>
+  )
+}
+
+/** A hook's message, muted: it's context the user configured, not something to act on. */
+function HookNoteRow({ note }: { note: HookNote }): JSX.Element {
+  const textRef = useRef<HTMLSpanElement>(null)
+  const [open, setOpen] = useState(false)
+  // Measured clamped: once open, the clamp is off and the text always fits.
+  const clamped = useOverflows(textRef, note.text)
+  return (
+    <div data-ui="hook-note" className="flex items-baseline gap-1.5 text-meta text-dim">
+      {note.event && (
+        <span className="shrink-0 text-faint">
+          <span className="font-mono">
+            {note.event}
+            {note.matcher && `:${note.matcher}`}
+          </span>{' '}
+          hook
+        </span>
+      )}
+      <span className="flex min-w-0 flex-col items-start">
+        <span ref={textRef} className={`whitespace-pre-wrap break-words ${open ? '' : 'line-clamp-3'}`}>
+          {note.text}
+        </span>
+        {(clamped || open) && (
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+            className="min-h-6 rounded text-faint transition-colors hover:text-content"
+          >
+            {open ? 'Show less' : 'Show more'}
+          </button>
+        )}
+      </span>
+      {note.count > 1 && (
+        <span className="shrink-0 tabular-nums text-faint">
+          <span aria-hidden="true">×{note.count}</span>
+          <span className="sr-only">{note.count} times</span>
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** Warn, not error: the hook did what it was configured to do. The prompt never reached Claude, so
+ *  the way forward is editing it. */
+function BlockedPromptNotice({ prompt, blocked }: { prompt: string; blocked: BlockedPrompt }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const reasonRef = useRef<HTMLDivElement>(null)
+  const clamped = useOverflows(reasonRef, blocked.reason)
+  const detailsId = useId()
+  const setDraftText = useSession((s) => s.setDraftText)
+  const handleId = useActive((s) => s?.handleId ?? null)
+
+  const edit = (): void => {
+    if (!handleId) return
+    // Read at click time, so typing in the composer doesn't re-render every blocked notice.
+    const draft = activeSlice(useSession.getState())?.draftText ?? ''
+    if (draft !== prompt) setDraftText(handleId, draft.trim() ? `${prompt}\n\n${draft}` : prompt)
+    requestAnimationFrame(() => {
+      const ta = document.querySelector<HTMLTextAreaElement>('[data-composer-input]')
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(ta.value.length, ta.value.length)
+    })
+  }
+
+  return (
+    <section
+      data-ui="prompt-blocked"
+      className="rounded-r-md border-l-2 border-warn bg-warn/7 py-[9px] pl-[13px] pr-3"
+      aria-label="Prompt blocked"
+    >
+      <div className="flex items-center gap-2">
+        <IconNoEntry className="h-3.5 w-3.5 shrink-0 text-warn" aria-hidden="true" />
+        <span className="text-label font-medium text-warn">
+          Blocked by your <span className="font-mono">UserPromptSubmit</span> hook
+        </span>
+      </div>
+      <div ref={reasonRef} id={blocked.command ? undefined : detailsId} className={`mt-1 whitespace-pre-wrap break-words text-ui text-content ${open && !blocked.command ? '' : 'line-clamp-3'}`}>
+        {blocked.reason}
+      </div>
+      <div className="mt-0.5 text-meta text-dim">Claude didn&apos;t receive this prompt.</div>
+      {(prompt || blocked.command || clamped) && (
+        <div className="mt-2 flex items-center gap-2">
+          {prompt && (
+            <Button data-ui="blocked-edit-prompt" variant="control" size="sm" onClick={edit}>
+              Edit prompt
+            </Button>
+          )}
+          {(blocked.command || clamped || open) && (
+            <button
+              type="button"
+              data-ui="blocked-hook-command"
+              aria-expanded={open}
+              aria-controls={detailsId}
+              onClick={() => setOpen((o) => !o)}
+              className="flex h-6 items-center gap-1 rounded px-1.5 text-meta text-dim transition-colors hover:text-content"
+            >
+              <IconChevron className={`h-3 w-3 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden="true" />
+              {`${open ? 'Hide' : 'Show'} ${blocked.command ? 'hook command' : 'full message'}`}
+            </button>
+          )}
+        </div>
+      )}
+      {open && blocked.command && (
+        <div id={detailsId}>
+          <pre className="mt-1.5 whitespace-pre-wrap break-all rounded-md border border-border px-2.5 py-1.5 font-mono text-code text-content">
+            {blocked.command}
+          </pre>
+          {clamped && <div className="mt-1.5 whitespace-pre-wrap break-words text-ui text-content">{blocked.reason}</div>}
+        </div>
       )}
     </section>
   )
@@ -427,7 +584,11 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
   )
 }
 
-type SpineEntry = { kind: 'text'; text: string } | { kind: 'divider' } | { kind: 'tools'; tools: ToolCall[] }
+type SpineEntry =
+  | { kind: 'text'; text: string }
+  | { kind: 'divider' }
+  | { kind: 'hook'; note: HookNote }
+  | { kind: 'tools'; tools: ToolCall[] }
 
 /** Flattens a message into spine entries in stream order. Consecutive tools coalesce into one run
  *  (so aggregation applies to a fan-out); entering plan mode breaks the run with a divider. */
@@ -451,6 +612,11 @@ function spineEntries(message: ChatMessage): SpineEntry[] {
     if (b.kind === 'text') {
       flush()
       if (b.text.trim()) out.push({ kind: 'text', text: b.text })
+      continue
+    }
+    if (b.kind === 'hook') {
+      flush()
+      out.push({ kind: 'hook', note: b })
       continue
     }
     const tc = byId.get(b.id)
@@ -478,7 +644,7 @@ function SpineItems({ entries }: { entries: SpineEntry[] }): JSX.Element {
         if (e.kind === 'tools') return <ToolGroup key={i} tools={e.tools} spine={i === last ? 'end' : 'through'} />
         return (
           <div key={i} className="spine-seg" data-seg={i < last ? 'through' : 'none'}>
-            {e.kind === 'text' ? <Markdown text={e.text} /> : <PlanModeDivider />}
+            {e.kind === 'text' ? <Markdown text={e.text} /> : e.kind === 'hook' ? <HookNoteRow note={e.note} /> : <PlanModeDivider />}
           </div>
         )
       })}

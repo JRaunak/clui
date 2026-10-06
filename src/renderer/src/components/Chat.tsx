@@ -440,7 +440,7 @@ interface FooterContext {
 function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
   const busy = useActive((s) => s?.busy ?? false)
   const compacting = useActive((s) => s?.compacting ?? false)
-  const compactAnnounce = useActive((s) => s?.compactAnnounce ?? '')
+  const statusAnnounce = useActive((s) => s?.statusAnnounce ?? '')
   const lastError = useActive((s) => s?.lastError ?? null)
   // Merge the verb away while the puck shows: it already narrates the work, so the verb would
   // compete. Gated on the same condition as the puck, so they stay in lockstep.
@@ -472,7 +472,7 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
       style={{ paddingBottom: 'calc(var(--dock-h, 0px) + 1.5rem)' }}
     >
       <span className="sr-only" role="status" aria-live="polite">
-        {compactAnnounce}
+        {statusAnnounce}
       </span>
       {(busy || compacting) && <WorkingStatus taskMerged={taskMerged} />}
       {/* Queued messages live at the tail, below the response: renderer-held drafts, not committed

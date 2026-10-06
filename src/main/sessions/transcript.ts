@@ -14,6 +14,7 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { claudeHome } from '../lib/claude-home'
 import type { HistoryMessage, HistoryToolCall, TranscriptResult } from '../../shared/sessions'
+import { parseCliMessage } from '../../shared/events'
 
 const projectsRoot = (): string => join(claudeHome(), 'projects')
 
@@ -46,6 +47,7 @@ interface RawEntry {
   isCompactSummary?: boolean
   isMeta?: boolean
   compactMetadata?: { trigger?: string; preTokens?: number; postTokens?: number }
+  preventContinuation?: boolean
 }
 
 /** Unwrap <local-command-stdout>…</local-command-stdout> to the inner text. */
@@ -400,6 +402,19 @@ async function parseTranscriptFile(
         continue
       }
       if (entry.isCompactSummary) continue
+      // A hook-blocked prompt is persisted only as this notice; the prompt itself never is.
+      if (entry.type === 'system' && entry.subtype === 'informational' && entry.preventContinuation && typeof entry.content === 'string') {
+        const m = parseCliMessage(entry.content, true)
+        messages.push({
+          id: `h-${seq++}-${entry.uuid ?? ''}`,
+          role: 'user',
+          text: m.prompt ?? '',
+          thinking: '',
+          tools: [],
+          blocked: { reason: m.text, command: m.command }
+        })
+        continue
+      }
       // The CLI notes where it saved a message's images as a meta "user" record of bare `[Image: source: …]`
       // placeholders. The images are already on the real message, so the note isn't something the user said.
       if (entry.isMeta && entry.type === 'user' && isImageSourceNote(entry.message?.content)) continue

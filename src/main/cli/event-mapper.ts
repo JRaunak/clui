@@ -5,7 +5,7 @@
  * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
  * drift skips the envelope instead of crashing the app.
  */
-import type { DomainEvent, PermissionSuggestion, TurnUsage } from '../../shared/events'
+import { parseCliMessage, type DomainEvent, type PermissionSuggestion, type TurnUsage } from '../../shared/events'
 import { deriveModelInfo } from '../../shared/settings'
 
 // Minimal structural typing of the raw envelopes we care about.
@@ -22,6 +22,9 @@ interface RawEnvelope {
   permissionMode?: string
   tools?: string[]
   estimated_tokens?: number
+  /** `system/informational`: the notice text, and whether it ended the turn. */
+  content?: string
+  prevent_continuation?: boolean
   compact_result?: string
   compact_metadata?: { trigger?: string; pre_tokens?: number; post_tokens?: number }
   request_id?: string
@@ -38,6 +41,8 @@ interface RawEnvelope {
     decision_reason_type?: string
     blocked_path?: string
     suppress_always_allow_rule?: boolean
+    /** The asking subagent's task_id, absent when the main session asks. */
+    agent_id?: string
     mcp_server_name?: string
     message?: string
     mode?: string
@@ -701,6 +706,8 @@ export class EventMapper {
           }
         ]
       }
+      case 'informational':
+        return typeof env.content === 'string' && env.content.trim() ? [parseCliMessage(env.content, !!env.prevent_continuation)] : []
       case 'thinking_tokens': {
         if (typeof env.estimated_tokens !== 'number') return []
         const now = Date.now()
@@ -874,6 +881,7 @@ export class EventMapper {
   private mapControlRequest(env: RawEnvelope): DomainEvent[] {
     const req = env.request
     if (req?.subtype === 'can_use_tool' && env.request_id) {
+      const agent = req.agent_id ? this.agentTaskMeta.get(req.agent_id) : undefined
       return [
         {
           type: 'permission-request',
@@ -888,7 +896,9 @@ export class EventMapper {
           decisionReason: req.decision_reason,
           decisionReasonType: req.decision_reason_type,
           blockedPath: req.blocked_path,
-          suppressAlwaysAllow: req.suppress_always_allow_rule
+          suppressAlwaysAllow: req.suppress_always_allow_rule,
+          agentToolUseId: agent?.toolUseId,
+          agentDescription: agent?.description
         }
       ]
     }

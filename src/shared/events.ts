@@ -259,6 +259,20 @@ export type DomainEvent =
       decisionReasonType?: string
       blockedPath?: string
       suppressAlwaysAllow?: boolean
+      /** Set when a subagent asks: its Agent tool_use id (opens its transcript) and task description. */
+      agentToolUseId?: string
+      agentDescription?: string
+    }
+  /** A notice the CLI shows the user (`system/informational`), in practice a hook's
+   *  systemMessage. `blocked` means a UserPromptSubmit hook stopped the prompt, so the
+   *  turn ends with no reply; `command` and `prompt` are parsed from that message. */
+  | {
+      type: 'cli-message'
+      text: string
+      source?: string
+      blocked: boolean
+      command?: string
+      prompt?: string
     }
   /** An MCP server asked the user to continue in the browser (url) or fill a form. */
   | { type: 'elicitation-request'; requestId: string; request: ElicitationRequest }
@@ -337,3 +351,18 @@ export type DomainEvent =
   | { type: 'api-retry'; attempt: number; maxRetries: number; delayMs: number; status: number | null }
   /** The underlying CLI process exited. */
   | { type: 'process-exit'; code: number | null }
+
+export type CliMessage = Extract<DomainEvent, { type: 'cli-message' }>
+
+/** Splits the CLI's hook wording into its parts: `<Event>[:<matcher>] says: <message>` for a
+ *  systemMessage, and for a blocking UserPromptSubmit hook
+ *  `<Event> operation blocked by hook:\n[<command>]: <reason>\n\n\nOriginal prompt: <prompt>`.
+ *  Wording the patterns don't match is shown whole. The live stream and a resumed transcript
+ *  both carry this text, so both parse it here. */
+export function parseCliMessage(content: string, blocked: boolean): CliMessage {
+  const block = /^(\S+) operation blocked by hook:\n\[([\s\S]*?)\]: ([\s\S]*?)\n+Original prompt: ([\s\S]*)$/.exec(content)
+  if (block) return { type: 'cli-message', blocked: true, source: block[1], command: block[2], text: block[3].trim(), prompt: block[4] }
+  const says = /^(\S+) says: ([\s\S]*)$/.exec(content)
+  if (says) return { type: 'cli-message', blocked, source: says[1], text: says[2].trim() }
+  return { type: 'cli-message', blocked, text: content.trim() }
+}

@@ -25,9 +25,13 @@ export function focusPaneTitle(): void {
     ?.focus({ preventScroll: true })
 }
 
-/** Back on the transcript, return focus to the row that opened the pane. If the row isn't rendered,
- *  bring its message to the top of the viewport and retry once, then fall back to the composer. */
+/** Back on the transcript, return focus to a waiting Gate, else the row that opened the pane. If the
+ *  row isn't rendered, bring its message to the top of the viewport and retry once, then fall back
+ *  to the composer. */
 function focusOpener(toolId: string): void {
+  // A Gate waiting in the dock outranks the row: the user went to the transcript to answer it.
+  const gate = document.querySelector<HTMLElement>('[data-ui="gate-title"]')
+  if (gate) return gate.focus({ preventScroll: true })
   const btn = openButtonFor(toolId)
   if (btn) return btn.focus({ preventScroll: true })
   const st = useSession.getState()

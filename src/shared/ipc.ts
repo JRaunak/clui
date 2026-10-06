@@ -64,6 +64,13 @@ export interface StartSessionOptions {
 export type PermissionModeChoice = CluiSettings['permissionMode']
 
 /** Result of starting a session: our local handle for it. */
+/** A live permission-mode change. `errorCode` is the CLI's reason when it refuses, e.g.
+ *  'auto_mode_model' when the session's model can't run auto. */
+export interface ModeChangeResult {
+  ok: boolean
+  errorCode?: string
+}
+
 export interface StartSessionResult {
   /** App-local id used to route events/sends before the CLI session id is known. */
   handleId: string
@@ -156,7 +163,7 @@ export interface CluiApi {
   backgroundTask: (handleId: string, toolUseId: string) => Promise<boolean>
   /** Change a running session's permission mode mid-session. Resolves false if the CLI
    *  rejected the change, so the renderer can revert its optimistic UI. */
-  setPermissionMode: (handleId: string, mode: PermissionModeChoice) => Promise<boolean>
+  setPermissionMode: (handleId: string, mode: PermissionModeChoice) => Promise<ModeChangeResult>
   /** Change a running session's model live. False = rejected (renderer reverts). */
   setModel: (handleId: string, model: ModelChoice) => Promise<boolean>
   /** Change a running session's effort (respawns via --resume; per-session only). */

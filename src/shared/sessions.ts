@@ -81,6 +81,13 @@ export interface CompactionMarker {
   postTokens: number
 }
 
+/** A prompt a UserPromptSubmit hook stopped before Claude saw it. `command` is absent when the
+ *  CLI's wording didn't parse, and `reason` is then its whole message. */
+export interface BlockedPrompt {
+  reason: string
+  command?: string
+}
+
 export interface HistoryMessage {
   id: string
   role: 'user' | 'assistant'
@@ -94,6 +101,9 @@ export interface HistoryMessage {
    *  it to a 'peer' block on resume. */
   peer?: { from: string }
   compaction?: CompactionMarker
+  /** Set on a user turn a hook blocked. The CLI never writes the prompt itself, so `text` is the
+   *  prompt quoted in the hook's message. */
+  blocked?: BlockedPrompt
 }
 
 /** Result of reading a session transcript (may be capped for huge sessions). */

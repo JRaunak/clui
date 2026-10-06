@@ -17,12 +17,12 @@
  */
 import { create } from 'zustand'
 import type { DomainEvent, ElicitationResponse, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo, TurnUsage } from '../../shared/events'
-import type { CompactionMarker, ProjectGroup } from '../../shared/sessions'
+import type { BlockedPrompt, CompactionMarker, ProjectGroup } from '../../shared/sessions'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { CluiApi, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
-import { clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
+import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
 import { CAP_NOTE, pinWords, clipName, messageGist, type AnnotateEvent, type AnnotationPin } from '../../shared/annotate'
 import type { Via } from './lib/motion'
@@ -42,6 +42,9 @@ export interface PendingPermission {
   decisionReasonType?: string
   blockedPath?: string
   suppressAlwaysAllow?: boolean
+  /** Set when a subagent asks: its Agent tool_use id and task description. */
+  agentToolUseId?: string
+  agentDescription?: string
 }
 
 /**
@@ -112,7 +115,16 @@ export interface WorkflowState {
 /** An ordered piece of an assistant message (a text run or a tool call ref), so the
  *  transcript renders text and tools in true stream order rather than lumping all
  *  text above all tools. */
-export type MessageBlock = { kind: 'text'; text: string } | { kind: 'tool'; id: string }
+export type MessageBlock = { kind: 'text'; text: string } | { kind: 'tool'; id: string } | ({ kind: 'hook' } & HookNote)
+
+/** A hook's message in the transcript. `event` is absent when the CLI's wording didn't name one.
+ *  Repeats within one message bump `count` in place, since PreToolUse hooks fire per tool call. */
+export interface HookNote {
+  event?: string
+  matcher?: string
+  text: string
+  count: number
+}
 
 /** A displayable attachment on a USER bubble: an image thumbnail or a document/text
  *  file chip. Present on live bubbles the composer created AND on resumed user turns
@@ -162,6 +174,11 @@ export interface ChatMessage {
    *  rebuilt-from-disk history (not persisted). */
   usage?: TurnUsage
   compaction?: CompactionMarker
+  /** Hook messages from before Claude replied, under a user bubble. On an assistant message
+   *  they make it a standalone marker for notes that arrived outside a turn. */
+  hookNotes?: HookNote[]
+  /** On a user message: a UserPromptSubmit hook stopped it. */
+  blocked?: BlockedPrompt
 }
 
 /**
@@ -258,7 +275,8 @@ export interface PerSessionState {
   turnStartMs: number | null
   thinkingTokens: number | null
   compacting: boolean
-  compactAnnounce: string
+  /** Polite transcript-level announcement: compaction progress, a hook-blocked prompt. */
+  statusAnnounce: string
   messages: ChatMessage[]
   /** Messages composed while a turn was running: held renderer-side (editable/cancelable),
    *  rendered at the transcript tail, dispatched FIFO at the next turn boundary. */
@@ -618,6 +636,19 @@ export function activeSlice(store: SessionStore): PerSessionState | null {
   return store.activeHandleId ? (store.sessions[store.activeHandleId] ?? null) : null
 }
 
+/** The permission mode in effect. The CLI can run a pick as something else without saying so
+ *  (auto on a model that can't run it starts as default), so its reported mode outranks the pick
+ *  when they disagree. A reported mode the picker doesn't know falls back to the pick. */
+export function effectiveMode(
+  s: Pick<PerSessionState, 'modelMode' | 'modeChoice' | 'permissionMode'>
+): { mode: PermissionModeChoice; downgraded: boolean } {
+  if (s.modelMode) return { mode: s.modelMode, downgraded: false }
+  const reported = s.permissionMode
+  if (s.modeChoice !== 'inherit' && reported && reported !== s.modeChoice && reported in PERMISSION_MODE_LABELS)
+    return { mode: reported as PermissionModeChoice, downgraded: true }
+  return { mode: s.modeChoice, downgraded: false }
+}
+
 /** The session's shown title: its explicit/branch name, else the first user message
  *  (truncated), else 'Untitled'. One derivation so the footer and the sidebar row can't drift. */
 export function sessionDisplayTitle(slice: Pick<PerSessionState, 'title' | 'messages'> | null): string {
@@ -938,6 +969,7 @@ async function beginSession(
         role: m.peer ? ('peer' as const) : m.role,
         peer: m.peer ? { from: m.peer.from, pending: false } : undefined,
         compaction: m.compaction,
+        blocked: m.blocked,
         text: m.text,
         thinking: m.thinking,
         tools: m.tools.map((tc) => ({ ...tc })),
@@ -1017,7 +1049,7 @@ async function beginSession(
     turnStartMs: null,
     thinkingTokens: null,
     compacting: false,
-    compactAnnounce: '',
+    statusAnnounce: '',
     messages: history,
     queuedMessages: EMPTY_QUEUED,
     draftText: '',
@@ -1165,7 +1197,7 @@ async function dispatchTurn(
       interrupting: false,
       turnStartMs: now,
       lastError: null,
-      compactAnnounce: '',
+      statusAnnounce: '',
       lastActivityMs: now
     })
   })
@@ -1193,7 +1225,7 @@ async function dispatchTurn(
 /** Find or create the current (last) assistant message to append streamed content. */
 function currentAssistant(messages: ChatMessage[]): ChatMessage {
   const last = messages[messages.length - 1]
-  if (last && last.role === 'assistant' && !last.compaction) return last
+  if (last && last.role === 'assistant' && !last.compaction && !last.hookNotes) return last
   const msg: ChatMessage = {
     id: `a-${Date.now()}-${messages.length}`,
     role: 'assistant',
@@ -1204,6 +1236,13 @@ function currentAssistant(messages: ChatMessage[]): ChatMessage {
   }
   messages.push(msg)
   return msg
+}
+
+const sameNote = (a: HookNote, b: HookNote): boolean => a.event === b.event && a.matcher === b.matcher && a.text === b.text
+
+function withNote(notes: HookNote[], note: HookNote): HookNote[] {
+  const i = notes.findIndex((n) => sameNote(n, note))
+  return i < 0 ? [...notes, note] : notes.map((n, j) => (j === i ? { ...n, count: n.count + 1 } : n))
 }
 
 /** Narrow a loose CLI task status to the tray's union: only 'killed'/'failed' are kept
@@ -1264,6 +1303,8 @@ function touchesMessages(type: DomainEvent['type']): boolean {
     type === 'peer-pending' ||
     type === 'peer-message' ||
     type === 'peer-lifecycle-end' ||
+    type === 'cli-message' ||
+    type === 'compact-boundary' ||
     type === 'result'
   )
 }
@@ -1505,11 +1546,16 @@ export const useSession = create<SessionStore>((set, get) => ({
     )
     // Revert the optimistic chip if the CLI rejected the change: the UI must
     // not claim a mode the session isn't actually in.
-    const ok = await window.clui.setPermissionMode(active.handleId, mode)
+    const { ok, errorCode } = await window.clui.setPermissionMode(active.handleId, mode)
     if (!ok) {
+      const label = PERMISSION_MODE_LABELS[mode]
+      const current = PERMISSION_MODE_LABELS[effectiveMode(prev).mode]
       set((s) => ({
         ...patchSlice(s, active.handleId, prev),
-        notice: { message: 'Could not change permission mode.', tone: 'error' }
+        notice:
+          errorCode === 'auto_mode_model'
+            ? { message: `${label} isn't available on ${deriveModelInfo(active.modelChoice).label}. Permissions stay on ${current}.`, tone: 'warn' }
+            : { message: `Couldn't switch permissions to ${label}. The session is still on ${current}.`, tone: 'error' }
       }))
     }
   },
@@ -1571,6 +1617,13 @@ export const useSession = create<SessionStore>((set, get) => ({
           ultracode: prev.ultracode
         })
       return
+    }
+    // A session spawned in auto on a model that can't run it fell back to default; the new model
+    // may run it, so offer the pick again. A refusal leaves the chip on the mode in effect.
+    const now = get().sessions[active.handleId]
+    if (now?.modeChoice === 'auto' && !now.modelMode && now.permissionMode !== 'auto') {
+      const { ok: restored } = await window.clui.setPermissionMode(active.handleId, 'auto')
+      if (restored) set((s) => patchSlice(s, active.handleId, { permissionMode: 'auto' }))
     }
     if (nextEffort !== prevEffort) await window.clui.setEffort(active.handleId, nextEffort)
     if (ultraChanged) await window.clui.setUltracode(active.handleId, nextUltra)
@@ -1953,13 +2006,13 @@ export const useSession = create<SessionStore>((set, get) => ({
           break
         case 'compact-status':
           patch.compacting = e.state === 'running'
-          patch.compactAnnounce = e.state === 'running' ? 'Compacting context' : 'Context compacted'
+          patch.statusAnnounce = e.state === 'running' ? 'Compacting context' : 'Context compacted'
           if (e.state === 'failed') {
             const lastUser = messages.findLast((m) => m.role === 'user')
             patch.lastError = lastUser?.text.trim().startsWith('/compact')
               ? "Couldn't compact the context. Your conversation is unchanged. Run /compact to try again."
               : `Auto-compact failed.${slice.contextPercent !== null ? ` Context is ${slice.contextPercent}% full.` : ''} Run /compact or start a new session.`
-            patch.compactAnnounce = patch.lastError
+            patch.statusAnnounce = patch.lastError
           }
           break
         case 'compact-boundary':
@@ -1973,6 +2026,39 @@ export const useSession = create<SessionStore>((set, get) => ({
             compaction: { trigger: e.trigger, preTokens: e.preTokens, postTokens: e.postTokens }
           })
           break
+        case 'cli-message': {
+          if (e.blocked) {
+            const i = messages.findLastIndex((m) => m.role === 'user')
+            if (i >= 0) messages[i] = { ...messages[i], blocked: { reason: e.text, command: e.command } }
+            patch.statusAnnounce = toggled(`Prompt blocked by a hook. ${e.text}`)
+            break
+          }
+          const src = e.source ?? ''
+          const cut = src.indexOf(':')
+          const note: HookNote = {
+            event: (cut < 0 ? src : src.slice(0, cut)) || undefined,
+            matcher: cut < 0 ? undefined : src.slice(cut + 1),
+            text: e.text,
+            count: 1
+          }
+          const last = messages[messages.length - 1]
+          // SessionStart isn't about the prompt it happens to arrive with, so it stands alone.
+          if (!slice.busy || note.event === 'SessionStart') {
+            if (last?.role === 'assistant' && last.hookNotes) messages[messages.length - 1] = { ...last, hookNotes: withNote(last.hookNotes, note) }
+            else messages.push({ id: `k-${Date.now()}-${messages.length}`, role: 'assistant', text: '', thinking: '', tools: [], blocks: [], hookNotes: [note] })
+          } else if (last?.role === 'user') {
+            messages[messages.length - 1] = { ...last, hookNotes: withNote(last.hookNotes ?? [], note) }
+          } else {
+            const m = currentAssistant(messages)
+            const blocks = m.blocks.slice()
+            const hit = blocks.findIndex((b) => b.kind === 'hook' && sameNote(b, note))
+            const prev = blocks[hit]
+            if (prev?.kind === 'hook') blocks[hit] = { ...prev, count: prev.count + 1 }
+            else blocks.push({ kind: 'hook', ...note })
+            messages[messages.length - 1] = { ...m, blocks }
+          }
+          break
+        }
         case 'thinking-delta': {
           const m = currentAssistant(messages)
           m.thinking += e.text
@@ -2027,7 +2113,9 @@ export const useSession = create<SessionStore>((set, get) => ({
               decisionReason: e.decisionReason,
               decisionReasonType: e.decisionReasonType,
               blockedPath: e.blockedPath,
-              suppressAlwaysAllow: e.suppressAlwaysAllow
+              suppressAlwaysAllow: e.suppressAlwaysAllow,
+              agentToolUseId: e.agentToolUseId,
+              agentDescription: e.agentDescription
             }
           ]
           patch.lastActivityMs = Date.now()
@@ -2354,8 +2442,10 @@ export const useSession = create<SessionStore>((set, get) => ({
           // message. The envelope's usage is cumulative session-to-date, so the trailer shows this
           // turn's marginal (delta off prevCumUsage); the cumulative total lives in the footer + ring.
           if (e.usage || e.denials?.length) {
-            const idx = messages.findLastIndex((m) => m.role === 'assistant')
-            if (idx >= 0) {
+            // A turn that never reached Claude (a hook-blocked prompt) has no reply of its own, and
+            // the previous turn's trailer must not be overwritten with this one's zero.
+            const idx = messages.findLastIndex((m) => m.role === 'user' || (m.role === 'assistant' && !m.hookNotes))
+            if (idx >= 0 && messages[idx].role === 'assistant') {
               const perTurn = e.usage ? perTurnUsage(e.usage, slice.prevCumUsage) : undefined
               messages[idx] = {
                 ...messages[idx],

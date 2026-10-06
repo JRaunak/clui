@@ -9,7 +9,7 @@ import {
   type ChangeEvent,
   type CSSProperties
 } from 'react'
-import { useActive, useSession, EMPTY_ATTACHMENTS, type SendAttachment } from '../store'
+import { effectiveMode, useActive, useSession, EMPTY_ATTACHMENTS, type SendAttachment } from '../store'
 import { annotationsText, hostOf, pinWords, type AnnotationPin } from '../../../shared/annotate'
 import { AnnotationChip } from './AnnotationChip'
 import { useComposerAutocomplete } from './ComposerAutocomplete'
@@ -41,7 +41,8 @@ import {
   PERMISSION_MODES,
   PERMISSION_MODE_LABELS,
   PERMISSION_MODE_COLORS,
-  PERMISSION_MODE_DESCRIPTIONS
+  PERMISSION_MODE_DESCRIPTIONS,
+  deriveModelInfo
 } from '../../../shared/settings'
 import type { PermissionModeChoice } from '../../../shared/ipc'
 
@@ -90,10 +91,16 @@ export function Composer(): JSX.Element {
   const isDirectoryless = !!cwd && cwd === chatDir
   const ephemeral = useActive((s) => s?.ephemeral ?? false)
   const modeChoice = useActive((s) => s?.modeChoice ?? 'inherit')
-  // A mode the model switched into (e.g. plan) shadows the user's pick on the chip only,
-  // so the chip reflects the session's actual mode without rewriting their selection.
+  // The chip shows the mode in effect (the model's plan, or what the CLI runs a pick as) without
+  // rewriting the user's pick, so it comes back when the session can honor it.
   const modelMode = useActive((s) => s?.modelMode ?? null)
-  const displayMode = modelMode ?? modeChoice
+  const permissionMode = useActive((s) => s?.permissionMode ?? null)
+  const { mode: displayMode, downgraded } = effectiveMode({ modelMode, modeChoice, permissionMode })
+  // From modelChoice: the init-reported model never updates on a live switch.
+  const modelLabel = useActive((s) => (s ? deriveModelInfo(s.modelChoice).label : null))
+  // Auto is the one pick a model can refuse; any other mismatch just shows the mode in effect.
+  const unavailableOn = downgraded && modeChoice === 'auto' ? modelLabel : null
+  const permTitle = `Permissions: ${PERMISSION_MODE_LABELS[displayMode]}${unavailableOn ? ` (${PERMISSION_MODE_LABELS[modeChoice]} isn't available on ${unavailableOn})` : ''}`
   const contextPercent = useActive((s) => s?.contextPercent ?? null)
   const contextTokens = useActive((s) => s?.contextTokens ?? null)
   const contextWindow = useActive((s) => s?.contextWindow ?? null)
@@ -313,7 +320,10 @@ export function Composer(): JSX.Element {
     value: m,
     label: PERMISSION_MODE_LABELS[m],
     color: PERMISSION_MODE_COLORS[m],
-    description: PERMISSION_MODE_DESCRIPTIONS[m],
+    description:
+      unavailableOn && m === modeChoice
+        ? `Your pick. Unavailable on ${unavailableOn}, so ${PERMISSION_MODE_LABELS[displayMode]} is in effect.`
+        : PERMISSION_MODE_DESCRIPTIONS[m],
     icon: <PermissionIcon mode={m} className="h-4 w-4" />,
     // Autonomous (bypassPermissions) is the full-access danger tier: the whole row goes err,
     // not a new hue (terracotta stays scarce).
@@ -439,7 +449,8 @@ export function Composer(): JSX.Element {
                     value={displayMode}
                     options={permOptions}
                     onChange={(m) => void setPermissionMode(m)}
-                    title={`Permissions: ${permOptions.find((o) => o.value === displayMode)?.label ?? displayMode}`}
+                    title={permTitle}
+                    ariaLabel={unavailableOn ? permTitle : undefined}
                     direction="up"
                     variant="pill"
                     menuClassName="w-72"

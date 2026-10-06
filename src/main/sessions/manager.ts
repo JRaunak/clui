@@ -5,7 +5,7 @@
  */
 import { ClaudeSession, type ClaudeSessionOptions } from '../cli/session'
 import type { DomainEvent, ElicitationResponse } from '../../shared/events'
-import type { PermissionVerdict, WireAttachment } from '../../shared/ipc'
+import type { ModeChangeResult, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { readTasks } from './tasks'
 
 export type EventSink = (handleId: string, event: DomainEvent) => void
@@ -110,8 +110,8 @@ export class SessionManager {
     return this.sessions.get(handleId)?.backgroundTask(toolUseId) ?? Promise.resolve(false)
   }
 
-  setPermissionMode(handleId: string, mode: string): Promise<boolean> {
-    return this.sessions.get(handleId)?.setPermissionMode(mode) ?? Promise.resolve(false)
+  setPermissionMode(handleId: string, mode: string): Promise<ModeChangeResult> {
+    return this.sessions.get(handleId)?.setPermissionMode(mode) ?? Promise.resolve({ ok: false })
   }
 
   setModel(handleId: string, model: string): Promise<boolean> {

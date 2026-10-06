@@ -1,7 +1,11 @@
-import { useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { useActive, useSession, type PendingPermission } from '../../store'
 import { Button } from '../Button'
-import { IconCheck, IconShield } from '../Icon'
+import { IconCheck, IconOpenPane, IconShield } from '../Icon'
+import { subagentType } from '../InstrumentRow'
+import { diveInto } from '../../lib/dive'
+import { viaOf } from '../../lib/motion'
+import { getStage, SPLIT_MIN } from '../../lib/stage'
 import { highlightOf } from '../../lib/toolHighlight'
 import { PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS } from '../../../../shared/settings'
 import type { PermissionModeChoice } from '../../../../shared/ipc'
@@ -45,6 +49,8 @@ export function PermissionGate({
   const allowLabel = copy ? copy.allowLabel : !suggestion ? 'Allow' : armed ? `Allow & switch to ${suggestion.label}` : 'Allow once'
   const sessionMode = useActive((s) => s?.permissionMode ?? null)
   const reason = request.decisionReason?.trim()
+  const sourceId = useId()
+  const fromSubagent = !!(request.agentToolUseId || request.agentDescription)
 
   return (
     <GateFrame
@@ -57,8 +63,9 @@ export function PermissionGate({
           </>
         )
       }
+      source={fromSubagent && <SubagentSource id={sourceId} request={request} />}
       count={count}
-      describedBy={reason ? 'permission-reason' : undefined}
+      describedBy={[fromSubagent && sourceId, reason && 'permission-reason'].filter(Boolean).join(' ') || undefined}
       footer={
         <>
           {suggestion && (
@@ -109,6 +116,54 @@ export function PermissionGate({
         </div>
       )}
     </GateFrame>
+  )
+}
+
+/** Which subagent is asking, and the way into its transcript. */
+function SubagentSource({ id, request }: { id: string; request: PendingPermission }): JSX.Element {
+  const toolId = request.agentToolUseId
+  const desc = request.agentDescription
+  const viewing = useSession((s) => !!toolId && s.viewingSubagent === toolId)
+  // The Agent call's own card carries the type; a nested subagent's card isn't in the main transcript.
+  const subType = useActive((s) => {
+    if (!toolId || !s) return null
+    for (let i = s.messages.length - 1; i >= 0; i--) {
+      const t = s.messages[i].tools.find((t) => t.id === toolId)
+      if (t) return subagentType(t.input)
+    }
+    return null
+  })
+  const open = (e: { detail: number }): void => {
+    if (!toolId) return
+    // A full pane would cover this card; beside it, the user can answer while reading.
+    if ((getStage()?.clientWidth ?? 0) >= SPLIT_MIN) useSession.getState().setPaneFull(false)
+    diveInto(toolId, viaOf(e))
+  }
+  return (
+    <div id={id} data-ui="gate-source" className="mt-1 flex min-w-0 items-center gap-1.5 text-ui text-dim">
+      <span className="shrink-0">{desc || subType ? 'From subagent' : 'From a subagent'}</span>
+      {desc && (
+        <span className="min-w-0 truncate text-content" title={desc}>
+          {desc}
+        </span>
+      )}
+      {subType && (
+        <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint">{subType}</span>
+      )}
+      {toolId && !viewing && (
+        <Button
+          data-ui="gate-open-transcript"
+          variant="ghost"
+          size="sm"
+          className="ml-1 shrink-0"
+          aria-label={desc ? `Open transcript: ${desc}` : 'Open transcript'}
+          onClick={open}
+        >
+          <IconOpenPane className="h-3.5 w-3.5" />
+          Open transcript
+        </Button>
+      )}
+    </div>
   )
 }
 
