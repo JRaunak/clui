@@ -312,8 +312,12 @@ function HookNoteRow({ note }: { note: HookNote }): JSX.Element {
   // Measured clamped: once open, the clamp is off and the text always fits.
   const clamped = useOverflows(textRef, note.text)
   return (
-    <div data-ui="hook-note" className="flex items-baseline gap-1.5 text-meta text-dim">
-      {note.event && (
+    <div data-ui="hook-note" data-source={note.plugin ? 'plugin' : undefined} className="flex items-baseline gap-1.5 text-meta text-dim">
+      {note.plugin ? (
+        <span className="shrink-0 text-faint">
+          <span className="font-mono">{note.plugin}</span> plugin
+        </span>
+      ) : note.event && (
         <span className="shrink-0 text-faint">
           <span className="font-mono">
             {note.event}

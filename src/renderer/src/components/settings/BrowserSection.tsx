@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ApprovedSite, LocalNetSite, SavedLoginInfo } from '../../../../shared/browser'
-import { ToastStack } from '../Toast'
+import { useBrowserToasts } from '../Toast'
 import { FieldError, LOGIN_INPUT } from '../LoginFields'
 import { IconEdit, IconPlus, IconTrash } from '../Icon'
 import { useEscape } from '../../lib/useEscape'
@@ -42,7 +42,7 @@ const netKey = (s: LocalNetSite): string => `net:${s.site}`
 
 /** `hides` are the row keys the removal takes out of view, which are also their Remove buttons' focus keys. */
 /** `verb` is the toast's quiet suffix, so it matches the button that removed the row. */
-type PendingRemoval = { id: string; hides: string[]; title: string; verb?: string; commit: () => Promise<void> }
+type PendingRemoval = { id: string; hides: string[]; title: string; verb?: string; at?: number; commit: () => Promise<void> }
 type FocusRequest = { key: string; fallback?: string; reveal?: boolean; top?: boolean }
 
 /** The browser switch, approved sites and saved logins. Changes go straight to main without waiting
@@ -69,7 +69,7 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   const [pending, setPendingState] = useState<PendingRemoval[]>([])
   const pendingRef = useRef<PendingRemoval[]>([])
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
-  const [announce, setAnnounce] = useState('')
+  const undoRef = useRef<(id: string) => void>(() => {})
   const announceSeq = useRef(0)
   const [filterSay, setFilterSay] = useState('')
   const filterSeq = useRef(0)
@@ -86,6 +86,9 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   const setPending = useCallback((next: PendingRemoval[]) => {
     pendingRef.current = next
     setPendingState(next)
+    useBrowserToasts.setState({
+      items: next.map((p) => ({ kind: 'undo', id: p.id, title: p.title, suffix: p.verb ?? 'removed', at: p.at ?? 0 }))
+    })
   }, [])
 
   const relist = useCallback(async () => {
@@ -142,14 +145,16 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   // Closing Settings is not an undo: whatever is still waiting commits now.
   useEffect(() => {
     const t = timers.current
+    useBrowserToasts.setState({ onUndo: (id) => undoRef.current(id) })
     return () => {
       t.forEach(clearTimeout)
       pendingRef.current.forEach((p) => void p.commit())
+      useBrowserToasts.setState({ items: [], onUndo: () => {} })
     }
   }, [])
 
   const remove = (p: PendingRemoval, said: string): void => {
-    const item = { ...p, commit: async () => { await p.commit(); await relist() } }
+    const item = { ...p, at: Date.now(), commit: async () => { await p.commit(); await relist() } }
     setPending([item, ...pendingRef.current.filter((x) => x.id !== p.id)])
     timers.current.set(
       p.id,
@@ -159,7 +164,7 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
         void item.commit()
       }, UNDO_MS)
     )
-    setAnnounce(`${said} Undo available.${'\u200b'.repeat(++announceSeq.current % 2)}`)
+    useBrowserToasts.setState({ announce: { text: `${said} Undo available.${'\u200b'.repeat(++announceSeq.current % 2)}`, at: item.at } })
   }
 
   const hidden = new Set(pending.flatMap((p) => p.hides))
@@ -227,6 +232,8 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
     const key = visible.find((k) => p.hides.includes(k))
     setFocus(key ? { key, reveal: true } : { key: isNet ? 'net-h3' : isSite ? 'sites-filter' : 'logins-filter' })
   }
+
+  undoRef.current = undo
 
   const openForm = (edit: SavedLoginInfo | null, opener: string): void => {
     if (vault) setForm({ edit, opener })
@@ -531,14 +538,6 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
           {filterSay}
         </span>
       </Pane>
-
-      <ToastStack
-        items={pending.map((p) => ({ id: p.id, title: p.title, suffix: p.verb ?? 'removed' }))}
-        durationMs={UNDO_MS}
-        announce={announce}
-        onUndo={undo}
-        label="Recently removed browser items"
-      />
     </>
   )
 }

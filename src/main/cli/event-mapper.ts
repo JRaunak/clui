@@ -24,6 +24,11 @@ interface RawEnvelope {
   estimated_tokens?: number
   /** `system/informational`: the notice text, and whether it ended the turn. */
   content?: string
+  // system/ui_{status,toast,log} from a user's plugin. Untrusted, so typed loosely.
+  plugin?: unknown
+  text?: unknown
+  timeout_ms?: unknown
+  uuid?: unknown
   prevent_continuation?: boolean
   compact_result?: string
   compact_metadata?: { trigger?: string; pre_tokens?: number; post_tokens?: number }
@@ -246,6 +251,7 @@ export class EventMapper {
    *  subagent never appears in that snapshot). Consumed by the task_started handler. */
   private bgAgentTaskIds = new Set<string>()
   private lastThinkingEmitMs = 0
+  private seenUiUuids = new Set<string>()
   /** tool_use_id + description per local_agent task_id, so a subagent moved to the
    *  background AFTER its task_started (no fresh one fires) can still get a tray handle
    *  from its later task_updated. Cleared on the task's terminal notification. */
@@ -728,6 +734,10 @@ export class EventMapper {
       }
       case 'informational':
         return typeof env.content === 'string' && env.content.trim() ? [parseCliMessage(env.content, !!env.prevent_continuation)] : []
+      case 'ui_status':
+      case 'ui_toast':
+      case 'ui_log':
+        return this.mapPluginUi(env)
       case 'thinking_tokens': {
         if (typeof env.estimated_tokens !== 'number') return []
         const now = Date.now()
@@ -738,6 +748,23 @@ export class EventMapper {
       default:
         return []
     }
+  }
+
+  private mapPluginUi(env: RawEnvelope): DomainEvent[] {
+    if (typeof env.uuid === 'string') {
+      if (this.seenUiUuids.has(env.uuid)) return []
+      // Bounded, on the bet that a duplicate lands close behind its original.
+      if (this.seenUiUuids.size >= 256) this.seenUiUuids.delete(this.seenUiUuids.values().next().value as string)
+      this.seenUiUuids.add(env.uuid)
+    }
+    if (env.text != null && typeof env.text !== 'string') return []
+    const plugin = sanitizePluginName(env.plugin)
+    const text = typeof env.text === 'string' ? sanitizePluginText(env.text) : ''
+    if (env.subtype === 'ui_status') return [{ type: 'mod-status', plugin, text: text.trim() ? text : null }]
+    if (!text.trim()) return []
+    if (env.subtype === 'ui_log') return [{ type: 'mod-log', plugin, text }]
+    const timeoutMs = typeof env.timeout_ms === 'number' && Number.isFinite(env.timeout_ms) ? env.timeout_ms : 4000
+    return [{ type: 'mod-toast', plugin, text, timeoutMs }]
   }
 
   private mapStreamEvent(env: RawEnvelope): DomainEvent[] {
@@ -951,6 +978,31 @@ interface ApiError {
 
 // An IAM deny on the model ("not authorized to perform … explicit deny") is model access too; an expired
 // sign-in reads "security token … expired" instead.
+// Terminal escapes a plugin may print: string sequences (OSC, incl. OSC 8 links, plus DCS/SOS/PM/APC)
+// ended by BEL or ST, then CSI, then any other ESC sequence. 8-bit C1 introducers count too.
+const ESC_STRING = /(?:\x1b[\]PX^_]|[\x90\x98\x9d-\x9f])[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?/g
+const ESC_CSI = /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]?/g
+const ESC_OTHER = /\x1b[ -/]*[0-~]?/g
+const CONTROLS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g
+// Bidi embeddings, overrides, isolates and marks, plus zero-width characters: invisible, and enough to spoof displayed text.
+const INVISIBLE = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g
+
+/** A plugin's text as plain, display-safe characters: only \n and \t survive as controls. */
+export function sanitizePluginText(raw: string): string {
+  return raw
+    .replace(/\r\n/g, '\n')
+    .replace(ESC_STRING, '')
+    .replace(ESC_CSI, '')
+    .replace(ESC_OTHER, '')
+    .replace(CONTROLS, '')
+    .replace(INVISIBLE, '')
+}
+
+export function sanitizePluginName(raw: unknown): string {
+  const name = typeof raw === 'string' ? [...sanitizePluginText(raw).replace(/\s+/g, ' ').trim()].slice(0, 40).join('').trim() : ''
+  return name || 'unnamed'
+}
+
 const MODEL_ACCESS_TEXT = /model access|marketplace|not enabled|enable this model|not authorized to perform|explicit deny/i
 
 /** The provider's own message, after the CLI's `API Error:` marker. The CLI's Bedrock

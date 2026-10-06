@@ -260,6 +260,7 @@ export class ClaudeSession extends EventEmitter {
     this.reconnecting = false
     this.parser = new NdjsonParser()
     this.mapper = new EventMapper()
+    if (gen > 1) this.emitEvent({ type: 'mod-status-reset' })
     // The transcript's last cost-state is what this process starts counting from. It's read while the
     // CLI boots, and no result can land before the first turn, which is seconds away.
     const resumeId = this.opts.resumeSessionId

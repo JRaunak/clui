@@ -384,6 +384,14 @@ export type DomainEvent =
   | { type: 'api-retry'; attempt: number; maxRetries: number; delayMs: number; status: number | null }
   /** The underlying CLI process exited. */
   | { type: 'process-exit'; code: number | null }
+  /** A user's own Claude Code plugin writing to the UI (`system/ui_status|ui_toast|ui_log`).
+   *  `plugin` and `text` are sanitized in main and stay untrusted plain text. A status is one line per
+   *  plugin that its next call replaces; null clears it. */
+  | { type: 'mod-status'; plugin: string; text: string | null }
+  | { type: 'mod-toast'; plugin: string; text: string; timeoutMs: number }
+  | { type: 'mod-log'; plugin: string; text: string }
+  /** A respawned child starts with no plugin status; the CLI never replays it. */
+  | { type: 'mod-status-reset' }
 
 export type CliMessage = Extract<DomainEvent, { type: 'cli-message' }>
 

@@ -1,12 +1,15 @@
 import { forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { create } from 'zustand'
 import { occludeIfIntersects } from '../lib/browserOcclusion'
+import { IconClose } from './Icon'
 
 /**
- * A delete-undo card; ToastStack owns its positioning and stacking.
- * No ✕: waiting is the commit and Undo the only action, so a ✕ would read as "cancel".
+ * A stack card; ToastStack owns its positioning and stacking. A delete-undo card has no ✕: waiting
+ * is the commit and Undo the only action, so a ✕ would read as "cancel". A plugin card has a ✕ and
+ * times itself, pausing while the pointer or focus is on it or the window is hidden.
  */
 export const Toast = forwardRef<HTMLDivElement, ToastCardProps>(function Toast(
-  { title, suffix, actionLabel, onAction, durationMs, exiting = false, toastId },
+  { toast, onAction, onDismiss, durationMs, exiting = false },
   ref
 ): JSX.Element {
   // Flip one frame after mount so the transition plays: enter for a live card, exit for one already leaving.
@@ -15,6 +18,34 @@ export const Toast = forwardRef<HTMLDivElement, ToastCardProps>(function Toast(
     const id = requestAnimationFrame(() => setFlipped(true))
     return () => cancelAnimationFrame(id)
   }, [])
+
+  const isMod = toast.kind === 'mod'
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const [hidden, setHidden] = useState(() => document.hidden)
+  useEffect(() => {
+    if (!isMod) return
+    const sync = (): void => setHidden(document.hidden)
+    document.addEventListener('visibilitychange', sync)
+    return () => document.removeEventListener('visibilitychange', sync)
+  }, [isMod])
+  const paused = hovered || focused || hidden
+  // Time left survives a pause; a repeat (count bump) starts the full duration again.
+  const left = useRef({ count: 0, ms: 0 })
+  const count = toast.kind === 'mod' ? toast.count : 0
+  const onDismissRef = useRef(onDismiss)
+  onDismissRef.current = onDismiss
+  useEffect(() => {
+    if (!isMod || exiting) return
+    if (left.current.count !== count) left.current = { count, ms: durationMs }
+    if (paused) return
+    const start = Date.now()
+    const t = setTimeout(() => onDismissRef.current?.(), left.current.ms)
+    return () => {
+      clearTimeout(t)
+      left.current.ms -= Date.now() - start
+    }
+  }, [isMod, exiting, paused, count, durationMs])
 
   const motion = exiting
     ? flipped
@@ -27,32 +58,73 @@ export const Toast = forwardRef<HTMLDivElement, ToastCardProps>(function Toast(
   return (
     <div
       ref={ref}
-      data-toast-id={toastId}
+      data-toast-id={exiting ? undefined : toast.id}
       data-ui="toast"
-      className={`relative inline-flex min-w-[min(300px,calc(100vw-2rem))] max-w-[min(360px,calc(100vw-2rem))] items-center gap-3 overflow-hidden glass-thick rounded-lg px-3.5 py-1.5 text-xs transition-[translate,opacity] ${
-        exiting
-          ? 'pointer-events-none duration-fast ease-in'
-          : 'pointer-events-auto duration-base ease-out'
-      } ${motion}`}
+      data-kind={toast.kind}
+      onPointerEnter={isMod ? () => setHovered(true) : undefined}
+      onPointerLeave={isMod ? () => setHovered(false) : undefined}
+      onFocus={isMod ? () => setFocused(true) : undefined}
+      onBlur={
+        isMod
+          ? (e) => {
+              if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false)
+            }
+          : undefined
+      }
+      className={`relative inline-flex w-[min(360px,calc(100vw-2rem))] overflow-hidden glass-thick rounded-lg px-3.5 text-xs transition-[translate,opacity] ${
+        isMod ? 'flex-col items-start gap-0.5 py-2' : 'items-center gap-3 py-1.5'
+      } ${exiting ? 'pointer-events-none duration-fast ease-in' : 'pointer-events-auto duration-base ease-out'} ${motion}`}
     >
-      <span className="flex min-w-0 flex-1 items-baseline gap-1">
-        <span className="min-w-0 truncate font-medium text-content">{title}</span>
-        {suffix && <span className="shrink-0 text-dim">{suffix}</span>}
-      </span>
-      <button
-        className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-label font-semibold text-on-accent transition-colors hover:bg-accent-hover"
-        onClick={onAction}
-        tabIndex={exiting ? -1 : undefined}
-      >
-        {actionLabel}
-      </button>
+      {toast.kind === 'mod' ? (
+        <>
+          <div className="flex w-full items-center gap-1.5 text-meta text-dim">
+            <span className="min-w-0 flex-1 truncate">
+              <span className="font-mono">{toast.plugin}</span> plugin
+            </span>
+            {toast.count > 1 && (
+              <span className="shrink-0 tabular-nums text-faint">
+                <span aria-hidden="true">×{toast.count}</span>
+                <span className="sr-only">{toast.count} times</span>
+              </span>
+            )}
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={onDismiss}
+              tabIndex={exiting ? -1 : undefined}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-dim transition-colors hover:bg-bg-raised hover:text-content"
+            >
+              <IconClose className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <p className="line-clamp-4 whitespace-pre-wrap break-words text-xs text-content" title={toast.text.slice(0, 1000)}>
+            {toast.text}
+          </p>
+        </>
+      ) : (
+        <>
+          <span className="flex min-w-0 flex-1 items-baseline gap-1">
+            <span className="min-w-0 truncate font-medium text-content">{toast.title}</span>
+            {toast.suffix && <span className="shrink-0 text-dim">{toast.suffix}</span>}
+          </span>
+          <button
+            className="shrink-0 rounded-md bg-accent px-2.5 py-1 text-label font-semibold text-on-accent transition-colors hover:bg-accent-hover"
+            onClick={onAction}
+            tabIndex={exiting ? -1 : undefined}
+          >
+            Undo
+          </button>
+        </>
+      )}
       {/* Neutral (not accent) countdown so the sole accent stays on Undo; hidden under reduced-motion
           where the drain keyframe would otherwise snap to empty and sit broken. Dropped on a leaving
-          card so a re-mounted drain can't flash back to full behind the fade. */}
+          card so a re-mounted drain can't flash back to full behind the fade. A repeat remounts it
+          (keyed by count) so it refills with the restarted timer. */}
       {!exiting && (
         <div
+          key={count}
           className="absolute bottom-0 left-0 h-0.5 w-full origin-left bg-dim motion-reduce:hidden"
-          style={{ animation: `toast-drain ${durationMs}ms linear forwards` }}
+          style={{ animation: `toast-drain ${durationMs}ms linear forwards ${isMod && paused ? 'paused' : 'running'}` }}
         />
       )}
     </div>
@@ -60,26 +132,38 @@ export const Toast = forwardRef<HTMLDivElement, ToastCardProps>(function Toast(
 })
 
 interface ToastCardProps {
-  /** Primary token, emphasized; truncates under width pressure so the recognizable name survives. */
-  title: string
-  /** Dim trailing verb naming what Undo reverses (e.g. "· deleted"); never truncates. */
-  suffix?: string
-  actionLabel: string
-  onAction: () => void
+  toast: StackToast
+  /** The undo card's Undo. */
+  onAction?: () => void
+  /** The plugin card's ✕ and its own timeout. */
+  onDismiss?: () => void
   durationMs: number
   /** True while the card is leaving; drives the exit transition and mutes interaction. */
   exiting?: boolean
-  /** Mirrored to `data-toast-id` so the stack can locate a card for focus routing. */
-  toastId?: string
 }
 
-export interface StackToast {
-  id: string
-  title: string
-  suffix?: string
-}
+export type StackToast =
+  | {
+      kind: 'undo'
+      id: string
+      /** Primary token, emphasized; truncates under width pressure so the recognizable name survives. */
+      title: string
+      /** Dim trailing verb naming what Undo reverses (e.g. "· deleted"); never truncates. */
+      suffix?: string
+    }
+  | { kind: 'mod'; id: string; plugin: string; text: string; count: number; durationMs: number }
 
-interface ExitingToast extends StackToast {
+export type UndoCard = Extract<StackToast, { kind: 'undo' }> & { at: number }
+
+/** Undo cards from Settings' Browser pane, shown on the app's one stack (mounted by SessionsSidebar). The
+ *  pane owns their timers and commits; `onUndo` is its handler. */
+export const useBrowserToasts = create<{ items: UndoCard[]; announce: { text: string; at: number }; onUndo: (id: string) => void }>(() => ({
+  items: [],
+  announce: { text: '', at: 0 },
+  onUndo: () => {}
+}))
+
+type ExitingToast = StackToast & {
   /** Viewport top of the slot the card occupied when it left the stack; pins the Layer-B overlay. */
   top: number
   left: number
@@ -90,7 +174,7 @@ const EXIT_MS = 150
 const REFLOW_MS = 220
 
 /**
- * The one mount point for delete-undo toasts, newest on top. Survivors reflow with a native FLIP pass
+ * The one mount point for toasts, newest on top. Survivors reflow with a native FLIP pass
  * (transform only). A leaving card moves to a separate fixed overlay pinned where it sat, so its slot
  * closes at once and the survivors' FLIP measures the closed layout.
  */
@@ -99,16 +183,16 @@ export function ToastStack({
   durationMs,
   announce,
   onUndo,
-  label = 'Recently deleted sessions'
+  onDismiss
 }: {
-  /** Live (undoable) toasts, newest first. */
+  /** Live toasts, newest first. */
   items: StackToast[]
+  /** The undo window; a plugin card carries its own. */
   durationMs: number
-  /** sr-only text for the latest delete; coalesces rapid deletes to the most recent. */
+  /** sr-only text for the latest card; coalesces rapid ones to the most recent. */
   announce: string
   onUndo: (id: string) => void
-  /** Names the group for assistive tech. */
-  label?: string
+  onDismiss?: (id: string) => void
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const cardRefs = useRef<Map<string, HTMLElement>>(new Map())
@@ -223,7 +307,7 @@ export function ToastStack({
       <div
         ref={containerRef}
         role="group"
-        aria-label={label}
+        aria-label="Notifications"
         tabIndex={-1}
         onFocus={(e) => {
           const card = (e.target as HTMLElement).closest('[data-toast-id]')
@@ -239,25 +323,16 @@ export function ToastStack({
           <Toast
             key={t.id}
             ref={setCardRef(t.id)}
-            toastId={t.id}
-            title={t.title}
-            suffix={t.suffix}
-            actionLabel="Undo"
+            toast={t}
             onAction={() => onUndo(t.id)}
-            durationMs={durationMs}
+            onDismiss={() => onDismiss?.(t.id)}
+            durationMs={t.kind === 'mod' ? t.durationMs : durationMs}
           />
         ))}
       </div>
       {exiting.map((e) => (
         <div key={e.id} className="pointer-events-none fixed z-[60]" style={{ top: e.top, left: e.left }}>
-          <Toast
-            title={e.title}
-            suffix={e.suffix}
-            actionLabel="Undo"
-            onAction={() => {}}
-            durationMs={durationMs}
-            exiting
-          />
+          <Toast toast={e} durationMs={durationMs} exiting />
         </div>
       ))}
     </>

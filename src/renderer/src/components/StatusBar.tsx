@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { useActive, useSession, sessionDisplayTitle } from '../store'
+import { useActive, useSession, sessionDisplayTitle, type ModStatusLine } from '../store'
 import { BackgroundTasks } from './BackgroundTasks'
+import { usePopover } from './Popover'
 import { WorkflowTray } from './WorkflowTray'
 import { IconFolder } from './Icon'
 import { formatCost } from '../lib/formatCost'
@@ -55,6 +56,7 @@ export function StatusBar(): JSX.Element {
         {sessionId && <SessionIdButton id={sessionId} />}
       </div>
       <div className="flex min-w-0 items-center gap-2">
+        <ModStatus />
         {hasTasks && <BackgroundTasks />}
         <WorkflowTray />
         {cost && (
@@ -67,6 +69,60 @@ export function StatusBar(): JSX.Element {
             {cost}
           </span>
         )}
+      </div>
+    </div>
+  )
+}
+
+const NO_STATUS: ModStatusLine[] = []
+
+/** The viewed session's plugin status lines: up to two inline, every line in full in the popover. */
+function ModStatus(): JSX.Element | null {
+  const lines = useActive((s) => s?.modStatus ?? NO_STATUS)
+  const hasDock = !!document.querySelector('[data-ui="composer-dock"]')
+  const p = usePopover({ placement: 'up', align: 'end', above: hasDock ? '--composer-dock' : undefined })
+  // Read in the effect below, which runs before the popover's own unmount resets `open`.
+  const openRef = useRef(false)
+  openRef.current = p.open
+  useEffect(() => {
+    if (!lines.length && openRef.current) document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
+  }, [lines.length])
+  if (!lines.length) return null
+
+  const n = lines.length
+  const only = n === 1 ? lines[0] : null
+  return (
+    <div className="relative min-w-0">
+      <button
+        {...p.triggerProps}
+        type="button"
+        data-ui="mod-status"
+        aria-label={only ? `${only.plugin} plugin status: ${only.text.slice(0, 200)}` : `Plugin status, ${n} plugins`}
+        className="flex h-6 min-w-0 max-w-[min(56ch,45cqw)] items-center gap-2 rounded-md px-1.5 text-meta text-dim transition-colors hover:bg-bg-raised hover:text-content"
+      >
+        {lines.slice(0, 2).map((l, i) => (
+          <span key={l.plugin} className={`flex min-w-0 items-baseline gap-1 ${i ? '@max-[720px]:hidden' : ''}`}>
+            <span className="shrink-0">
+              <span className="font-mono text-faint">{l.plugin}</span> <span className="text-faint">plugin</span>
+            </span>
+            <span className="truncate @max-[560px]:hidden">{l.text.replace(/\s+/g, ' ')}</span>
+          </span>
+        ))}
+        {n > 2 && <span className="shrink-0 tabular-nums text-faint @max-[720px]:hidden">+{n - 2}</span>}
+        {n > 1 && <span className="hidden shrink-0 tabular-nums text-faint @max-[720px]:inline">+{n - 1}</span>}
+      </button>
+      <div {...p.popoverProps} aria-label="Plugin status" className="pop-base pop glass-thick w-[min(420px,90vw)] overflow-hidden rounded-lg">
+        <div className="border-b border-border px-3 py-2">
+          <span className="text-xs font-semibold text-content">Plugin status</span>
+        </div>
+        <div className="max-h-[40vh] overflow-y-auto py-1">
+          {lines.map((l) => (
+            <div key={l.plugin} className="px-3 py-1.5">
+              <div className="font-mono text-meta text-dim">{l.plugin}</div>
+              <div className="whitespace-pre-wrap break-words text-xs text-content">{l.text}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )

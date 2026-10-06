@@ -300,3 +300,28 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(messages.some((m) => m.text === 'what are these?'), 'resume: the real message stays')
   ok(messages.length === 2, 'resume: the peer message still renders', `${messages.length}`)
 }
+
+// Plugin UI messages: sanitized in main, deduped by uuid, routed by subtype.
+{
+  const m = new EventMapper()
+  const ui = (subtype: string, over: Record<string, unknown>): any[] =>
+    m.map({ type: 'system', subtype, plugin: 'my-mod', session_id: 's', ...over })
+  const [log] = ui('ui_log', {
+    uuid: 'u1',
+    text: 'a\r\nb\t\u001b[31mred\u001b[0m \u001b]8;;javascript:alert(1)\u0007link\u001b]8;;\u0007 \u001b]0;title\u001b\\x\u0007‮evil⁦​z﻿'
+  })
+  ok(log?.type === 'mod-log' && log.text === 'a\nb\tred link xevilz', `mapper: ui_log text is stripped to plain text (${JSON.stringify(log?.text)})`)
+  ok(ui('ui_log', { uuid: 'u1', text: 'again' }).length === 0, 'mapper: a repeated uuid is dropped')
+  const [named] = m.map({ type: 'system', subtype: 'ui_log', plugin: '‮\u001b[1m  \n', text: 'x' })
+  ok(named?.plugin === 'unnamed', 'mapper: a plugin name that strips to nothing reads unnamed')
+  const [long] = m.map({ type: 'system', subtype: 'ui_log', plugin: 'p'.repeat(60), text: 'x' })
+  ok(long?.plugin.length === 40, 'mapper: plugin name is capped at 40')
+  const [st] = ui('ui_status', { text: 'building' })
+  ok(st?.type === 'mod-status' && st.text === 'building', 'mapper: ui_status carries its text')
+  ok(ui('ui_status', { text: null })[0]?.text === null && ui('ui_status', { text: '' })[0]?.text === null, 'mapper: null or empty status clears')
+  ok(ui('ui_status', { text: 3 }).length === 0, 'mapper: a non-string status is ignored')
+  const [t] = ui('ui_toast', { text: 'done', timeout_ms: 9000 })
+  ok(t?.type === 'mod-toast' && t.timeoutMs === 9000, 'mapper: ui_toast keeps timeout_ms')
+  ok(ui('ui_toast', { text: 'x' })[0]?.timeoutMs === 4000, 'mapper: missing timeout_ms defaults to 4000')
+  ok(ui('ui_toast', { text: '\u001b[0m' }).length === 0, 'mapper: a toast that strips to nothing is dropped')
+}

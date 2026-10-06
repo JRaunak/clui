@@ -1,6 +1,7 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { perTurnUsage, useSession, apiRetryCopy } from '../src/renderer/src/store.ts'
+import { useSession, apiRetryCopy } from '../src/renderer/src/store.ts'
+import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
 
 const cum = (costUSD: number, out: number, cacheRead: number, cacheCreate: number) => ({
@@ -152,4 +153,42 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   st().applyEvent('h1', { type: 'result', sessionId: 's', isError: true, result: null })
   st().applyEvent('h1', retry(1))
   ok(cur().apiRetry?.attempt === 1 && cur().apiRetryDismissed === false, "store: the next turn's retry shows again")
+}
+
+// Plugin status: keyed by plugin in first-arrival order, null removes, exit clears.
+{
+  reset({ modStatus: [], busy: false })
+  const status = (plugin: string, text: string | null): void => st().applyEvent('h1', { type: 'mod-status', plugin, text })
+  status('a', '1')
+  status('b', '1')
+  status('a', '2')
+  ok(cur().modStatus.map((l: any) => `${l.plugin}${l.text}`).join() === 'a2,b1', 'store: a repeat status replaces in place')
+  status('a', null)
+  ok(cur().modStatus.length === 1 && cur().modStatus[0].plugin === 'b', 'store: a null status removes the line')
+  st().applyEvent('h1', { type: 'mod-status-reset' })
+  ok(cur().modStatus.length === 0, 'store: a respawn clears plugin status')
+}
+
+// Plugin toasts: the viewed session pops (deduped, capped at 3); a background one logs instead.
+{
+  reset({ modStatus: [], busy: false })
+  useSession.setState({ modToasts: [] })
+  const toast = (text: string, h = 'h1'): void => st().applyEvent(h, { type: 'mod-toast', plugin: 'p', text, timeoutMs: 60_000 })
+  toast('one')
+  toast('one')
+  ok(st().modToasts.length === 1 && st().modToasts[0].count === 2, 'store: a repeated toast bumps its count')
+  ok(st().modToasts[0].durationMs === 20_000, 'store: toast duration clamps to 20s')
+  toast('two')
+  toast('three')
+  toast('four')
+  ok(st().modToasts.map((t) => t.text).join() === 'four,three,two', 'store: a 4th toast evicts the oldest')
+  ok(st().modToastAnnounce.text.startsWith('p plugin: four'), 'store: the latest toast is announced')
+  useSession.setState({ sessions: { ...st().sessions, h2: slice({ handleId: 'h2', modStatus: [], busy: false }) } })
+  toast('bg', 'h2')
+  ok(st().modToasts.length === 3, 'store: a background session does not pop')
+  const note = st().sessions.h2.messages.at(-1)?.hookNotes?.[0]
+  ok(note?.plugin === 'p' && note.text === 'bg', 'store: a background toast lands in its transcript')
+  st().applyEvent('h1', { type: 'mod-log', plugin: 'p', text: 'logged' })
+  ok(cur().messages.at(-1)?.hookNotes?.[0]?.plugin === 'p', 'store: an idle log is a standalone note')
+  ok(!cur().messages.some((m: any) => m.blocks?.some((b: any) => b.kind === 'text')), 'store: a log never becomes a text block')
 }

@@ -122,8 +122,26 @@ export type MessageBlock = { kind: 'text'; text: string } | { kind: 'tool'; id: 
 export interface HookNote {
   event?: string
   matcher?: string
+  /** Set for a plugin's line: a `ui_log`, or a toast from a session that wasn't being viewed. */
+  plugin?: string
   text: string
   count: number
+}
+
+/** One plugin's `ui_status` line. */
+export interface ModStatusLine {
+  plugin: string
+  text: string
+}
+
+/** A plugin's toast card. `count` bumps when the same plugin repeats the same text while it shows. */
+export interface ModToast {
+  id: string
+  plugin: string
+  text: string
+  durationMs: number
+  count: number
+  at: number
 }
 
 /** A displayable attachment on a USER bubble: an image thumbnail or a document/text
@@ -286,6 +304,8 @@ export interface PerSessionState {
   changedFiles: string[]
   /** Background tasks keyed by taskId (running + recently-terminal, ordered by start). */
   backgroundTasks: Record<string, BackgroundTask>
+  /** Plugin status lines in first-arrival order. The CLI never replays them, so they last as long as the process. */
+  modStatus: ModStatusLine[]
   /**
    * Subagent transcript: a running subagent's forwarded text/thinking AND tool calls in
    * stream order, keyed by the parent Agent tool_use id. Populated from the
@@ -407,6 +427,10 @@ interface SessionStore {
   notice: Notice | null
   /** Polite announcement from the browser (a login Clui filled), read by the browser pane's live region. */
   browserAnnounce: string
+  /** Plugin toasts for the viewed session, newest first. */
+  modToasts: ModToast[]
+  /** The latest plugin toast for the toast stack's live region; `at` lets it lose to a newer delete announcement. */
+  modToastAnnounce: { text: string; at: number }
   /** Effort ceilings from ~/.claude/settings.json (read-only), so the picker/chip show
    *  the effort that will actually run under a `maxEffortLevel` cap. Read via `effortCap`. */
   effortCaps: EffortCaps
@@ -571,6 +595,7 @@ interface SessionStore {
   setNotice: (message: string, tone?: NoticeTone) => void
   /** Dismiss the transient app-level notice. */
   dismissNotice: () => void
+  dismissModToast: (id: string) => void
   /** Hide the active session's retry strip for the rest of this retry run. */
   dismissApiRetry: () => void
   /** Open the maximized transcript view for a subagent (by parent_tool_use_id). Resets
@@ -713,6 +738,7 @@ export const EMPTY_NESTED_SUBAGENTS: NestedSubagent[] = []
 export const EMPTY_SLASH_COMMANDS: SlashCommandInfo[] = []
 /** Stable empty ref for the live task list (zustand-v5 selector safety). */
 export const EMPTY_TASKS: SessionTask[] = []
+const EMPTY_MOD_STATUS: ModStatusLine[] = []
 /** Stable empty ref for a session's staged draft attachments (zustand-v5 selector safety). */
 export const EMPTY_ATTACHMENTS: ProcessedAttachment[] = []
 
@@ -1023,6 +1049,7 @@ async function beginSession(
     pendingPermissions: [],
     changedFiles: [],
     backgroundTasks: {},
+    modStatus: EMPTY_MOD_STATUS,
     subagentMessages: {},
     subagentChildren: {},
     workflows: {},
@@ -1204,12 +1231,36 @@ function currentAssistant(messages: ChatMessage[]): ChatMessage {
   return msg
 }
 
-const sameNote = (a: HookNote, b: HookNote): boolean => a.event === b.event && a.matcher === b.matcher && a.text === b.text
+const sameNote = (a: HookNote, b: HookNote): boolean =>
+  a.event === b.event && a.matcher === b.matcher && a.plugin === b.plugin && a.text === b.text
 
 function withNote(notes: HookNote[], note: HookNote): HookNote[] {
   const i = notes.findIndex((n) => sameNote(n, note))
   return i < 0 ? [...notes, note] : notes.map((n, j) => (j === i ? { ...n, count: n.count + 1 } : n))
 }
+
+/** Outside a turn a note stands alone (joining a notes-only item if that's last); before Claude
+ *  replies it goes under the prompt; mid-reply it goes inline, in stream order. */
+function placeNote(messages: ChatMessage[], note: HookNote, standalone: boolean): void {
+  const last = messages[messages.length - 1]
+  if (standalone) {
+    if (last?.role === 'assistant' && last.hookNotes) messages[messages.length - 1] = { ...last, hookNotes: withNote(last.hookNotes, note) }
+    else messages.push({ id: `k-${Date.now()}-${messages.length}`, role: 'assistant', text: '', thinking: '', tools: [], blocks: [], hookNotes: [note] })
+  } else if (last?.role === 'user') {
+    messages[messages.length - 1] = { ...last, hookNotes: withNote(last.hookNotes ?? [], note) }
+  } else {
+    const m = currentAssistant(messages)
+    const blocks = m.blocks.slice()
+    const hit = blocks.findIndex((b) => b.kind === 'hook' && sameNote(b, note))
+    const prev = blocks[hit]
+    if (prev?.kind === 'hook') blocks[hit] = { ...prev, count: prev.count + 1 }
+    else blocks.push({ kind: 'hook', ...note })
+    messages[messages.length - 1] = { ...m, blocks }
+  }
+}
+
+const MOD_TOAST_CAP = 3
+let modToastSeq = 0
 
 /** Narrow a loose CLI task status to the tray's union: only 'killed'/'failed' are kept
  *  distinct; every other terminal string collapses to 'completed' (the tray only cares
@@ -1270,6 +1321,7 @@ function touchesMessages(type: DomainEvent['type']): boolean {
     type === 'peer-message' ||
     type === 'peer-lifecycle-end' ||
     type === 'cli-message' ||
+    type === 'mod-log' ||
     type === 'compact-boundary' ||
     type === 'result'
   )
@@ -1280,6 +1332,8 @@ export const useSession = create<SessionStore>((set, get) => ({
   activeHandleId: null,
   notice: null,
   browserAnnounce: '',
+  modToasts: [],
+  modToastAnnounce: { text: '', at: 0 },
   effortCaps: {},
   viewingSubagent: null,
   subagentTrail: [],
@@ -1893,6 +1947,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       const patch: Partial<PerSessionState> = {}
       // Top-level (store-wide) notice to set, if any; survives a slice drop.
       let topLevelNotice: Notice | null = null
+      const top: Partial<SessionStore> = {}
       // Set true to CLEAR the app-level notice (e.g. a fresh session-init resolves the
       // transient "Reconnecting…" notice from an effort/ultracode respawn).
       let clearNotice = false
@@ -2007,24 +2062,51 @@ export const useSession = create<SessionStore>((set, get) => ({
             text: e.text,
             count: 1
           }
-          const last = messages[messages.length - 1]
           // SessionStart isn't about the prompt it happens to arrive with, so it stands alone.
-          if (!slice.busy || note.event === 'SessionStart') {
-            if (last?.role === 'assistant' && last.hookNotes) messages[messages.length - 1] = { ...last, hookNotes: withNote(last.hookNotes, note) }
-            else messages.push({ id: `k-${Date.now()}-${messages.length}`, role: 'assistant', text: '', thinking: '', tools: [], blocks: [], hookNotes: [note] })
-          } else if (last?.role === 'user') {
-            messages[messages.length - 1] = { ...last, hookNotes: withNote(last.hookNotes ?? [], note) }
-          } else {
-            const m = currentAssistant(messages)
-            const blocks = m.blocks.slice()
-            const hit = blocks.findIndex((b) => b.kind === 'hook' && sameNote(b, note))
-            const prev = blocks[hit]
-            if (prev?.kind === 'hook') blocks[hit] = { ...prev, count: prev.count + 1 }
-            else blocks.push({ kind: 'hook', ...note })
-            messages[messages.length - 1] = { ...m, blocks }
-          }
+          placeNote(messages, note, !slice.busy || note.event === 'SessionStart')
           break
         }
+        case 'mod-log':
+          placeNote(messages, { plugin: e.plugin, text: e.text, count: 1 }, !slice.busy)
+          break
+        case 'mod-toast': {
+          // Over Settings a card would cover its controls, so it becomes a transcript line there too.
+          if (handleId !== state.activeHandleId || state.settingsSection) {
+            const msgs = slice.messages.slice()
+            placeNote(msgs, { plugin: e.plugin, text: e.text, count: 1 }, !slice.busy)
+            patch.messages = msgs
+            break
+          }
+          const hit = state.modToasts.find((t) => t.plugin === e.plugin && t.text === e.text)
+          const now = Date.now()
+          top.modToasts = hit
+            ? state.modToasts.map((t) => (t === hit ? { ...t, count: t.count + 1 } : t))
+            : [
+                {
+                  id: `mt-${++modToastSeq}`,
+                  plugin: e.plugin,
+                  text: e.text,
+                  durationMs: Math.min(20_000, Math.max(3000, e.timeoutMs)),
+                  count: 1,
+                  at: now
+                },
+                ...state.modToasts
+              ].slice(0, MOD_TOAST_CAP)
+          top.modToastAnnounce = { text: toggled(`${e.plugin} plugin: ${e.text.slice(0, 200)}`), at: now }
+          break
+        }
+        case 'mod-status': {
+          const { plugin, text } = e
+          const i = slice.modStatus.findIndex((l) => l.plugin === plugin)
+          if (text === null) {
+            if (i >= 0) patch.modStatus = slice.modStatus.filter((_, j) => j !== i)
+          } else if (i < 0) patch.modStatus = [...slice.modStatus, { plugin, text }]
+          else if (slice.modStatus[i].text !== text) patch.modStatus = slice.modStatus.map((l, j) => (j === i ? { plugin, text } : l))
+          break
+        }
+        case 'mod-status-reset':
+          if (slice.modStatus.length) patch.modStatus = EMPTY_MOD_STATUS
+          break
         case 'thinking-delta': {
           const m = currentAssistant(messages)
           m.thinking += e.text
@@ -2446,6 +2528,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.thinkingTokens = null
           patch.compacting = false
           patch.exited = true
+          patch.modStatus = EMPTY_MOD_STATUS
           break
       }
 
@@ -2478,6 +2561,7 @@ export const useSession = create<SessionStore>((set, get) => ({
 
       if (touchesMessages(e.type)) patch.messages = messages
       return {
+        ...top,
         sessions: { ...state.sessions, [handleId]: { ...slice, ...patch } },
         ...(topLevelNotice !== null ? { notice: topLevelNotice } : clearNotice ? { notice: null } : {})
       }
@@ -2508,6 +2592,7 @@ export const useSession = create<SessionStore>((set, get) => ({
 
   setNotice: (message, tone = 'warn') => set(() => ({ notice: { message, tone } })),
   dismissNotice: () => set(() => ({ notice: null })),
+  dismissModToast: (id) => set((s) => ({ modToasts: s.modToasts.filter((t) => t.id !== id) })),
   dismissApiRetry: () =>
     set((s) => (s.activeHandleId ? patchSlice(s, s.activeHandleId, { apiRetryDismissed: true }) : {})),
   dismissCompactSuggestion: () =>

@@ -18,7 +18,7 @@ import {
   IconSendToTray,
   IconGhost
 } from './Icon'
-import { ToastStack } from './Toast'
+import { ToastStack, useBrowserToasts } from './Toast'
 import { useGuardedAsync } from '../lib/useGuardedAsync'
 import { usePopover } from './Popover'
 import { runTagged, viaOf, type Via } from '../lib/motion'
@@ -77,6 +77,7 @@ interface PendingDelete {
   id: string
   projectSlug: string
   title: string
+  at: number
 }
 
 export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: boolean }): JSX.Element {
@@ -98,7 +99,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   // One expiry timer per pending id.
   const deleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   // sr-only announcement for the latest delete; coalesces rapid ones to the most recent.
-  const [announce, setAnnounce] = useState('')
+  const [announce, setAnnounce] = useState({ text: '', at: 0 })
   // Toggling suffix so two same-titled deletes still differ as text; an unchanged aria-live node is silent.
   const announceSeq = useRef(0)
 
@@ -117,6 +118,10 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   const loading = useSession((s) => s.sessionsLoading)
   const refreshSessions = useSession((s) => s.refreshSessions)
   const chatDir = useSession((s) => s.chatDir)
+  const modToasts = useSession((s) => s.modToasts)
+  const modAnnounce = useSession((s) => s.modToastAnnounce)
+  const dismissModToast = useSession((s) => s.dismissModToast)
+  const browserToasts = useBrowserToasts()
 
   // Export a session to Markdown (on-disk sessions only). Reads the jsonl in main (safe on dormant sessions).
   const exportSession = useCallback(
@@ -161,7 +166,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
       // If live, stop the process now so the live counter and dots update at once. Undo restores only the on-disk transcript.
       if (liveHandleId) void closeSession(liveHandleId)
 
-      const pd: PendingDelete = { id, projectSlug, title }
+      const pd: PendingDelete = { id, projectSlug, title, at: Date.now() }
       let next = [pd, ...pendingRef.current.filter((p) => p.id !== id)]
       // Over the cap: the oldest commits now.
       if (next.length > STACK_CAP) {
@@ -179,7 +184,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
         setPending(pendingRef.current.filter((p) => p.id !== id))
       }, UNDO_MS)
       deleteTimers.current.set(id, t)
-      setAnnounce(`Deleted ${title}. Undo available.${'\u200b'.repeat(++announceSeq.current % 2)}`)
+      setAnnounce({ text: `Deleted ${title}. Undo available.${'\u200b'.repeat(++announceSeq.current % 2)}`, at: pd.at })
     },
     [clearDeleteTimer, commitDelete, closeSession, setPending]
   )
@@ -383,10 +388,15 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   // in place instead of remounting it.
   const stack = (
     <ToastStack
-      items={pending.map((p) => ({ id: p.id, title: p.title, suffix: '· deleted' }))}
+      items={[
+        ...pending.map((p) => ({ kind: 'undo' as const, id: p.id, title: p.title, suffix: '· deleted', at: p.at })),
+        ...browserToasts.items,
+        ...modToasts.map((t) => ({ kind: 'mod' as const, ...t }))
+      ].sort((a, b) => b.at - a.at)}
       durationMs={UNDO_MS}
-      announce={announce}
-      onUndo={undoDelete}
+      announce={[modAnnounce, browserToasts.announce].reduce((a, b) => (b.at > a.at ? b : a), announce).text}
+      onUndo={(id) => (browserToasts.items.some((t) => t.id === id) ? browserToasts.onUndo(id) : undoDelete(id))}
+      onDismiss={dismissModToast}
     />
   )
 
