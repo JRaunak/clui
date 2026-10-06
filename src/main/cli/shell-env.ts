@@ -57,7 +57,7 @@ const AUTH_EXACT = new Set([
   'SSL_CERT_FILE'
 ])
 /**
- * `CLAUDE_CODE_*` keys that are per-session RUNTIME markers, not auth. These must NOT be
+ * Claude keys that are per-session RUNTIME markers, not auth. These must NOT be
  * forwarded, or the spawned CLI would think it's a child/continuation of whatever
  * session set them (only present when Clui itself is launched from inside a Claude
  * Code session; harmless for a normal Finder launch, but wrong to pass through).
@@ -67,6 +67,11 @@ const RUNTIME_MARKERS = new Set([
   'CLAUDE_CODE_SESSION_ID',
   'CLAUDE_CODE_CHILD_SESSION',
   'CLAUDE_CODE_EXECPATH',
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_CODE_SESSION_ATTENDED',
+  'CLAUDE_PID',
+  'CLAUDE_EFFORT',
   'CLAUDECODE'
 ])
 
