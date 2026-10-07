@@ -454,7 +454,7 @@ function registerIpc(): void {
       // for a user whose default is Plan/Accept-Edits/Autonomous. Falls back to 'default'
       // when unset (the CLI's own default). Still a live control message only.
       const resolved = mode === 'inherit' ? ((await readCliSettings()).defaultMode ?? 'default') : mode
-      return manager.setPermissionMode(handleId, resolved)
+      return { ...(await manager.setPermissionMode(handleId, resolved)), mode: resolved }
     }
   )
 

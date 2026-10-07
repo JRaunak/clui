@@ -1,6 +1,6 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { useSession, apiRetryCopy } from '../src/renderer/src/store.ts'
+import { useSession, apiRetryCopy, effectiveMode } from '../src/renderer/src/store.ts'
 import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
 
@@ -42,10 +42,11 @@ const cum = (costUSD: number, out: number, cacheRead: number, cacheCreate: numbe
   equal(t.outputTokens, 0, 'perTurn: a lower token count floors at 0')
 }
 
-// The store's IPC is stubbed: each call is recorded and resolves true.
+// The store's IPC is stubbed: each call is recorded and resolves true unless `replies` overrides it.
 const calls: { name: string; args: unknown[] }[] = []
+const replies: Record<string, (...args: any[]) => unknown> = {}
 ;(globalThis as any).window = {
-  clui: new Proxy({}, { get: (_t, name: string) => async (...args: unknown[]) => (calls.push({ name, args }), true) })
+  clui: new Proxy({}, { get: (_t, name: string) => async (...args: unknown[]) => (calls.push({ name, args }), replies[name] ? replies[name](...args) : true) })
 }
 const slice = (over: Record<string, unknown> = {}): any => ({
   handleId: 'h1',
@@ -101,6 +102,27 @@ const st = useSession.getState
   await st().setEffort('low')
   ok(cur().ultracode === true && cur().effortChoice === 'low', 'store: picking an effort with Ultra on keeps Ultra')
   ok(!calls.some((c) => c.name === 'setUltracode'), 'store: picking an effort sends no ultracode change')
+}
+
+// Under System Default the CLI's reported mode is the one in effect; under a concrete pick a mismatch is a downgrade.
+{
+  const m = (modeChoice: string, permissionMode: string | null) => effectiveMode({ modelMode: null, modeChoice: modeChoice as any, permissionMode })
+  equal(JSON.stringify(m('inherit', 'plan')), JSON.stringify({ mode: 'plan', downgraded: false, inherited: true }), 'mode: inherit + reported plan shows plan, inherited')
+  equal(JSON.stringify(m('inherit', null)), JSON.stringify({ mode: 'inherit', downgraded: false, inherited: false }), 'mode: inherit before a report stays System Default')
+  equal(JSON.stringify(m('auto', 'default')), JSON.stringify({ mode: 'default', downgraded: true, inherited: false }), 'mode: auto run as default is a downgrade')
+}
+
+// Picking System Default shows no mode until main names the one settings.json resolved to.
+{
+  reset({ modeChoice: 'plan', modelMode: null, permissionMode: 'plan' })
+  let release!: () => void
+  replies.setPermissionMode = () => new Promise((r) => (release = () => r({ ok: true, mode: 'bypassPermissions' })))
+  const p = st().setPermissionMode('inherit')
+  ok(cur().modeChoice === 'inherit' && cur().permissionMode === null, 'store: inherit pick clears the reported mode while pending')
+  release()
+  await p
+  ok(cur().permissionMode === 'bypassPermissions' && effectiveMode(cur()).inherited, 'store: inherit pick takes the resolved mode from main')
+  delete replies.setPermissionMode
 }
 
 // Retry copy

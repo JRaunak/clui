@@ -636,8 +636,8 @@ export class ClaudeSession extends EventEmitter {
    *
    * Also persists the new mode into `opts.permissionMode` so a later effort-driven
    * respawn (which rebuilds argv from opts) keeps it, else the respawn would
-   * silently revert to the launch-time mode. The renderer maps 'inherit' → 'default'
-   * before calling this (there's no mid-session "unset"), so `mode` is concrete here.
+   * silently revert to the launch-time mode. The IPC handler resolves 'inherit' from
+   * settings.json before calling this (there's no mid-session "unset"), so `mode` is concrete here.
    */
   async setPermissionMode(mode: string): Promise<ModeChangeResult> {
     if (!this.child) return { ok: false }

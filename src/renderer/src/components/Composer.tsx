@@ -95,12 +95,14 @@ export function Composer(): JSX.Element {
   // rewriting the user's pick, so it comes back when the session can honor it.
   const modelMode = useActive((s) => s?.modelMode ?? null)
   const permissionMode = useActive((s) => s?.permissionMode ?? null)
-  const { mode: displayMode, downgraded } = effectiveMode({ modelMode, modeChoice, permissionMode })
+  const { mode: displayMode, downgraded, inherited } = effectiveMode({ modelMode, modeChoice, permissionMode })
   // From modelChoice: the init-reported model never updates on a live switch.
   const modelLabel = useActive((s) => (s ? deriveModelInfo(s.modelChoice).label : null))
   // Auto is the one pick a model can refuse; any other mismatch just shows the mode in effect.
   const unavailableOn = downgraded && modeChoice === 'auto' ? modelLabel : null
-  const permTitle = `Permissions: ${PERMISSION_MODE_LABELS[displayMode]}${unavailableOn ? ` (${PERMISSION_MODE_LABELS[modeChoice]} isn't available on ${unavailableOn})` : ''}`
+  const permTitle = inherited
+    ? `Permissions: ${PERMISSION_MODE_LABELS[displayMode]} (System Default)`
+    : `Permissions: ${PERMISSION_MODE_LABELS[displayMode]}${unavailableOn ? ` (${PERMISSION_MODE_LABELS[modeChoice]} isn't available on ${unavailableOn})` : ''}`
   const contextPercent = useActive((s) => s?.contextPercent ?? null)
   const contextTokens = useActive((s) => s?.contextTokens ?? null)
   const contextWindow = useActive((s) => s?.contextWindow ?? null)
@@ -323,7 +325,9 @@ export function Composer(): JSX.Element {
     description:
       unavailableOn && m === modeChoice
         ? `Your pick. Unavailable on ${unavailableOn}, so ${PERMISSION_MODE_LABELS[displayMode]} is in effect.`
-        : PERMISSION_MODE_DESCRIPTIONS[m],
+        : inherited && m === 'inherit'
+          ? `Your pick. ${PERMISSION_MODE_LABELS[displayMode]} is in effect; select to reapply settings.json.`
+          : PERMISSION_MODE_DESCRIPTIONS[m],
     icon: <PermissionIcon mode={m} className="h-4 w-4" />,
     // Autonomous (bypassPermissions) is the full-access danger tier: the whole row goes err,
     // not a new hue (terracotta stays scarce).
@@ -450,7 +454,7 @@ export function Composer(): JSX.Element {
                     options={permOptions}
                     onChange={(m) => void setPermissionMode(m)}
                     title={permTitle}
-                    ariaLabel={unavailableOn ? permTitle : undefined}
+                    ariaLabel={unavailableOn || inherited ? permTitle : undefined}
                     direction="up"
                     variant="pill"
                     menuClassName="w-72"
