@@ -48,6 +48,8 @@ interface RawEntry {
   effort?: string
   isCompactSummary?: boolean
   isMeta?: boolean
+  /** On a meta record the CLI injects for a tool call, e.g. the body of a skill the Skill tool loaded. */
+  sourceToolUseID?: string
   compactMetadata?: { trigger?: string; preTokens?: number; postTokens?: number }
   preventContinuation?: boolean
 }
@@ -466,6 +468,9 @@ async function parseTranscriptFile(
       // The CLI notes where it saved a message's images as a meta "user" record of bare `[Image: source: …]`
       // placeholders. The images are already on the real message, so the note isn't something the user said.
       if (entry.isMeta && entry.type === 'user' && isImageSourceNote(entry.message?.content)) continue
+      // A skill's instructions reach the model as a meta "user" record tied to the Skill call; the live
+      // stream never renders them, so a resumed transcript mustn't show them as the user's words.
+      if (entry.isMeta && entry.type === 'user' && entry.sourceToolUseID && toolCallsById.get(entry.sourceToolUseID)?.name === 'Skill') continue
 
       // Slash-command output is logged as a `system` record of subtype
       // `local_command` carrying <local-command-stdout>…</local-command-stdout>
