@@ -11,7 +11,7 @@ import {
   type PeerMessage,
   type ToolCall
 } from '../store'
-import { Markdown } from './Markdown'
+import { Markdown, StreamingContext } from './Markdown'
 import { AnnotationChip } from './AnnotationChip'
 import { Button } from './Button'
 import { splitAnnotations } from '../../../shared/annotate'
@@ -92,6 +92,7 @@ function renderUserText(text: string): (string | JSX.Element)[] {
 }
 
 export function MessageView({ message, hideThinking = false }: { message: ChatMessage; hideThinking?: boolean }): JSX.Element {
+  const live = useActive((s) => !!s?.busy && s.messages[s.messages.length - 1]?.id === message.id)
   if (message.role === 'peer' && message.peer) return <PeerMessageView message={message} peer={message.peer} />
   if (message.compaction) return <CompactionDivider marker={message.compaction} />
   const isUser = message.role === 'user'
@@ -111,45 +112,47 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
   const entries = isUser ? [] : spineEntries(message)
   const hasSpine = lastToolsIndex(entries) >= 0
   return (
-    <div
-      className="flex flex-col gap-2"
-      data-ui={isUser ? 'prompt-row' : hasSpine ? 'spine' : undefined}
-      id={isUser ? `msg-${message.id}` : undefined}
-      tabIndex={isUser ? -1 : undefined}
-    >
+    <StreamingContext.Provider value={live}>
       <div
-        className={`relative flex items-center gap-1.5 text-label font-semibold ${isUser ? 'text-dim' : 'text-accent spine-seg'}`}
-        data-seg={isUser ? undefined : hasSpine ? 'head' : 'none'}
+        className="flex flex-col gap-2"
+        data-ui={isUser ? 'prompt-row' : hasSpine ? 'spine' : undefined}
+        id={isUser ? `msg-${message.id}` : undefined}
+        tabIndex={isUser ? -1 : undefined}
       >
-        {/* The speaker dot is the top of the spine, centred on the line 15px left of the column. */}
-        {!isUser && (
-          <span
-            className="absolute left-[-18.5px] top-1/2 h-[7px] w-[7px] -translate-y-1/2 rounded-full bg-accent"
-            aria-hidden="true"
-          />
-        )}
-        {isUser ? 'You' : 'Claude'}
-      </div>
-      {/* A blocked prompt read back from disk whose wording didn't parse has no text to show. */}
-      {(!isUser || message.text || message.attachments?.length) && (
-        <div className={isUser ? 'max-w-[80%] self-start rounded-lg rounded-tl-sm bg-user px-3.5 py-2.5' : 'flex flex-col gap-2'}>
-          {message.thinking && !(hideThinking && !message.text && message.tools.length === 0) && (
-            <div className={isUser ? undefined : 'spine-seg'} data-seg={isUser ? undefined : hasSpine ? 'through' : 'none'}>
-              <ThinkingBlock text={message.thinking} />
-            </div>
+        <div
+          className={`relative flex items-center gap-1.5 text-label font-semibold ${isUser ? 'text-dim' : 'text-accent spine-seg'}`}
+          data-seg={isUser ? undefined : hasSpine ? 'head' : 'none'}
+        >
+          {/* The speaker dot is the top of the spine, centred on the line 15px left of the column. */}
+          {!isUser && (
+            <span
+              className="absolute left-[-18.5px] top-1/2 h-[7px] w-[7px] -translate-y-1/2 rounded-full bg-accent"
+              aria-hidden="true"
+            />
           )}
-          {isUser ? (
-            <UserContent message={message} />
-          ) : (
-            <SpineItems entries={entries} />
-          )}
+          {isUser ? 'You' : 'Claude'}
         </div>
-      )}
-      {isUser && message.hookNotes && <HookNotes notes={message.hookNotes} />}
-      {isUser && message.blocked && <BlockedPromptNotice prompt={splitAnnotations(message.text).text} blocked={message.blocked} />}
-      {!isUser && message.denials && message.denials.length > 0 && <BlockedActionsNotice denials={message.denials} />}
-      {!isUser && message.usage && <TurnUsageTrailer usage={message.usage} id={message.id} />}
-    </div>
+        {/* A blocked prompt read back from disk whose wording didn't parse has no text to show. */}
+        {(!isUser || message.text || message.attachments?.length) && (
+          <div className={isUser ? 'max-w-[80%] self-start rounded-lg rounded-tl-sm bg-user px-3.5 py-2.5' : 'flex flex-col gap-2'}>
+            {message.thinking && !(hideThinking && !message.text && message.tools.length === 0) && (
+              <div className={isUser ? undefined : 'spine-seg'} data-seg={isUser ? undefined : hasSpine ? 'through' : 'none'}>
+                <ThinkingBlock text={message.thinking} />
+              </div>
+            )}
+            {isUser ? (
+              <UserContent message={message} />
+            ) : (
+              <SpineItems entries={entries} />
+            )}
+          </div>
+        )}
+        {isUser && message.hookNotes && <HookNotes notes={message.hookNotes} />}
+        {isUser && message.blocked && <BlockedPromptNotice prompt={splitAnnotations(message.text).text} blocked={message.blocked} />}
+        {!isUser && message.denials && message.denials.length > 0 && <BlockedActionsNotice denials={message.denials} />}
+        {!isUser && message.usage && <TurnUsageTrailer usage={message.usage} id={message.id} />}
+      </div>
+    </StreamingContext.Provider>
   )
 }
 

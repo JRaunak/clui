@@ -10,7 +10,7 @@
  * renders whatever currently parses, and the highlighter is wrapped in try/catch, so a
  * partial document never throws.
  */
-import { memo, useCallback, useState, type MouseEvent, type ReactNode } from 'react'
+import { createContext, memo, useCallback, useContext, useState, type MouseEvent, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import hljs from '../lib/hljs'
@@ -19,9 +19,47 @@ import { linkHandlers, linkTitle, useLinkTarget } from '../lib/openLink'
 import { useActive } from '../store'
 import { parseUsageReport, UsageCard, parseContextReport, ContextCard } from './CommandOutput'
 
+type Highlighted = { html: string; used: string | null }
+
+/** True inside the message that is still streaming. */
+export const StreamingContext = createContext(false)
+
+const PLAIN_CHARS = 4000
+const PLAIN_LINES = 60
+
+/** The transcript remounts its rows on every session switch, and auto-detect runs every
+ *  registered grammar over a block, so a big untagged block costs hundreds of ms each time it
+ *  mounts. */
+const highlightCache = new Map<string, Highlighted>()
+let cachedChars = 0
+const CACHE_CHARS = 8_000_000
+
+function highlight(code: string, lang: string | null, streaming: boolean): Highlighted {
+  // Without a known grammar, auto-detect guesses wrong on long output, and mid-stream its guess
+  // changes with every token, so those blocks stay plain.
+  const known = !!lang && !!hljs.getLanguage(lang)
+  if (!known && (streaming || code.length > PLAIN_CHARS || code.split('\n').length > PLAIN_LINES)) {
+    return { html: escapeHtml(code), used: null }
+  }
+  // Every streamed prefix is a new key, and they would push finished blocks out of the cache.
+  if (streaming) return highlightUncached(code, lang)
+  const key = `${lang ?? ''}\u0000${code}`
+  const hit = highlightCache.get(key)
+  if (hit) return hit
+  const out = highlightUncached(code, lang)
+  highlightCache.set(key, out)
+  cachedChars += key.length + out.html.length
+  for (const [k, v] of highlightCache) {
+    if (cachedChars <= CACHE_CHARS) break
+    highlightCache.delete(k)
+    cachedChars -= k.length + v.html.length
+  }
+  return out
+}
+
 /** Highlight to an HTML string, defensively. Unknown/absent language triggers auto-detect;
  *  any grammar error falls back to plain (escaped) text so a stream never breaks. */
-function highlight(code: string, lang: string | null): { html: string; used: string | null } {
+function highlightUncached(code: string, lang: string | null): Highlighted {
   try {
     if (lang && hljs.getLanguage(lang)) {
       return { html: hljs.highlight(code, { language: lang }).value, used: lang }
@@ -40,7 +78,9 @@ function escapeHtml(s: string): string {
 
 function CodeBlock({ code, lang }: { code: string; lang: string | null }): JSX.Element {
   const [copied, setCopied] = useState(false)
-  const { html, used } = highlight(code, lang)
+  const { html, used } = highlight(code, lang, useContext(StreamingContext))
+  // The author's tag names the block even when highlight.js has no grammar for it.
+  const label = lang && !hljs.getLanguage(lang) ? lang : (used ?? 'text')
   const onCopy = useCallback(() => {
     void navigator.clipboard.writeText(code).then(() => {
       setCopied(true)
@@ -52,7 +92,7 @@ function CodeBlock({ code, lang }: { code: string; lang: string | null }): JSX.E
     <div className="group relative my-2 overflow-hidden rounded-md border border-border bg-tool">
       <div className="flex items-center justify-between border-b border-border/60 px-3 py-1">
         <span className="font-mono text-meta text-faint">
-          {used ?? 'text'}
+          {label}
         </span>
         {/* Persistent at-rest affordance (opacity-60), brightening on hover/focus. A hover-only
             copy button is undiscoverable and unreachable by a keyboard scan of visible controls. */}
