@@ -57,6 +57,7 @@ export function summarizeInput(input: unknown): string {
     // A subagent call carries a short human description, which reads better than its prompt.
     if (typeof o.description === 'string') return o.description
     if (typeof o.command === 'string') return o.command
+    if (typeof o.skill === 'string') return o.skill
     if (typeof o.file_path === 'string') return o.file_path
     if (typeof o.path === 'string') return o.path
     if (typeof o.pattern === 'string') return o.pattern

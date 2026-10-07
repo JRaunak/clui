@@ -1,6 +1,6 @@
 // Boundary: the row-state grammar, the aggregate's worst-state pick, "needs you" matching, and the
 // current-turn derivation that the top-band header renders.
-import { rowState, worstState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel } from '../src/renderer/src/lib/instrument.ts'
+import { rowState, worstState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel, summarizeInput } from '../src/renderer/src/lib/instrument.ts'
 import { equal } from './support/harness.mjs'
 
 const tool = (o: Record<string, unknown>) => ({ id: 't', name: 'Bash', input: {}, ...o }) as never
@@ -67,3 +67,6 @@ equal(urls('(see https://example.com/a_(b))'), 'https://example.com/a_(b)', 'lin
 equal(urls('one http://localhost:5173/x, two https://a.io'), 'http://localhost:5173/x https://a.io', 'links: several in one line')
 equal(urls('ftp://x.io and mailto:me@x.io'), '', 'links: only http(s)')
 equal(urls('tail https://example.com/very/lo', true), '', 'links: a URL cut by truncation stays text')
+
+// A Skill row names the skill it ran.
+equal(summarizeInput({ skill: 'create-cso-pr', args: '--help' }), 'create-cso-pr', 'summarizeInput: Skill shows the skill name')
