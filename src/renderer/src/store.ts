@@ -1178,9 +1178,10 @@ const BROWSER_OPENED = 'Claude opened the browser'
 /** The Stage already shows a browser pane, so the next session's pane reuses it without remounting. */
 const browserPaneShown = (s: SessionStore): boolean => !s.viewingSubagent && !!(s.activeHandleId && s.sessions[s.activeHandleId]?.browserOpen)
 
-/** The payload that opens a session's deferred browser pane as it becomes active: half, and with no
- *  motion, since it arrives with the pane already up. A narrow Stage leaves the flag for a later visit.
- *  Only the mount clears the quiet flag, so it is set only when the pane will mount; a stray flag would skip focus on the next open. */
+/** The payload for a session becoming active. Arriving isn't a request to work in its browser pane,
+ *  so a pane that mounts on arrival leaves focus where it was. A deferred open comes up here at half
+ *  with no motion; a narrow Stage leaves its flag for a later visit. Only the mount clears the quiet
+ *  flag, so it is set only when the pane will mount; a stray flag would skip focus on the next open. */
 function arriveWithBrowser(
   sessions: SessionStore['sessions'],
   handleId: string | null,
@@ -1188,11 +1189,14 @@ function arriveWithBrowser(
   paneShown: boolean
 ): Partial<SessionStore> {
   const cur = handleId ? sessions[handleId] : undefined
-  if (!handleId || !cur?.browserAutoOpen || cur.browserOpen || !cur.browser || !stageWide) return {}
+  if (!handleId || !cur?.browser) return {}
+  const quiet = paneShown ? {} : { paneOpenedQuietly: true }
+  if (cur.browserOpen) return quiet
+  if (!cur.browserAutoOpen || !stageWide) return {}
   return {
     sessions: { ...sessions, [handleId]: { ...cur, browserOpen: true, browserAutoOpen: false, statusAnnounce: toggled(BROWSER_OPENED) } },
     browserPaneFull: false,
-    ...(paneShown ? {} : { paneOpenedQuietly: true })
+    ...quiet
   }
 }
 

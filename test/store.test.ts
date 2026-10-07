@@ -275,6 +275,16 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   ok(back.browserOpen && !back.browserAutoOpen && said('h2'), 'browser auto-open: activation opens the deferred pane and announces')
   ok(!st().browserPaneFull, 'browser auto-open: the deferred open is half')
 
+  // Arriving at a session whose pane is already open mounts it without taking focus. If the Stage
+  // already shows a browser pane nothing mounts, so no flag may be left behind.
+  fresh()
+  useSession.setState({ paneOpenedQuietly: false, sessions: { ...st().sessions, h2: slice({ handleId: 'h2', ...pane({ browserOpen: true }) }) } })
+  st().activateSession('h2')
+  ok(st().paneOpenedQuietly, 'session switch: an open pane mounts quietly')
+  useSession.setState({ paneOpenedQuietly: false, sessions: { ...st().sessions, h1: { ...st().sessions.h1, browserOpen: true } } })
+  st().activateSession('h1')
+  ok(!st().paneOpenedQuietly, 'session switch: a pane already on the Stage sets no flag')
+
   // The hand-offs that pick a neighbour without activateSession open it the same way.
   const pair = (h1: Record<string, unknown>): void => {
     fresh({ createdMs: 2, lastActivityMs: 2, ...h1 })
