@@ -139,6 +139,11 @@ export const EFFORT_LABELS: Record<EffortChoice, string> = {
   max: 'Max'
 }
 
+/** A level the labels don't know (a CLI bump added one) shows as the raw word. */
+export function effortLabel(v: string): string {
+  return isEffortChoice(v) ? EFFORT_LABELS[v] : v
+}
+
 /** True if this model can run ultracode. The CLI offers it only on models with an
  *  xhigh tier, so that tier is the gate, though ultra runs at the stored effort. */
 export function supportsUltracodeToggle(id: string): boolean {

@@ -19,13 +19,13 @@ import { viaOf } from '../lib/motion'
 import { Markdown } from './Markdown'
 import { ToolGroup } from './MessageView'
 import { IconWarn } from './Icon'
-import { RunningTimer } from './InstrumentRow'
+import { RunningTimer, subagentEffort, subagentType } from './InstrumentRow'
 import { Lumen } from './Lumen'
 import { lumenKeyOf } from '../lib/lumen'
 import { PaneHeader, usePane } from './Stage'
 import type { HistoryMessage } from '../../../shared/sessions'
 import type { SubagentMessage } from '../store'
-import { deriveModelInfo, EFFORT_LABELS, isEffortChoice } from '../../../shared/settings'
+import { deriveModelInfo, effortLabel } from '../../../shared/settings'
 
 function findAgentTool(
   messages: { tools: ToolCall[] }[],
@@ -73,7 +73,7 @@ function resolveAgentMeta(
   if (tool) {
     return {
       name: tool.name === 'Task' ? 'Agent' : tool.name,
-      subtype: agentSubtype(tool.input),
+      subtype: subagentType(tool.input),
       desc: agentDescription(tool.input),
       tool
     }
@@ -101,14 +101,6 @@ function agentDescription(input: unknown): string {
   }
   return ''
 }
-function agentSubtype(input: unknown): string | null {
-  if (input && typeof input === 'object') {
-    const t = (input as Record<string, unknown>).subagent_type
-    if (typeof t === 'string' && t) return t
-  }
-  return null
-}
-
 function agentStatus(state: string): { cls: string; label: string } {
   if (/fail|error/i.test(state)) return { cls: 'bg-err', label: 'failed' }
   if (/done|complete|success/i.test(state)) return { cls: 'bg-ok', label: 'done' }
@@ -622,12 +614,9 @@ export function SubagentView(): JSX.Element | null {
   const name = meta.name
   const subtype = meta.subtype
   const desc = meta.desc
-  // Humanize the raw model id; effort falls back to the raw word if a CLI bump adds a level the labels don't know.
   const modelLabel = agentMeta.model ? deriveModelInfo(agentMeta.model).label : null
-  const effortLabel =
-    agentMeta.effort && isEffortChoice(agentMeta.effort)
-      ? EFFORT_LABELS[agentMeta.effort]
-      : (agentMeta.effort ?? null)
+  // The on-disk transcript's effort is what ran; the launching input stands in until the transcript lands.
+  const effort = agentMeta.effort ? effortLabel(agentMeta.effort) : subagentEffort(meta.tool?.input)
   // Status source, in order of authority: (1) A backgrounded subagent's own bg-task lifecycle. Its launching Agent tool
   // returns immediately, so the tool's `result` says nothing about the agent. (2) A foreground subagent's Agent tool card,
   // which does resolve when the agent finishes. (3) A nested child has no card: a loaded on-disk transcript means finished.
@@ -665,7 +654,7 @@ export function SubagentView(): JSX.Element | null {
               childToolUseId: t.id,
               name: t.name,
               description: agentDescription(t.input),
-              subagentType: agentSubtype(t.input) ?? undefined
+              subagentType: subagentType(t.input) ?? undefined
             }))
         )
       : []
@@ -725,13 +714,23 @@ export function SubagentView(): JSX.Element | null {
             {subtype}
           </span>
         )}
-        {modelLabel && (
+        {(modelLabel || effort) && (
           <span
             className="shrink-0 whitespace-nowrap rounded bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-dim"
-            title={`Ran on ${modelLabel}${effortLabel ? ` at ${effortLabel} effort` : ''}`}
+            title={
+              modelLabel
+                ? `Ran on ${modelLabel}${effort ? ` at ${effort} effort` : ''}`
+                : `Ran at ${effort} effort`
+            }
           >
-            {modelLabel}
-            {effortLabel && <>{' · '}{effortLabel}</>}
+            {modelLabel ? (
+              <>
+                {modelLabel}
+                {effort && <>{' · '}{effort}</>}
+              </>
+            ) : (
+              `${effort} effort`
+            )}
           </span>
         )}
       </PaneHeader>

@@ -18,6 +18,7 @@ import {
   worstState,
   type RowState
 } from '../lib/instrument'
+import { effortLabel } from '../../../shared/settings'
 import { IconAgentBrowser, IconCheck, IconChevron, IconCopy, IconOpenPane, IconSendToTray, IconWarn } from './Icon'
 
 type Placement = 'spine' | 'inline'
@@ -143,6 +144,7 @@ export function InstrumentRow({
   // Task was renamed Agent in CLI 2.1.63; both mean a subagent.
   const isSubagent = tool.name === 'Task' || tool.name === 'Agent'
   const subType = subagentType(tool.input)
+  const effort = subagentEffort(tool.input)
   const name = isSubagent ? 'Agent' : browser ? 'Browser' : tool.name
   const lastOpen = useSession((s) => (activeSlice(s)?.browser ? (s.browserPaneFull ? 'full' : 'half') : null))
   // Only a foreground Bash is worth moving; other tools finish too fast to bother.
@@ -218,8 +220,12 @@ export function InstrumentRow({
                 </span>
               )}
               {isSubagent && subType && (
-                <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint">
+                <span
+                  className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint"
+                  title={effort ? `${subType} subagent at ${effort} effort` : undefined}
+                >
                   {subType}
+                  {effort && <>{' · '}{effort}</>}
                 </span>
               )}
             </span>
@@ -498,6 +504,13 @@ export function subagentType(input: unknown): string | null {
     if (typeof t === 'string' && t) return t
   }
   return null
+}
+
+/** The CLI ignores `effort` on a fork, so showing it there would lie. */
+export function subagentEffort(input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null
+  const { effort, subagent_type } = input as Record<string, unknown>
+  return typeof effort === 'string' && effort && subagent_type !== 'fork' ? effortLabel(effort) : null
 }
 
 /** In "16 messages, 8 errors" the problem is the last clause, so only it takes the emphasis. */
