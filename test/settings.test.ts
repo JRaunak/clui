@@ -10,7 +10,8 @@ import {
   supportsUltracodeToggle,
   supports1m,
   contextSizeLabel,
-  reconcileModelChoice
+  reconcileModelChoice,
+  effortLabel
 } from '../src/shared/settings.ts'
 import { ok } from './support/harness.mjs'
 
@@ -133,3 +134,6 @@ ok(!supportsUltracodeToggle('claude-haiku-4-5'), 'supportsUltracodeToggle: haiku
   await m.updateSettings({ browserEnabled: false })
   ok(!('browserEnabled' in onDisk()), 'settings: browserEnabled off is pruned to the default')
 }
+// Agent effort reads in the composer's words; a level a CLI bump adds shows raw rather than vanishing.
+ok(effortLabel('xhigh') === 'X-High', 'settings: effortLabel maps a known level')
+ok(effortLabel('turbo') === 'turbo', 'settings: effortLabel passes an unknown level through')
