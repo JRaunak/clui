@@ -63,14 +63,16 @@ export interface StartSessionOptions {
  *  maps in settings.ts (which compile-error on a missing arm). */
 export type PermissionModeChoice = CluiSettings['permissionMode']
 
-/** Result of starting a session: our local handle for it. */
 /** A live permission-mode change. `errorCode` is the CLI's reason when it refuses, e.g.
- *  'auto_mode_model' when the session's model can't run auto. */
+ *  'auto_mode_model' when the session's model can't run auto. `mode` is the concrete mode
+ *  main sent, which for 'inherit' is what settings.json resolved to. */
 export interface ModeChangeResult {
   ok: boolean
   errorCode?: string
+  mode?: string
 }
 
+/** Result of starting a session: our local handle for it. */
 export interface StartSessionResult {
   /** App-local id used to route events/sends before the CLI session id is known. */
   handleId: string

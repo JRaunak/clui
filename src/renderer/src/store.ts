@@ -659,15 +659,19 @@ export function activeSlice(store: SessionStore): PerSessionState | null {
 
 /** The permission mode in effect. The CLI can run a pick as something else without saying so
  *  (auto on a model that can't run it starts as default), so its reported mode outranks the pick
- *  when they disagree. A reported mode the picker doesn't know falls back to the pick. */
+ *  when they disagree. Under 'inherit' the reported mode is what settings.json or a resumed plan
+ *  resolved to, so it's inherited, not a downgrade. A reported mode the picker doesn't know
+ *  falls back to the pick. */
 export function effectiveMode(
   s: Pick<PerSessionState, 'modelMode' | 'modeChoice' | 'permissionMode'>
-): { mode: PermissionModeChoice; downgraded: boolean } {
-  if (s.modelMode) return { mode: s.modelMode, downgraded: false }
+): { mode: PermissionModeChoice; downgraded: boolean; inherited: boolean } {
+  if (s.modelMode) return { mode: s.modelMode, downgraded: false, inherited: s.modeChoice === 'inherit' }
   const reported = s.permissionMode
-  if (s.modeChoice !== 'inherit' && reported && reported !== s.modeChoice && reported in PERMISSION_MODE_LABELS)
-    return { mode: reported as PermissionModeChoice, downgraded: true }
-  return { mode: s.modeChoice, downgraded: false }
+  if (reported && reported !== s.modeChoice && reported in PERMISSION_MODE_LABELS)
+    return s.modeChoice === 'inherit'
+      ? { mode: reported as PermissionModeChoice, downgraded: false, inherited: true }
+      : { mode: reported as PermissionModeChoice, downgraded: true, inherited: false }
+  return { mode: s.modeChoice, downgraded: false, inherited: false }
 }
 
 /** The session's shown title: its explicit/branch name, else the first user message
@@ -1549,8 +1553,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (!active) return
     // Optimistically reflect both the choice AND the resolved "active" mode. The
     // CLI applies the change live but does not re-emit a session-init event, so
-    // we update the reported mode ourselves. 'inherit' has no mid-session
-    // "unset", so the main process maps it to 'default'; mirror that here.
+    // we update the reported mode ourselves. Main resolves 'inherit' from settings.json,
+    // so the mode stays unknown until its reply names it.
     const prev = {
       modeChoice: active.modeChoice,
       modelMode: active.modelMode,
@@ -1561,13 +1565,17 @@ export const useSession = create<SessionStore>((set, get) => ({
         modeChoice: mode,
         // A manual pick wins: drop any model-driven override so the chip shows their choice.
         modelMode: null,
-        permissionMode: mode === 'inherit' ? 'default' : mode
+        permissionMode: mode === 'inherit' ? null : mode
       })
     )
     // Revert the optimistic chip if the CLI rejected the change: the UI must
     // not claim a mode the session isn't actually in.
-    const { ok, errorCode } = await window.clui.setPermissionMode(active.handleId, mode)
-    if (!ok) {
+    const { ok, errorCode, mode: resolved } = await window.clui.setPermissionMode(active.handleId, mode)
+    // A reply that lands after a newer pick belongs to a superseded change and must not overwrite it.
+    if (get().sessions[active.handleId]?.modeChoice !== mode) return
+    if (ok) {
+      if (resolved) set((s) => patchSlice(s, active.handleId, { permissionMode: resolved }))
+    } else {
       const label = PERMISSION_MODE_LABELS[mode]
       const current = PERMISSION_MODE_LABELS[effectiveMode(prev).mode]
       set((s) => ({
