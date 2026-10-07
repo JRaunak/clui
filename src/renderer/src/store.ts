@@ -352,6 +352,10 @@ export interface PerSessionState {
   browser: BrowserTabs | null
   /** This session's browser is showing in the right sidebar. Its size is the app-wide `browserPaneFull`. */
   browserOpen: boolean
+  /** Claude used the browser while this session was in the background; its pane opens on return. */
+  browserAutoOpen: boolean
+  /** The user hid the pane, so Claude's browser use leaves it hidden until their next prompt. */
+  browserAutoOpenSuppressed: boolean
   annotate: AnnotateDraft
 }
 
@@ -453,8 +457,17 @@ interface SessionStore {
    *  Below SPLIT_MIN an open pane is full regardless, and that never counts as a choice. Persisted. */
   paneFull: boolean
   setPaneFull: (full: boolean) => void
-  /** The same choice for the browser pane, shared by every session. Persisted. */
+  /** The same choice for the browser pane, shared by every session. Kept for this run only, so
+   *  every launch starts at half. */
   browserPaneFull: boolean
+  /** The Stage is at least SPLIT_MIN wide, the only width where a half pane renders as half. */
+  stageWide: boolean
+  setStageWide: (wide: boolean) => void
+  /** Called on Claude's browser tool use. True means open the viewed session's pane now; a background
+   *  session is marked to open when it's next activated. */
+  autoOpenBrowser: (handleId: string) => boolean
+  /** The next side pane to mount opened without being asked for, so it must leave focus alone. */
+  paneOpenedQuietly: boolean
   /** Content sits under the top band or the pane header, the only time their glass shows. Written
    *  on change, never per scroll event. */
   primaryScrolled: boolean
@@ -1070,6 +1083,8 @@ async function beginSession(
       ? { tabs: [{ id: 1, ...BLANK_BROWSER }], viewed: 1, multi: false, toolTabs: {}, enter: [], announce: '' }
       : null,
     browserOpen: false,
+    browserAutoOpen: false,
+    browserAutoOpenSuppressed: false,
     annotate: IDLE_ANNOTATE
   })
 }
@@ -1158,6 +1173,28 @@ const BLANK_BROWSER: BrowserState = {
 let announceSeq = 0
 /** The toggling zero-width space makes a repeated announcement a text change, which is what gets read. */
 const toggled = (text: string): string => `${text}${'\u200b'.repeat(++announceSeq % 2)}`
+const BROWSER_OPENED = 'Claude opened the browser'
+
+/** The Stage already shows a browser pane, so the next session's pane reuses it without remounting. */
+const browserPaneShown = (s: SessionStore): boolean => !s.viewingSubagent && !!(s.activeHandleId && s.sessions[s.activeHandleId]?.browserOpen)
+
+/** The payload that opens a session's deferred browser pane as it becomes active: half, and with no
+ *  motion, since it arrives with the pane already up. A narrow Stage leaves the flag for a later visit.
+ *  Only the mount clears the quiet flag, so it is set only when the pane will mount; a stray flag would skip focus on the next open. */
+function arriveWithBrowser(
+  sessions: SessionStore['sessions'],
+  handleId: string | null,
+  stageWide: boolean,
+  paneShown: boolean
+): Partial<SessionStore> {
+  const cur = handleId ? sessions[handleId] : undefined
+  if (!handleId || !cur?.browserAutoOpen || cur.browserOpen || !cur.browser || !stageWide) return {}
+  return {
+    sessions: { ...sessions, [handleId]: { ...cur, browserOpen: true, browserAutoOpen: false, statusAnnounce: toggled(BROWSER_OPENED) } },
+    browserPaneFull: false,
+    ...(paneShown ? {} : { paneOpenedQuietly: true })
+  }
+}
 
 function basename(p: string): string {
   const parts = p.replace(/\/+$/, '').split('/')
@@ -1343,6 +1380,9 @@ export const useSession = create<SessionStore>((set, get) => ({
   subagentTrail: [],
   paneFull: false,
   browserPaneFull: false,
+  stageWide: false,
+  setStageWide: (wide) => set({ stageWide: wide }),
+  paneOpenedQuietly: false,
   primaryScrolled: false,
   primaryScrolledFor: null,
   secondaryScrolled: false,
@@ -1472,15 +1512,19 @@ export const useSession = create<SessionStore>((set, get) => ({
 
   activateSession: (handleId) => {
     if (!get().sessions[handleId]) return
-    set((s) => ({
-      ...patchSlice(s, handleId, { lastActivityMs: Date.now() }),
-      activeHandleId: handleId,
-      // Switching sessions closes any open transcript view (its ids are scoped to
-      // the previously-active session's Agent tool_use ids).
-      viewingSubagent: null,
-      subagentTrail: [],
-      currentTurn: null
-    }))
+    set((s) => {
+      const { sessions = s.sessions } = patchSlice(s, handleId, { lastActivityMs: Date.now() })
+      return {
+        sessions,
+        ...arriveWithBrowser(sessions, handleId, s.stageWide, browserPaneShown(s)),
+        activeHandleId: handleId,
+        // Switching sessions closes any open transcript view (its ids are scoped to
+        // the previously-active session's Agent tool_use ids).
+        viewingSubagent: null,
+        subagentTrail: [],
+        currentTurn: null
+      }
+    })
   },
 
   renameLiveSession: (handleId, name) => {
@@ -1524,7 +1568,7 @@ export const useSession = create<SessionStore>((set, get) => ({
         activeHandleId: active,
         // If the active session changed, its detail view (scoped to the closed session's
         // tool ids) must reset.
-        ...(active !== s.activeHandleId ? { viewingSubagent: null, subagentTrail: [] } : {})
+        ...(active !== s.activeHandleId ? { viewingSubagent: null, subagentTrail: [], ...arriveWithBrowser(next, active, s.stageWide, browserPaneShown(s)) } : {})
       }
     })
   },
@@ -1699,6 +1743,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     // A new prompt hands a stopped browser back to Claude. It runs before the queue check because the
     // prompt after a Stop usually queues behind the interrupted turn.
     if (anyTabIn(active.browser, 'stopped')) void window.clui.browserDrive(active.handleId, 'reset')
+    if (active.browserAutoOpenSuppressed) set((s) => patchSlice(s, active.handleId, { browserAutoOpenSuppressed: false }))
     // Composed while a turn is running (or interrupting, or with messages already queued) →
     // HOLD it renderer-side (editable/cancelable, rendered at the tail) instead of dispatching
     // now. It's sent FIFO at the next turn boundary (see the `result` handler). Queuing while
@@ -2563,7 +2608,7 @@ export const useSession = create<SessionStore>((set, get) => ({
         return {
           sessions: next,
           activeHandleId: active,
-          ...(active !== state.activeHandleId ? { viewingSubagent: null, subagentTrail: [] } : {})
+          ...(active !== state.activeHandleId ? { viewingSubagent: null, subagentTrail: [], ...arriveWithBrowser(next, active, state.stageWide, browserPaneShown(state)) } : {})
         }
       }
 
@@ -2823,7 +2868,6 @@ export const useSession = create<SessionStore>((set, get) => ({
       browserPaneFull: full,
       ...(closeSubagent ? { viewingSubagent: null, subagentTrail: [], currentTurn: null } : {})
     })
-    if (full !== s.browserPaneFull) void window.clui.updateSettings({ browserPaneFull: full })
   },
 
   toggleBrowser: (apply) => {
@@ -2832,8 +2876,23 @@ export const useSession = create<SessionStore>((set, get) => ({
     const show = apply ?? get().setBrowserPane
     const st = get()
     const shown = !st.viewingSubagent && active.browserOpen
+    if (shown) set((s) => patchSlice(s, active.handleId, { browserAutoOpenSuppressed: true, browserAutoOpen: false }))
     // A narrow Stage renders half as full, and keeps the user's choice for when it grows back.
     show(shown ? 'collapsed' : st.browserPaneFull ? 'full' : 'half')
+  },
+
+  autoOpenBrowser: (handleId) => {
+    const s = get()
+    const slice = s.sessions[handleId]
+    if (!slice?.browser || slice.browserOpen || slice.browserAutoOpenSuppressed) return false
+    // A background session waits for its next visit, which judges the Stage as it is then.
+    if (handleId !== s.activeHandleId) {
+      set(patchSlice(s, handleId, { browserAutoOpen: true }))
+      return false
+    }
+    if (s.viewingSubagent || !s.stageWide) return false
+    set({ ...patchSlice(s, handleId, { browserAutoOpen: false, statusAnnounce: toggled(BROWSER_OPENED) }), paneOpenedQuietly: true })
+    return true
   },
 
   browserDrive: async (action) => {

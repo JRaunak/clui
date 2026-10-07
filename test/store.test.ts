@@ -214,3 +214,81 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   ok(cur().messages.at(-1)?.hookNotes?.[0]?.plugin === 'p', 'store: an idle log is a standalone note')
   ok(!cur().messages.some((m: any) => m.blocks?.some((b: any) => b.kind === 'text')), 'store: a log never becomes a text block')
 }
+
+// Auto-open on Claude's browser use: half, only from closed, held back by a manual hide until the
+// next prompt, deferred for a background session, skipped over a subagent pane or a narrow Stage.
+{
+  const browser = { tabs: [], viewed: 1, multi: false, toolTabs: {}, enter: [], announce: '' }
+  const pane = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    browser,
+    browserOpen: false,
+    browserAutoOpen: false,
+    browserAutoOpenSuppressed: false,
+    statusAnnounce: '',
+    ...over
+  })
+  const fresh = (over?: Record<string, unknown>): void => {
+    reset(pane(over))
+    useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [], browserPaneFull: true })
+  }
+  const said = (h = 'h1'): boolean => st().sessions[h].statusAnnounce.startsWith('Claude opened the browser')
+
+  fresh()
+  ok(st().autoOpenBrowser('h1') && said(), 'browser auto-open: the viewed closed pane opens and is announced')
+  fresh({ browserOpen: true })
+  ok(!st().autoOpenBrowser('h1') && !said(), 'browser auto-open: an open pane is left alone')
+  fresh({ browser: null })
+  ok(!st().autoOpenBrowser('h1'), 'browser auto-open: a session without the browser never opens')
+
+  fresh({ browserOpen: true, browserAutoOpen: true })
+  st().toggleBrowser()
+  ok(!cur().browserOpen && cur().browserAutoOpenSuppressed, 'browser auto-open: a manual hide suppresses')
+  ok(!cur().browserAutoOpen, 'browser auto-open: a manual hide drops a pending open')
+  ok(!st().autoOpenBrowser('h1'), 'browser auto-open: suppressed until the next prompt')
+  await st().sendMessage('next')
+  ok(!cur().browserAutoOpenSuppressed && st().autoOpenBrowser('h1'), 'browser auto-open: a prompt lifts the suppression')
+
+  fresh({ browserOpen: true })
+  st().setBrowserPane('collapsed')
+  ok(!cur().browserAutoOpenSuppressed, 'browser auto-open: a programmatic collapse does not suppress')
+
+  fresh()
+  useSession.setState({ viewingSubagent: 't1', subagentTrail: ['t1'] })
+  ok(!st().autoOpenBrowser('h1') && !cur().browserAutoOpen, 'browser auto-open: skipped, not deferred, over a subagent pane')
+  fresh()
+  useSession.setState({ stageWide: false })
+  ok(!st().autoOpenBrowser('h1') && !cur().browserAutoOpen, 'browser auto-open: skipped, not deferred, on a narrow Stage')
+
+  fresh()
+  useSession.setState({ sessions: { ...st().sessions, h2: slice({ handleId: 'h2', ...pane() }) } })
+  ok(!st().autoOpenBrowser('h2'), 'browser auto-open: a background session does not open now')
+  const h2 = st().sessions.h2
+  ok(h2.browserAutoOpen && !h2.browserOpen && !said('h2') && !said(), 'browser auto-open: a background session is marked, silently')
+  ok(st().browserPaneFull, 'browser auto-open: a deferral leaves the pane size alone')
+  useSession.setState({ stageWide: false })
+  st().activateSession('h2')
+  ok(!st().sessions.h2.browserOpen && st().sessions.h2.browserAutoOpen, 'browser auto-open: a narrow Stage holds the deferred open')
+  st().activateSession('h1')
+  useSession.setState({ stageWide: true })
+  st().activateSession('h2')
+  const back = st().sessions.h2
+  ok(back.browserOpen && !back.browserAutoOpen && said('h2'), 'browser auto-open: activation opens the deferred pane and announces')
+  ok(!st().browserPaneFull, 'browser auto-open: the deferred open is half')
+
+  // The hand-offs that pick a neighbour without activateSession open it the same way.
+  const pair = (h1: Record<string, unknown>): void => {
+    fresh({ createdMs: 2, lastActivityMs: 2, ...h1 })
+    const h2 = slice({ handleId: 'h2', createdMs: 1, lastActivityMs: 1, ...pane({ browserAutoOpen: true }) })
+    useSession.setState({ sessions: { ...st().sessions, h2 } })
+  }
+  pair({})
+  await st().closeSession('h1')
+  ok(st().activeHandleId === 'h2' && st().sessions.h2.browserOpen && said('h2'), 'browser auto-open: closing hands off to an opened neighbour')
+  pair({ model: null })
+  st().applyEvent('h1', { type: 'process-exit', code: 1 })
+  ok(st().activeHandleId === 'h2' && st().sessions.h2.browserOpen && said('h2'), 'browser auto-open: a failed launch hands off to an opened neighbour')
+  pair({})
+  useSession.setState({ activeHandleId: 'h2', sessions: { ...st().sessions, h3: slice({ handleId: 'h3', ...pane() }) } })
+  await st().closeSession('h3')
+  ok(!st().sessions.h2.browserOpen, 'browser auto-open: closing a background session leaves the viewed one alone')
+}

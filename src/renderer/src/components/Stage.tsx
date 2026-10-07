@@ -110,6 +110,8 @@ export function Stage({
   const secondaryScrolled = useSession((s) => s.secondaryScrolled)
   const gatePending = useActive((s) => (s?.pendingPermissions ?? EMPTY_PENDING).length > 0)
   const wide = useAtLeast(ref, SPLIT_MIN)
+  const setStageWide = useSession((s) => s.setStageWide)
+  useEffect(() => setStageWide(wide), [wide, setStageWide])
   const [focusInSecondary, setFocusInSecondary] = useState(false)
 
   const browserOpen = useActive(selectBrowserOpen)
@@ -316,7 +318,9 @@ function SecondaryPane({
   }, [setSecondaryScrolled])
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null
-    document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-pane-title]')?.focus()
+    const quiet = useSession.getState().paneOpenedQuietly
+    if (quiet) useSession.setState({ paneOpenedQuietly: false })
+    else document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-pane-title]')?.focus()
     return () => {
       if (opener && document.contains(opener)) opener.focus()
       else document.querySelector<HTMLElement>('[data-composer-input]')?.focus()

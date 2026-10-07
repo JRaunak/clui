@@ -55,10 +55,9 @@ export interface CluiSettings {
   /** Expanded sidebar width in px. Applied clamped to the live window, so a width saved on a wide
    *  monitor still fits a laptop. Persisted like `sidebarCollapsed`. */
   sidebarWidth: number
-  /** The right sidebar's size when the Stage can split, false = half: one choice for the subagent
-   *  pane and one for the browser, app-wide. Persisted like `sidebarCollapsed`. */
+  /** The subagent pane's size when the Stage can split, false = half, app-wide. Persisted like
+   *  `sidebarCollapsed`. */
   subagentPaneFull: boolean
-  browserPaneFull: boolean
   /** Give new and resumed sessions Claude's browser tools. Read once at spawn: a running session
    *  keeps whatever it started with, because MCP servers are fixed for the life of the process. */
   browserEnabled: boolean
@@ -467,7 +466,6 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   sidebarCollapsed: false,
   sidebarWidth: 288,
   subagentPaneFull: false,
-  browserPaneFull: false,
   browserEnabled: false,
   linkTarget: 'clui',
   annotateScreenshots: true,
