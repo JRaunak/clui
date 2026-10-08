@@ -636,9 +636,15 @@ function SessionRow({
   return (
     <div
       data-ui="sidebar-row"
-      className={`group relative flex items-center gap-2 rounded-md py-1.5 pl-3 pr-1.5 transition-colors ${st ? 'min-h-11' : ''} ${
+      className={`group relative flex cursor-pointer items-center gap-2 rounded-md py-1.5 pl-3 pr-1.5 transition-colors ${st ? 'min-h-11' : ''} ${
         active ? 'surface-row-selected' : 'hover:bg-bg-raised'
       }`}
+      // The whole row opens the session for a pointer; the title button stays the one keyboard stop.
+      // Clicks on the row's own controls, its menu, or the rename field are theirs.
+      onClick={(e) => {
+        if (editing || (e.target as HTMLElement).closest('button, input, a, [popover]')) return
+        onOpen(e)
+      }}
     >
       {active && <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-accent" aria-hidden="true" />}
 
@@ -668,7 +674,7 @@ function SessionRow({
           ) : (
             <button
               ref={titleBtnRef}
-              className={`min-w-0 flex-1 truncate rounded text-left text-xs ${titleTone}`}
+              className={`min-w-0 flex-1 cursor-pointer truncate rounded text-left text-xs ${titleTone}`}
               // Rename is the kebab or F2, never a title click: on a dormant row the click resumes.
               onClick={onOpen}
               aria-current={active || undefined}
