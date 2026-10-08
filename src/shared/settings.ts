@@ -175,6 +175,7 @@ export const FALLBACK_MODEL_IDS: string[] = [
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
+  'claude-sonnet-5-5',
   'claude-sonnet-5',
   'claude-sonnet-4-6',
   'claude-fable-5-1',
@@ -238,7 +239,7 @@ function effortsFor(id: string): EffortChoice[] {
   // An unversioned alias can't be gated by version, and capping it at `high` would strip
   // xhigh/max from what is usually the newest model in its family. Offer the full range and
   // let the CLI reject a level it doesn't support, since a visible error beats a silent
-  // downgrade. Haiku is out because no version of it supports effort.
+  // downgrade. Haiku is left out because the bare `haiku` alias resolves to a Haiku without xhigh or max.
   if (!versioned) {
     if (family === 'opus' || family === 'sonnet' || family === 'fable') return [...base, 'xhigh', 'max']
     return base
@@ -252,8 +253,12 @@ function effortsFor(id: string): EffortChoice[] {
   } else if (family === 'fable') {
     max = version >= 5
     xhigh = version >= 5
+  } else if (family === 'haiku') {
+    // From the CLI's model catalog (2.1.293), unconfirmed by a live turn on this account.
+    max = version >= 5.5
+    xhigh = version >= 5.5
   }
-  // haiku / unknown: high only.
+  // unknown: high only.
   const out = [...base]
   if (xhigh) out.push('xhigh')
   if (max) out.push('max')
@@ -363,7 +368,10 @@ export function supports1m(family: ModelInfo['family'], version: number): boolea
  * switch, where the picker changes the window with no new turn to re-derive it).
  */
 export function contextWindowForModel(id: string): number {
-  return /\[1m\]/i.test(id) ? 1_000_000 : 200_000
+  if (/\[1m\]/i.test(id)) return 1_000_000
+  // Haiku 5.5 is 1M natively and takes no [1m] suffix (CLI catalog, 2.1.293), so supports1m stays false.
+  const { family, version } = parseModelId(id)
+  return family === 'haiku' && version >= 5.5 ? 1_000_000 : 200_000
 }
 
 /**
@@ -484,7 +492,8 @@ export const DEFAULT_SETTINGS: CluiSettings = {
 // `dontAsk`/`auto` are 2.1.210 CLI modes (verified accepted headless): dontAsk = never
 // prompts, DENIES anything not pre-approved (most restrictive; verified it hard-denies a
 // safe-but-unlisted command); auto = runs low-risk silently + delegates risk to Claude's
-// classifier (Claude Code's new default).
+// classifier (Claude Code's new default). Auto is model-gated: a session spawned in auto on a
+// model that can't run it (Haiku 4.5) silently starts in default, which effectiveMode() shows.
 export const PERMISSION_MODES: CluiSettings['permissionMode'][] = [
   'inherit',
   'dontAsk',

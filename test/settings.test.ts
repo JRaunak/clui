@@ -38,6 +38,11 @@ ok(supports1m('haiku', 4.5) === false, 'supports1m: no haiku is 1M')
 ok(contextSizeLabel('claude-opus-4-8[1m]') === '1M', 'contextSizeLabel: [1m] → 1M')
 ok(contextSizeLabel('claude-opus-4-8') === '200K', 'contextSizeLabel: base → 200K')
 ok(contextSizeLabel('claude-haiku-4-5') === '200K', 'contextSizeLabel: haiku → 200K')
+ok(contextSizeLabel('us.anthropic.claude-haiku-5-5') === '1M', 'contextSizeLabel: Haiku 5.5 is natively 1M')
+ok(supports1m('haiku', 5.5) === false, 'supports1m: Haiku 5.5 takes no [1m] suffix')
+ok(supportsUltracodeToggle('us.anthropic.claude-haiku-5-5'), 'supportsUltracodeToggle: Haiku 5.5 has an xhigh tier')
+ok(clampEffort('us.anthropic.claude-haiku-5-5', 'max') === 'max', 'clampEffort: Haiku 5.5 keeps max')
+ok(clampEffort('claude-haiku-4-5', 'max') === 'high', 'clampEffort: Haiku 4.5 still tops out at high')
 
 // reconcile: a stored/kept BASE id of a supports1m model resolves to the [1m] picker entry
 {

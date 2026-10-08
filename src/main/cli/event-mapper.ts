@@ -97,6 +97,8 @@ interface RawEnvelope {
   // only the status.
   is_api_error_message?: boolean
   api_error_status?: number | null
+  /** The result's error category, e.g. 'provider_credentials' for a Bedrock credential or entitlement refusal. */
+  api_error?: string | null
   api_error_params?: { remedy?: string }
   total_cost_usd?: number
   modelUsage?: Record<
@@ -392,7 +394,7 @@ export class EventMapper {
         // text was ALREADY rendered as an assistant bubble (the API-error-as-text case),
         // not merely because some progress text streamed first.
         const alreadyShown = Boolean(env.result) && this.turnText.includes(env.result as string)
-        const classified = isForeground ? this.classifiedError(env.api_error_status ?? undefined) : null
+        const classified = isForeground ? this.classifiedError(env.api_error_status ?? undefined, env.api_error ?? undefined) : null
         if (isForeground) {
           this.streamedTextSinceStart = false
           this.interrupted = false
@@ -831,16 +833,19 @@ export class EventMapper {
    *  caller keeps the CLI's own text). Model access is checked first: the CLI tags a Bedrock
    *  model-access 403 as `refresh_command` (captured live, 2.1.284), so the credential copy
    *  would send the user to refresh credentials that already work. */
-  private classifiedError(resultStatus?: number): string | null {
+  private classifiedError(resultStatus?: number, resultCategory?: string): string | null {
     const err = this.apiError
-    if (!err) return null
-    const status = err.status ?? resultStatus
-    if (err.remedy === 'model_access' || (status === 403 && MODEL_ACCESS_TEXT.test(providerMessage(err.text)))) {
+    const status = err?.status ?? resultStatus
+    // A listed model the account isn't entitled to fails with this category and a 403, whether or not
+    // its error text reached the stream.
+    const deniedModel = resultCategory === 'provider_credentials' && status === 403
+    if (!err && !deniedModel) return null
+    if (deniedModel || err?.remedy === 'model_access' || (status === 403 && MODEL_ACCESS_TEXT.test(providerMessage(err?.text ?? '')))) {
       const info = deriveModelInfo(this.model)
       const subject = info.family === 'unknown' ? 'This model' : info.label
       return `${subject} isn't enabled on your AWS account in this region. Switch to another model, or ask your AWS admin to enable it in Amazon Bedrock.`
     }
-    if (err.remedy === 'refresh_command') {
+    if (err?.remedy === 'refresh_command') {
       const command = /`([^`]+)`/.exec(err.text)?.[1] ?? 'your AWS sign-in command'
       return `Your AWS sign-in has expired. Run ${command} in a terminal, then send your message again.`
     }

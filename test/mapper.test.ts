@@ -243,6 +243,14 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(err?.message.startsWith("This model isn't enabled"), 'mapper: remedy model_access → model-access copy')
 }
 
+// A 403 'provider_credentials' result is a model-access error even with no error text on the stream
+{
+  const err = feed(new EventMapper(), [
+    { type: 'result', is_error: true, api_error_status: 403, api_error: 'provider_credentials', result: 'API Error: 403', session_id: 's' }
+  ]).find((e) => e.type === 'error')
+  ok(err?.message.includes("isn't enabled on your AWS account"), 'mapper: 403 provider_credentials → model-access copy')
+}
+
 // An unclassified API error maps exactly as the same envelopes without the api-error fields
 {
   const assistant = { type: 'assistant', message: { content: [{ type: 'text', text: 'API Error: PDF too large' }] } }
