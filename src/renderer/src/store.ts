@@ -832,6 +832,19 @@ export const EMPTY_ATTACHMENTS: ProcessedAttachment[] = []
  *  name, not the key's presence. */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
+/** The file a finished tool call actually wrote, or null. */
+function writtenPath(t: ToolCall): string | null {
+  if (t.result === undefined || t.isError || !WRITE_TOOLS.has(t.name)) return null
+  const inp = t.input as { file_path?: unknown; notebook_path?: unknown }
+  const fp = typeof inp?.file_path === 'string' ? inp.file_path : inp?.notebook_path
+  return typeof fp === 'string' && fp ? fp : null
+}
+
+/** Most recent first, each path once. */
+function withChangedFile(files: string[], fp: string): string[] {
+  return [fp, ...files.filter((f) => f !== fp)]
+}
+
 const EMPTY_WOKEN: WokenTask[] = []
 const EMPTY_CHECKING: Record<string, true> = {}
 
@@ -1146,7 +1159,10 @@ async function beginSession(
     draftText: '',
     draftAttachments: EMPTY_ATTACHMENTS,
     pendingPermissions: [],
-    changedFiles: [],
+    changedFiles: history.flatMap((m) => m.tools).reduce<string[]>((files, t) => {
+      const fp = writtenPath(t)
+      return fp ? withChangedFile(files, fp) : files
+    }, []),
     backgroundTasks: {},
     modStatus: EMPTY_MOD_STATUS,
     subagentMessages: {},
@@ -1175,6 +1191,8 @@ async function beginSession(
     browserAutoOpenSuppressed: false,
     annotate: IDLE_ANNOTATE
   })
+  // Files the history wrote may be gone since.
+  if (opts.resumeSessionId) void get().pruneChangedFiles(handleId)
 }
 
 /** In-flight resume ids: a reservation so two concurrent resumes of the SAME durable
@@ -2352,13 +2370,8 @@ export const useSession = create<SessionStore>((set, get) => ({
               t.isError = e.isError
               if (e.notRun) t.notRun = true
               // A write/edit that actually SUCCEEDED is a real changed file.
-              if (!e.isError && WRITE_TOOLS.has(t.name)) {
-                const inp = t.input as { file_path?: unknown; notebook_path?: unknown }
-                const fp = typeof inp?.file_path === 'string' ? inp.file_path : inp?.notebook_path
-                if (typeof fp === 'string' && fp) {
-                  patch.changedFiles = [fp, ...slice.changedFiles.filter((f) => f !== fp)]
-                }
-              }
+              const fp = writtenPath(t)
+              if (fp) patch.changedFiles = withChangedFile(slice.changedFiles, fp)
               break
             }
           }
