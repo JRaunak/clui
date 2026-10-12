@@ -1,12 +1,12 @@
 import { messageGist, splitAnnotations } from '../../../shared/annotate'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type StateSnapshot, type VirtuosoHandle } from 'react-virtuoso'
-import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
+import { useActive, useSession, sendsOnlyAtTurnEnd, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
 import { MessageView } from './MessageView'
 import { WorkingStatus } from './WorkingStatus'
 import { CompactSuggestion } from './CompactSuggestion'
 import { TaskPuck, useTaskUiActive } from './TaskPuck'
-import { IconChevron, IconClose, IconEdit, IconCheck, IconFile } from './Icon'
+import { IconArrowUp, IconChevron, IconClose, IconEdit, IconCheck, IconFile } from './Icon'
 import { deriveModelInfo } from '../../../shared/settings'
 import { TURN_LINE_PX, currentTurnAt } from '../lib/instrument'
 import type { PermissionModeChoice } from '../../../shared/ipc'
@@ -503,9 +503,27 @@ function QueuedMessages(): JSX.Element | null {
   )
 }
 
+const ROW_ACTION = 'flex h-6 w-6 items-center justify-center rounded text-faint focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent'
+
 function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
   const edit = useSession((s) => s.editQueuedMessage)
   const cancel = useSession((s) => s.cancelQueuedMessage)
+  const steer = useSession((s) => s.steerQueuedMessage)
+  const interrupting = useActive((s) => !!s?.interrupting)
+  const rowRef = useRef<HTMLDivElement>(null)
+  const heldBack = sendsOnlyAtTurnEnd(q.attachments)
+  const sendNowTitle = interrupting
+    ? 'Stopping. It sends when the turn ends.'
+    : heldBack
+      ? 'Messages with a PDF send when the turn ends'
+      : 'Send now. Claude reads it at its next step  ⌘↵'
+  // The row unmounts, so focus goes to the next row's Send now, or back to the composer.
+  const sendNow = (): void => {
+    if (interrupting || heldBack) return
+    const next = rowRef.current?.nextElementSibling?.querySelector<HTMLElement>('[data-ui="queued-send-now"]')
+    steer(q.id)
+    requestAnimationFrame(() => (next ?? document.querySelector<HTMLElement>('[data-composer-input]'))?.focus())
+  }
   const [editing, setEditing] = useState(false)
   // The annotation block isn't editable here: edits change the typed text, and the block rides along.
   const { block, text: typed } = splitAnnotations(q.text)
@@ -530,7 +548,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
 
   if (editing) {
     return (
-      <div className="rounded-lg border border-info/50 bg-user px-3 py-2" role="listitem">
+      <div ref={rowRef} className="rounded-lg border border-info/50 bg-user px-3 py-2" role="listitem">
         {q.attachments && q.attachments.length > 0 && (
           <div className="mb-1.5">
             <QueuedAttachments atts={q.attachments} />
@@ -541,7 +559,11 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && e.metaKey) {
+              e.preventDefault()
+              commit()
+              sendNow()
+            } else if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
               commit()
             } else if (e.key === 'Escape') {
@@ -554,7 +576,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
           className="w-full resize-none bg-transparent text-sm leading-relaxed text-content focus-visible:outline-none"
         />
         <div className="mt-1.5 flex items-center justify-end gap-1.5 text-meta text-faint">
-          <span className="mr-auto">Enter to save · Esc to discard</span>
+          <span className="mr-auto">{interrupting || heldBack ? 'Enter to save · Esc to discard' : 'Enter to save · ⌘↵ to send now · Esc to discard'}</span>
           <button
             className="rounded p-1 text-faint hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             onClick={() => { setDraft(typed); setEditing(false) }}
@@ -578,6 +600,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
     <div
       /* Dashed info-tinted border distinguishes a still-queued message (editable, not committed
          history) from a sent user bubble, which is solid. */
+      ref={rowRef}
       className="group flex max-w-[80%] items-start gap-2 self-start rounded-lg rounded-tl-sm border border-dashed border-info/40 bg-user px-3.5 py-2.5"
       role="listitem"
     >
@@ -593,7 +616,18 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
           so a user may not realize a queued message is still editable. */}
       <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
         <button
-          className="rounded p-1 text-faint hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          data-ui="queued-send-now"
+          className={`${ROW_ACTION} hover:text-content aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:text-faint`}
+          onClick={sendNow}
+          aria-disabled={interrupting || heldBack || undefined}
+          aria-label="Send now"
+          aria-keyshortcuts="Meta+Enter"
+          title={sendNowTitle}
+        >
+          <IconArrowUp className="h-3.5 w-3.5" />
+        </button>
+        <button
+          className={`${ROW_ACTION} hover:text-content`}
           onClick={() => { setDraft(typed); setEditing(true) }}
           aria-label="Edit queued message"
           title="Edit before it sends"
@@ -601,7 +635,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
           <IconEdit className="h-3.5 w-3.5" />
         </button>
         <button
-          className="rounded p-1 text-faint hover:text-err focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          className={`${ROW_ACTION} hover:text-err`}
           onClick={() => cancel(q.id)}
           aria-label="Cancel queued message"
           title="Remove before it sends"

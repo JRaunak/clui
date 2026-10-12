@@ -156,6 +156,8 @@ export interface CluiApi {
    * text turn.
    */
   sendMessage: (handleId: string, text: string, attachments?: WireAttachment[]) => Promise<void>
+  /** Send a message into the running turn; false means no turn was open, so it started one. */
+  steerMessage: (handleId: string, text: string, attachments?: WireAttachment[]) => Promise<boolean>
   /** Interrupt the current turn. */
   interrupt: (handleId: string) => Promise<void>
   /** Kill a background task directly (control protocol); false means the caller should
@@ -361,6 +363,7 @@ export const IpcChannels = {
   getFullscreen: 'clui:getFullscreen',
   startSession: 'clui:startSession',
   sendMessage: 'clui:sendMessage',
+  steerMessage: 'clui:steerMessage',
   interrupt: 'clui:interrupt',
   stopTask: 'clui:stopTask',
   backgroundTask: 'clui:backgroundTask',

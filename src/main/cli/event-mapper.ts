@@ -267,13 +267,21 @@ export class EventMapper {
   /** Messages Clui sent that no result has answered yet. A result lists the uuids it answered,
    *  whichever turn took them in, so a message folded into a background turn still finds its end. */
   private unanswered = new Set<string>()
+  /** The ones sent mid-turn. While one is unanswered, a result isn't the end of the user's turn. */
+  private steers = new Set<string>()
   /** Every uuid Clui stamped, so their command_lifecycle frames aren't read as a peer's. */
   private stamped = new Set<string>()
 
-  trackSent(uuid: string): void {
+  trackSent(uuid: string, steer: boolean): void {
     this.unanswered.add(uuid)
+    if (steer) this.steers.add(uuid)
     if (this.stamped.size >= 256) this.stamped.delete(this.stamped.values().next().value as string)
     this.stamped.add(uuid)
+  }
+
+  /** A message Clui sent is still being worked on, so a new one joins that turn. */
+  hasOpenTurn(): boolean {
+    return this.unanswered.size > 0
   }
 
   /** Suppress the next result's is_error box (see the `interrupted` field). */
@@ -400,9 +408,15 @@ export class EventMapper {
         const fromPeer = env.origin?.kind === 'peer'
         const listed = Array.isArray(env.user_message_uuids) ? env.user_message_uuids : []
         const answersUser = listed.some((u) => this.unanswered.has(u))
-        for (const u of listed) this.unanswered.delete(u)
-        // A result that lists nothing (as an older CLI may) still ends the turn it ran for.
-        if (!listed.length && !fromTaskNotification && !fromPeer) this.unanswered.clear()
+        for (const u of listed) {
+          this.unanswered.delete(u)
+          this.steers.delete(u)
+        }
+        // A result that lists nothing (as an older CLI may) still ends the turn it ran for,
+        // so only a steer's uuid survives it. Steering itself relies on the listing: re-verify on a bump.
+        if (!listed.length && !fromTaskNotification && !fromPeer) {
+          for (const u of this.unanswered) if (!this.steers.has(u)) this.unanswered.delete(u)
+        }
         // A background-subagent-completion or peer-woken result is NOT the user's turn boundary,
         // unless the user's message folded into it, so it must not consume the user turn's
         // streamed/interrupt state (else it eats a Stop meant for the user's turn).
@@ -442,6 +456,7 @@ export class EventMapper {
             // doesn't clear the user's busy or run user-turn side effects.
             fromPeer,
             answersUser,
+            steerPending: this.steers.size > 0,
             // A bg/peer result isn't the user's turn, so its denials aren't theirs.
             denials:
               ownsTurn && env.permission_denials?.length
@@ -484,7 +499,10 @@ export class EventMapper {
       }
       case 'command_lifecycle':
         if (env.command_uuid && this.stamped.has(env.command_uuid)) {
-          if (env.state === 'cancelled') this.unanswered.delete(env.command_uuid)
+          if (env.state === 'cancelled') {
+            this.unanswered.delete(env.command_uuid)
+            this.steers.delete(env.command_uuid)
+          }
           return []
         }
         // Brackets a peer-triggered turn. `started` fires before the reply, so the placeholder

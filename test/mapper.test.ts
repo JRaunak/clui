@@ -334,6 +334,22 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(ui('ui_toast', { text: '\u001b[0m' }).length === 0, 'mapper: a toast that strips to nothing is dropped')
 }
 
+// A result names the uuids it answered, which is how the user's turn end is found.
+{
+  const m = new EventMapper()
+  m.trackSent('u1', false)
+  const [bg] = feed(m, [{ type: 'result', origin: { kind: 'task-notification' }, user_message_uuids: ['u1'], session_id: 's' }])
+  ok(bg.answersUser === true, 'mapper: a woken result that took the user message in answers the user')
+  m.trackSent('u2', false)
+  m.trackSent('s1', true)
+  const [first] = feed(m, [{ type: 'result', user_message_uuids: ['u2'], session_id: 's' }])
+  ok(first.steerPending === true, 'mapper: an unanswered steer marks the result as not the end')
+  const [second] = feed(m, [{ type: 'result', user_message_uuids: ['s1'], session_id: 's' }])
+  ok(second.steerPending === false && second.answersUser, 'mapper: the steer\'s own result ends it')
+  ok(feed(m, [{ type: 'command_lifecycle', command_uuid: 's1', state: 'started' }]).length === 0, 'mapper: Clui\'s own lifecycle frames are not a peer\'s')
+  ok(feed(m, [{ type: 'command_lifecycle', command_uuid: 'other', state: 'started' }])[0]?.type === 'peer-pending', 'mapper: a foreign lifecycle still opens a peer placeholder')
+}
+
 // A foreground shell isn't background work until it's moved there.
 {
   const m = new EventMapper()

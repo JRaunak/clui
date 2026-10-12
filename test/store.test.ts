@@ -327,3 +327,29 @@ const q = (id: string, text: string): any => ({ id, text })
   ok(cur().queuedMessages.length === 0, 'store: and releases the next queued message')
 }
 
+// A steer that missed the turn's last step runs as its own turn: the first result isn't the end.
+{
+  reset({ queuedMessages: [q('q1', 'later')], turnStartMs: 5, messages: [{ id: 'a', role: 'assistant', text: 'x', thinking: '', tools: [], blocks: [] }, { id: 'u', role: 'user', text: 'steer', thinking: '', tools: [], blocks: [] }] })
+  st().applyEvent('h1', res({ steerPending: true, durationMs: 3000, usage: { costUSD: 0.01, inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, models: [] } }))
+  ok(cur().busy && cur().queuedMessages.length === 1, 'store: a pending steer keeps busy and holds the queue')
+  ok(cur().messages[0].usage?.costUSD === 0.01, 'store: the first result still records the reply above the steer')
+  st().applyEvent('h1', res({ durationMs: 2000 }))
+  ok(cur().queuedMessages.length === 0, 'store: the steer\'s own result is the boundary')
+}
+
+// Send now leaves the queue at once and goes over the steer channel.
+{
+  reset({ queuedMessages: [q('q1', 'a'), q('q2', 'b')] })
+  st().steerQueuedMessage('q1')
+  ok(cur().queuedMessages.map((m: any) => m.id).join() === 'q2', 'store: Send now removes the row synchronously')
+  ok(cur().messages.at(-1)?.text === 'a', 'store: Send now appends the user bubble')
+  await new Promise((r) => setTimeout(r, 0))
+  ok(calls.some((c) => c.name === 'steerMessage' && c.args[1] === 'a'), 'store: Send now goes to steerMessage')
+  reset({ interrupting: true, busy: false, queuedMessages: [q('q1', 'a')] })
+  st().steerQueuedMessage('q1')
+  ok(cur().queuedMessages.length === 1, 'store: Send now does nothing while stopping')
+  reset({ queuedMessages: [{ id: 'q1', text: 'pdf', attachments: [{ wire: { kind: 'document' }, display: {} }] }] })
+  st().steerQueuedMessage('q1')
+  ok(cur().queuedMessages.length === 1, 'store: a message with a PDF waits for the turn end')
+}
+

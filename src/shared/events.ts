@@ -269,6 +269,8 @@ export type DomainEvent =
       messageId?: string
       /** This result answered a message Clui sent, even when a background or peer turn took it in. */
       answersUser?: boolean
+      /** A message sent mid-turn hasn't been answered yet, so another turn follows this result. */
+      steerPending?: boolean
     }
   /** A peer began messaging this session (`command_lifecycle:started`): insert the
    *  anonymous placeholder, backfilled by `peer-message` at the result. */

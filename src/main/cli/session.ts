@@ -28,6 +28,7 @@ import { recordTurnUsage } from '../sessions/usage'
 interface UserTurn {
   text: string
   attachments?: WireAttachment[]
+  steer?: boolean
 }
 
 export interface ClaudeSessionOptions {
@@ -586,6 +587,21 @@ export class ClaudeSession extends EventEmitter {
   }
 
   /**
+   * Send a message into the running turn. Written mid-turn with no `priority`, the CLI folds it in
+   * at the turn's next step; one that lands after the last step runs as its own turn (verified
+   * live, 2.1.296). Returns false when no turn of Clui's was open, so the message starts a turn.
+   */
+  steer(text: string, attachments?: WireAttachment[]): boolean {
+    const open = this.mapper.hasOpenTurn() && this.initAcked && !this.reconnecting
+    if (!open) {
+      this.send(text, attachments)
+      return false
+    }
+    this.writeUserMessage({ text, attachments, steer: true })
+    return true
+  }
+
+  /**
    * Write a user turn to the CLI stdin as NDJSON. With no attachments, `content` stays
    * a plain string. With attachments, `content` becomes an
    * Anthropic content-block array (attachment blocks first, then the text block),
@@ -598,9 +614,9 @@ export class ClaudeSession extends EventEmitter {
   private writeUserMessage(turn: UserTurn): void {
     const { text, attachments } = turn
     // The CLI names the uuids each result answered, which is how a turn's end is found when the
-    // message joined a background turn.
+    // message joined a background turn or was sent mid-turn.
     const uuid = randomUUID()
-    this.mapper.trackSent(uuid)
+    this.mapper.trackSent(uuid, !!turn.steer)
     if (!attachments || attachments.length === 0) {
       this.writeLine({ type: 'user', message: { role: 'user', content: text }, uuid })
       return

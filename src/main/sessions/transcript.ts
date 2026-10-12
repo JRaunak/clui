@@ -52,6 +52,7 @@ interface RawEntry {
   sourceToolUseID?: string
   compactMetadata?: { trigger?: string; preTokens?: number; postTokens?: number }
   preventContinuation?: boolean
+  attachment?: { type?: string; commandMode?: string; prompt?: unknown }
 }
 
 /** Unwrap <local-command-stdout>…</local-command-stdout> to the inner text. */
@@ -434,6 +435,11 @@ async function parseTranscriptFile(
       // Only render the main thread; skip subagent sidechains, UNLESS we're reading
       // an agent's own transcript (whose records are all sidechains).
       if (entry.isSidechain && !opts.includeSidechain) continue
+      // A message sent mid-turn that the turn took in is saved only as this attachment, at the step
+      // that read it. One that ran as its own turn is an ordinary user record.
+      if (entry.type === 'attachment' && entry.attachment?.type === 'queued_command' && entry.attachment.commandMode === 'prompt') {
+        entry = { ...entry, type: 'user', message: { role: 'user', content: entry.attachment.prompt } }
+      }
       // Capture usage (main thread only); the last one is the resident context.
       const usedNow = residentTokens(entry.message?.usage ?? entry.usage)
       if (usedNow > 0) lastContextTokens = usedNow

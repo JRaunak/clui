@@ -564,7 +564,9 @@ interface SessionStore {
    * Send a user turn. `attachments` carries both the lean wire payload (image
    * blocks sent to the CLI) and a display thumbnail for the user's own bubble.
    */
-  sendMessage: (text: string, attachments?: SendAttachment[]) => Promise<void>
+  sendMessage: (text: string, attachments?: SendAttachment[], opts?: { steer?: boolean }) => Promise<void>
+  /** Send a queued message into the running turn now instead of at its end. */
+  steerQueuedMessage: (id: string) => void
   /** Edit a still-queued message's text (before it's dispatched at the turn boundary). */
   editQueuedMessage: (id: string, text: string) => void
   /** Remove a still-queued message (never dispatched). */
@@ -1216,15 +1218,7 @@ async function dispatchTurn(
   text: string,
   attachments?: SendAttachment[]
 ): Promise<void> {
-  const userMsg: ChatMessage = {
-    id: `u-${Date.now()}`,
-    role: 'user',
-    text,
-    thinking: '',
-    tools: [],
-    blocks: [],
-    attachments: attachments && attachments.length ? attachments.map((a) => a.display) : undefined
-  }
+  const userMsg = userBubble(text, attachments)
   const now = Date.now()
   set((s) => {
     const slice = s.sessions[handleId]
@@ -1257,6 +1251,55 @@ async function dispatchTurn(
         lastError: 'Message not delivered. The session may have stopped. Resume it and try again.'
       })
     })
+  }
+}
+
+function userBubble(text: string, attachments?: SendAttachment[]): ChatMessage {
+  return {
+    id: `u-${Date.now()}`,
+    role: 'user',
+    text,
+    thinking: '',
+    tools: [],
+    blocks: [],
+    attachments: attachments && attachments.length ? attachments.map((a) => a.display) : undefined
+  }
+}
+
+const SENT_NOW = 'Sent to Claude'
+
+/** A PDF folded into a running turn never reaches the model, though images and text files do
+ *  (verified live on 2.1.296), so a message carrying one waits for the turn's end. */
+export function sendsOnlyAtTurnEnd(atts: SendAttachment[] | undefined): boolean {
+  return !!atts?.some((a) => a.wire.kind === 'document')
+}
+
+/** Send a message into the running turn. Its bubble goes in now, so the turn's later content
+ *  streams below it, and `busy` stays as it is: the turn's own result still ends the work. */
+async function steerTurn(
+  set: (fn: (s: SessionStore) => Partial<SessionStore>) => void,
+  handleId: string,
+  text: string,
+  attachments?: SendAttachment[]
+): Promise<void> {
+  const userMsg = userBubble(text, attachments)
+  set((s) => {
+    const slice = s.sessions[handleId]
+    if (!slice) return {}
+    return patchSlice(s, handleId, { messages: [...slice.messages, userMsg], statusAnnounce: toggled(SENT_NOW), lastActivityMs: Date.now() })
+  })
+  const wire = attachments && attachments.length ? attachments.map((a) => a.wire) : undefined
+  try {
+    const joined = await window.clui.steerMessage(handleId, text, wire)
+    // The turn ended before the message reached the CLI, so it runs as a turn of its own.
+    if (!joined) {
+      set((s) => {
+        const slice = s.sessions[handleId]
+        return slice && !slice.busy ? patchSlice(s, handleId, { busy: true, interrupting: false, turnStartMs: Date.now() }) : {}
+      })
+    }
+  } catch {
+    set((s) => (s.sessions[handleId] ? patchSlice(s, handleId, { lastError: 'Message not delivered. The session may have stopped. Resume it and try again.' }) : {}))
   }
 }
 
@@ -1738,7 +1781,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     }
   },
 
-  sendMessage: async (text, attachments) => {
+  sendMessage: async (text, attachments, opts) => {
     const active = activeSlice(get())
     // A turn is valid with text OR at least one attachment (an attachments-only turn is fine).
     if (!active || (!text.trim() && !(attachments && attachments.length))) return
@@ -1754,6 +1797,10 @@ export const useSession = create<SessionStore>((set, get) => ({
     // prompt after a Stop usually queues behind the interrupted turn.
     if (anyTabIn(active.browser, 'stopped')) void window.clui.browserDrive(active.handleId, 'reset')
     if (active.browserAutoOpenSuppressed) set((s) => patchSlice(s, active.handleId, { browserAutoOpenSuppressed: false }))
+    if (opts?.steer && active.busy && !active.interrupting && !sendsOnlyAtTurnEnd(attachments)) {
+      await steerTurn(set, active.handleId, text, attachments)
+      return
+    }
     // Composed while a turn is running (or interrupting, or with messages already queued) →
     // HOLD it renderer-side (editable/cancelable, rendered at the tail) instead of dispatching
     // now. It's sent FIFO at the next turn boundary (see the `result` handler). Queuing while
@@ -1769,6 +1816,14 @@ export const useSession = create<SessionStore>((set, get) => ({
       return
     }
     await dispatchTurn(set, active.handleId, text, attachments)
+  },
+  steerQueuedMessage: (id) => {
+    const active = activeSlice(get())
+    const q = active?.queuedMessages.find((m) => m.id === id)
+    if (!active || !q || !active.busy || active.interrupting || sendsOnlyAtTurnEnd(q.attachments)) return
+    // Out of the queue before anything awaits, so a result landing now can't release it a second time.
+    set((s) => patchSlice(s, active.handleId, { queuedMessages: active.queuedMessages.filter((m) => m.id !== id) }))
+    void steerTurn(set, active.handleId, q.text, q.attachments)
   },
   editQueuedMessage: (id, text) =>
     set((s) => {
@@ -2183,8 +2238,8 @@ export const useSession = create<SessionStore>((set, get) => ({
           break
         }
         case 'tool-use-stop': {
-          const m = currentAssistant(messages)
-          const t = m.tools.find((t) => t.id === e.id)
+          // Not necessarily the last message: a message sent mid-turn can land between a tool's start and stop.
+          const t = messages.findLast((m) => m.tools.some((t) => t.id === e.id))?.tools.find((t) => t.id === e.id)
           // Record the input only. The changed-file is published on the tool's SUCCESSFUL
           // RESULT (below), not here at propose-time: a denied/failed edit must not appear
           // as a changed file, and existence-pruning can't retract one to a file that
@@ -2515,20 +2570,27 @@ export const useSession = create<SessionStore>((set, get) => ({
             // only foreground turn outstanding (new prompts queue), so it can't be another
             // turn's. Swallow it (cost still accrues below) but treat it as the FIFO boundary.
             const wasInterrupting = slice.interrupting
-            patch.busy = false
             patch.interrupting = false
-            patch.turnStartMs = null
             patch.thinkingTokens = null
             patch.compacting = false
             patch.lastActivityMs = Date.now()
-            // A real turn boundary: if the user queued message(s) during this turn, release
-            // the OLDEST now (FIFO). Dequeue it here and dispatch it after this set commits
-            // (dispatch is async + re-sets busy; can't run inside the reducer). Remaining
-            // queued messages wait for their own boundary.
-            if (slice.queuedMessages.length > 0) {
-              const [next, ...rest] = slice.queuedMessages
-              patch.queuedMessages = rest
-              release.queued = { handleId, msg: next }
+            if (e.steerPending) {
+              // A message sent mid-turn reached the CLI after the turn's last step, so it runs as a
+              // turn of its own and the work isn't over. The queue waits for that turn's end.
+              patch.busy = true
+              if (wasInterrupting || slice.turnStartMs === null) patch.turnStartMs = Date.now()
+            } else {
+              patch.busy = false
+              patch.turnStartMs = null
+              // A real turn boundary: if the user queued message(s) during this turn, release
+              // the OLDEST now (FIFO). Dequeue it here and dispatch it after this set commits
+              // (dispatch is async + re-sets busy; can't run inside the reducer). Remaining
+              // queued messages wait for their own boundary.
+              if (slice.queuedMessages.length > 0) {
+                const [next, ...rest] = slice.queuedMessages
+                patch.queuedMessages = rest
+                release.queued = { handleId, msg: next }
+              }
             }
             // Matched at the command boundary (leading token only), so a mid-sentence
             // "/rename" or another command never triggers the re-scan. Skip when the turn was
@@ -2555,8 +2617,11 @@ export const useSession = create<SessionStore>((set, get) => ({
           // message. The usage is this turn's own; the session total lives in the footer + ring.
           if (e.usage || e.denials?.length) {
             // A turn that never reached Claude (a hook-blocked prompt) has no reply of its own, and
-            // the previous turn's trailer must not be overwritten with this one's zero.
-            const idx = messages.findLastIndex((m) => m.role === 'user' || (m.role === 'assistant' && !m.hookNotes))
+            // the previous turn's trailer must not be overwritten with this one's zero. Before a steer's
+            // own turn the steered bubble is last, and this result belongs to the reply above it.
+            const idx = e.steerPending
+              ? messages.findLastIndex((m) => m.role === 'assistant' && !m.hookNotes)
+              : messages.findLastIndex((m) => m.role === 'user' || (m.role === 'assistant' && !m.hookNotes))
             if (idx >= 0 && messages[idx].role === 'assistant') {
               messages[idx] = {
                 ...messages[idx],

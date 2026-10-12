@@ -271,7 +271,7 @@ export function Composer(): JSX.Element {
     if (target) void respawnIn(target)
   }
 
-  const submit = async (): Promise<void> => {
+  const submit = async (steer = false): Promise<void> => {
     const typed = text.trim()
     if ((!typed && attachments.length === 0 && pins.length === 0) || !handleId) return
     const lead = pins.length ? annotationsText(pins) : ''
@@ -300,7 +300,7 @@ export function Composer(): JSX.Element {
     clearDraft(handleId)
     clearAnnotations(handleId)
     setCaret(0)
-    await sendMessage(t, send.length ? send : undefined)
+    await sendMessage(t, send.length ? send : undefined, { steer })
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -308,7 +308,8 @@ export function Composer(): JSX.Element {
     if (ac.onKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      void submit()
+      // ⌘↵ during a turn sends into it instead of queuing; when idle it's a plain send.
+      void submit(e.metaKey)
     }
   }
 

@@ -98,6 +98,12 @@ export class SessionManager {
     s.send(text, attachments)
   }
 
+  steer(handleId: string, text: string, attachments?: WireAttachment[]): boolean {
+    const s = this.sessions.get(handleId)
+    if (!s) throw new Error('This session is no longer running.')
+    return s.steer(text, attachments)
+  }
+
   interrupt(handleId: string): void {
     this.sessions.get(handleId)?.interrupt()
   }
