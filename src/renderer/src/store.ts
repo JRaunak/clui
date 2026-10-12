@@ -16,7 +16,7 @@
  * each event into `sessions[handleId]`.
  */
 import { create } from 'zustand'
-import type { DomainEvent, ElicitationResponse, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo, TurnUsage } from '../../shared/events'
+import type { DomainEvent, ElicitationResponse, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo, TurnEnd, TurnUsage } from '../../shared/events'
 import type { BlockedPrompt, CompactionMarker, ProjectGroup } from '../../shared/sessions'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
@@ -26,6 +26,7 @@ import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, supportsUltr
 import type { ProcessedAttachment } from './lib/images'
 import { CAP_NOTE, pinWords, clipName, messageGist, type AnnotateEvent, type AnnotationPin } from '../../shared/annotate'
 import type { Via } from './lib/motion'
+import { turnEndLine } from './lib/turnEnd'
 
 export type SettingsSection = 'general' | 'sessions' | 'browser'
 
@@ -177,6 +178,7 @@ export interface WokenTask {
 /** How a finished turn ended, for its footer. Its presence also closes the message, so whatever
  *  streams next (a background-woken turn) starts a message of its own. */
 export interface TurnRecord {
+  reason?: TurnEnd
   durationMs?: number
   /** Background tasks the turn launched itself, not ones its subagents started. */
   bgTaskIds?: string[]
@@ -2670,7 +2672,10 @@ export const useSession = create<SessionStore>((set, get) => ({
             : messages.findLastIndex((m) => m.role === 'user' || (m.role === 'assistant' && !m.hookNotes))
           const host = messages[idx]
           if (host?.role === 'assistant' && !host.turnEnd) {
+            const started = userEnd ? slice.turnStartMs : null
             const turnEnd: TurnRecord = {
+              reason: e.endReason,
+              durationMs: e.durationMs ?? (started !== null && !e.localCommand ? Date.now() - started : undefined),
               ...(slice.turnTasks.length ? { bgTaskIds: slice.turnTasks } : {})
             }
             messages[idx] = {
@@ -2679,6 +2684,9 @@ export const useSession = create<SessionStore>((set, get) => ({
               ...(e.denials?.length ? { denials: e.denials } : {}),
               turnEnd
             }
+            const waiting = slice.turnTasks.filter((id) => slice.backgroundTasks[id]?.status === 'running').length
+            const line = e.steerPending ? null : turnEndLine(turnEnd.reason, turnEnd.durationMs, waiting)
+            if (line) patch.statusAnnounce = toggled(line.text.replace(/ · (.)/g, (_, c: string) => `, ${c.toLowerCase()}`))
             // Tasks that ended during this turn were this turn's news. A result with no reply of its own
             // (the CLI can open and drop a turn when two tasks end together) leaves them for the next.
             patch.endedTasks = EMPTY_WOKEN

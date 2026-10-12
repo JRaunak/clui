@@ -1,6 +1,7 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
 import { useSession, apiRetryCopy, effectiveMode } from '../src/renderer/src/store.ts'
+import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
 
@@ -363,5 +364,38 @@ const q = (id: string, text: string): any => ({ id, text })
   ok(msgs.length === 2 && msgs[0].text === 'launched' && msgs[1].text === 'Both done', 'store: woken text starts a new message')
   ok(msgs[1].wokenBy?.[0]?.kind === 'agent' && msgs[1].wokenBy[0].description === 'sleep', 'store: the woken message names its task')
   ok(cur().endedTasks.length === 0, 'store: the caption consumes the ended tasks')
+}
+
+// A turn that launched background work counts it in its footer until it ends.
+{
+  reset({ messages: [{ id: 'a', role: 'assistant', text: 'go', thinking: '', tools: [], blocks: [] }] })
+  st().applyEvent('h1', { type: 'bg-task-started', taskId: 't1', toolUseId: 'x', description: 'd', taskType: 'local_agent' })
+  st().applyEvent('h1', res({ durationMs: 61000 }))
+  ok(cur().messages[0].turnEnd?.bgTaskIds?.[0] === 't1', 'store: the turn keeps the tasks it launched')
+  ok(/^Waiting for 1 background task/.test(cur().statusAnnounce), 'store: a turn with running tasks announces the wait')
+}
+
+// Turn-end lines.
+{
+  ok(turnEndLine(undefined, 63000, 0)?.text === 'Worked for 1m 03s', 'turn end: completed')
+  ok(turnEndLine(undefined, 63000, 2)?.text === 'Waiting for 2 background tasks', 'turn end: a completed turn with running tasks shows only the wait')
+  ok(turnEndLine(undefined, undefined, 0) === null, 'turn end: nothing to say')
+  ok(turnEndLine({ kind: 'stopped' }, 47000, 1)?.text === 'Stopped by you after 47s · Waiting for 1 background task', 'turn end: a stop keeps its lead and appends the wait')
+  ok(turnEndLine({ kind: 'max-turns', limit: 3 }, 5000, 0)?.text === 'Stopped at the 3-turn limit after 5s · Send a message to continue', 'turn end: turn limit')
+  ok(turnEndLine({ kind: 'max-turns', limit: 3 }, 95000, 2)?.text === 'Stopped at the 3-turn limit after 1m 35s · Waiting for 2 background tasks · Send a message to continue', 'turn end: the wait sits before the call to continue')
+  ok(turnEndLine({ kind: 'early', reason: 'hook_stopped' }, undefined, 0)?.title.includes('hook_stopped'), 'turn end: an early stop names its reason on hover')
+  ok(turnEndLine({ kind: 'failed' }, 2000, 0)?.glyph === 'warn', 'turn end: a failure carries the warning glyph')
+  ok(wokenLine([{ kind: 'command', description: 'npm test', status: 'failed' }]).text === 'Background command failed: npm test', 'woken: one command')
+  ok(wokenLine([{ kind: 'agent', description: 'a', status: 'completed' }, { kind: 'agent', description: 'b', status: 'failed' }]).text === '2 background tasks ended, 1 failed', 'woken: several, one failed')
+}
+
+// The live announcement reads the line as a sentence.
+{
+  reset({ turnStartMs: 1, messages: [{ id: 'a', role: 'assistant', text: 'x', thinking: '', tools: [], blocks: [] }] })
+  st().applyEvent('h1', { type: 'result', sessionId: 's', isError: true, result: null, endReason: { kind: 'max-turns', limit: 2 }, durationMs: 4000 } as any)
+  ok(cur().statusAnnounce.startsWith('Stopped at the 2-turn limit after 4s, send a message to continue'), 'store: the announcement lowercases after its commas')
+  reset({ turnStartMs: 1, messages: [{ id: 'a', role: 'assistant', text: 'x', thinking: '', tools: [], blocks: [] }] })
+  st().applyEvent('h1', { type: 'result', sessionId: 's', isError: false, result: null, localCommand: true } as any)
+  ok(cur().messages[0].turnEnd?.durationMs === undefined, 'store: a local command gets no duration')
 }
 

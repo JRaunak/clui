@@ -5,7 +5,7 @@
  * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
  * drift skips the envelope instead of crashing the app.
  */
-import { parseCliMessage, perTurnUsage, ZERO_USAGE, type DomainEvent, type PermissionSuggestion, type TurnUsage } from '../../shared/events'
+import { parseCliMessage, perTurnUsage, ZERO_USAGE, type DomainEvent, type PermissionSuggestion, type TurnEnd, type TurnUsage } from '../../shared/events'
 import { deriveModelInfo } from '../../shared/settings'
 
 // Minimal structural typing of the raw envelopes we care about.
@@ -88,8 +88,13 @@ interface RawEnvelope {
   }
   is_error?: boolean
   result?: string | null
+  terminal_reason?: string
+  duration_ms?: number
+  errors?: string[]
   /** The Clui-stamped uuids of the user messages this result answered. */
   user_message_uuids?: string[]
+  /** Set on a local slash command's result (/usage, /context), which ran no model turn. */
+  local_command?: string
   // system/api_retry
   attempt?: number
   max_retries?: number
@@ -115,6 +120,7 @@ interface RawEnvelope {
       thinkingTokens?: number
       provider?: string
       canonicalModel?: string
+      costBasis?: 'list' | 'managed' | 'unknown'
     }
   >
   /** Tool calls a permission rule blocked without prompting (not the interactive ask). */
@@ -185,7 +191,7 @@ function turnUsageFrom(env: RawEnvelope): TurnUsage | undefined {
     usage.cacheReadInputTokens += u.cacheReadInputTokens ?? 0
     usage.cacheCreationInputTokens += u.cacheCreationInputTokens ?? 0
     usage.thinkingTokens += u.thinkingTokens ?? 0
-    usage.models.push({ id, model: u.canonicalModel ?? id, provider: u.provider, costUSD: u.costUSD })
+    usage.models.push({ id, model: u.canonicalModel ?? id, provider: u.provider, costUSD: u.costUSD, costBasis: u.costBasis })
   }
   return usage
 }
@@ -433,7 +439,10 @@ export class EventMapper {
           this.turnText = ''
           this.apiError = null
         }
-        // Every result advances the process total, so the baseline moves on each one.
+        const local = typeof env.local_command === 'string'
+        const endReason = local ? undefined : turnEndOf(env, wasInterrupted)
+        // Every result advances the process total, so the baseline moves on each one. A local command
+        // ran no model turn, so it has no usage of its own.
         const cumulative = turnUsageFrom(env)
         const prevUsage = this.usageBaseline
         if (cumulative) this.usageBaseline = cumulative
@@ -461,8 +470,11 @@ export class EventMapper {
               ownsTurn && env.permission_denials?.length
                 ? env.permission_denials.map((d) => ({ toolName: d.tool_name ?? 'a tool', input: d.tool_input }))
                 : undefined,
-            usage: cumulative ? perTurnUsage(cumulative, prevUsage) : undefined,
-            messageId
+            usage: !local && cumulative ? perTurnUsage(cumulative, prevUsage) : undefined,
+            messageId: local ? undefined : messageId,
+            endReason,
+            durationMs: local ? undefined : env.duration_ms,
+            ...(local ? { localCommand: true } : {})
           }
         ]
         // Backfill the pending placeholder (or insert a resolved block) with the peer's sender + body.
@@ -474,11 +486,12 @@ export class EventMapper {
           })
         }
         // Surface the user's failure as the in-chat error box. `alreadyShown` de-dups the
-        // API-error-as-assistant-text case; a Stop is the user's own action, not a failure;
-        // a bg-subagent or peer result is not the user's turn.
-        if (env.is_error && ownsTurn && !wasInterrupted && classified) {
+        // API-error-as-assistant-text case; a Stop or a limit isn't a failure; a bg-subagent or
+        // peer result is not the user's turn.
+        const failed = env.is_error && ownsTurn && !wasInterrupted && (!endReason || endReason.kind === 'failed')
+        if (failed && classified) {
           out.push({ type: 'error', message: classified, severity: 'error' })
-        } else if (env.is_error && ownsTurn && !wasInterrupted && !alreadyShown) {
+        } else if (failed && !alreadyShown) {
           out.push({ type: 'error', message: env.result ?? 'The request failed.', severity: 'error' })
         }
         // The authoritative window changed (e.g. a model switch corrected 200K↔1M) but no
@@ -1018,6 +1031,27 @@ export class EventMapper {
     }
     return []
   }
+}
+
+/** Turn ends the CLI reports as non-errors (2.1.296): the turn stopped short, and nothing failed. */
+const EARLY_ENDS = new Set(['max_turns', 'aborted_streaming', 'aborted_tools', 'stop_hook_prevented', 'hook_stopped', 'tool_deferred', 'background_requested'])
+
+/** An unknown reason on an error result stays a failure, so a new kind of failure still shows its box. */
+function turnEndOf(env: RawEnvelope, stoppedByUser: boolean): TurnEnd | undefined {
+  const reason = env.terminal_reason
+  const detail = env.errors?.[0] ?? ''
+  if (stoppedByUser) return { kind: 'stopped' }
+  if (reason === 'max_turns') {
+    // The limit is only in the error text, matched against 2.1.296's wording: re-verify on a CLI bump.
+    const n = /maximum number of turns \((\d+)\)/.exec(detail)
+    return { kind: 'max-turns', limit: n ? Number(n[1]) : undefined }
+  }
+  if (reason === 'budget_exhausted' || env.subtype === 'error_max_budget_usd') {
+    const usd = /\$(\d+(?:\.\d+)?)/.exec(detail)
+    return { kind: 'budget', limit: usd ? Number(usd[1]) : undefined }
+  }
+  if (reason && reason !== 'completed' && (EARLY_ENDS.has(reason) || !env.is_error)) return { kind: 'early', reason }
+  return env.is_error ? { kind: 'failed' } : undefined
 }
 
 interface ApiError {

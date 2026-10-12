@@ -77,6 +77,9 @@ export interface TurnUsageModel {
   model: string
   provider?: string
   costUSD?: number
+  /** How the CLI priced it: 'list' is an estimate from published prices, 'unknown' matched no price.
+   *  Absent until priced, which also means list. */
+  costBasis?: 'list' | 'managed' | 'unknown'
 }
 
 /** A single turn's usage from the result envelope's `modelUsage`. Per-turn, distinct from the
@@ -118,6 +121,14 @@ export function perTurnUsage(cur: TurnUsage, prev: TurnUsage): TurnUsage {
     models: cur.models.map((m) => ({ ...m, costUSD: d(m.costUSD, prevByModel.get(m.id ?? m.model)) }))
   }
 }
+
+/** Why a turn stopped short of completing, for the turn's footer. Errors aren't here: they keep the red box. */
+export type TurnEnd =
+  | { kind: 'stopped' }
+  | { kind: 'max-turns'; limit?: number }
+  | { kind: 'budget'; limit?: number }
+  | { kind: 'early'; reason: string }
+  | { kind: 'failed' }
 
 export type DomainEvent =
   /** Session started; carries the CLI-assigned session id + metadata. */
@@ -271,6 +282,10 @@ export type DomainEvent =
       answersUser?: boolean
       /** A message sent mid-turn hasn't been answered yet, so another turn follows this result. */
       steerPending?: boolean
+      endReason?: TurnEnd
+      durationMs?: number
+      /** A local slash command (/usage, /context) ran no model turn, so it has no record to show. */
+      localCommand?: boolean
     }
   /** A peer began messaging this session (`command_lifecycle:started`): insert the
    *  anonymous placeholder, backfilled by `peer-message` at the result. */

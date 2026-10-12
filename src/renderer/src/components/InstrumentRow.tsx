@@ -1,6 +1,7 @@
 import { LinkedText } from '../lib/openLink'
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { activeSlice, useActive, useSession, type ToolCall } from '../store'
+import { formatElapsed } from '../lib/turnEnd'
 import { Lumen } from './Lumen'
 import { lumenSiteOf } from '../lib/lumen'
 import { viaOf } from '../lib/motion'
@@ -475,15 +476,6 @@ export function RunningTimer({ startMs }: { startMs: number }): JSX.Element {
     return () => clearInterval(t)
   }, [])
   return <span className="font-mono tabular-nums text-dim">{formatElapsed(now - startMs)}</span>
-}
-
-function formatElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000))
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
-  const h = Math.floor(m / 60)
-  return `${h}h ${String(m % 60).padStart(2, '0')}m`
 }
 
 function truncate(s: string, n: number): string {

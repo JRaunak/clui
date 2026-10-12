@@ -9,16 +9,18 @@ import {
   type HookNote,
   type MessageAttachment,
   type PeerMessage,
-  type ToolCall
+  type ToolCall,
+  type WokenTask
 } from '../store'
 import { Markdown, StreamingContext } from './Markdown'
 import { AnnotationChip } from './AnnotationChip'
 import { Button } from './Button'
 import { splitAnnotations } from '../../../shared/annotate'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
-import { IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconShieldOff } from './Icon'
+import { IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShieldOff, IconStop, IconWarn } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
 import { formatCost } from '../lib/formatCost'
+import { turnEndLine, wokenLine } from '../lib/turnEnd'
 import type { PermissionDenial, TurnUsage } from '../../../shared/events'
 
 export { summarizeInput } from '../lib/instrument'
@@ -119,6 +121,7 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
         id={isUser ? `msg-${message.id}` : undefined}
         tabIndex={isUser ? -1 : undefined}
       >
+        {!isUser && message.wokenBy && <WokenByLine tasks={message.wokenBy} />}
         <div
           className={`relative flex items-center gap-1.5 text-label font-semibold ${isUser ? 'text-dim' : 'text-accent spine-seg'}`}
           data-seg={isUser ? undefined : hasSpine ? 'head' : 'none'}
@@ -150,7 +153,7 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
         {isUser && message.hookNotes && <HookNotes notes={message.hookNotes} />}
         {isUser && message.blocked && <BlockedPromptNotice prompt={splitAnnotations(message.text).text} blocked={message.blocked} />}
         {!isUser && message.denials && message.denials.length > 0 && <BlockedActionsNotice denials={message.denials} />}
-        {!isUser && message.usage && <TurnUsageTrailer usage={message.usage} id={message.id} />}
+        {!isUser && (message.turnEnd || message.usage) && <TurnFooter message={message} />}
       </div>
     </StreamingContext.Provider>
   )
@@ -427,6 +430,42 @@ function BlockedPromptNotice({ prompt, blocked }: { prompt: string; blocked: Blo
   )
 }
 
+/** It isn't Claude's output, so it sits above the speaker label, off the spine. */
+function WokenByLine({ tasks }: { tasks: WokenTask[] }): JSX.Element {
+  const { text, title } = wokenLine(tasks)
+  return (
+    <div data-ui="woken-by" className="mb-1 flex items-center gap-1.5 text-meta text-dim">
+      <IconSendToTray className="h-3.5 w-3.5 shrink-0 text-info" />
+      <span className="max-w-[48ch] truncate" title={title}>
+        {text}
+      </span>
+    </div>
+  )
+}
+
+/** The turn's record on the left, its cost on the right. The waiting count follows the tray as
+ *  tasks end, and nothing here ticks. */
+function TurnFooter({ message }: { message: ChatMessage }): JSX.Element | null {
+  const rec = message.turnEnd
+  const waiting = useActive((s) => rec?.bgTaskIds?.filter((id) => s?.backgroundTasks[id]?.status === 'running').length ?? 0)
+  const line = rec ? turnEndLine(rec.reason, rec.durationMs, waiting) : null
+  if (!line && !message.usage) return null
+  const Glyph = line?.glyph === 'stop' ? IconStop : line?.glyph === 'warn' ? IconWarn : null
+  return (
+    <div data-ui="turn-footer" className="flex items-start justify-between gap-3">
+      {line ? (
+        <p className={`flex min-h-6 min-w-0 items-center gap-1.5 text-meta ${Glyph ? 'text-dim' : 'text-faint'}`} title={line.title}>
+          {Glyph && <Glyph className="h-3 w-3 shrink-0 text-dim" />}
+          <span className="truncate">{line.text}</span>
+        </p>
+      ) : (
+        <span />
+      )}
+      {message.usage && <TurnUsageTrailer usage={message.usage} id={message.id} />}
+    </div>
+  )
+}
+
 function fmtCost(n: number | undefined): string {
   return typeof n === 'number' ? formatCost(n) : '—'
 }
@@ -450,44 +489,47 @@ function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.
   const cachedPct = totalInput > 0 ? Math.round((usage.cacheReadInputTokens / totalInput) * 100) : 0
   const n = (v: number): string => v.toLocaleString('en-US')
   const panelId = `turn-usage-${id}`
+  // A turn without a costBasis counts as a list-price estimate, which on Bedrock is every turn.
+  const estimate = usage.models.some((m) => (m.costBasis ?? 'list') === 'list')
   return (
-    <div className="flex flex-col items-end">
+    <div className="flex shrink-0 flex-col items-end">
       <button
         type="button"
         className="flex min-h-[24px] items-center gap-1 rounded px-1.5 font-mono text-meta tabular-nums text-faint transition-colors hover:text-content"
         aria-expanded={open}
         aria-controls={panelId}
-        aria-label={`Turn cost ${fmtCost(usage.costUSD)}, show breakdown`}
+        aria-label={`${estimate ? 'Estimated turn cost' : 'Turn cost'} ${fmtCost(usage.costUSD)}, show breakdown`}
+        title={estimate ? 'Estimated at list prices' : undefined}
         onClick={() => setOpen((o) => !o)}
       >
         <IconChevron className={`h-3 w-3 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden="true" />
         {fmtCost(usage.costUSD)}
       </button>
       {open && (
-        <dl
-          id={panelId}
-          className="mt-1 flex w-full max-w-xs flex-col gap-1 rounded-md border border-border bg-bg-elev px-3 py-2 text-meta"
-        >
-          <UsageRow label="Turn cost" value={fmtCost(usage.costUSD)} strong />
-          <UsageRow label="Tokens" value={`${n(usage.inputTokens)} in · ${n(usage.outputTokens)} out`} />
-          <UsageRow
-            label="Cache read"
-            value={totalInput > 0 ? `${n(usage.cacheReadInputTokens)} · ${cachedPct}% cached` : n(usage.cacheReadInputTokens)}
-          />
-          {usage.cacheCreationInputTokens > 0 && (
-            <UsageRow label="Cache creation" value={n(usage.cacheCreationInputTokens)} />
-          )}
-          {usage.thinkingTokens > 0 && <UsageRow label="Thinking" value={n(usage.thinkingTokens)} />}
-          {usage.models.length > 1 &&
-            usage.models.map((m, i) => (
-              <div key={i} className="flex items-baseline justify-between gap-6">
-                <dt className="min-w-0 truncate font-mono text-faint" title={m.model}>
-                  {m.model}
-                </dt>
-                <dd className="shrink-0 font-mono tabular-nums text-dim">{fmtCost(m.costUSD)}</dd>
-              </div>
-            ))}
-        </dl>
+        <div id={panelId} className="mt-1 w-80 max-w-full rounded-md border border-border bg-bg-elev px-3 py-2 text-meta">
+          <dl className="flex flex-col gap-1">
+            <UsageRow label="Turn cost" value={fmtCost(usage.costUSD)} strong />
+            <UsageRow label="Tokens" value={`${n(usage.inputTokens)} in · ${n(usage.outputTokens)} out`} />
+            <UsageRow
+              label="Cache read"
+              value={totalInput > 0 ? `${n(usage.cacheReadInputTokens)} · ${cachedPct}% cached` : n(usage.cacheReadInputTokens)}
+            />
+            {usage.cacheCreationInputTokens > 0 && (
+              <UsageRow label="Cache creation" value={n(usage.cacheCreationInputTokens)} />
+            )}
+            {usage.thinkingTokens > 0 && <UsageRow label="Thinking" value={n(usage.thinkingTokens)} />}
+            {usage.models.length > 1 &&
+              usage.models.map((m, i) => (
+                <div key={i} className="flex items-baseline justify-between gap-6">
+                  <dt className="min-w-0 truncate font-mono text-faint" title={m.model}>
+                    {m.model}
+                  </dt>
+                  <dd className="shrink-0 font-mono tabular-nums text-dim">{fmtCost(m.costUSD)}</dd>
+                </div>
+              ))}
+          </dl>
+          {estimate && <p className="mt-1 border-t border-border pt-1 text-meta text-faint">Estimated at list prices. Your bill may differ.</p>}
+        </div>
       )}
     </div>
   )

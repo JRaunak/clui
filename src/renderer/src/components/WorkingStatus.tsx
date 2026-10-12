@@ -10,6 +10,7 @@ import { Lumen } from './Lumen'
 import { runningCountOf, useLumenSite } from '../lib/lumen'
 import { randomWorkingVerb } from '../lib/workingVerbs'
 import { fmtTokens } from '../lib/formatTokens'
+import { formatElapsed } from '../lib/turnEnd'
 
 export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }): JSX.Element {
   // Elapsed derives from the turn's start timestamp in the slice, not component mount, so switching sessions
@@ -57,17 +58,8 @@ export function WorkingStatus({ taskMerged = false }: { taskMerged?: boolean }):
           {thinkingTokens === 1 ? 'token' : 'tokens'}
         </span>
       )}
-      <span className="font-mono tabular-nums text-dim">{formatElapsed(elapsed)}</span>
+      <span className="font-mono tabular-nums text-dim">{formatElapsed(elapsed * 1000)}</span>
     </span>
   )
 }
 
-/** `47s` / `1m 13s` / `1h 02m`. */
-function formatElapsed(totalSeconds: number): string {
-  const s = Math.max(0, totalSeconds)
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
-  const h = Math.floor(m / 60)
-  return `${h}h ${String(m % 60).padStart(2, '0')}m`
-}

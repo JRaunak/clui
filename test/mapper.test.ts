@@ -350,6 +350,34 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(feed(m, [{ type: 'command_lifecycle', command_uuid: 'other', state: 'started' }])[0]?.type === 'peer-pending', 'mapper: a foreign lifecycle still opens a peer placeholder')
 }
 
+// terminal_reason: limits and stops are notes, errors keep the box.
+{
+  const one = (env: Record<string, unknown>, stop = false): any[] => {
+    const m = new EventMapper()
+    if (stop) m.markInterrupted()
+    return feed(m, [{ type: 'result', session_id: 's', ...env }])
+  }
+  const lim = one({ subtype: 'error_max_turns', is_error: true, terminal_reason: 'max_turns', errors: ['Reached maximum number of turns (1)'] })
+  ok(lim[0].endReason?.kind === 'max-turns' && lim[0].endReason.limit === 1 && !lim.some((e) => e.type === 'error'), 'mapper: a turn limit is a note, not an error')
+  const stopped = one({ subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_tools' }, true)
+  ok(stopped[0].endReason?.kind === 'stopped' && !stopped.some((e) => e.type === 'error'), 'mapper: a Stop reads as stopped by you')
+  const budget = one({ subtype: 'error_max_budget_usd', is_error: true, terminal_reason: 'budget_exhausted', errors: ['Reached maximum budget ($0.5)'] })
+  ok(budget[0].endReason?.kind === 'budget' && budget[0].endReason.limit === 0.5 && !budget.some((e) => e.type === 'error'), 'mapper: a budget limit is a note')
+  const failed = one({ subtype: 'error_during_execution', is_error: true, terminal_reason: 'model_error', result: 'boom' })
+  ok(failed[0].endReason?.kind === 'failed' && failed.some((e) => e.type === 'error'), 'mapper: an error keeps the red box')
+  const unknownErr = one({ is_error: true, terminal_reason: 'brand_new_failure', result: 'x' })
+  ok(unknownErr.some((e) => e.type === 'error'), 'mapper: an unknown reason on an error stays an error')
+  const early = one({ is_error: false, terminal_reason: 'brand_new_stop' })
+  ok(early[0].endReason?.kind === 'early' && early[0].endReason.reason === 'brand_new_stop', 'mapper: an unknown non-error reason is an early stop')
+  ok(one({ terminal_reason: 'completed', duration_ms: 1234 })[0].durationMs === 1234 && !one({ terminal_reason: 'completed' })[0].endReason, 'mapper: a completed turn carries its duration and no reason')
+  const local = one({ local_command: 'usage', num_turns: 0, modelUsage: { m: { costUSD: 0 } }, total_cost_usd: 0 })
+  ok(local[0].usage === undefined, 'mapper: a local command has no per-turn usage')
+  const priced = one({ modelUsage: { m: { costUSD: 0.1, costBasis: 'list' } }, total_cost_usd: 0.1 })
+  ok(priced[0].usage?.models[0]?.costBasis === 'list', 'mapper: costBasis rides on the turn usage')
+  const woken = one({ origin: { kind: 'task-notification' }, modelUsage: { m: { costUSD: 0.2 } }, total_cost_usd: 0.2 })
+  ok(woken[0].usage?.costUSD === 0.2, 'mapper: a woken turn gets its own usage')
+}
+
 // A foreground shell isn't background work until it's moved there.
 {
   const m = new EventMapper()
