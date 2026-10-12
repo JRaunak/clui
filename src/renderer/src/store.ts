@@ -167,6 +167,21 @@ export interface PeerMessage {
   pending: boolean
 }
 
+/** A background task whose end woke Claude for a turn of its own. */
+export interface WokenTask {
+  kind: 'agent' | 'command'
+  description: string
+  status: 'completed' | 'failed' | 'killed'
+}
+
+/** How a finished turn ended, for its footer. Its presence also closes the message, so whatever
+ *  streams next (a background-woken turn) starts a message of its own. */
+export interface TurnRecord {
+  durationMs?: number
+  /** Background tasks the turn launched itself, not ones its subagents started. */
+  bgTaskIds?: string[]
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'peer'
@@ -197,6 +212,9 @@ export interface ChatMessage {
   hookNotes?: HookNote[]
   /** On a user message: a UserPromptSubmit hook stopped it. */
   blocked?: BlockedPrompt
+  turnEnd?: TurnRecord
+  /** The background tasks whose end started this turn. */
+  wokenBy?: WokenTask[]
 }
 
 /**
@@ -337,6 +355,10 @@ export interface PerSessionState {
   /** The retry copy for the live region: only a run's first and last attempts, so a ten-attempt
    *  run is two announcements, not ten. */
   apiRetryAnnounce: string
+  /** Background tasks the running turn launched, handed to its footer at the result. */
+  turnTasks: string[]
+  /** Tasks that ended since the last result: what a background-woken turn is about. */
+  endedTasks: WokenTask[]
   /**
    * True once the underlying process has exited for real (NOT an effort respawn,
    * which is swallowed in the main process). The slice is kept so the transcript
@@ -765,6 +787,8 @@ export const EMPTY_ATTACHMENTS: ProcessedAttachment[] = []
  *  name, not the key's presence. */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
+const EMPTY_WOKEN: WokenTask[] = []
+
 // --- One persistent event subscription (installed lazily on first use) ---
 
 let subscribed = false
@@ -982,6 +1006,8 @@ async function beginSession(
         compaction: m.compaction,
         blocked: m.blocked,
         usage: m.usage,
+        // A turn read back from disk is over, so a new turn's text never extends it.
+        turnEnd: m.role === 'assistant' ? { durationMs: m.durationMs } : undefined,
         text: m.text,
         thinking: m.thinking,
         tools: m.tools.map((tc) => ({ ...tc })),
@@ -1078,6 +1104,8 @@ async function beginSession(
     apiRetry: null,
     apiRetryDismissed: false,
     apiRetryAnnounce: '',
+    turnTasks: EMPTY_STRINGS,
+    endedTasks: EMPTY_WOKEN,
     exited: false,
     createdMs: now,
     lastActivityMs: now,
@@ -1309,17 +1337,19 @@ function endsUserTurn(e: Extract<DomainEvent, { type: 'result' }>): boolean {
   return (!e.fromTaskNotification && !e.fromPeer) || !!e.answersUser
 }
 
-/** Find or create the current (last) assistant message to append streamed content. */
-function currentAssistant(messages: ChatMessage[]): ChatMessage {
+/** Find or create the current (last) assistant message to append streamed content. A new one
+ *  carries `wokenBy` when a background task's end started its turn. */
+function currentAssistant(messages: ChatMessage[], wokenBy?: WokenTask[]): ChatMessage {
   const last = messages[messages.length - 1]
-  if (last && last.role === 'assistant' && !last.compaction && !last.hookNotes) return last
+  if (last && last.role === 'assistant' && !last.compaction && !last.hookNotes && !last.turnEnd) return last
   const msg: ChatMessage = {
     id: `a-${Date.now()}-${messages.length}`,
     role: 'assistant',
     text: '',
     thinking: '',
     tools: [],
-    blocks: []
+    blocks: [],
+    ...(wokenBy?.length ? { wokenBy } : {})
   }
   messages.push(msg)
   return msg
@@ -1359,7 +1389,7 @@ let modToastSeq = 0
 /** Narrow a loose CLI task status to the tray's union: only 'killed'/'failed' are kept
  *  distinct; every other terminal string collapses to 'completed' (the tray only cares
  *  running-vs-not). One place so the bg-task-updated and -notification arms can't diverge. */
-function narrowTaskStatus(status: string | undefined): BackgroundTask['status'] {
+function narrowTaskStatus(status: string | undefined): Exclude<BackgroundTask['status'], 'running'> {
   return status === 'killed' || status === 'failed' ? status : 'completed'
 }
 
@@ -2072,6 +2102,13 @@ export const useSession = create<SessionStore>((set, get) => ({
       if (slice.apiRetry && (ENDS_RETRY.has(e.type) || (e.type === 'result' && endsUserTurn(e)))) {
         Object.assign(patch, NO_RETRY)
       }
+      // A turn that starts while the user's isn't running was woken by the tasks that ended before it.
+      const assistant = (): ChatMessage => {
+        const before = messages.length
+        const m = currentAssistant(messages, slice.busy ? undefined : slice.endedTasks)
+        if (messages.length > before && m.wokenBy) patch.endedTasks = EMPTY_WOKEN
+        return m
+      }
 
       switch (e.type) {
         case 'api-retry': {
@@ -2131,7 +2168,7 @@ export const useSession = create<SessionStore>((set, get) => ({
         }
         case 'text-delta': {
           if (slice.thinkingTokens !== null) patch.thinkingTokens = null
-          const m = currentAssistant(messages)
+          const m = assistant()
           m.text += e.text
           // Extend the trailing text block, or start a new one (after a tool block)
           // so text that streams AFTER tools renders below them, in true order.
@@ -2226,13 +2263,13 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (slice.modStatus.length) patch.modStatus = EMPTY_MOD_STATUS
           break
         case 'thinking-delta': {
-          const m = currentAssistant(messages)
+          const m = assistant()
           m.thinking += e.text
           break
         }
         case 'tool-use-start': {
           if (slice.thinkingTokens !== null) patch.thinkingTokens = null
-          const m = currentAssistant(messages)
+          const m = assistant()
           m.tools.push({ id: e.id, name: e.name, input: {}, startMs: Date.now() })
           m.blocks.push({ kind: 'tool', id: e.id })
           break
@@ -2439,7 +2476,13 @@ export const useSession = create<SessionStore>((set, get) => ({
           }
           break
         }
-        case 'bg-task-started':
+        case 'bg-task-started': {
+          // The running turn's own launch counts toward its footer; a subagent's is nested under that agent.
+          const last = messages[messages.length - 1]
+          const turnOpen = slice.busy || (last?.role === 'assistant' && !last.turnEnd)
+          if (turnOpen && !subagentOwnerOfTask(e.toolUseId, slice.subagentMessages, slice.subagentChildren)) {
+            patch.turnTasks = [...slice.turnTasks, e.taskId]
+          }
           patch.backgroundTasks = {
             ...slice.backgroundTasks,
             [e.taskId]: {
@@ -2454,6 +2497,7 @@ export const useSession = create<SessionStore>((set, get) => ({
             }
           }
           break
+        }
         case 'bg-task-updated': {
           // A terminal status → mark the task terminal (so the tray, which shows only
           // status==='running', stops listing it) but KEEP the entry so the imminent
@@ -2493,6 +2537,10 @@ export const useSession = create<SessionStore>((set, get) => ({
               delete next[e.taskId]
               patch.backgroundTasks = next
             }
+            patch.endedTasks = [
+              ...slice.endedTasks,
+              { kind: prev.taskType === 'local_agent' ? 'agent' : 'command', description: prev.description, status }
+            ]
             const kind = prev.taskType === 'local_agent' ? 'Background subagent' : 'Background task'
             // Tone tracks the terminal outcome so a killed or failed task isn't announced as success.
             const verb = status === 'killed' ? 'stopped' : status === 'failed' ? 'failed' : 'finished'
@@ -2613,23 +2661,29 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (typeof e.totalCostUsd === 'number') {
             patch.costUsd = Math.max(slice.costUsd ?? 0, e.totalCostUsd)
           }
-          // Result arrives after the assistant text, so hang usage/denials on the last assistant
-          // message. The usage is this turn's own; the session total lives in the footer + ring.
-          if (e.usage || e.denials?.length) {
-            // A turn that never reached Claude (a hook-blocked prompt) has no reply of its own, and
-            // the previous turn's trailer must not be overwritten with this one's zero. Before a steer's
-            // own turn the steered bubble is last, and this result belongs to the reply above it.
-            const idx = e.steerPending
-              ? messages.findLastIndex((m) => m.role === 'assistant' && !m.hookNotes)
-              : messages.findLastIndex((m) => m.role === 'user' || (m.role === 'assistant' && !m.hookNotes))
-            if (idx >= 0 && messages[idx].role === 'assistant') {
-              messages[idx] = {
-                ...messages[idx],
-                ...(e.usage ? { usage: e.usage } : {}),
-                ...(e.denials?.length ? { denials: e.denials } : {})
-              }
+          // Result arrives after the assistant text, so the turn's record goes on its last assistant
+          // message. A turn that never reached Claude (a hook-blocked prompt) has no reply of its own,
+          // and the previous turn's record must not be overwritten. Before a steer's own turn the
+          // steered bubble is last, and this result belongs to the reply above it.
+          const idx = e.steerPending
+            ? messages.findLastIndex((m) => m.role === 'assistant' && !m.hookNotes)
+            : messages.findLastIndex((m) => m.role === 'user' || (m.role === 'assistant' && !m.hookNotes))
+          const host = messages[idx]
+          if (host?.role === 'assistant' && !host.turnEnd) {
+            const turnEnd: TurnRecord = {
+              ...(slice.turnTasks.length ? { bgTaskIds: slice.turnTasks } : {})
             }
+            messages[idx] = {
+              ...host,
+              ...(e.usage ? { usage: e.usage } : {}),
+              ...(e.denials?.length ? { denials: e.denials } : {}),
+              turnEnd
+            }
+            // Tasks that ended during this turn were this turn's news. A result with no reply of its own
+            // (the CLI can open and drop a turn when two tasks end together) leaves them for the next.
+            patch.endedTasks = EMPTY_WOKEN
           }
+          patch.turnTasks = EMPTY_STRINGS
           break
         }
         case 'error':

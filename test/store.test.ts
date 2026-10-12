@@ -353,3 +353,15 @@ const q = (id: string, text: string): any => ({ id, text })
   ok(cur().queuedMessages.length === 1, 'store: a message with a PDF waits for the turn end')
 }
 
+// A turn a background task's end started opens its own message, captioned with that task.
+{
+  const ended = { id: 'a', role: 'assistant', text: 'launched', thinking: '', tools: [], blocks: [], turnEnd: {} }
+  reset({ busy: false, messages: [ended], backgroundTasks: { t1: { taskId: 't1', description: 'sleep', taskType: 'local_agent', toolUseId: 'tu', status: 'running', startMs: 0 } } })
+  st().applyEvent('h1', { type: 'bg-task-notification', taskId: 't1', status: 'completed' })
+  st().applyEvent('h1', { type: 'text-delta', text: 'Both done' })
+  const msgs = cur().messages
+  ok(msgs.length === 2 && msgs[0].text === 'launched' && msgs[1].text === 'Both done', 'store: woken text starts a new message')
+  ok(msgs[1].wokenBy?.[0]?.kind === 'agent' && msgs[1].wokenBy[0].description === 'sleep', 'store: the woken message names its task')
+  ok(cur().endedTasks.length === 0, 'store: the caption consumes the ended tasks')
+}
+

@@ -103,6 +103,8 @@ export interface HistoryMessage {
   peer?: { from: string }
   /** The turn's own usage, saved by Clui when it finished (assistant messages only). */
   usage?: TurnUsage
+  /** How long the turn took, when the jsonl recorded it (assistant messages only). */
+  durationMs?: number
   compaction?: CompactionMarker
   /** Set on a user turn a hook blocked. The CLI never writes the prompt itself, so `text` is the
    *  prompt quoted in the hook's message. */

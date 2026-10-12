@@ -433,13 +433,12 @@ export class EventMapper {
           this.turnText = ''
           this.apiError = null
         }
-        // Background and peer turns still advance the process total, so the baseline moves on every
-        // result while only the user's turn reports its delta.
+        // Every result advances the process total, so the baseline moves on each one.
         const cumulative = turnUsageFrom(env)
         const prevUsage = this.usageBaseline
         if (cumulative) this.usageBaseline = cumulative
-        const messageId = ownsTurn ? this.lastMessageId : undefined
-        if (ownsTurn) this.lastMessageId = undefined
+        const messageId = this.lastMessageId
+        this.lastMessageId = undefined
         const out: DomainEvent[] = [
           {
             type: 'result',
@@ -462,7 +461,7 @@ export class EventMapper {
               ownsTurn && env.permission_denials?.length
                 ? env.permission_denials.map((d) => ({ toolName: d.tool_name ?? 'a tool', input: d.tool_input }))
                 : undefined,
-            usage: ownsTurn && cumulative ? perTurnUsage(cumulative, prevUsage) : undefined,
+            usage: cumulative ? perTurnUsage(cumulative, prevUsage) : undefined,
             messageId
           }
         ]
