@@ -1,6 +1,6 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { useSession, apiRetryCopy, effectiveMode } from '../src/renderer/src/store.ts'
+import { useSession, apiRetryCopy, effectiveMode, rateLimitCopy } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -385,6 +385,20 @@ const q = (id: string, text: string): any => ({ id, text })
   st().applyEvent('h1', { type: 'permission-check', toolUseId: 't', checking: true })
   st().applyEvent('h1', { type: 'permission-check', toolUseId: 't', checking: false })
   ok(!cur().checkingTools.t, 'store: done ends the check')
+}
+
+// Usage-limit copy.
+{
+  const now = new Date(2026, 9, 12, 9, 0)
+  const at = (h: number, m: number, d = 12): number => new Date(2026, 9, d, h, m).getTime() / 1000
+  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(at(15, 40) * 1000))
+  ok(rateLimitCopy({ status: 'allowed_warning', utilization: 0.82, window: 'five_hour', resetsAt: at(15, 40), extraUsage: false }, now) === `You've used 82% of your 5-hour limit. It resets at ${time}.`, 'rate limit: warning names window and reset')
+  ok(rateLimitCopy({ status: 'allowed_warning', utilization: 0.5, window: 'seven_day_opus', extraUsage: false }, now) === "You've used 50% of your usage limit.", 'rate limit: an unnamed window drops the phrase, no reset drops the clause')
+  ok(rateLimitCopy({ status: 'rejected', resetsAt: at(15, 40), extraUsage: false }, now) === `Usage limit reached. Claude can't respond until ${time}.`, 'rate limit: same-day reset after until has no preposition')
+  ok(rateLimitCopy({ status: 'rejected', extraUsage: false }, now) === "Usage limit reached. Claude can't respond until it resets.", 'rate limit: blocked with no reset')
+  ok(/^Usage limit reached\. Extra usage is on, .* until \w+day at /.test(rateLimitCopy({ status: 'rejected', resetsAt: at(15, 40, 14), extraUsage: true }, now)), 'rate limit: extra usage, a later weekday')
+  const date = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(at(9, 0, 25) * 1000))
+  ok(rateLimitCopy({ status: 'allowed_warning', resetsAt: at(9, 0, 25), extraUsage: false }, now) === `You're close to your usage limit. It resets on ${date}.`, 'rate limit: a week out reads as a date')
 }
 
 // Turn-end lines.

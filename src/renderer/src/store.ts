@@ -16,7 +16,7 @@
  * each event into `sessions[handleId]`.
  */
 import { create } from 'zustand'
-import type { DomainEvent, ElicitationResponse, PermissionDenial, PermissionSuggestion, SessionTask, SlashCommandInfo, TurnEnd, TurnUsage } from '../../shared/events'
+import type { DomainEvent, ElicitationResponse, PermissionDenial, PermissionSuggestion, RateLimit, SessionTask, SlashCommandInfo, TurnEnd, TurnUsage } from '../../shared/events'
 import type { BlockedPrompt, CompactionMarker, ProjectGroup } from '../../shared/sessions'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
@@ -361,6 +361,11 @@ export interface PerSessionState {
   apiRetryAnnounce: string
   /** Tool calls auto mode's classifier is still deciding on, by tool_use id. */
   checkingTools: Record<string, true>
+  /** The account's latest usage-limit warning or block; null while usage is fine. */
+  rateLimit: RateLimit | null
+  rateLimitDismissed: boolean
+  /** Set only when the limit's status changes, so each change is announced once. */
+  rateLimitAnnounce: string
   /** Background tasks the running turn launched, handed to its footer at the result. */
   turnTasks: string[]
   /** Tasks that ended since the last result: what a background-woken turn is about. */
@@ -444,6 +449,38 @@ export function apiRetryCopy(r: ApiRetry): string {
     ? `${cause} Last retry in ${secs}s.`
     : `${cause} Retrying in ${secs}s, attempt ${r.attempt} of ${r.maxRetries}.`
 }
+const WINDOWS: Record<string, string> = { five_hour: '5-hour', seven_day: 'weekly' }
+
+/** When a limit resets, as a clock time: `at 3:40 PM`, `Tuesday at 3:40 PM`, `on Oct 20`. After
+ *  "until" the same-day and later forms drop their preposition. */
+export function resetPhrase(resetsAtSec: number, afterUntil: boolean, now = new Date()): string {
+  const at = new Date(resetsAtSec * 1000)
+  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(at)
+  const days = Math.round((new Date(at).setHours(0, 0, 0, 0) - new Date(now).setHours(0, 0, 0, 0)) / 86_400_000)
+  if (days <= 0) return afterUntil ? time : `at ${time}`
+  if (days <= 6) return `${new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(at)} at ${time}`
+  const date = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(at)
+  return afterUntil ? date : `on ${date}`
+}
+
+export function rateLimitCopy(r: RateLimit, now = new Date()): string {
+  const reset = r.resetsAt === undefined ? null : r.resetsAt
+  if (r.status === 'rejected') {
+    if (r.extraUsage) {
+      return reset === null
+        ? "Usage limit reached. Extra usage is on, so Claude keeps going and it's billed to your account."
+        : `Usage limit reached. Extra usage is on, so Claude keeps going and it's billed to your account until ${resetPhrase(reset, true, now)}.`
+    }
+    return `Usage limit reached. Claude can't respond until ${reset === null ? 'it resets' : resetPhrase(reset, true, now)}.`
+  }
+  const window = r.window ? WINDOWS[r.window] : undefined
+  const used =
+    r.utilization === undefined
+      ? "You're close to your usage limit."
+      : `You've used ${Math.round(r.utilization * 100)}% of your ${window ? `${window} limit` : 'usage limit'}.`
+  return reset === null ? used : `${used} It resets ${resetPhrase(reset, false, now)}.`
+}
+
 /** The transient app-level notice: a message plus the tone that channels its styling. */
 export interface Notice {
   message: string
@@ -641,6 +678,8 @@ interface SessionStore {
   dismissModToast: (id: string) => void
   /** Hide the active session's retry strip for the rest of this retry run. */
   dismissApiRetry: () => void
+  /** Hide the active session's usage-limit strip until the limit's status changes. */
+  dismissRateLimit: () => void
   /** Open the maximized transcript view for a subagent (by parent_tool_use_id). Resets
    *  the nesting trail to just this id (fresh entry from an Agent card / bg tray). */
   viewSubagent: (parentToolUseId: string) => void
@@ -800,6 +839,9 @@ function withoutKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
   const { [key]: _gone, ...rest } = rec
   return rest
 }
+
+/** Each session's one pending timer for its usage limit's reset, replaced by every new limit event. */
+const rateLimitTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 // --- One persistent event subscription (installed lazily on first use) ---
 
@@ -1117,6 +1159,9 @@ async function beginSession(
     apiRetryDismissed: false,
     apiRetryAnnounce: '',
     checkingTools: EMPTY_CHECKING,
+    rateLimit: null,
+    rateLimitDismissed: false,
+    rateLimitAnnounce: '',
     turnTasks: EMPTY_STRINGS,
     endedTasks: EMPTY_WOKEN,
     exited: false,
@@ -2087,6 +2132,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     // stream event to map, so nothing else refreshes the sidebar. Detected at the turn
     // boundary below and quiet-rescanned post-commit. Holder like `release`.
     const rescanSessions = { needed: false }
+    // A usage-limit event to (re)arm the reset timer for, after the commit. Holder like `release`.
+    const rateLimitSchedule: { next: RateLimit | null } = { next: null }
     set((state) => {
       const slice = state.sessions[handleId]
       // Slice not created yet: buffer until insertSlice flushes it (race guard). But a
@@ -2318,9 +2365,22 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (slice.checkingTools[e.toolUseId]) patch.checkingTools = withoutKey(slice.checkingTools, e.toolUseId)
           break
         }
-        case 'permission-check': {
+        case 'permission-check':
           if (e.checking) patch.checkingTools = { ...slice.checkingTools, [e.toolUseId]: true }
           else if (slice.checkingTools[e.toolUseId]) patch.checkingTools = withoutKey(slice.checkingTools, e.toolUseId)
+          break
+        case 'rate-limit': {
+          const r = e.info
+          rateLimitSchedule.next = r
+          if (r.status === 'allowed') {
+            if (slice.rateLimit) Object.assign(patch, { rateLimit: null, rateLimitDismissed: false, rateLimitAnnounce: '' })
+            break
+          }
+          patch.rateLimit = r
+          if (slice.rateLimit?.status !== r.status) {
+            patch.rateLimitDismissed = false
+            patch.rateLimitAnnounce = rateLimitCopy(r)
+          }
           break
         }
         case 'permission-request':
@@ -2787,6 +2847,21 @@ export const useSession = create<SessionStore>((set, get) => ({
       void dispatchTurn(set, release.queued.handleId, release.queued.msg.text, release.queued.msg.attachments)
     }
     if (rescanSessions.needed) void get().refreshSessions(true)
+    const limit = rateLimitSchedule.next
+    if (limit) {
+      clearTimeout(rateLimitTimers.get(handleId))
+      rateLimitTimers.delete(handleId)
+      // A limit can't outlast its reset, so a stale "can't respond" never sits there afterwards.
+      if (limit.status !== 'allowed' && limit.resetsAt !== undefined) {
+        const clear = (): void => {
+          rateLimitTimers.delete(handleId)
+          set((s) => (s.sessions[handleId]?.rateLimit === limit ? patchSlice(s, handleId, { rateLimit: null, rateLimitDismissed: false }) : {}))
+        }
+        const ms = limit.resetsAt * 1000 - Date.now()
+        if (ms <= 0) clear()
+        else rateLimitTimers.set(handleId, setTimeout(clear, Math.min(ms, 2 ** 31 - 1)))
+      }
+    }
     // A rename that arrived while this session was busy fires now that the turn is idle.
     const pendingName = pendingLiveRename.get(handleId)
     if (pendingName && !get().sessions[handleId]?.busy) {
@@ -2809,6 +2884,8 @@ export const useSession = create<SessionStore>((set, get) => ({
   dismissModToast: (id) => set((s) => ({ modToasts: s.modToasts.filter((t) => t.id !== id) })),
   dismissApiRetry: () =>
     set((s) => (s.activeHandleId ? patchSlice(s, s.activeHandleId, { apiRetryDismissed: true }) : {})),
+  dismissRateLimit: () =>
+    set((s) => (s.activeHandleId ? patchSlice(s, s.activeHandleId, { rateLimitDismissed: true }) : {})),
   dismissCompactSuggestion: () =>
     set((s) => {
       const active = activeSlice(s)

@@ -130,6 +130,15 @@ export type TurnEnd =
   | { kind: 'early'; reason: string }
   | { kind: 'failed' }
 
+/** The CLI's `rate_limit_event` info, narrowed to what the banner reads. `resetsAt` is epoch seconds. */
+export interface RateLimit {
+  status: 'allowed' | 'allowed_warning' | 'rejected'
+  resetsAt?: number
+  window?: string
+  utilization?: number
+  extraUsage: boolean
+}
+
 export type DomainEvent =
   /** Session started; carries the CLI-assigned session id + metadata. */
   | {
@@ -169,6 +178,7 @@ export type DomainEvent =
     }
   /** Auto mode's classifier has been deciding on this call for a few seconds (`checking`), or stopped. */
   | { type: 'permission-check'; toolUseId: string; checking: boolean }
+  | { type: 'rate-limit'; info: RateLimit }
   /** The current turn finished (one assistant message). */
   | { type: 'turn-complete'; stopReason: string | null }
   /**

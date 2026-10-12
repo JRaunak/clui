@@ -5,7 +5,7 @@
  * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
  * drift skips the envelope instead of crashing the app.
  */
-import { parseCliMessage, perTurnUsage, ZERO_USAGE, type DomainEvent, type PermissionSuggestion, type TurnEnd, type TurnUsage } from '../../shared/events'
+import { parseCliMessage, perTurnUsage, ZERO_USAGE, type DomainEvent, type PermissionSuggestion, type RateLimit, type TurnEnd, type TurnUsage } from '../../shared/events'
 import { deriveModelInfo } from '../../shared/settings'
 
 // Minimal structural typing of the raw envelopes we care about.
@@ -97,6 +97,14 @@ interface RawEnvelope {
   local_command?: string
   /** On a user/tool_result envelope: why a call didn't run, keyed by tool_use_id. */
   tool_result_meta?: Array<{ id?: string; non_execution_kind?: string }>
+  rate_limit_info?: {
+    status?: string
+    resetsAt?: number
+    rateLimitType?: string
+    utilization?: number
+    overageStatus?: string
+    isUsingOverage?: boolean
+  }
   // system/api_retry
   attempt?: number
   max_retries?: number
@@ -510,6 +518,19 @@ export class EventMapper {
           })
         }
         return out
+      }
+      case 'rate_limit_event': {
+        const info = env.rate_limit_info
+        const status = info?.status
+        if (status !== 'allowed' && status !== 'allowed_warning' && status !== 'rejected') return []
+        const rateLimit: RateLimit = {
+          status,
+          resetsAt: typeof info?.resetsAt === 'number' ? info.resetsAt : undefined,
+          window: info?.rateLimitType,
+          utilization: typeof info?.utilization === 'number' ? info.utilization : undefined,
+          extraUsage: info?.isUsingOverage === true || info?.overageStatus === 'allowed' || info?.overageStatus === 'allowed_warning'
+        }
+        return [{ type: 'rate-limit', info: rateLimit }]
       }
       case 'command_lifecycle':
         if (env.command_uuid && this.stamped.has(env.command_uuid)) {

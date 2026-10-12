@@ -1,4 +1,4 @@
-import { useSession, useActive, apiRetryCopy, type NoticeTone } from '../store'
+import { useSession, useActive, apiRetryCopy, rateLimitCopy, type NoticeTone } from '../store'
 import { IconCheck, IconWarn, IconNoEntry, IconClose, IconRefresh } from './Icon'
 
 /** Per-tone notice styling. Message text stays text-content in the render, not the tone color:
@@ -14,22 +14,28 @@ const NOTICE_STYLES: Record<
   info: { cls: 'border-info/40 bg-info/10', Icon: IconRefresh, tint: 'text-info' }
 }
 
-/** The app-level notice strip, or else the viewed session's API retry. A global notice always
- *  wins, so a retry never hides an error. Its tint is translucent, so it sits on an opaque bg-bg
- *  base and the transcript never shows through it. */
+/** The app-level notice strip, or else the viewed session's usage limit or API retry. A global
+ *  notice always wins, so a retry never hides an error, and a blocked account outranks a retry that
+ *  can't succeed. Its tint is translucent, so it sits on an opaque bg-bg base and the transcript
+ *  never shows through it. */
 export function Notice(): JSX.Element {
   const notice = useSession((s) => s.notice)
   const dismissNotice = useSession((s) => s.dismissNotice)
   const dismissApiRetry = useSession((s) => s.dismissApiRetry)
   const retry = useActive((s) => (s && !s.apiRetryDismissed ? s.apiRetry : null))
   const retryAnnounce = useActive((s) => s?.apiRetryAnnounce ?? '')
-  const shown = notice ?? (retry ? { message: apiRetryCopy(retry), tone: 'info' as const } : null)
+  const dismissRateLimit = useSession((s) => s.dismissRateLimit)
+  const limit = useActive((s) => (s && !s.rateLimitDismissed ? s.rateLimit : null))
+  const limitAnnounce = useActive((s) => s?.rateLimitAnnounce ?? '')
+  const blocked = limit?.status === 'rejected' && !limit.extraUsage
+  const limitShown = limit && (blocked || !retry) ? { message: rateLimitCopy(limit), tone: blocked ? ('error' as const) : ('warn' as const) } : null
+  const shown = notice ?? limitShown ?? (retry ? { message: apiRetryCopy(retry), tone: 'info' as const } : null)
   const { cls, Icon, tint } = NOTICE_STYLES[shown?.tone ?? 'info']
   return (
     <>
       {/* Always mounted: a live region that mounts with its first message often goes unannounced. */}
       <span className="sr-only" role="status">
-        {notice ? notice.message : retry ? retryAnnounce : ''}
+        {notice ? notice.message : limitShown ? limitAnnounce : retry ? retryAnnounce : ''}
       </span>
       {shown && (
         <div data-ui="notice" className="bg-bg">
@@ -38,7 +44,7 @@ export function Notice(): JSX.Element {
             <span className="flex-1 tabular-nums">{shown.message}</span>
             <button
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim transition-colors hover:bg-bg-raised hover:text-content"
-              onClick={notice ? dismissNotice : dismissApiRetry}
+              onClick={notice ? dismissNotice : limitShown ? dismissRateLimit : dismissApiRetry}
               aria-label="Dismiss"
               title="Dismiss"
             >

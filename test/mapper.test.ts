@@ -389,6 +389,14 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(!tr('automode-blocked').notRun && !tr('user-rejected').notRun, 'mapper: a refusal is still a failure')
 }
 
+// rate_limit_event
+{
+  const m = new EventMapper()
+  const [r] = feed(m, [{ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 100, rateLimitType: 'five_hour', isUsingOverage: true } }])
+  ok(r?.type === 'rate-limit' && r.info.status === 'rejected' && r.info.extraUsage && r.info.window === 'five_hour' && r.info.resetsAt === 100, 'mapper: rate_limit_event maps')
+  ok(feed(m, [{ type: 'rate_limit_event', rate_limit_info: { status: 'weird' } }]).length === 0, 'mapper: an unknown limit status is dropped')
+}
+
 // A foreground shell isn't background work until it's moved there.
 {
   const m = new EventMapper()
