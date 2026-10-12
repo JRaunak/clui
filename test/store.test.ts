@@ -68,6 +68,17 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   lastError: null,
   exited: false,
   lastActivityMs: 0,
+  backgroundTasks: {},
+  subagentMessages: {},
+  subagentChildren: {},
+  checkingTools: {},
+  pendingPermissions: [],
+  rateLimit: null,
+  rateLimitDismissed: false,
+  rateLimitAnnounce: '',
+  turnTasks: [],
+  endedTasks: [],
+  turnStartMs: null,
   ...over
 })
 const reset = (over?: Record<string, unknown>, caps = {}): void => {
@@ -302,3 +313,17 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   await st().closeSession('h3')
   ok(!st().sessions.h2.browserOpen, 'browser auto-open: closing a background session leaves the viewed one alone')
 }
+
+const res = (over: Record<string, unknown> = {}): any => ({ type: 'result', sessionId: 's', isError: false, result: null, ...over })
+const q = (id: string, text: string): any => ({ id, text })
+
+// A user's message folded into a background-woken turn ends the user's turn at that turn's result.
+{
+  reset({ queuedMessages: [q('q1', 'next')] })
+  st().applyEvent('h1', res({ fromTaskNotification: true }))
+  ok(cur().busy && cur().queuedMessages.length === 1, 'store: a woken turn that took nothing of the user\'s keeps busy and the queue')
+  st().applyEvent('h1', res({ fromTaskNotification: true, answersUser: true }))
+  ok(!cur().busy || calls.some((c) => c.name === 'sendMessage'), 'store: a woken turn that answered the user ends the user\'s turn')
+  ok(cur().queuedMessages.length === 0, 'store: and releases the next queued message')
+}
+

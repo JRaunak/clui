@@ -333,3 +333,12 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(ui('ui_toast', { text: 'x' })[0]?.timeoutMs === 4000, 'mapper: missing timeout_ms defaults to 4000')
   ok(ui('ui_toast', { text: '\u001b[0m' }).length === 0, 'mapper: a toast that strips to nothing is dropped')
 }
+
+// A foreground shell isn't background work until it's moved there.
+{
+  const m = new EventMapper()
+  ok(feed(m, [{ type: 'system', subtype: 'task_started', task_id: 'b1', tool_use_id: 'tu', task_type: 'local_bash', is_backgrounded: false, description: 'Sleep' }]).length === 0, 'mapper: a foreground shell gets no tray handle')
+  const moved = feed(m, [{ type: 'system', subtype: 'task_updated', task_id: 'b1', patch: { is_backgrounded: true } }])
+  ok(moved[0]?.type === 'bg-task-started' && moved[0].taskType === 'local_bash' && moved[0].description === 'Sleep', 'mapper: a shell moved to the background joins the tray')
+  ok(feed(m, [{ type: 'system', subtype: 'task_started', task_id: 'b2', task_type: 'local_bash', is_backgrounded: true }])[0]?.type === 'bg-task-started', 'mapper: a background shell joins the tray')
+}

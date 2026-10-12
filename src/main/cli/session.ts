@@ -597,8 +597,12 @@ export class ClaudeSession extends EventEmitter {
    */
   private writeUserMessage(turn: UserTurn): void {
     const { text, attachments } = turn
+    // The CLI names the uuids each result answered, which is how a turn's end is found when the
+    // message joined a background turn.
+    const uuid = randomUUID()
+    this.mapper.trackSent(uuid)
     if (!attachments || attachments.length === 0) {
-      this.writeLine({ type: 'user', message: { role: 'user', content: text } })
+      this.writeLine({ type: 'user', message: { role: 'user', content: text }, uuid })
       return
     }
     const content: unknown[] = attachments.map((a) => {
@@ -612,7 +616,7 @@ export class ClaudeSession extends EventEmitter {
       }
     })
     if (text) content.push({ type: 'text', text })
-    this.writeLine({ type: 'user', message: { role: 'user', content } })
+    this.writeLine({ type: 'user', message: { role: 'user', content }, uuid })
   }
 
   /**

@@ -1260,6 +1260,12 @@ async function dispatchTurn(
   }
 }
 
+/** A result ends the user's turn when it isn't a background or peer turn's, or when one of
+ *  those took the user's message in. */
+function endsUserTurn(e: Extract<DomainEvent, { type: 'result' }>): boolean {
+  return (!e.fromTaskNotification && !e.fromPeer) || !!e.answersUser
+}
+
 /** Find or create the current (last) assistant message to append streamed content. */
 function currentAssistant(messages: ChatMessage[]): ChatMessage {
   const last = messages[messages.length - 1]
@@ -2008,7 +2014,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       // Set true to CLEAR the app-level notice (e.g. a fresh session-init resolves the
       // transient "Reconnecting…" notice from an effort/ultracode respawn).
       let clearNotice = false
-      if (slice.apiRetry && (ENDS_RETRY.has(e.type) || (e.type === 'result' && !e.fromTaskNotification && !e.fromPeer))) {
+      if (slice.apiRetry && (ENDS_RETRY.has(e.type) || (e.type === 'result' && endsUserTurn(e)))) {
         Object.assign(patch, NO_RETRY)
       }
 
@@ -2497,12 +2503,14 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (idx >= 0) messages.splice(idx, 1)
           break
         }
-        case 'result':
+        case 'result': {
           // A bg-subagent completion (`fromTaskNotification`) or a peer-woken turn (`fromPeer`)
           // arrives as its own result: cost is real (accrued below) but it's not the user's
           // turn ending, so it must not clear `busy`, release the queue, or trigger the
-          // /rename rescan. Only a genuine user turn-end does those.
-          if (!e.fromTaskNotification && !e.fromPeer) {
+          // /rename rescan. Only a genuine user turn-end does those, or one of those turns
+          // that took the user's message in (the CLI folds a message into a turn mid-way).
+          const userEnd = endsUserTurn(e)
+          if (userEnd) {
             // While `interrupting`, this is the interrupted turn's terminal result: it's the
             // only foreground turn outstanding (new prompts queue), so it can't be another
             // turn's. Swallow it (cost still accrues below) but treat it as the FIFO boundary.
@@ -2558,6 +2566,7 @@ export const useSession = create<SessionStore>((set, get) => ({
             }
           }
           break
+        }
         case 'error':
           // 'info' severity = transient status (e.g. "Reconnecting to exit ultracode…"
           // during an effort respawn) → top notice/toast, NOT the red in-chat error

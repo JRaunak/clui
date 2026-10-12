@@ -267,6 +267,8 @@ export type DomainEvent =
       usage?: TurnUsage
       /** The API id of the turn's last main-thread assistant message, which keys its saved usage. */
       messageId?: string
+      /** This result answered a message Clui sent, even when a background or peer turn took it in. */
+      answersUser?: boolean
     }
   /** A peer began messaging this session (`command_lifecycle:started`): insert the
    *  anonymous placeholder, backfilled by `peer-message` at the result. */

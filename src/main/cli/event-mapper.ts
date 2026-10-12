@@ -88,6 +88,8 @@ interface RawEnvelope {
   }
   is_error?: boolean
   result?: string | null
+  /** The Clui-stamped uuids of the user messages this result answered. */
+  user_message_uuids?: string[]
   // system/api_retry
   attempt?: number
   max_retries?: number
@@ -254,14 +256,25 @@ export class EventMapper {
   private bgAgentTaskIds = new Set<string>()
   private lastThinkingEmitMs = 0
   private seenUiUuids = new Set<string>()
-  /** tool_use_id + description per local_agent task_id, so a subagent moved to the
+  /** tool_use_id + description per local_agent or local_bash task_id, so a task moved to the
    *  background AFTER its task_started (no fresh one fires) can still get a tray handle
    *  from its later task_updated. Cleared on the task's terminal notification. */
-  private agentTaskMeta = new Map<string, { toolUseId?: string; description?: string }>()
+  private taskMeta = new Map<string, { toolUseId?: string; description?: string; taskType: string }>()
   /** The session's current model, for naming it in a model-access error. */
   private model = ''
   /** This foreground turn's API error, from its `is_api_error_message` assistant envelope. */
   private apiError: ApiError | null = null
+  /** Messages Clui sent that no result has answered yet. A result lists the uuids it answered,
+   *  whichever turn took them in, so a message folded into a background turn still finds its end. */
+  private unanswered = new Set<string>()
+  /** Every uuid Clui stamped, so their command_lifecycle frames aren't read as a peer's. */
+  private stamped = new Set<string>()
+
+  trackSent(uuid: string): void {
+    this.unanswered.add(uuid)
+    if (this.stamped.size >= 256) this.stamped.delete(this.stamped.values().next().value as string)
+    this.stamped.add(uuid)
+  }
 
   /** Suppress the next result's is_error box (see the `interrupted` field). */
   markInterrupted(): void {
@@ -385,29 +398,34 @@ export class EventMapper {
         }
         const fromTaskNotification = env.origin?.kind === 'task-notification'
         const fromPeer = env.origin?.kind === 'peer'
-        // A background-subagent-completion or peer-woken result is NOT the foreground
-        // turn's boundary, so it must not consume the foreground turn's streamed/interrupt
-        // state (else it eats a Stop meant for the foreground turn).
-        const isForeground = !fromTaskNotification && !fromPeer
-        const wasInterrupted = isForeground && this.interrupted
+        const listed = Array.isArray(env.user_message_uuids) ? env.user_message_uuids : []
+        const answersUser = listed.some((u) => this.unanswered.has(u))
+        for (const u of listed) this.unanswered.delete(u)
+        // A result that lists nothing (as an older CLI may) still ends the turn it ran for.
+        if (!listed.length && !fromTaskNotification && !fromPeer) this.unanswered.clear()
+        // A background-subagent-completion or peer-woken result is NOT the user's turn boundary,
+        // unless the user's message folded into it, so it must not consume the user turn's
+        // streamed/interrupt state (else it eats a Stop meant for the user's turn).
+        const ownsTurn = (!fromTaskNotification && !fromPeer) || answersUser
+        const wasInterrupted = ownsTurn && this.interrupted
         // Dedupe the failure by identity: only suppress the error box when the failure
         // text was ALREADY rendered as an assistant bubble (the API-error-as-text case),
         // not merely because some progress text streamed first.
         const alreadyShown = Boolean(env.result) && this.turnText.includes(env.result as string)
-        const classified = isForeground ? this.classifiedError(env.api_error_status ?? undefined, env.api_error ?? undefined) : null
-        if (isForeground) {
+        const classified = ownsTurn ? this.classifiedError(env.api_error_status ?? undefined, env.api_error ?? undefined) : null
+        if (ownsTurn) {
           this.streamedTextSinceStart = false
           this.interrupted = false
           this.turnText = ''
           this.apiError = null
         }
         // Background and peer turns still advance the process total, so the baseline moves on every
-        // result while only a foreground one reports its delta.
+        // result while only the user's turn reports its delta.
         const cumulative = turnUsageFrom(env)
         const prevUsage = this.usageBaseline
         if (cumulative) this.usageBaseline = cumulative
-        const messageId = isForeground ? this.lastMessageId : undefined
-        if (isForeground) this.lastMessageId = undefined
+        const messageId = ownsTurn ? this.lastMessageId : undefined
+        if (ownsTurn) this.lastMessageId = undefined
         const out: DomainEvent[] = [
           {
             type: 'result',
@@ -423,12 +441,13 @@ export class EventMapper {
             // A peer-woken turn ends with origin.kind='peer'; same guard as above so it
             // doesn't clear the user's busy or run user-turn side effects.
             fromPeer,
-            // Foreground only: a bg/peer result isn't the user's turn, so its denials aren't theirs.
+            answersUser,
+            // A bg/peer result isn't the user's turn, so its denials aren't theirs.
             denials:
-              isForeground && env.permission_denials?.length
+              ownsTurn && env.permission_denials?.length
                 ? env.permission_denials.map((d) => ({ toolName: d.tool_name ?? 'a tool', input: d.tool_input }))
                 : undefined,
-            usage: isForeground && cumulative ? perTurnUsage(cumulative, prevUsage) : undefined,
+            usage: ownsTurn && cumulative ? perTurnUsage(cumulative, prevUsage) : undefined,
             messageId
           }
         ]
@@ -440,12 +459,12 @@ export class EventMapper {
             body: env.origin.body
           })
         }
-        // Surface a foreground failure as the in-chat error box. `alreadyShown` de-dups the
+        // Surface the user's failure as the in-chat error box. `alreadyShown` de-dups the
         // API-error-as-assistant-text case; a Stop is the user's own action, not a failure;
-        // a bg-subagent or peer result is not the foreground turn.
-        if (env.is_error && isForeground && !wasInterrupted && classified) {
+        // a bg-subagent or peer result is not the user's turn.
+        if (env.is_error && ownsTurn && !wasInterrupted && classified) {
           out.push({ type: 'error', message: classified, severity: 'error' })
-        } else if (env.is_error && isForeground && !wasInterrupted && !alreadyShown) {
+        } else if (env.is_error && ownsTurn && !wasInterrupted && !alreadyShown) {
           out.push({ type: 'error', message: env.result ?? 'The request failed.', severity: 'error' })
         }
         // The authoritative window changed (e.g. a model switch corrected 200K↔1M) but no
@@ -464,6 +483,10 @@ export class EventMapper {
         return out
       }
       case 'command_lifecycle':
+        if (env.command_uuid && this.stamped.has(env.command_uuid)) {
+          if (env.state === 'cancelled') this.unanswered.delete(env.command_uuid)
+          return []
+        }
         // Brackets a peer-triggered turn. `started` fires before the reply, so the placeholder
         // lands above it; the terminal state sweeps a placeholder that never resolved.
         if (env.state === 'started') return [{ type: 'peer-pending' }]
@@ -516,6 +539,10 @@ export class EventMapper {
         // when the subagent finishes. Record the local_bash ids so the later task
         // events (which lack a reliable task_type) can be gated too.
         if (env.task_id && env.task_type === 'local_bash') {
+          this.taskMeta.set(env.task_id, { toolUseId: env.tool_use_id, description: env.description, taskType: 'local_bash' })
+          // The CLI also registers a foreground shell after a couple of seconds, so it can be moved
+          // to the background. It's still the turn's own tool card until that move.
+          if (env.is_backgrounded === false) return []
           this.bgTaskIds.add(env.task_id)
           return [
             {
@@ -540,10 +567,10 @@ export class EventMapper {
             }
           ]
         }
-        // Record every local_agent's meta up front (see agentTaskMeta) so a later
+        // Record every local_agent's meta up front (see taskMeta) so a later
         // background move can recover a tray handle for it.
         if (env.task_id && env.task_type === 'local_agent') {
-          this.agentTaskMeta.set(env.task_id, { toolUseId: env.tool_use_id, description: env.description })
+          this.taskMeta.set(env.task_id, { toolUseId: env.tool_use_id, description: env.description, taskType: 'local_agent' })
         }
         // A BACKGROUNDED subagent earns a tray handle (keyed by the Agent tool_use id so the
         // row opens its transcript). Backgrounded-ness = `is_backgrounded` (2.1.243+) or, as
@@ -611,8 +638,8 @@ export class EventMapper {
         ]
       }
       case 'task_updated': {
-        // A subagent moved to the background AFTER its task_started (auto-background timer,
-        // or a client `background_tasks` request) arrives here with patch.is_backgrounded and
+        // A subagent or shell moved to the background AFTER its task_started (auto-background
+        // timer, or a client `background_tasks` request) arrives here with patch.is_backgrounded and
         // no fresh task_started to promote it. Give it the tray handle now from its meta.
         if (
           env.patch?.is_backgrounded === true &&
@@ -620,15 +647,16 @@ export class EventMapper {
           !this.bgSubagentIds.has(env.task_id) &&
           !this.bgTaskIds.has(env.task_id)
         ) {
-          this.bgSubagentIds.add(env.task_id)
-          const meta = this.agentTaskMeta.get(env.task_id)
+          const meta = this.taskMeta.get(env.task_id)
+          const shell = meta?.taskType === 'local_bash'
+          ;(shell ? this.bgTaskIds : this.bgSubagentIds).add(env.task_id)
           return [
             {
               type: 'bg-task-started',
               taskId: env.task_id,
               toolUseId: meta?.toolUseId,
-              description: meta?.description ?? 'Background subagent',
-              taskType: 'local_agent'
+              description: meta?.description ?? (shell ? 'Background task' : 'Background subagent'),
+              taskType: shell ? 'local_bash' : 'local_agent'
             },
             { type: 'bg-task-updated', taskId: env.task_id, status: env.patch?.status }
           ]
@@ -647,10 +675,10 @@ export class EventMapper {
           }
           return [{ type: 'workflow-ended', taskId: env.task_id, status: env.status }]
         }
-        // Release this local_agent's meta on a terminal status (trayed or not) so the map
-        // doesn't retain an entry per foreground subagent.
+        // Release the task's meta on a terminal status (trayed or not) so the map
+        // doesn't retain an entry per foreground subagent or shell.
         if (env.task_id && (env.status === 'killed' || env.status === 'completed' || env.status === 'failed' || env.status === 'stopped')) {
-          this.agentTaskMeta.delete(env.task_id)
+          this.taskMeta.delete(env.task_id)
         }
         // Only tracked bg tasks (local_bash OR backgrounded subagent) get a completion
         // toast; a foreground subagent finishing must NOT. Drop the id from its set on a
@@ -933,7 +961,7 @@ export class EventMapper {
   private mapControlRequest(env: RawEnvelope): DomainEvent[] {
     const req = env.request
     if (req?.subtype === 'can_use_tool' && env.request_id) {
-      const agent = req.agent_id ? this.agentTaskMeta.get(req.agent_id) : undefined
+      const agent = req.agent_id ? this.taskMeta.get(req.agent_id) : undefined
       return [
         {
           type: 'permission-request',
