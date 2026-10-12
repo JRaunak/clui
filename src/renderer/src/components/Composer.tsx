@@ -9,7 +9,7 @@ import {
   type ChangeEvent,
   type CSSProperties
 } from 'react'
-import { effectiveMode, useActive, useSession, EMPTY_ATTACHMENTS, type SendAttachment } from '../store'
+import { chipMode, effectiveMode, useActive, useSession, EMPTY_ATTACHMENTS, type SendAttachment } from '../store'
 import { annotationsText, hostOf, pinWords, type AnnotationPin } from '../../../shared/annotate'
 import { AnnotationChip } from './AnnotationChip'
 import { useComposerAutocomplete } from './ComposerAutocomplete'
@@ -95,14 +95,18 @@ export function Composer(): JSX.Element {
   // rewriting the user's pick, so it comes back when the session can honor it.
   const modelMode = useActive((s) => s?.modelMode ?? null)
   const permissionMode = useActive((s) => s?.permissionMode ?? null)
-  const { mode: displayMode, downgraded, inherited } = effectiveMode({ modelMode, modeChoice, permissionMode })
+  const effect = effectiveMode({ modelMode, modeChoice, permissionMode })
+  const { downgraded } = effect
+  const { mode: displayMode, raw: unknownMode } = chipMode(effect.mode, permissionMode)
   // From modelChoice: the init-reported model never updates on a live switch.
   const modelLabel = useActive((s) => (s ? deriveModelInfo(s.modelChoice).label : null))
   // Auto is the one pick a model can refuse; any other mismatch just shows the mode in effect.
   const unavailableOn = downgraded && modeChoice === 'auto' ? modelLabel : null
-  const permTitle = inherited
-    ? `Permissions: ${PERMISSION_MODE_LABELS[displayMode]} (System Default)`
-    : `Permissions: ${PERMISSION_MODE_LABELS[displayMode]}${unavailableOn ? ` (${PERMISSION_MODE_LABELS[modeChoice]} isn't available on ${unavailableOn})` : ''}`
+  const pickLabel = PERMISSION_MODE_LABELS[modeChoice]
+  const effectLabel = unknownMode ?? PERMISSION_MODE_LABELS[displayMode]
+  const permTitle = unavailableOn
+    ? `Permissions: ${effectLabel}, ${pickLabel} isn't available on ${unavailableOn}`
+    : `Permissions: ${effectLabel}`
   const contextPercent = useActive((s) => s?.contextPercent ?? null)
   const contextTokens = useActive((s) => s?.contextTokens ?? null)
   const contextWindow = useActive((s) => s?.contextWindow ?? null)
@@ -319,16 +323,15 @@ export function Composer(): JSX.Element {
     if (ta) setCaret(ta.selectionStart ?? 0)
   }
 
-  const permOptions = PERMISSION_MODES.map((m) => ({
+  // System Default lives in Settings only: mid-session the chip shows the concrete mode Claude runs under.
+  const permOptions = PERMISSION_MODES.filter((m) => m !== 'inherit').map((m) => ({
     value: m,
     label: PERMISSION_MODE_LABELS[m],
     color: PERMISSION_MODE_COLORS[m],
     description:
       unavailableOn && m === modeChoice
-        ? `Your pick. Unavailable on ${unavailableOn}, so ${PERMISSION_MODE_LABELS[displayMode]} is in effect.`
-        : inherited && m === 'inherit'
-          ? `Your pick. ${PERMISSION_MODE_LABELS[displayMode]} is in effect; select to reapply settings.json.`
-          : PERMISSION_MODE_DESCRIPTIONS[m],
+        ? `Unavailable on ${unavailableOn}, so ${effectLabel} is in effect`
+        : PERMISSION_MODE_DESCRIPTIONS[m],
     icon: <PermissionIcon mode={m} className="h-4 w-4" />,
     // Autonomous (bypassPermissions) is the full-access danger tier: the whole row goes err,
     // not a new hue (terracotta stays scarce).
@@ -436,7 +439,7 @@ export function Composer(): JSX.Element {
                     <IconGhost className="h-3.5 w-3.5 shrink-0" />
                     Not saved
                   </span>
-                  {modeChoice === 'bypassPermissions' && (
+                  {displayMode === 'bypassPermissions' && (
                     <span
                       className="flex h-8 items-center gap-1.5 whitespace-nowrap px-1 text-xs text-err"
                       title="Autonomous · runs tools without asking · change in Settings → Quick sessions"
@@ -451,11 +454,22 @@ export function Composer(): JSX.Element {
                   <ModelEffortPicker />
                   <Dropdown<PermissionModeChoice>
                     dataUi="permission-chip"
-                    value={displayMode}
+                    // On a downgrade the check marks the held pick rather than the mode in effect.
+                    value={unavailableOn ? modeChoice : displayMode}
                     options={permOptions}
                     onChange={(m) => void setPermissionMode(m)}
                     title={permTitle}
-                    ariaLabel={unavailableOn || inherited ? permTitle : undefined}
+                    ariaLabel={permTitle}
+                    triggerLabel={
+                      unavailableOn ? (
+                        <>
+                          {effectLabel}
+                          <span className="font-normal text-faint"> · {pickLabel} unavailable</span>
+                        </>
+                      ) : (
+                        unknownMode ?? undefined
+                      )
+                    }
                     direction="up"
                     variant="pill"
                     menuClassName="w-72"
@@ -605,7 +619,7 @@ const PERMISSION_MODE_ICONS: Record<
   bypassPermissions: IconShieldOff
 }
 
-function PermissionIcon({
+export function PermissionIcon({
   mode,
   className = 'h-3.5 w-3.5'
 }: {

@@ -1,6 +1,6 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { useSession, apiRetryCopy, effectiveMode, rateLimitCopy } from '../src/renderer/src/store.ts'
+import { useSession, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -425,3 +425,10 @@ const q = (id: string, text: string): any => ({ id, text })
   ok(cur().messages[0].turnEnd?.durationMs === undefined, 'store: a local command gets no duration')
 }
 
+// The chip never shows System Default: an unknown resolved mode is named as written, nothing reported reads Interactive.
+{
+  const unknown = effectiveMode({ modelMode: null, modeChoice: 'inherit', permissionMode: 'turbo' } as any)
+  ok(chipMode(unknown.mode, 'turbo').raw === 'turbo', 'chip: a mode Clui does not know is named as written')
+  ok(chipMode('inherit', null).mode === 'default' && chipMode('inherit', null).raw === null, 'chip: nothing reported reads Interactive')
+  ok(chipMode('bypassPermissions', 'bypassPermissions').raw === null, 'chip: a known mode shows its own label')
+}

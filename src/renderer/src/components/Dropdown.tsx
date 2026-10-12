@@ -43,7 +43,8 @@ export function Dropdown<T extends string>({
   solid = false,
   dataUi,
   labelClassName,
-  chevronClassName
+  chevronClassName,
+  triggerLabel
 }: {
   value: T
   options: DropdownOption<T>[]
@@ -66,6 +67,8 @@ export function Dropdown<T extends string>({
   dataUi?: string
   labelClassName?: string
   chevronClassName?: string
+  /** Shown on the trigger in place of the selected option's label. */
+  triggerLabel?: React.ReactNode
 }): JSX.Element {
   // The only upward dropdowns are the composer's chips, which open above the whole dock.
   const p = usePopover({
@@ -137,7 +140,7 @@ export function Dropdown<T extends string>({
                   : (current?.color ?? 'text-content')
             } ${labelClassName ?? ''}`}
           >
-            {current?.label ?? value}
+            {triggerLabel ?? current?.label ?? value}
           </span>
         </span>
         <svg

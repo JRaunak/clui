@@ -496,6 +496,10 @@ interface SessionStore {
   notice: Notice | null
   /** Polite announcement from the browser (a login Clui filled), read by the browser pane's live region. */
   browserAnnounce: string
+  /** `defaultMode` from ~/.claude/settings.json, null when it sets none; undefined until first read. */
+  systemPermissionMode: string | null | undefined
+  /** Re-read it (read-only), at app start and when the window regains focus. */
+  refreshSystemPermissionMode: () => Promise<string | null>
   /** Plugin toasts for the viewed session, newest first. */
   modToasts: ModToast[]
   /** The latest plugin toast for the toast stack's live region; `at` lets it lose to a newer delete announcement. */
@@ -754,6 +758,14 @@ export function effectiveMode(
       ? { mode: reported as PermissionModeChoice, downgraded: false, inherited: true }
       : { mode: reported as PermissionModeChoice, downgraded: true, inherited: false }
   return { mode: s.modeChoice, downgraded: false, inherited: false }
+}
+
+/** What the composer chip shows for the mode in effect. System Default isn't a mode, so when the
+ *  session resolved to one Clui doesn't know the chip names it as written (`raw`), and with nothing
+ *  reported yet (the settings read failed) it reads Interactive, which is what an unset default runs as. */
+export function chipMode(mode: PermissionModeChoice, reported: string | null): { mode: PermissionModeChoice; raw: string | null } {
+  if (mode !== 'inherit') return { mode, raw: null }
+  return reported ? { mode, raw: reported } : { mode: 'default', raw: null }
 }
 
 /** The session's shown title: its explicit/branch name, else the first user message
@@ -1026,6 +1038,15 @@ async function beginSession(
   // A Quick session runs a fixed profile (resolved once, here): the configured quick permission
   // mode instead of the normal per-session/default one.
   const choice = opts.ephemeral ? settings.quickPermissionMode : (opts.permissionMode ?? settings.permissionMode)
+  // System Default shows as the mode settings.json resolves to from the start. The CLI's init has
+  // the final word, since a project's settings or a managed policy can set their own.
+  let seededMode: string | null = null
+  if (choice === 'inherit') {
+    const cached = get().systemPermissionMode
+    const system = cached === undefined ? await get().refreshSystemPermissionMode() : cached
+    // Unset means Interactive. A mode Clui doesn't know is kept as written, so the chip can name it.
+    seededMode = system === null ? 'default' : system
+  }
   // On RESUME, restore the session's last-used model/effort from the sidecar (the CLI
   // reverts to the settings.json default on --resume, so a mid-session switch would
   // otherwise be lost). Fresh sessions use the Settings default. `remembered` is only
@@ -1134,7 +1155,7 @@ async function beginSession(
     title: opts.name ?? null,
     cwd: opts.cwd,
     model: null,
-    permissionMode: null,
+    permissionMode: seededMode,
     modeChoice: choice,
     modelMode: null,
     modelChoice,
@@ -1532,6 +1553,12 @@ export const useSession = create<SessionStore>((set, get) => ({
   activeHandleId: null,
   notice: null,
   browserAnnounce: '',
+  systemPermissionMode: undefined,
+  refreshSystemPermissionMode: async () => {
+    const mode = await window.clui.getSystemPermissionMode().catch(() => null)
+    set(() => ({ systemPermissionMode: mode }))
+    return mode
+  },
   modToasts: [],
   modToastAnnounce: { text: '', at: 0 },
   effortCaps: {},

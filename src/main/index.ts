@@ -721,9 +721,9 @@ function registerIpc(): void {
   })
 
   handle(IpcChannels.getSystemPermissionMode, async () => {
-    // Read the user's ~/.claude/settings.json fresh (read-only) and report what
-    // "System Default" resolves to. Defaults to 'default' if unset/unreadable.
-    return (await readCliSettings()).defaultMode ?? 'default'
+    // Read the user's ~/.claude/settings.json fresh (read-only) for what "System Default" resolves to.
+    // null when it sets no default mode, so the UI can tell that apart from an explicit `default`.
+    return (await readCliSettings()).defaultMode ?? null
   })
 
   handle(IpcChannels.getEffortCaps, async () => {

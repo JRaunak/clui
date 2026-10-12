@@ -55,6 +55,14 @@ export function App(): JSX.Element {
   const anyOverlayOpen = settingsOpen || showCustomizations || floatOpen
 
   useEffect(() => {
+    const refresh = (): void => void useSession.getState().refreshSystemPermissionMode()
+    refresh()
+    // An edit made in another app shows up when the user comes back.
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [])
+
+  useEffect(() => {
     const onFocusIn = (e: FocusEvent): void => {
       const t = e.target as HTMLElement | null
       if (t && !t.closest('[data-overlay-host]')) lastBgFocusRef.current = t

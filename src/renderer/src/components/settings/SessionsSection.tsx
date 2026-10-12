@@ -14,7 +14,9 @@ import {
   type CluiSettings
 } from '../../../../shared/settings'
 import { Dropdown } from '../Dropdown'
+import { PermissionIcon } from '../Composer'
 import { IconWarn } from '../Icon'
+import { useSession } from '../../store'
 import { CheckBox, Field, type DraftProps } from './shared'
 
 /** What to tell the user when the model list is the bundled fallback. Only Bedrock can be queried
@@ -56,7 +58,26 @@ const QUICK_PERMISSION_DESCRIPTIONS: Record<CluiSettings['permissionMode'], stri
 
 const INHERITING = 'Currently inheriting from ~/.claude/settings.json.'
 
+type ModeChoice = CluiSettings['permissionMode']
+
+/** What System Default resolves to, from ~/.claude/settings.json: unset means Interactive, and a mode
+ *  Clui doesn't know keeps its raw name and no glyph. */
+function systemDefault(raw: string | null): { mode: ModeChoice | null; label: string } {
+  if (raw === null) return { mode: 'default', label: PERMISSION_MODE_LABELS.default }
+  return raw in PERMISSION_MODE_LABELS ? { mode: raw as ModeChoice, label: PERMISSION_MODE_LABELS[raw as ModeChoice] } : { mode: null, label: raw }
+}
+
+function systemNote(raw: string | null): string {
+  if (raw === null) return 'Currently Interactive. ~/.claude/settings.json sets no default mode.'
+  const { mode, label } = systemDefault(raw)
+  return mode === 'bypassPermissions'
+    ? 'Currently Autonomous, from ~/.claude/settings.json. New sessions run tools without asking.'
+    : `Currently ${label}, from ~/.claude/settings.json.`
+}
+
 export function SessionsSection({ settings, sources, set, reset, isOverridden }: DraftProps): JSX.Element {
+  const system = useSession((s) => s.systemPermissionMode)
+  const resolved = system === undefined ? null : systemDefault(system)
   const [modelList, setModelList] = useState<ModelListResult>({ ids: [], live: true })
   useEffect(() => {
     void window.clui.listModels().then(setModelList)
@@ -100,8 +121,17 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
         </div>
         <Field
           label="Permission mode"
-          hint="Applied as a --permission-mode flag. System Default passes no flag. Clui never writes your ~/.claude/settings.json."
+          hint="Applied as a --permission-mode flag. System Default passes none, so the CLI uses your settings, and a project's own settings can override it. Clui never writes ~/.claude/settings.json."
           onReset={isOverridden('permissionMode') ? () => reset('permissionMode') : undefined}
+          note={
+            settings.permissionMode === 'inherit' &&
+            resolved && (
+              <p className="flex items-center gap-1.5 text-meta text-dim">
+                {resolved.mode && <PermissionIcon mode={resolved.mode} className="h-3.5 w-3.5" />}
+                {systemNote(system ?? null)}
+              </p>
+            )
+          }
         >
           <Dropdown<CluiSettings['permissionMode']>
             value={settings.permissionMode}
@@ -110,7 +140,13 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
               value: m,
               label: PERMISSION_MODE_LABELS[m],
               color: PERMISSION_MODE_COLORS[m],
-              description: PERMISSION_MODE_DESCRIPTIONS[m]
+              description:
+                m === 'inherit' && resolved
+                  ? system === null
+                    ? 'Follows ~/.claude/settings.json, not set there, so Interactive'
+                    : `Follows ~/.claude/settings.json, now ${resolved.label}`
+                  : PERMISSION_MODE_DESCRIPTIONS[m],
+              tone: m === 'bypassPermissions' ? ('danger' as const) : undefined
             }))}
             menuClassName="w-72"
             onChange={(m) => set('permissionMode', m)}

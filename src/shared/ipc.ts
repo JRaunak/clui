@@ -254,9 +254,9 @@ export interface CluiApi {
   detectCliAt: (path: string) => Promise<CliInfo>
   /**
    * Read the `permissions.defaultMode` from ~/.claude/settings.json, i.e. what
-   * the "System Default" (inherit) mode resolves to. Returns 'default' if unset.
+   * the "System Default" (inherit) mode resolves to. Returns null if unset.
    */
-  getSystemPermissionMode: () => Promise<string>
+  getSystemPermissionMode: () => Promise<string | null>
   /**
    * Read the effort ceilings from ~/.claude/settings.json (top-level + per-model). Used
    * to keep the effort picker/chip honest about what will actually run. Read-only.
