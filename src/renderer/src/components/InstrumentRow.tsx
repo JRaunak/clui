@@ -20,15 +20,18 @@ import {
   type RowState
 } from '../lib/instrument'
 import { effortLabel } from '../../../shared/settings'
-import { IconAgentBrowser, IconCheck, IconChevron, IconCopy, IconOpenPane, IconSendToTray, IconWarn } from './Icon'
+import { IconAgentBrowser, IconCheck, IconChevron, IconCircle, IconCopy, IconOpenPane, IconSendToTray, IconShield, IconWarn } from './Icon'
 
 type Placement = 'spine' | 'inline'
 type Seg = 'through' | 'end'
 
 const BEAD_FILL: Record<RowState, string> = {
   running: 'bg-accent',
+  // The call is still in flight from the user's side, so it keeps the running bead.
+  checking: 'bg-accent',
   'needs-you': 'bg-warn',
   failed: 'border-[1.5px] border-err',
+  'not-run': 'border-[1.5px] border-faint',
   launched: 'bg-info',
   launching: 'border-[1.5px] border-info',
   done: 'border-[1.5px] border-faint'
@@ -37,7 +40,7 @@ const BEAD_FILL: Record<RowState, string> = {
 /** 8px state mark. On the spine it sits outside the card, centred on the line 15px left of the
  *  card edge; inline (inside an aggregate or an off-spine list) it leads the row's grid. */
 export function Bead({ state, lit, placement }: { state: RowState; lit: boolean; placement: Placement }): JSX.Element {
-  const hollow = state === 'launching' || state === 'done' || state === 'failed'
+  const hollow = state === 'launching' || state === 'done' || state === 'failed' || state === 'not-run'
   const pos = placement === 'spine' ? 'absolute left-[-19px] top-3' : 'relative'
   // A hollow ring is filled with whatever it sits on, so the spine line doesn't show through it.
   const hole = hollow ? (placement === 'spine' ? 'bg-bg' : 'bg-tool') : ''
@@ -54,12 +57,26 @@ export function Bead({ state, lit, placement }: { state: RowState; lit: boolean;
   )
 }
 
-function StatusText({ state, startMs }: { state: RowState; startMs?: number }): JSX.Element {
+function StatusText({ state, startMs, reason }: { state: RowState; startMs?: number; reason?: string }): JSX.Element {
   switch (state) {
     case 'running':
       return (
         <span className="text-dim">
           running{startMs !== undefined && <> <RunningTimer startMs={startMs} /></>}
+        </span>
+      )
+    case 'checking':
+      return (
+        <span className="flex items-center gap-1 text-dim" title="Auto mode is checking whether this action is safe to run">
+          <IconShield className="h-3.5 w-3.5 shrink-0" />
+          checking{startMs !== undefined && <> <RunningTimer startMs={startMs} /></>}
+        </span>
+      )
+    case 'not-run':
+      return (
+        <span className="flex items-center gap-1 text-faint" title={reason || undefined}>
+          <IconCircle className="h-3.5 w-3.5 shrink-0" />
+          not run
         </span>
       )
     case 'needs-you':
@@ -136,12 +153,13 @@ export function InstrumentRow({
   const sendToBackground = useSession((s) => s.backgroundTask)
   // Boolean selectors: a streaming token re-runs them but only re-renders the row whose answer flips.
   const needsYou = useActive((s) => needsYouToolIdOf(s) === tool.id)
+  const checking = useDelayedFlag(useActive((s) => !!s?.checkingTools[tool.id]))
   const lit = useActive((s) => {
     if (!lumen || !s) return false
     const site = lumenSiteOf(s)
     return site?.kind === 'tool' && site.toolId === tool.id
   })
-  const state = rowState(tool, needsYou)
+  const state = rowState(tool, needsYou, checking)
   // Task was renamed Agent in CLI 2.1.63; both mean a subagent.
   const isSubagent = tool.name === 'Task' || tool.name === 'Agent'
   const subType = subagentType(tool.input)
@@ -152,6 +170,7 @@ export function InstrumentRow({
   const canSendToBackground = tool.result === undefined && !isBackgroundedTool(tool) && tool.name === 'Bash'
   const actions = isSubagent || canSendToBackground || (browser && !!lastOpen)
   const errLine = tool.isError ? firstLine(tool.result ?? '') : ''
+  const failed = state === 'failed'
   const toggleBody = (e: MouseEvent): void => {
     setAnimateBody(viaOf(e) === 'pointer')
     setOpen((o) => !o)
@@ -211,7 +230,7 @@ export function InstrumentRow({
             style={{ gridTemplateColumns: gridCols(placement, actions) }}
           >
             {placement === 'inline' && <Bead state={state} lit={lit} placement="inline" />}
-            <span className="text-label font-semibold text-content">{name}</span>
+            <span className={`text-label font-semibold ${state === 'not-run' ? 'text-dim' : 'text-content'}`}>{name}</span>
             <span className="flex min-w-0 items-center gap-1.5">
               {summary && <span className="truncate text-code text-dim">{summary}</span>}
               {counted && (
@@ -231,7 +250,7 @@ export function InstrumentRow({
               )}
             </span>
             <span className="text-meta">
-              <StatusText state={state} startMs={tool.startMs} />
+              <StatusText state={state} startMs={tool.startMs} reason={errLine} />
             </span>
             {isSubagent ? (
               // Not a button: a click here falls through to the row. It's the one sign that this row
@@ -293,7 +312,7 @@ export function InstrumentRow({
         </div>
         {/* A collapsed failure keeps its reason visible. err text on the tool fill has the least
             contrast headroom, so the reason itself stays dim. */}
-        {tool.isError && !open && (
+        {failed && !open && (
           <div
             className="truncate border-t border-border px-2.5 py-1.5 font-mono text-meta text-dim"
             title={errLine || undefined}
@@ -304,7 +323,7 @@ export function InstrumentRow({
         {open && (
           <div ref={bodyRef} id={bodyId} className={`${animateBody ? 'row-body-in ' : ''}max-h-80 overflow-auto border-t border-border p-2.5`}>
             <div className="mb-1.5 flex items-center gap-2">
-              <span className="text-caps uppercase text-faint">Output</span>
+              <span className="text-caps uppercase text-faint">{state === 'not-run' ? 'Reason' : 'Output'}</span>
               <button
                 type="button"
                 onClick={onCopy}
@@ -362,19 +381,25 @@ export function AggregateRow({
   const [expanded, setExpanded] = useState(false)
   const ids = useMemo(() => new Set(tools.map((t) => t.id)), [tools])
   const needsYouId = useActive((s) => needsYouToolIdOf(s))
+  const checkingMap = useActive((s) => s?.checkingTools)
+  // Delayed across the group, so a quick check on one row can't flash the word.
+  const anyChecking = useDelayedFlag(tools.some((t) => !!checkingMap?.[t.id]))
   const lit = useActive((s) => {
     if (!s) return false
     const site = lumenSiteOf(s)
     return site?.kind === 'tool' && ids.has(site.toolId)
   })
-  const states = tools.map((t) => rowState(t, t.id === needsYouId))
+  const states = tools.map((t) => rowState(t, t.id === needsYouId, anyChecking && !!checkingMap?.[t.id]))
   const worst = worstState(states)
   const done = states.filter((s) => s === 'done' || s === 'launched').length
   const failed = states.filter((s) => s === 'failed').length
+  const notRun = states.filter((s) => s === 'not-run').length
   // One activity word at most, the most urgent first, so a lit or amber bead always has text too.
   const activity: { text: string; cls: string } | null = states.includes('needs-you')
     ? { text: 'needs you', cls: 'text-warn' }
-    : states.includes('running')
+    : states.includes('checking')
+      ? { text: 'checking', cls: 'text-dim' }
+      : states.includes('running')
       ? { text: 'running', cls: 'text-dim' }
       : states.includes('launching')
         ? { text: 'launching…', cls: 'text-info' }
@@ -385,11 +410,12 @@ export function AggregateRow({
   // Collapsed, only what still matters shows: failures pinned first, then anything unresolved.
   const visible =
     collapse && !expanded
-      ? [...tools.filter((t) => t.result !== undefined && t.isError), ...tools.filter((t) => t.result === undefined)]
+      ? [...tools.filter((t) => t.result !== undefined && t.isError && !t.notRun), ...tools.filter((t) => t.result === undefined)]
       : tools
   const label = [
     `${tools.length} tool calls`,
     failed > 0 ? `${failed} failed` : null,
+    notRun > 0 ? `${notRun} not run` : null,
     activity?.text ?? null,
     `${done} of ${tools.length} done`
   ]
@@ -422,6 +448,15 @@ export function AggregateRow({
         <span className="text-faint">
           {done} of {tools.length} done
         </span>
+        {notRun > 0 && (
+          <>
+            <span className="text-faint">·</span>
+            <span className="flex items-center gap-1 text-faint">
+              <IconCircle className="h-3.5 w-3.5 shrink-0" />
+              {notRun} not run
+            </span>
+          </>
+        )}
       </span>
       <span className="flex h-6 w-6 items-center justify-center text-faint" aria-hidden="true">
         {collapse && (
@@ -466,6 +501,20 @@ export function AggregateRow({
       </div>
     </div>
   )
+}
+
+/** `on`, once it has held for `ms`. A check that resolves within that never changes the row. */
+function useDelayedFlag(on: boolean, ms = 400): boolean {
+  const [shown, setShown] = useState(false)
+  useEffect(() => {
+    if (!on) {
+      setShown(false)
+      return
+    }
+    const t = setTimeout(() => setShown(true), ms)
+    return () => clearTimeout(t)
+  }, [on, ms])
+  return on && shown
 }
 
 /** Text updates once a second; nothing animates. */

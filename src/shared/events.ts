@@ -164,7 +164,11 @@ export type DomainEvent =
       toolUseId: string
       content: string
       isError: boolean
+      /** The auto-mode classifier couldn't be reached, so the call was held back without running. */
+      notRun?: boolean
     }
+  /** Auto mode's classifier has been deciding on this call for a few seconds (`checking`), or stopped. */
+  | { type: 'permission-check'; toolUseId: string; checking: boolean }
   /** The current turn finished (one assistant message). */
   | { type: 'turn-complete'; stopReason: string | null }
   /**

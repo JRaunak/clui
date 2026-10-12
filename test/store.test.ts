@@ -375,6 +375,18 @@ const q = (id: string, text: string): any => ({ id, text })
   ok(/^Waiting for 1 background task/.test(cur().statusAnnounce), 'store: a turn with running tasks announces the wait')
 }
 
+// Auto mode's check shows from checking to done, the tool's result, or a permission request.
+{
+  reset()
+  st().applyEvent('h1', { type: 'permission-check', toolUseId: 't', checking: true })
+  ok(cur().checkingTools.t, 'store: checking marks the tool')
+  st().applyEvent('h1', { type: 'permission-request', requestId: 'r', toolName: 'Bash', input: {}, toolUseId: 't' })
+  ok(!cur().checkingTools.t, 'store: a permission request ends the check')
+  st().applyEvent('h1', { type: 'permission-check', toolUseId: 't', checking: true })
+  st().applyEvent('h1', { type: 'permission-check', toolUseId: 't', checking: false })
+  ok(!cur().checkingTools.t, 'store: done ends the check')
+}
+
 // Turn-end lines.
 {
   ok(turnEndLine(undefined, 63000, 0)?.text === 'Worked for 1m 03s', 'turn end: completed')

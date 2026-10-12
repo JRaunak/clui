@@ -378,6 +378,17 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(woken[0].usage?.costUSD === 0.2, 'mapper: a woken turn gets its own usage')
 }
 
+// Auto mode: the check heartbeat, and a call it held back without running.
+{
+  const m = new EventMapper()
+  const [c] = feed(m, [{ type: 'system', subtype: 'permission_check_status', tool_use_id: 't', status: 'checking' }])
+  ok(c?.type === 'permission-check' && c.checking, 'mapper: permission_check_status checking')
+  ok(!feed(m, [{ type: 'system', subtype: 'permission_check_status', tool_use_id: 't', status: 'done' }])[0].checking, 'mapper: permission_check_status done')
+  const tr = (kind: string): any => feed(m, [{ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', is_error: true, content: 'x' }] }, tool_result_meta: [{ id: 't', non_execution_kind: kind }] }])[0]
+  ok(tr('automode-unavailable').notRun === true, 'mapper: a classifier no-answer is not run')
+  ok(!tr('automode-blocked').notRun && !tr('user-rejected').notRun, 'mapper: a refusal is still a failure')
+}
+
 // A foreground shell isn't background work until it's moved there.
 {
   const m = new EventMapper()

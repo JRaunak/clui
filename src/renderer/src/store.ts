@@ -246,6 +246,8 @@ export interface ToolCall {
   /** Set when the user backgrounds this running foreground tool: makes the card read
    *  "launched" not "done" (its result lands at move-time but carries no bg flag). */
   sentToBackground?: boolean
+  /** Auto mode couldn't reach its classifier, so the call was held back without running. */
+  notRun?: boolean
 }
 
 /** All state for a single live session, keyed by its `handleId` in the store. */
@@ -357,6 +359,8 @@ export interface PerSessionState {
   /** The retry copy for the live region: only a run's first and last attempts, so a ten-attempt
    *  run is two announcements, not ten. */
   apiRetryAnnounce: string
+  /** Tool calls auto mode's classifier is still deciding on, by tool_use id. */
+  checkingTools: Record<string, true>
   /** Background tasks the running turn launched, handed to its footer at the result. */
   turnTasks: string[]
   /** Tasks that ended since the last result: what a background-woken turn is about. */
@@ -790,6 +794,12 @@ export const EMPTY_ATTACHMENTS: ProcessedAttachment[] = []
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
 const EMPTY_WOKEN: WokenTask[] = []
+const EMPTY_CHECKING: Record<string, true> = {}
+
+function withoutKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
+  const { [key]: _gone, ...rest } = rec
+  return rest
+}
 
 // --- One persistent event subscription (installed lazily on first use) ---
 
@@ -1106,6 +1116,7 @@ async function beginSession(
     apiRetry: null,
     apiRetryDismissed: false,
     apiRetryAnnounce: '',
+    checkingTools: EMPTY_CHECKING,
     turnTasks: EMPTY_STRINGS,
     endedTasks: EMPTY_WOKEN,
     exited: false,
@@ -2292,6 +2303,7 @@ export const useSession = create<SessionStore>((set, get) => ({
             if (t) {
               t.result = e.content
               t.isError = e.isError
+              if (e.notRun) t.notRun = true
               // A write/edit that actually SUCCEEDED is a real changed file.
               if (!e.isError && WRITE_TOOLS.has(t.name)) {
                 const inp = t.input as { file_path?: unknown; notebook_path?: unknown }
@@ -2303,9 +2315,17 @@ export const useSession = create<SessionStore>((set, get) => ({
               break
             }
           }
+          if (slice.checkingTools[e.toolUseId]) patch.checkingTools = withoutKey(slice.checkingTools, e.toolUseId)
+          break
+        }
+        case 'permission-check': {
+          if (e.checking) patch.checkingTools = { ...slice.checkingTools, [e.toolUseId]: true }
+          else if (slice.checkingTools[e.toolUseId]) patch.checkingTools = withoutKey(slice.checkingTools, e.toolUseId)
           break
         }
         case 'permission-request':
+          // The classifier passed the call to the user, so its check is over.
+          if (e.toolUseId && slice.checkingTools[e.toolUseId]) patch.checkingTools = withoutKey(slice.checkingTools, e.toolUseId)
           patch.pendingPermissions = [
             ...slice.pendingPermissions,
             {
@@ -2692,6 +2712,7 @@ export const useSession = create<SessionStore>((set, get) => ({
             patch.endedTasks = EMPTY_WOKEN
           }
           patch.turnTasks = EMPTY_STRINGS
+          if (Object.keys(slice.checkingTools).length) patch.checkingTools = EMPTY_CHECKING
           break
         }
         case 'error':

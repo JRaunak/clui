@@ -95,6 +95,8 @@ interface RawEnvelope {
   user_message_uuids?: string[]
   /** Set on a local slash command's result (/usage, /context), which ran no model turn. */
   local_command?: string
+  /** On a user/tool_result envelope: why a call didn't run, keyed by tool_use_id. */
+  tool_result_meta?: Array<{ id?: string; non_execution_kind?: string }>
   // system/api_retry
   attempt?: number
   max_retries?: number
@@ -798,6 +800,8 @@ export class EventMapper {
       case 'ui_toast':
       case 'ui_log':
         return this.mapPluginUi(env)
+      case 'permission_check_status':
+        return env.tool_use_id ? [{ type: 'permission-check', toolUseId: env.tool_use_id, checking: env.status === 'checking' }] : []
       case 'thinking_tokens': {
         if (typeof env.estimated_tokens !== 'number') return []
         const now = Date.now()
@@ -977,11 +981,14 @@ export class EventMapper {
     for (const block of content) {
       if (!block || typeof block !== 'object') continue
       if (block.type === 'tool_result' && block.tool_use_id) {
+        const kind = env.tool_result_meta?.find((m) => m?.id === block.tool_use_id)?.non_execution_kind
         out.push({
           type: 'tool-result',
           toolUseId: block.tool_use_id,
           content: stringifyResultContent(block.content),
-          isError: Boolean(block.is_error)
+          isError: Boolean(block.is_error),
+          // The CLI's terminal dims only this kind as "Not run": the classifier never answered, which isn't a refusal.
+          ...(kind === 'automode-unavailable' ? { notRun: true } : {})
         })
       }
     }

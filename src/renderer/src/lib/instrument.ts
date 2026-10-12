@@ -5,12 +5,14 @@ import { isBackgroundedTool } from './lumen'
 export { isBackgroundedTool }
 
 /** Backgrounded tools read info blue; amber is reserved for "needs you". */
-export type RowState = 'running' | 'needs-you' | 'failed' | 'launching' | 'launched' | 'done'
+export type RowState = 'running' | 'needs-you' | 'checking' | 'failed' | 'not-run' | 'launching' | 'launched' | 'done'
 
 export const STATE_TEXT: Record<RowState, string> = {
   running: 'running',
   'needs-you': 'needs you',
+  checking: 'checking with auto mode',
   failed: 'failed',
+  'not-run': 'not run',
   launching: 'launching',
   launched: 'launched',
   done: 'done'
@@ -18,14 +20,16 @@ export const STATE_TEXT: Record<RowState, string> = {
 
 /** A backgrounded tool returns at launch while the real work continues in the tray, so its
  *  terminal state is "launched", never "done". */
-export function rowState(tool: ToolCall, needsYou: boolean): RowState {
+export function rowState(tool: ToolCall, needsYou: boolean, checking = false): RowState {
   const bg = isBackgroundedTool(tool)
-  if (tool.result === undefined) return needsYou ? 'needs-you' : bg ? 'launching' : 'running'
+  if (tool.result === undefined) return needsYou ? 'needs-you' : checking ? 'checking' : bg ? 'launching' : 'running'
+  // Checked before isError: a call auto mode held back carries an error result but never ran.
+  if (tool.notRun) return 'not-run'
   if (tool.isError) return 'failed'
   return bg ? 'launched' : 'done'
 }
 
-const SEVERITY: RowState[] = ['failed', 'needs-you', 'running', 'launching', 'launched', 'done']
+const SEVERITY: RowState[] = ['failed', 'needs-you', 'checking', 'running', 'launching', 'launched', 'not-run', 'done']
 
 /** The aggregate row's single bead shows the most urgent child. */
 export function worstState(states: RowState[]): RowState {
