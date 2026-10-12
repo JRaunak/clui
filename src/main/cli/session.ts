@@ -330,7 +330,9 @@ export class ClaudeSession extends EventEmitter {
         // forwardSubagentText makes the CLI stream a running subagent's own
         // assistant/user text as envelopes tagged with parent_tool_use_id (verified
         // live). Without it, only tool_use/tool_result forward as agent_progress.
-        request: { subtype: 'initialize', forwardSubagentText: true }
+        // perTaskStopAffordance: the tray stops background tasks one by one (stop_task), so a Stop
+        // only aborts the turn and spares them. Public protocol (2.1.296); re-verify on a CLI bump.
+        request: { subtype: 'initialize', forwardSubagentText: true, perTaskStopAffordance: true }
       })
       this.initTimer = setTimeout(() => {
         if (this.initAcked || this.closed || gen !== this.generation) return
