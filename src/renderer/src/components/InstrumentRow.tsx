@@ -20,7 +20,7 @@ import {
   type RowState
 } from '../lib/instrument'
 import { effortLabel } from '../../../shared/settings'
-import { IconAgentBrowser, IconCheck, IconChevron, IconCircle, IconCopy, IconOpenPane, IconSendToTray, IconShield, IconWarn } from './Icon'
+import { IconAgentBrowser, IconCheck, IconChevron, IconCircle, IconCopy, IconOpenPane, IconSendToTray, IconShield, IconStop, IconWarn } from './Icon'
 
 type Placement = 'spine' | 'inline'
 type Seg = 'through' | 'end'
@@ -32,6 +32,7 @@ const BEAD_FILL: Record<RowState, string> = {
   'needs-you': 'bg-warn',
   failed: 'border-[1.5px] border-err',
   'not-run': 'border-[1.5px] border-faint',
+  stopped: 'border-[1.5px] border-faint',
   launched: 'bg-info',
   launching: 'border-[1.5px] border-info',
   done: 'border-[1.5px] border-faint'
@@ -40,7 +41,7 @@ const BEAD_FILL: Record<RowState, string> = {
 /** 8px state mark. On the spine it sits outside the card, centred on the line 15px left of the
  *  card edge; inline (inside an aggregate or an off-spine list) it leads the row's grid. */
 export function Bead({ state, lit, placement }: { state: RowState; lit: boolean; placement: Placement }): JSX.Element {
-  const hollow = state === 'launching' || state === 'done' || state === 'failed' || state === 'not-run'
+  const hollow = state === 'launching' || state === 'done' || state === 'failed' || state === 'not-run' || state === 'stopped'
   const pos = placement === 'spine' ? 'absolute left-[-19px] top-3' : 'relative'
   // A hollow ring is filled with whatever it sits on, so the spine line doesn't show through it.
   const hole = hollow ? (placement === 'spine' ? 'bg-bg' : 'bg-tool') : ''
@@ -70,6 +71,13 @@ function StatusText({ state, startMs, reason }: { state: RowState; startMs?: num
         <span className="flex items-center gap-1 text-dim" title="Auto mode is checking whether this action is safe to run">
           <IconShield className="h-3.5 w-3.5 shrink-0" />
           checking{startMs !== undefined && <> <RunningTimer startMs={startMs} /></>}
+        </span>
+      )
+    case 'stopped':
+      return (
+        <span className="flex items-center gap-1 text-faint">
+          <IconStop className="h-3 w-3 shrink-0" />
+          stopped
         </span>
       )
     case 'not-run':
@@ -394,6 +402,7 @@ export function AggregateRow({
   const done = states.filter((s) => s === 'done' || s === 'launched').length
   const failed = states.filter((s) => s === 'failed').length
   const notRun = states.filter((s) => s === 'not-run').length
+  const stopped = states.filter((s) => s === 'stopped').length
   // One activity word at most, the most urgent first, so a lit or amber bead always has text too.
   const activity: { text: string; cls: string } | null = states.includes('needs-you')
     ? { text: 'needs you', cls: 'text-warn' }
@@ -410,12 +419,13 @@ export function AggregateRow({
   // Collapsed, only what still matters shows: failures pinned first, then anything unresolved.
   const visible =
     collapse && !expanded
-      ? [...tools.filter((t) => t.result !== undefined && t.isError && !t.notRun), ...tools.filter((t) => t.result === undefined)]
+      ? [...tools.filter((t) => t.result !== undefined && t.isError && !t.notRun && !t.stopped), ...tools.filter((t) => t.result === undefined)]
       : tools
   const label = [
     `${tools.length} tool calls`,
     failed > 0 ? `${failed} failed` : null,
     notRun > 0 ? `${notRun} not run` : null,
+    stopped > 0 ? `${stopped} stopped` : null,
     activity?.text ?? null,
     `${done} of ${tools.length} done`
   ]
@@ -454,6 +464,15 @@ export function AggregateRow({
             <span className="flex items-center gap-1 text-faint">
               <IconCircle className="h-3.5 w-3.5 shrink-0" />
               {notRun} not run
+            </span>
+          </>
+        )}
+        {stopped > 0 && (
+          <>
+            <span className="text-faint">·</span>
+            <span className="flex items-center gap-1 text-faint">
+              <IconStop className="h-3 w-3 shrink-0" />
+              {stopped} stopped
             </span>
           </>
         )}

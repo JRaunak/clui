@@ -31,8 +31,8 @@ const api: CluiApi = {
     ipcRenderer.invoke(IpcChannels.startSession, opts),
   sendMessage: (handleId: string, text: string, attachments?: WireAttachment[]) =>
     ipcRenderer.invoke(IpcChannels.sendMessage, handleId, text, attachments),
-  steerMessage: (handleId: string, text: string, attachments?: WireAttachment[]) =>
-    ipcRenderer.invoke(IpcChannels.steerMessage, handleId, text, attachments),
+  sendNowMessage: (handleId: string, text: string, attachments?: WireAttachment[]) =>
+    ipcRenderer.invoke(IpcChannels.sendNowMessage, handleId, text, attachments),
   interrupt: (handleId: string) => ipcRenderer.invoke(IpcChannels.interrupt, handleId),
   stopTask: (handleId: string, taskId: string) =>
     ipcRenderer.invoke(IpcChannels.stopTask, handleId, taskId),

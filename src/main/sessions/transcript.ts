@@ -436,8 +436,8 @@ async function parseTranscriptFile(
       // Only render the main thread; skip subagent sidechains, UNLESS we're reading
       // an agent's own transcript (whose records are all sidechains).
       if (entry.isSidechain && !opts.includeSidechain) continue
-      // A message sent mid-turn that the turn took in is saved only as this attachment, at the step
-      // that read it. One that ran as its own turn is an ordinary user record.
+      // A message a running turn took in (one sent while a background-woken turn ran) is saved only
+      // as this attachment, at the step that read it. One that ran as its own turn is a user record.
       if (entry.type === 'attachment' && entry.attachment?.type === 'queued_command' && entry.attachment.commandMode === 'prompt') {
         entry = { ...entry, type: 'user', message: { role: 'user', content: entry.attachment.prompt } }
       }

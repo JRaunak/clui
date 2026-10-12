@@ -343,9 +343,9 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   m.trackSent('u2', false)
   m.trackSent('s1', true)
   const [first] = feed(m, [{ type: 'result', user_message_uuids: ['u2'], session_id: 's' }])
-  ok(first.steerPending === true, 'mapper: an unanswered steer marks the result as not the end')
+  ok(first.sendNowPending === true, 'mapper: an unanswered Send now marks the result as not the end')
   const [second] = feed(m, [{ type: 'result', user_message_uuids: ['s1'], session_id: 's' }])
-  ok(second.steerPending === false && second.answersUser, 'mapper: the steer\'s own result ends it')
+  ok(second.sendNowPending === false && second.answersUser, 'mapper: the sent message\'s own result ends it')
   ok(feed(m, [{ type: 'command_lifecycle', command_uuid: 's1', state: 'started' }]).length === 0, 'mapper: Clui\'s own lifecycle frames are not a peer\'s')
   ok(feed(m, [{ type: 'command_lifecycle', command_uuid: 'other', state: 'started' }])[0]?.type === 'peer-pending', 'mapper: a foreign lifecycle still opens a peer placeholder')
 }
@@ -404,4 +404,18 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   const moved = feed(m, [{ type: 'system', subtype: 'task_updated', task_id: 'b1', patch: { is_backgrounded: true } }])
   ok(moved[0]?.type === 'bg-task-started' && moved[0].taskType === 'local_bash' && moved[0].description === 'Sleep', 'mapper: a shell moved to the background joins the tray')
   ok(feed(m, [{ type: 'system', subtype: 'task_started', task_id: 'b2', task_type: 'local_bash', is_backgrounded: true }])[0]?.type === 'bg-task-started', 'mapper: a background shell joins the tray')
+}
+
+// Send now: the turn it cuts reads 'cut', and its interrupted tool reads stopped.
+{
+  const m = new EventMapper()
+  m.trackSent('u1', false)
+  m.trackSent('n1', true)
+  const [tr] = feed(m, [{ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', is_error: true, content: 'x' }] }, tool_result_meta: [{ id: 't', non_execution_kind: 'user-rejected' }] }])
+  ok(tr.stopped === true, 'mapper: a tool a Send now cut reads stopped')
+  const out = feed(m, [{ type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_tools', user_message_uuids: ['u1'], session_id: 's' }])
+  ok(out[0].endReason?.kind === 'cut' && out[0].sendNowPending && !out.some((e: any) => e.type === 'error'), 'mapper: the cut turn reads cut, with no red box')
+  const plain = new EventMapper()
+  const [denied] = feed(plain, [{ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', is_error: true, content: 'x' }] }, tool_result_meta: [{ id: 't', non_execution_kind: 'user-rejected' }] }])
+  ok(!denied.stopped, 'mapper: a refused permission with no interrupt out is not stopped')
 }

@@ -16,7 +16,7 @@ export interface TurnLine {
   text: string
   /** Hover text: the line, plus any detail it doesn't show. */
   title: string
-  glyph: 'stop' | 'warn' | null
+  glyph: 'stop' | 'warn' | 'send' | null
 }
 
 const CONTINUE = ' · Send a message to continue'
@@ -37,6 +37,8 @@ export function turnEndLine(reason: TurnEnd | undefined, durationMs: number | un
       return d ? { text: `Worked for ${d}`, title: `Worked for ${d}`, glyph: null } : null
     case 'stopped':
       return line(`Stopped by you${after}`, 'stop')
+    case 'cut':
+      return line(`Stopped for your message${after}`, 'send')
     case 'max-turns':
       return line(`Stopped at the ${reason.limit ? `${reason.limit}-turn` : 'turn'} limit${after}`, 'stop', { cont: true })
     case 'budget':

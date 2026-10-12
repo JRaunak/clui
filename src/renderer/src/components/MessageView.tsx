@@ -17,7 +17,7 @@ import { AnnotationChip } from './AnnotationChip'
 import { Button } from './Button'
 import { splitAnnotations } from '../../../shared/annotate'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
-import { IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShieldOff, IconStop, IconWarn } from './Icon'
+import { IconArrowUp, IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShieldOff, IconStop, IconWarn } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
 import { formatCost } from '../lib/formatCost'
 import { turnEndLine, wokenLine } from '../lib/turnEnd'
@@ -450,7 +450,7 @@ function TurnFooter({ message }: { message: ChatMessage }): JSX.Element | null {
   const waiting = useActive((s) => rec?.bgTaskIds?.filter((id) => s?.backgroundTasks[id]?.status === 'running').length ?? 0)
   const line = rec ? turnEndLine(rec.reason, rec.durationMs, waiting) : null
   if (!line && !message.usage) return null
-  const Glyph = line?.glyph === 'stop' ? IconStop : line?.glyph === 'warn' ? IconWarn : null
+  const Glyph = line?.glyph === 'stop' ? IconStop : line?.glyph === 'warn' ? IconWarn : line?.glyph === 'send' ? IconArrowUp : null
   return (
     <div data-ui="turn-footer" className="flex items-start justify-between gap-3">
       {line ? (

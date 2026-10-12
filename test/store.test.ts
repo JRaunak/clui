@@ -328,30 +328,34 @@ const q = (id: string, text: string): any => ({ id, text })
   ok(cur().queuedMessages.length === 0, 'store: and releases the next queued message')
 }
 
-// A steer that missed the turn's last step runs as its own turn: the first result isn't the end.
+// Send now cuts the turn and the message runs as its own: the cut turn's result isn't the end.
 {
-  reset({ queuedMessages: [q('q1', 'later')], turnStartMs: 5, messages: [{ id: 'a', role: 'assistant', text: 'x', thinking: '', tools: [], blocks: [] }, { id: 'u', role: 'user', text: 'steer', thinking: '', tools: [], blocks: [] }] })
-  st().applyEvent('h1', res({ steerPending: true, durationMs: 3000, usage: { costUSD: 0.01, inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, models: [] } }))
-  ok(cur().busy && cur().queuedMessages.length === 1, 'store: a pending steer keeps busy and holds the queue')
-  ok(cur().messages[0].usage?.costUSD === 0.01, 'store: the first result still records the reply above the steer')
+  reset({ queuedMessages: [q('q1', 'later')], turnStartMs: 5, messages: [{ id: 'a', role: 'assistant', text: 'x', thinking: '', tools: [], blocks: [] }, { id: 'u', role: 'user', text: 'now', thinking: '', tools: [], blocks: [] }] })
+  st().applyEvent('h1', res({ sendNowPending: true, durationMs: 3000, usage: { costUSD: 0.01, inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, models: [] } }))
+  ok(cur().busy && cur().queuedMessages.length === 1, 'store: a cut turn keeps busy and holds the queue')
+  ok(cur().messages[0].usage?.costUSD === 0.01, 'store: the cut turn\'s result records the reply above the sent message')
   st().applyEvent('h1', res({ durationMs: 2000 }))
-  ok(cur().queuedMessages.length === 0, 'store: the steer\'s own result is the boundary')
+  ok(cur().queuedMessages.length === 0, 'store: the sent message\'s own result is the boundary')
 }
 
-// Send now leaves the queue at once and goes over the steer channel.
+// Send now leaves the queue at once and goes over its own channel.
 {
   reset({ queuedMessages: [q('q1', 'a'), q('q2', 'b')] })
-  st().steerQueuedMessage('q1')
+  st().sendQueuedNow('q1')
   ok(cur().queuedMessages.map((m: any) => m.id).join() === 'q2', 'store: Send now removes the row synchronously')
   ok(cur().messages.at(-1)?.text === 'a', 'store: Send now appends the user bubble')
   await new Promise((r) => setTimeout(r, 0))
-  ok(calls.some((c) => c.name === 'steerMessage' && c.args[1] === 'a'), 'store: Send now goes to steerMessage')
+  ok(calls.some((c) => c.name === 'sendNowMessage' && c.args[1] === 'a'), 'store: Send now goes to sendNowMessage')
   reset({ interrupting: true, busy: false, queuedMessages: [q('q1', 'a')] })
-  st().steerQueuedMessage('q1')
+  st().sendQueuedNow('q1')
   ok(cur().queuedMessages.length === 1, 'store: Send now does nothing while stopping')
-  reset({ queuedMessages: [{ id: 'q1', text: 'pdf', attachments: [{ wire: { kind: 'document' }, display: {} }] }] })
-  st().steerQueuedMessage('q1')
-  ok(cur().queuedMessages.length === 1, 'store: a message with a PDF waits for the turn end')
+  reset({ messages: [{ id: 'a', role: 'assistant', text: 'x', thinking: '', tools: [{ id: 't', name: 'Bash', input: {} }], blocks: [] }] })
+  st().applyEvent('h1', res({ endReason: { kind: 'cut' } }))
+  ok(cur().messages[0].tools[0].stopped && cur().messages[0].tools[0].result === '', 'store: a call left without a result at the turn end reads stopped')
+  ok(cur().statusAnnounce?.replace(/\u200b/g, '') === 'Claude stopped its current step to answer.', 'store: a cut turn announces the cut')
+  reset({ messages: [{ id: 'a', role: 'assistant', text: 'x', thinking: '', tools: [{ id: 't', name: 'Bash', input: {} }], blocks: [] }] })
+  st().applyEvent('h1', res({ endReason: { kind: 'failed' } }))
+  ok(!cur().messages[0].tools[0].stopped && cur().messages[0].tools[0].isError, 'store: a call left without a result by a failed turn reads failed')
 }
 
 // A turn a background task's end started opens its own message, captioned with that task.
@@ -411,6 +415,8 @@ const q = (id: string, text: string): any => ({ id, text })
   ok(turnEndLine({ kind: 'max-turns', limit: 3 }, 95000, 2)?.text === 'Stopped at the 3-turn limit after 1m 35s · Waiting for 2 background tasks · Send a message to continue', 'turn end: the wait sits before the call to continue')
   ok(turnEndLine({ kind: 'early', reason: 'hook_stopped' }, undefined, 0)?.title.includes('hook_stopped'), 'turn end: an early stop names its reason on hover')
   ok(turnEndLine({ kind: 'failed' }, 2000, 0)?.glyph === 'warn', 'turn end: a failure carries the warning glyph')
+  ok(turnEndLine({ kind: 'cut' }, 63000, 2)?.text === 'Stopped for your message after 1m 03s · Waiting for 2 background tasks', 'turn end: a Send now cut keeps the wait')
+  ok(turnEndLine({ kind: 'cut' }, undefined, 0)?.text === 'Stopped for your message', 'turn end: a cut with no duration')
   ok(wokenLine([{ kind: 'command', description: 'npm test', status: 'failed' }]).text === 'Background command failed: npm test', 'woken: one command')
   ok(wokenLine([{ kind: 'agent', description: 'a', status: 'completed' }, { kind: 'agent', description: 'b', status: 'failed' }]).text === '2 background tasks ended, 1 failed', 'woken: several, one failed')
 }

@@ -1,7 +1,7 @@
 import { messageGist, splitAnnotations } from '../../../shared/annotate'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type StateSnapshot, type VirtuosoHandle } from 'react-virtuoso'
-import { useActive, useSession, sendsOnlyAtTurnEnd, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
+import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
 import { MessageView } from './MessageView'
 import { WorkingStatus } from './WorkingStatus'
 import { CompactSuggestion } from './CompactSuggestion'
@@ -508,20 +508,15 @@ const ROW_ACTION = 'flex h-6 w-6 items-center justify-center rounded text-faint 
 function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
   const edit = useSession((s) => s.editQueuedMessage)
   const cancel = useSession((s) => s.cancelQueuedMessage)
-  const steer = useSession((s) => s.steerQueuedMessage)
+  const sendQueuedNow = useSession((s) => s.sendQueuedNow)
   const interrupting = useActive((s) => !!s?.interrupting)
   const rowRef = useRef<HTMLDivElement>(null)
-  const heldBack = sendsOnlyAtTurnEnd(q.attachments)
-  const sendNowTitle = interrupting
-    ? 'Stopping. It sends when the turn ends.'
-    : heldBack
-      ? 'Messages with a PDF send when the turn ends'
-      : 'Send now. Claude reads it at its next step  ⌘↵'
+  const sendNowTitle = interrupting ? 'Stopping. It sends when the turn ends.' : 'Send now. Stops the current step, then Claude answers this  ⌘↵'
   // The row unmounts, so focus goes to the next row's Send now, or back to the composer.
   const sendNow = (): void => {
-    if (interrupting || heldBack) return
+    if (interrupting) return
     const next = rowRef.current?.nextElementSibling?.querySelector<HTMLElement>('[data-ui="queued-send-now"]')
-    steer(q.id)
+    sendQueuedNow(q.id)
     requestAnimationFrame(() => (next ?? document.querySelector<HTMLElement>('[data-composer-input]'))?.focus())
   }
   const [editing, setEditing] = useState(false)
@@ -576,7 +571,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
           className="w-full resize-none bg-transparent text-sm leading-relaxed text-content focus-visible:outline-none"
         />
         <div className="mt-1.5 flex items-center justify-end gap-1.5 text-meta text-faint">
-          <span className="mr-auto">{interrupting || heldBack ? 'Enter to save · Esc to discard' : 'Enter to save · ⌘↵ to send now · Esc to discard'}</span>
+          <span className="mr-auto">{interrupting ? 'Enter to save · Esc to discard' : 'Enter to save · ⌘↵ to send now · Esc to discard'}</span>
           <button
             className="rounded p-1 text-faint hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             onClick={() => { setDraft(typed); setEditing(false) }}
@@ -619,7 +614,7 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
           data-ui="queued-send-now"
           className={`${ROW_ACTION} hover:text-content aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:text-faint`}
           onClick={sendNow}
-          aria-disabled={interrupting || heldBack || undefined}
+          aria-disabled={interrupting || undefined}
           aria-label="Send now"
           aria-keyshortcuts="Meta+Enter"
           title={sendNowTitle}

@@ -5,7 +5,7 @@ import { isBackgroundedTool } from './lumen'
 export { isBackgroundedTool }
 
 /** Backgrounded tools read info blue; amber is reserved for "needs you". */
-export type RowState = 'running' | 'needs-you' | 'checking' | 'failed' | 'not-run' | 'launching' | 'launched' | 'done'
+export type RowState = 'running' | 'needs-you' | 'checking' | 'failed' | 'not-run' | 'stopped' | 'launching' | 'launched' | 'done'
 
 export const STATE_TEXT: Record<RowState, string> = {
   running: 'running',
@@ -13,6 +13,7 @@ export const STATE_TEXT: Record<RowState, string> = {
   checking: 'checking with auto mode',
   failed: 'failed',
   'not-run': 'not run',
+  stopped: 'stopped',
   launching: 'launching',
   launched: 'launched',
   done: 'done'
@@ -25,11 +26,12 @@ export function rowState(tool: ToolCall, needsYou: boolean, checking = false): R
   if (tool.result === undefined) return needsYou ? 'needs-you' : checking ? 'checking' : bg ? 'launching' : 'running'
   // Checked before isError: a call auto mode held back carries an error result but never ran.
   if (tool.notRun) return 'not-run'
+  if (tool.stopped) return 'stopped'
   if (tool.isError) return 'failed'
   return bg ? 'launched' : 'done'
 }
 
-const SEVERITY: RowState[] = ['failed', 'needs-you', 'checking', 'running', 'launching', 'launched', 'not-run', 'done']
+const SEVERITY: RowState[] = ['failed', 'needs-you', 'checking', 'running', 'launching', 'launched', 'not-run', 'stopped', 'done']
 
 /** The aggregate row's single bead shows the most urgent child. */
 export function worstState(states: RowState[]): RowState {

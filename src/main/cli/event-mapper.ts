@@ -283,14 +283,15 @@ export class EventMapper {
   /** Messages Clui sent that no result has answered yet. A result lists the uuids it answered,
    *  whichever turn took them in, so a message folded into a background turn still finds its end. */
   private unanswered = new Set<string>()
-  /** The ones sent mid-turn. While one is unanswered, a result isn't the end of the user's turn. */
-  private steers = new Set<string>()
+  /** The ones sent with Send now. While one is unanswered, a result isn't the end of the user's turn:
+   *  it's the turn the interrupt cut, and the message's own turn follows. */
+  private sentNow = new Set<string>()
   /** Every uuid Clui stamped, so their command_lifecycle frames aren't read as a peer's. */
   private stamped = new Set<string>()
 
-  trackSent(uuid: string, steer: boolean): void {
+  trackSent(uuid: string, sendNow: boolean): void {
     this.unanswered.add(uuid)
-    if (steer) this.steers.add(uuid)
+    if (sendNow) this.sentNow.add(uuid)
     if (this.stamped.size >= 256) this.stamped.delete(this.stamped.values().next().value as string)
     this.stamped.add(uuid)
   }
@@ -426,12 +427,12 @@ export class EventMapper {
         const answersUser = listed.some((u) => this.unanswered.has(u))
         for (const u of listed) {
           this.unanswered.delete(u)
-          this.steers.delete(u)
+          this.sentNow.delete(u)
         }
-        // A result that lists nothing (as an older CLI may) still ends the turn it ran for,
-        // so only a steer's uuid survives it. Steering itself relies on the listing: re-verify on a bump.
+        // A result that lists nothing (as an older CLI may) still ends the turn it ran for, so only a
+        // Send now uuid survives it. Send now itself relies on the listing: re-verify on a bump.
         if (!listed.length && !fromTaskNotification && !fromPeer) {
-          for (const u of this.unanswered) if (!this.steers.has(u)) this.unanswered.delete(u)
+          for (const u of this.unanswered) if (!this.sentNow.has(u)) this.unanswered.delete(u)
         }
         // A background-subagent-completion or peer-woken result is NOT the user's turn boundary,
         // unless the user's message folded into it, so it must not consume the user turn's
@@ -450,7 +451,8 @@ export class EventMapper {
           this.apiError = null
         }
         const local = typeof env.local_command === 'string'
-        const endReason = local ? undefined : turnEndOf(env, wasInterrupted)
+        const cut = this.sentNow.size > 0 && /^aborted_/.test(env.terminal_reason ?? '')
+        const endReason = local ? undefined : turnEndOf(env, wasInterrupted, cut)
         // Every result advances the process total, so the baseline moves on each one. A local command
         // ran no model turn, so it has no usage of its own.
         const cumulative = turnUsageFrom(env)
@@ -474,7 +476,7 @@ export class EventMapper {
             // doesn't clear the user's busy or run user-turn side effects.
             fromPeer,
             answersUser,
-            steerPending: this.steers.size > 0,
+            sendNowPending: this.sentNow.size > 0,
             // A bg/peer result isn't the user's turn, so its denials aren't theirs.
             denials:
               ownsTurn && env.permission_denials?.length
@@ -536,7 +538,7 @@ export class EventMapper {
         if (env.command_uuid && this.stamped.has(env.command_uuid)) {
           if (env.state === 'cancelled') {
             this.unanswered.delete(env.command_uuid)
-            this.steers.delete(env.command_uuid)
+            this.sentNow.delete(env.command_uuid)
           }
           return []
         }
@@ -1009,7 +1011,11 @@ export class EventMapper {
           content: stringifyResultContent(block.content),
           isError: Boolean(block.is_error),
           // The CLI's terminal dims only this kind as "Not run": the classifier never answered, which isn't a refusal.
-          ...(kind === 'automode-unavailable' ? { notRun: true } : {})
+          ...(kind === 'automode-unavailable'
+            ? { notRun: true }
+            : kind && STOP_KINDS.has(kind) && (this.interrupted || this.sentNow.size > 0)
+              ? { stopped: true }
+              : {})
         })
       }
     }
@@ -1061,14 +1067,20 @@ export class EventMapper {
   }
 }
 
+/** How the CLI marks a tool an interrupt ended (2.1.296: a Stop and a Send now cut both report
+ *  user-rejected). Only read while Clui's own interrupt is outstanding, since a refused permission
+ *  prompt reports user-rejected too. */
+const STOP_KINDS = new Set(['user-rejected', 'interrupted', 'cancelled'])
+
 /** Turn ends the CLI reports as non-errors (2.1.296): the turn stopped short, and nothing failed. */
 const EARLY_ENDS = new Set(['max_turns', 'aborted_streaming', 'aborted_tools', 'stop_hook_prevented', 'hook_stopped', 'tool_deferred', 'background_requested'])
 
 /** An unknown reason on an error result stays a failure, so a new kind of failure still shows its box. */
-function turnEndOf(env: RawEnvelope, stoppedByUser: boolean): TurnEnd | undefined {
+function turnEndOf(env: RawEnvelope, stoppedByUser: boolean, cutForMessage: boolean): TurnEnd | undefined {
   const reason = env.terminal_reason
   const detail = env.errors?.[0] ?? ''
   if (stoppedByUser) return { kind: 'stopped' }
+  if (cutForMessage) return { kind: 'cut' }
   if (reason === 'max_turns') {
     // The limit is only in the error text, matched against 2.1.296's wording: re-verify on a CLI bump.
     const n = /maximum number of turns \((\d+)\)/.exec(detail)

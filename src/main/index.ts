@@ -433,8 +433,8 @@ function registerIpc(): void {
     }
   )
 
-  handle(IpcChannels.steerMessage, async (_e, handleId: string, text: string, attachments?: WireAttachment[]) =>
-    manager.steer(handleId, text, attachments)
+  handle(IpcChannels.sendNowMessage, async (_e, handleId: string, text: string, attachments?: WireAttachment[]) =>
+    manager.sendNow(handleId, text, attachments)
   )
 
   handle(IpcChannels.interrupt, async (_e, handleId: string) => {

@@ -248,6 +248,8 @@ export interface ToolCall {
   sentToBackground?: boolean
   /** Auto mode couldn't reach its classifier, so the call was held back without running. */
   notRun?: boolean
+  /** A Stop or Send now ended the call while it ran. */
+  stopped?: boolean
 }
 
 /** All state for a single live session, keyed by its `handleId` in the store. */
@@ -633,9 +635,9 @@ interface SessionStore {
    * Send a user turn. `attachments` carries both the lean wire payload (image
    * blocks sent to the CLI) and a display thumbnail for the user's own bubble.
    */
-  sendMessage: (text: string, attachments?: SendAttachment[], opts?: { steer?: boolean }) => Promise<void>
-  /** Send a queued message into the running turn now instead of at its end. */
-  steerQueuedMessage: (id: string) => void
+  sendMessage: (text: string, attachments?: SendAttachment[], opts?: { now?: boolean }) => Promise<void>
+  /** Send a queued message now, cutting the running turn's step, instead of at the turn's end. */
+  sendQueuedNow: (id: string) => void
   /** Edit a still-queued message's text (before it's dispatched at the turn boundary). */
   editQueuedMessage: (id: string, text: string) => void
   /** Remove a still-queued message (never dispatched). */
@@ -1391,17 +1393,13 @@ function userBubble(text: string, attachments?: SendAttachment[]): ChatMessage {
   }
 }
 
-const SENT_NOW = 'Sent to Claude'
+const SENT_NOW = 'Sent.'
+const CUT_FOR_MESSAGE = 'Claude stopped its current step to answer.'
 
-/** A PDF folded into a running turn never reaches the model, though images and text files do
- *  (verified live on 2.1.296), so a message carrying one waits for the turn's end. */
-export function sendsOnlyAtTurnEnd(atts: SendAttachment[] | undefined): boolean {
-  return !!atts?.some((a) => a.wire.kind === 'document')
-}
 
-/** Send a message into the running turn. Its bubble goes in now, so the turn's later content
- *  streams below it, and `busy` stays as it is: the turn's own result still ends the work. */
-async function steerTurn(
+/** Send a message now, cutting the running turn's step. Its bubble goes in at once and `busy`
+ *  stays as it is: the message's own result ends the work, not the cut turn's. */
+async function sendNowTurn(
   set: (fn: (s: SessionStore) => Partial<SessionStore>) => void,
   handleId: string,
   text: string,
@@ -1411,13 +1409,14 @@ async function steerTurn(
   set((s) => {
     const slice = s.sessions[handleId]
     if (!slice) return {}
-    return patchSlice(s, handleId, { messages: [...slice.messages, userMsg], statusAnnounce: toggled(SENT_NOW), lastActivityMs: Date.now() })
+    return patchSlice(s, handleId, { messages: [...slice.messages, userMsg], lastActivityMs: Date.now() })
   })
   const wire = attachments && attachments.length ? attachments.map((a) => a.wire) : undefined
   try {
-    const joined = await window.clui.steerMessage(handleId, text, wire)
+    const joined = await window.clui.sendNowMessage(handleId, text, wire)
+    if (joined) set((s) => (s.sessions[handleId] ? patchSlice(s, handleId, { statusAnnounce: toggled(SENT_NOW) }) : {}))
     // The turn ended before the message reached the CLI, so it runs as a turn of its own.
-    if (!joined) {
+    else {
       set((s) => {
         const slice = s.sessions[handleId]
         return slice && !slice.busy ? patchSlice(s, handleId, { busy: true, interrupting: false, turnStartMs: Date.now() }) : {}
@@ -1930,8 +1929,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     // prompt after a Stop usually queues behind the interrupted turn.
     if (anyTabIn(active.browser, 'stopped')) void window.clui.browserDrive(active.handleId, 'reset')
     if (active.browserAutoOpenSuppressed) set((s) => patchSlice(s, active.handleId, { browserAutoOpenSuppressed: false }))
-    if (opts?.steer && active.busy && !active.interrupting && !sendsOnlyAtTurnEnd(attachments)) {
-      await steerTurn(set, active.handleId, text, attachments)
+    if (opts?.now && active.busy && !active.interrupting) {
+      await sendNowTurn(set, active.handleId, text, attachments)
       return
     }
     // Composed while a turn is running (or interrupting, or with messages already queued) →
@@ -1950,13 +1949,13 @@ export const useSession = create<SessionStore>((set, get) => ({
     }
     await dispatchTurn(set, active.handleId, text, attachments)
   },
-  steerQueuedMessage: (id) => {
+  sendQueuedNow: (id) => {
     const active = activeSlice(get())
     const q = active?.queuedMessages.find((m) => m.id === id)
-    if (!active || !q || !active.busy || active.interrupting || sendsOnlyAtTurnEnd(q.attachments)) return
+    if (!active || !q || !active.busy || active.interrupting) return
     // Out of the queue before anything awaits, so a result landing now can't release it a second time.
     set((s) => patchSlice(s, active.handleId, { queuedMessages: active.queuedMessages.filter((m) => m.id !== id) }))
-    void steerTurn(set, active.handleId, q.text, q.attachments)
+    void sendNowTurn(set, active.handleId, q.text, q.attachments)
   },
   editQueuedMessage: (id, text) =>
     set((s) => {
@@ -2396,6 +2395,7 @@ export const useSession = create<SessionStore>((set, get) => ({
               t.result = e.content
               t.isError = e.isError
               if (e.notRun) t.notRun = true
+              if (e.stopped) t.stopped = true
               // A write/edit that actually SUCCEEDED is a real changed file.
               const fp = writtenPath(t)
               if (fp) patch.changedFiles = withChangedFile(slice.changedFiles, fp)
@@ -2744,9 +2744,9 @@ export const useSession = create<SessionStore>((set, get) => ({
             patch.thinkingTokens = null
             patch.compacting = false
             patch.lastActivityMs = Date.now()
-            if (e.steerPending) {
-              // A message sent mid-turn reached the CLI after the turn's last step, so it runs as a
-              // turn of its own and the work isn't over. The queue waits for that turn's end.
+            if (e.sendNowPending) {
+              // This is the turn a Send now cut; the sent message's own turn is still to come, so the
+              // queue waits for that turn's end.
               patch.busy = true
               if (wasInterrupting || slice.turnStartMs === null) patch.turnStartMs = Date.now()
             } else {
@@ -2785,9 +2785,9 @@ export const useSession = create<SessionStore>((set, get) => ({
           }
           // Result arrives after the assistant text, so the turn's record goes on its last assistant
           // message. A turn that never reached Claude (a hook-blocked prompt) has no reply of its own,
-          // and the previous turn's record must not be overwritten. Before a steer's own turn the
-          // steered bubble is last, and this result belongs to the reply above it.
-          const idx = e.steerPending
+          // and the previous turn's record must not be overwritten. Before a sent-now message's
+          // turn its bubble is last, and this result belongs to the reply above it.
+          const idx = e.sendNowPending
             ? messages.findLastIndex((m) => m.role === 'assistant' && !m.hookNotes)
             : messages.findLastIndex((m) => m.role === 'user' || (m.role === 'assistant' && !m.hookNotes))
           const host = messages[idx]
@@ -2804,9 +2804,21 @@ export const useSession = create<SessionStore>((set, get) => ({
               ...(e.denials?.length ? { denials: e.denials } : {}),
               turnEnd
             }
+            // A call the turn left without a result ended with it: stopped only when the user ended
+            // the turn, failed otherwise.
+            const byUser = e.endReason?.kind === 'stopped' || e.endReason?.kind === 'cut'
+            for (let i = idx; i >= 0 && messages[i].role === 'assistant'; i--) {
+              const m = messages[i]
+              if (m.tools.some((t) => t.result === undefined)) {
+                const ended = byUser ? { stopped: true } : { isError: true }
+                messages[i] = { ...m, tools: m.tools.map((t) => (t.result === undefined ? { ...t, result: '', ...ended } : t)) }
+              }
+            }
             const waiting = slice.turnTasks.filter((id) => slice.backgroundTasks[id]?.status === 'running').length
-            const line = e.steerPending ? null : turnEndLine(turnEnd.reason, turnEnd.durationMs, waiting)
-            if (line) patch.statusAnnounce = toggled(line.text.replace(/ · (.)/g, (_, c: string) => `, ${c.toLowerCase()}`))
+            // A Send now that landed after the turn's last step cut nothing, so that turn gets its own line.
+            const line = e.endReason?.kind === 'cut' ? null : turnEndLine(turnEnd.reason, turnEnd.durationMs, waiting)
+            if (e.endReason?.kind === 'cut') patch.statusAnnounce = toggled(CUT_FOR_MESSAGE)
+            else if (line) patch.statusAnnounce = toggled(line.text.replace(/ · (.)/g, (_, c: string) => `, ${c.toLowerCase()}`))
             // Tasks that ended during this turn were this turn's news. A result with no reply of its own
             // (the CLI can open and drop a turn when two tasks end together) leaves them for the next.
             patch.endedTasks = EMPTY_WOKEN

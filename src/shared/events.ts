@@ -125,6 +125,8 @@ export function perTurnUsage(cur: TurnUsage, prev: TurnUsage): TurnUsage {
 /** Why a turn stopped short of completing, for the turn's footer. Errors aren't here: they keep the red box. */
 export type TurnEnd =
   | { kind: 'stopped' }
+  /** Send now interrupted it so Claude could answer the sent message. */
+  | { kind: 'cut' }
   | { kind: 'max-turns'; limit?: number }
   | { kind: 'budget'; limit?: number }
   | { kind: 'early'; reason: string }
@@ -175,6 +177,8 @@ export type DomainEvent =
       isError: boolean
       /** The auto-mode classifier couldn't be reached, so the call was held back without running. */
       notRun?: boolean
+      /** A Stop or Send now ended the call while it ran. */
+      stopped?: boolean
     }
   /** Auto mode's classifier has been deciding on this call for a few seconds (`checking`), or stopped. */
   | { type: 'permission-check'; toolUseId: string; checking: boolean }
@@ -295,7 +299,7 @@ export type DomainEvent =
       /** This result answered a message Clui sent, even when a background or peer turn took it in. */
       answersUser?: boolean
       /** A message sent mid-turn hasn't been answered yet, so another turn follows this result. */
-      steerPending?: boolean
+      sendNowPending?: boolean
       endReason?: TurnEnd
       durationMs?: number
       /** A local slash command (/usage, /context) ran no model turn, so it has no record to show. */

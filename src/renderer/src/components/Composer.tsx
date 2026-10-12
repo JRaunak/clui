@@ -275,7 +275,7 @@ export function Composer(): JSX.Element {
     if (target) void respawnIn(target)
   }
 
-  const submit = async (steer = false): Promise<void> => {
+  const submit = async (now = false): Promise<void> => {
     const typed = text.trim()
     if ((!typed && attachments.length === 0 && pins.length === 0) || !handleId) return
     const lead = pins.length ? annotationsText(pins) : ''
@@ -304,7 +304,7 @@ export function Composer(): JSX.Element {
     clearDraft(handleId)
     clearAnnotations(handleId)
     setCaret(0)
-    await sendMessage(t, send.length ? send : undefined, { steer })
+    await sendMessage(t, send.length ? send : undefined, { now })
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -386,6 +386,7 @@ export function Composer(): JSX.Element {
             <textarea
               ref={textareaRef}
               data-composer-input
+              aria-keyshortcuts="Meta+Enter"
               className="max-h-48 min-h-[52px] w-full resize-none bg-transparent [field-sizing:content] px-2 pt-1.5 text-sm leading-normal text-content outline-none placeholder:text-dim focus-visible:outline-none"
               placeholder="Message Claude…"
               aria-label="Message Claude"

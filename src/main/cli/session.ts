@@ -28,7 +28,7 @@ import { recordTurnUsage } from '../sessions/usage'
 interface UserTurn {
   text: string
   attachments?: WireAttachment[]
-  steer?: boolean
+  sendNow?: boolean
 }
 
 export interface ClaudeSessionOptions {
@@ -151,6 +151,8 @@ export class ClaudeSession extends EventEmitter {
   /** Partial trailing stderr line held until its newline arrives, so classification
    *  runs per complete line, not per arbitrary transport chunk. */
   private stderrBuf = ''
+  /** Send-now messages waiting for the CLI to queue them before the interrupt goes out, by uuid. */
+  private pendingCuts = new Map<string, ReturnType<typeof setTimeout>>()
   /** request_ids of elicitations the user hasn't answered yet. */
   private elicitations = new Set<string>()
   /**
@@ -416,6 +418,14 @@ export class ClaudeSession extends EventEmitter {
       // In gated mode, intercept control-protocol envelopes (the mapper ignores
       // control_response) to drive the handshake before mapping to domain events.
       if (this.opts.gated) this.handleControlEnvelope(raw)
+      const life = raw as { type?: string; command_uuid?: string; state?: string }
+      if (life?.type === 'command_lifecycle' && life.command_uuid && this.pendingCuts.has(life.command_uuid)) {
+        if (life.state === 'queued') this.cutFor(life.command_uuid)
+        else {
+          clearTimeout(this.pendingCuts.get(life.command_uuid))
+          this.pendingCuts.delete(life.command_uuid)
+        }
+      }
       for (const ev of this.mapper.map(raw)) {
         if (ev.type === 'session-init' && ev.sessionId) this.sessionId = ev.sessionId
         if (ev.type === 'session-init') this.dropMcpConfig()
@@ -589,18 +599,38 @@ export class ClaudeSession extends EventEmitter {
   }
 
   /**
-   * Send a message into the running turn. Written mid-turn with no `priority`, the CLI folds it in
-   * at the turn's next step; one that lands after the last step runs as its own turn (verified
-   * live, 2.1.296). Returns false when no turn of Clui's was open, so the message starts a turn.
+   * The terminal's Send now: write the message, then an interrupt naming it, so the CLI stops the
+   * running step and answers the message as a turn of its own. Returns false when no turn of
+   * Clui's was open, so the message just starts a turn.
    */
-  steer(text: string, attachments?: WireAttachment[]): boolean {
+  sendNow(text: string, attachments?: WireAttachment[]): boolean {
     const open = this.mapper.hasOpenTurn() && this.initAcked && !this.reconnecting
     if (!open) {
       this.send(text, attachments)
       return false
     }
-    this.writeUserMessage({ text, attachments, steer: true })
+    const uuid = this.writeUserMessage({ text, attachments, sendNow: true })
+    // The CLI only cuts a turn for a message already in its queue, so the interrupt waits for the
+    // message's `queued` frame, with a timer in case that frame never comes.
+    this.pendingCuts.set(uuid, setTimeout(() => this.cutFor(uuid), 1000))
     return true
+  }
+
+  /**
+   * `send_now` is internal protocol (2.1.296, advertised as interrupt_send_now_v1 on init): re-verify
+   * its shape and its sparing of background tasks on a CLI bump. A reply of `nothing_waiting` means
+   * the turn already took the message in or ended, and the message's own result still closes it.
+   */
+  private cutFor(uuid: string): void {
+    const timer = this.pendingCuts.get(uuid)
+    if (!timer) return
+    clearTimeout(timer)
+    this.pendingCuts.delete(uuid)
+    this.writeLine({
+      type: 'control_request',
+      request_id: `now-${randomUUID()}`,
+      request: { subtype: 'interrupt', send_now: true, message_uuid: uuid }
+    })
   }
 
   /**
@@ -613,15 +643,15 @@ export class ClaudeSession extends EventEmitter {
    * delimiter so the model knows what it is (mechanically identical to a paste, no
    * Read tool, so it works regardless of the workspace-cwd boundary).
    */
-  private writeUserMessage(turn: UserTurn): void {
+  private writeUserMessage(turn: UserTurn): string {
     const { text, attachments } = turn
     // The CLI names the uuids each result answered, which is how a turn's end is found when the
     // message joined a background turn or was sent mid-turn.
     const uuid = randomUUID()
-    this.mapper.trackSent(uuid, !!turn.steer)
+    this.mapper.trackSent(uuid, !!turn.sendNow)
     if (!attachments || attachments.length === 0) {
       this.writeLine({ type: 'user', message: { role: 'user', content: text }, uuid })
-      return
+      return uuid
     }
     const content: unknown[] = attachments.map((a) => {
       switch (a.kind) {
@@ -635,6 +665,7 @@ export class ClaudeSession extends EventEmitter {
     })
     if (text) content.push({ type: 'text', text })
     this.writeLine({ type: 'user', message: { role: 'user', content }, uuid })
+    return uuid
   }
 
   /**
@@ -824,6 +855,8 @@ export class ClaudeSession extends EventEmitter {
       p.resolve({ ok: false })
     }
     this.pendingControl.clear()
+    for (const t of this.pendingCuts.values()) clearTimeout(t)
+    this.pendingCuts.clear()
     if (this.initTimer) {
       clearTimeout(this.initTimer)
       this.initTimer = null
