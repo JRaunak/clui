@@ -66,6 +66,11 @@ export interface CluiSettings {
   linkTarget: LinkTarget
   /** Send each annotated element with a small screenshot of it, besides its text and HTML. */
   annotateScreenshots: boolean
+  /** Browser tool bundles past observing (snapshot, tabs, navigate): screenshot, page input, and the
+   *  console/network/storage readers. Read at spawn, like browserEnabled. */
+  browserVisual: boolean
+  browserInteract: boolean
+  browserDebug: boolean
   /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
    *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
@@ -477,6 +482,9 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   browserEnabled: false,
   linkTarget: 'clui',
   annotateScreenshots: true,
+  browserVisual: true,
+  browserInteract: true,
+  browserDebug: true,
   enableTaskTools: false,
   // Empty → resolves to ~/.clui in main (getChatDir).
   defaultChatDir: '',

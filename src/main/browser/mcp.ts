@@ -9,40 +9,66 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { WebContents } from 'electron'
 import { siteKeyOf } from '../../shared/browser'
 import { TEXT, WAITING, type BrowserManager } from './manager'
-import { keyEvent, formatRef, parseRef, refTarget, type Box, type Cdp, type Ref, type RefMiss } from './cdp'
+import { capture, keyEvent, parseRef, refTarget, scrub, PAGE_VIS, type Box, type Cdp, type Observed, type Rect, type Ref, type RefMiss, type View } from './cdp'
 import { moveCursor, clickRing, pill, injectCursor, WORLD } from './cursor'
 import { loginsForSite, secretOf, vaultAvailable } from './vault'
 import { totp } from './totp'
 
-type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/png' }
+type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/jpeg' }
 interface ToolResult { content: Content[]; isError?: boolean }
 
 const MAX_BODY = 1 << 20
 const MAX_KEYS = 50
 const SETTLE_WAIT_MS = 10_000
+const SNAPSHOT_CAP = 12_000
+/** screenshot detail low: the longer side, in image pixels. A 16:10 viewport at 1280 is ~1,330 visual tokens, under the
+ *  standard vision tier's 1,568 cap, so the API doesn't downscale it and the shot's pixels are the ones the model reads. */
+const LOW_EDGE = 1280
+/** Haiku-class models downscale anything past 1568px server-side, which would break the shot's pixel mapping. */
+const HIGH_EDGE = 1568
+const SHOT_MARGIN = 24
+const SHOTS_KEPT = 8
 
 const PAGE_TOOLS = [
   {
     name: 'navigate',
-    description:
-      'Open a web page (http or https) in a browser tab, by default the tab you last used. The user may be viewing another tab.',
+    description: 'Open an http(s) URL.',
     inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] }
   },
   {
     name: 'snapshot',
     description:
-      'Screenshot the page and list its interactive elements with refs for click, type, press and hover. A ref stays ' +
-      'valid while its element is on the page, and no ref survives a new page.',
-    inputSchema: { type: 'object', properties: {} }
+      'The page as text: headings, text and controls in view, with refs. No image. A ref lasts while its element is on the page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', description: 'Section ref to read whole.' },
+        all: { type: 'boolean' }
+      }
+    }
+  },
+  {
+    name: 'screenshot',
+    description:
+      'See the viewport, a ref, or region [x,y,w,h] of screenshot shotId; detail high costs more. Gives a shotId for click/hover x,y in its pixels.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string' },
+        region: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4 },
+        shotId: { type: 'string' },
+        detail: { type: 'string', enum: ['low', 'high'] }
+      }
+    }
   },
   {
     name: 'click',
-    description: 'Click an element by its ref from snapshot, or at viewport coordinates.',
-    inputSchema: { type: 'object', properties: { ref: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } }
+    description: 'Click a ref, or x,y of screenshot shotId.',
+    inputSchema: { type: 'object', properties: { ref: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, shotId: { type: 'string' } } }
   },
   {
     name: 'type',
-    description: 'Click an element by ref and type text into it; submit presses Enter. Password fields are refused: use autofill_login.',
+    description: 'Click a ref and type text; submit presses Enter. Refuses password fields: use autofill_login.',
     inputSchema: {
       type: 'object',
       properties: { ref: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' } },
@@ -51,106 +77,98 @@ const PAGE_TOOLS = [
   },
   {
     name: 'scroll',
-    description: 'Scroll the page vertically by dy pixels (negative scrolls up).',
+    description: 'Scroll by dy pixels; negative is up.',
     inputSchema: { type: 'object', properties: { dy: { type: 'number' } }, required: ['dy'] }
   },
   {
     name: 'press',
     description:
-      'Press keys on the focused element as real key presses the page sees on keydown. Use it for what type ' +
-      "can't deliver: games, keyboard shortcuts, arrow-key navigation, Escape, Tab. type is still the way to fill " +
-      'text fields. keys are DOM key names ("Enter", "ArrowLeft", "Backspace", "Tab", "Escape") or single ' +
-      `characters ("a", "A", "1", " "), up to ${MAX_KEYS} per call. Modifier combinations like Ctrl+A are not ` +
-      'supported. With ref, the element is clicked first to focus it. Password fields are refused: use autofill_login.',
+      'Key presses for games and shortcuts. keys: DOM key names or characters, like ["h","i","Enter"]; ' +
+      'no combinations. ref is clicked first. Refuses password fields.',
     inputSchema: {
       type: 'object',
-      properties: {
-        keys: {
-          anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' }, maxItems: MAX_KEYS }],
-          description: 'One key name, or a list pressed in order.'
-        },
-        ref: { type: 'string', description: 'Element to click before pressing, from snapshot.' }
-      },
+      properties: { keys: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, ref: { type: 'string' } },
       required: ['keys']
     }
   },
   {
     name: 'hover',
-    description: 'Move the mouse over an element by ref, or to viewport coordinates, without clicking. Use it to open hover menus and tooltips, then snapshot.',
-    inputSchema: { type: 'object', properties: { ref: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } }
+    description: 'Hover a ref, or x,y of screenshot shotId.',
+    inputSchema: { type: 'object', properties: { ref: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, shotId: { type: 'string' } } }
   },
-  { name: 'back', description: 'Go back one page.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'back', description: 'Go back a page.', inputSchema: { type: 'object', properties: {} } },
   {
     name: 'autofill_login',
-    description: "Sign in with the user's saved login for this site. Clui fills the form itself; you never see the credentials.",
+    description: "Sign in with the user's saved login here; you never see it.",
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'console',
     description:
-      "Read the page's console: errors, warnings, log lines and uncaught exceptions, oldest first. Recording starts on " +
-      "a tab's first console call, which returns what Chromium kept from before; navigate to the page's URL to capture a fresh load. " +
-      'level keeps only errors or warnings; since keeps entries numbered after it.',
-    inputSchema: {
-      type: 'object',
-      properties: { level: { type: 'string', enum: ['error', 'warn', 'all'] }, since: { type: 'number' } }
-    }
+      "Page console. A tab's first call starts recording and returns what Chromium kept. since: entries after that number.",
+    inputSchema: { type: 'object', properties: { level: { type: 'string', enum: ['error', 'warn', 'all'] }, since: { type: 'number' } } }
   },
   {
     name: 'network',
     description:
-      "List the page's network requests: number, method, status, type, size, time, URL, and why a request failed. " +
-      "Recording starts on a tab's first network call, so that call returns nothing yet: navigate to the page's URL to " +
-      "capture its load. Query values are hidden except on this machine's dev servers. failedOnly keeps failed and " +
-      'HTTP 4xx/5xx requests; filter keeps URLs containing that text.',
+      "Page requests with status, size, time and failures. A tab's first call starts recording, empty: " +
+      'navigate again to capture a load. failedOnly: failures and 4xx/5xx. filter: URL text.',
     inputSchema: { type: 'object', properties: { failedOnly: { type: 'boolean' }, filter: { type: 'string' } } }
   },
   {
     name: 'network_body',
-    description:
-      'Read the response body of a request by its number from network, as text. Only requests to this machine ' +
-      "(localhost, 127.0.0.1, [::1]) are readable: a real site's response is the user's data.",
+    description: "A localhost request's body, by network number.",
     inputSchema: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] }
   },
   {
     name: 'cookies',
-    description:
-      "List the cookies a request to the page's URL would carry, as metadata: name, domain, path, expiry, size and the " +
-      'HttpOnly, Secure and SameSite flags. Values are never shown: a cookie value is a session credential.',
+    description: "Cookie metadata for the page's URL, never values.",
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'storage',
-    description:
-      "List the page's storage. local and session give each key with its size, and its value only on this machine's dev " +
-      'servers (localhost, 127.0.0.1, [::1]). indexeddb gives each database with its object stores and entry counts. ' +
-      'With no area, lists local and session storage.',
+    description: 'local/session storage keys (values on localhost only), or indexeddb databases.',
     inputSchema: { type: 'object', properties: { area: { type: 'string', enum: ['local', 'session', 'indexeddb'] } } }
   }
 ]
 
-const TAB = { type: 'number', description: 'Tab id from tabs. Defaults to the tab you last used.' }
-
 export const TOOLS = [
-  ...PAGE_TOOLS.map((t) => ({ ...t, inputSchema: { ...t.inputSchema, properties: { ...t.inputSchema.properties, tab: TAB } } })),
+  ...PAGE_TOOLS.map((t) => ({ ...t, inputSchema: { ...t.inputSchema, properties: { ...t.inputSchema.properties, tab: { type: 'number' } } } })),
   {
     name: 'tabs',
-    description: 'List the open tabs: id, title and URL, which one the user is viewing and which one you last used.',
+    description:
+      'Open tabs: id, title, URL, viewed, last used. Page tools act in tab, else your last one.',
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'new_tab',
-    description:
-      "Open a new tab at the end, optionally at a url (http or https). The user's view stays on the tab they're viewing. " +
-      'Later calls default to the new tab.',
+    description: 'Open a tab, optionally at a URL; later calls default to it.',
     inputSchema: { type: 'object', properties: { url: { type: 'string' } } }
   },
   {
     name: 'close_tab',
-    description: 'Close a tab. Closing the last tab leaves a fresh empty one.',
-    inputSchema: { type: 'object', properties: { tab: { type: 'number', description: 'Tab id from tabs.' } }, required: ['tab'] }
+    description: 'Close a tab; the last leaves an empty one.',
+    inputSchema: { type: 'object', properties: { tab: { type: 'number' } }, required: ['tab'] }
   }
 ]
+
+/** The tools a session can turn off, by bundle. snapshot, tabs, navigate and back come with browser access. */
+const BUNDLES = {
+  visual: ['screenshot'],
+  interact: ['click', 'type', 'press', 'hover', 'scroll', 'new_tab', 'close_tab', 'autofill_login'],
+  debug: ['console', 'network', 'network_body', 'cookies', 'storage']
+}
+export type Bundles = Record<keyof typeof BUNDLES, boolean>
+
+/** Listed straight to the model instead of behind ToolSearch: every browsing task starts with them,
+ *  and skipping the search round trip brought the first browser action from 7-9s to 5-6s. */
+const ALWAYS_LOAD = new Set(['snapshot', 'navigate', 'tabs', 'back'])
+
+export const toolsFor = (b: Bundles): typeof TOOLS => {
+  const off = new Set((Object.keys(BUNDLES) as (keyof Bundles)[]).flatMap((k) => (b[k] ? [] : BUNDLES[k])))
+  return TOOLS.filter((t) => !off.has(t.name))
+}
+const ALL_ON: Bundles = { visual: true, interact: true, debug: true }
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError } : {}) })
 const untrusted = (url: string): string => {
@@ -188,10 +206,6 @@ export function requestUrl(raw: string): string {
   return `${u.origin}${u.pathname}${query}`.slice(0, 300)
 }
 
-export function scrub(t: string, secrets: Set<string>): string {
-  for (const v of secrets) for (const form of [v, encodeURIComponent(v)]) t = t.split(form).join('•••')
-  return t
-}
 const keyName = (k: string): string => (k === ' ' ? 'Space' : k)
 
 /** press's keys as a list, or the refusal text for the model. */
@@ -221,6 +235,53 @@ export function refMiss(ref: Ref, why: RefMiss | 'tab', url: string): string {
 export function targetTab(asked: unknown, open: number[], lastUsed: number, viewed: number): number | string {
   if (asked !== undefined && asked !== null) return typeof asked === 'number' && open.includes(asked) ? asked : TEXT.noTab(asked)
   return open.includes(lastUsed) ? lastUsed : viewed
+}
+
+/** A screenshot's geometry: image pixels per CSS pixel, the CSS point its top-left corner shows, and the view it was taken in. */
+export interface Shot extends View { id: string; tab: number; scale: number; x0: number; y0: number; w: number; h: number }
+
+/** Why a screenshot no longer matches the page, or null while it does. */
+export function stale(shot: Shot, now: View): string | null {
+  if (now.doc !== shot.doc) return 'The page changed since that screenshot; take a new one.'
+  if (now.vw !== shot.vw || now.vh !== shot.vh) return 'The viewport was resized since that screenshot; take a new one.'
+  if (now.sx !== shot.sx || now.sy !== shot.sy) return 'The page scrolled since that screenshot; take a new one.'
+  if (now.epoch !== shot.epoch) return "The page's layout changed since that screenshot; take a new one."
+  return null
+}
+
+/** A point in a screenshot's pixels as a viewport point, or why it can't be one. */
+export function fromShot(shot: Shot, now: View, x: number, y: number): { x: number; y: number } | string {
+  const why = stale(shot, now)
+  if (why) return why
+  if (x < 0 || y < 0 || x >= shot.w || y >= shot.h) return `${x}, ${y} is outside screenshot ${shot.id}, which is ${shot.w}×${shot.h}.`
+  return { x: shot.x0 + x / shot.scale, y: shot.y0 + y / shot.scale }
+}
+
+/** `r` clipped to the viewport, in whole CSS pixels. */
+function within(r: Rect, v: View): Rect {
+  const x = Math.max(0, Math.floor(r.x))
+  const y = Math.max(0, Math.floor(r.y))
+  return { x, y, w: Math.min(v.vw, Math.ceil(r.x + r.w)) - x, h: Math.min(v.vh, Math.ceil(r.y + r.h)) - y }
+}
+
+const KEYBOARD =
+  '\n\nThis page reads keys typed on it and shows an on-screen keyboard: enter letters with press, the whole word and then Enter in one call, not by clicking key buttons.'
+
+/** The snapshot body: the page's lines with full refs, then what's cut or off screen. */
+function listing(o: Observed): string {
+  const lines = [...o.lines]
+  if (o.cut) lines.push(`(Cut at ${SNAPSHOT_CAP.toLocaleString('en-US')} characters. snapshot scope with a section's ref reads one part, or scroll.)`)
+  if (o.above || o.below || o.headings.length) {
+    const counts = [o.above && `${plural(o.above, 'control')} above`, o.below && `${plural(o.below, 'control')} below`].filter(Boolean).join(', ')
+    const under = o.headings.length ? `sections below: ${o.headings.map((h) => JSON.stringify(h)).join(', ')}` : ''
+    lines.push(`Off screen: ${[counts, under].filter(Boolean).join('; ')}. Scroll, or snapshot all:true.`)
+  }
+  return lines.join('\n') || '(nothing to read in view)'
+}
+
+function viewLine(o: Observed): string {
+  const focus = o.focus ? ` · focus: ${o.focus}` : ''
+  return `Viewport ${o.vw}×${o.vh} · scrolled ${Math.round(o.sy)}/${Math.max(0, o.sh - o.vh)}${focus}`
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -268,6 +329,11 @@ export class BrowserMcpServer {
   /** Sites this session filled a login on. A form that submits by GET puts the password in the URL,
    *  so URLs on these sites lose their query string in anything the model reads. */
   private readonly filledSites = new Map<string, Set<string>>()
+  /** The last few screenshots per tab, keyed like chains, newest last. */
+  private readonly shots = new Map<string, Shot[]>()
+  private shotSeq = 0
+  /** Per session, captured at spawn. A session with no entry has every tool. */
+  private readonly bundles = new Map<string, Bundles>()
   private port: Promise<number> | null = null
 
   private readonly browser: BrowserManager
@@ -307,10 +373,16 @@ export class BrowserMcpServer {
     return JSON.stringify({ mcpServers: { 'clui-browser': { type: 'http', url, headers: { Authorization: `Bearer ${token}` } } } })
   }
 
+  /** Which bundles this session's CLI sees and may call. Set before the CLI lists its tools, which it does once. */
+  setBundles(handleId: string, b: Partial<Bundles>): void {
+    this.bundles.set(handleId, { ...ALL_ON, ...b })
+  }
+
   revoke(handleId: string): void {
     this.tokens.delete(handleId)
-    for (const key of this.chains.keys()) if (key.startsWith(`${handleId}\n`)) this.chains.delete(key)
+    for (const map of [this.chains, this.shots]) for (const key of map.keys()) if (key.startsWith(`${handleId}\n`)) map.delete(key)
     this.filledSites.delete(handleId)
+    this.bundles.delete(handleId)
   }
 
   private shownUrl(handleId: string, raw: string): string {
@@ -375,7 +447,9 @@ export class BrowserMcpServer {
       case 'ping':
         return this.reply(res, msg.id, {})
       case 'tools/list':
-        return this.reply(res, msg.id, { tools: TOOLS })
+        return this.reply(res, msg.id, {
+          tools: toolsFor(this.bundles.get(handleId) ?? ALL_ON).map((t) => (ALWAYS_LOAD.has(t.name) ? { ...t, _meta: { 'anthropic/alwaysLoad': true } } : t))
+        })
       case 'tools/call': {
         const name = typeof params.name === 'string' ? params.name : ''
         const args = params.arguments && typeof params.arguments === 'object' ? (params.arguments as Record<string, unknown>) : {}
@@ -394,10 +468,12 @@ export class BrowserMcpServer {
 
   /** Runs one tool for a session. Never throws: every failure becomes text for the model. */
   async callTool(handleId: string, name: string, args: Record<string, unknown>, toolUseId?: string): Promise<ToolResult> {
+    if (!toolsFor(this.bundles.get(handleId) ?? ALL_ON).some((t) => t.name === name)) {
+      return text(TOOLS.some((t) => t.name === name) ? `${name} is turned off for this session.` : `Unknown tool ${name}.`, true)
+    }
     if (name === 'tabs') return this.listTabs(handleId)
     if (name === 'new_tab') return this.openTab(handleId, args, toolUseId)
     if (name === 'close_tab') return this.closeTab(handleId, args, toolUseId)
-    if (!PAGE_TOOLS.some((t) => t.name === name)) return text(`Unknown tool ${name}.`, true)
     const info = this.browser.tabsOf(handleId)
     if (!info) return text(TEXT.off, true)
     const tab = targetTab(args.tab, info.tabs.map((t) => t.id), info.lastUsed, info.viewed)
@@ -595,22 +671,22 @@ export class BrowserMcpServer {
       }
 
       case 'snapshot': {
-        const { doc, items, shown, keys } = await cdp.listInteractive()
-        const list = items.map(([n, line]) => `${formatRef({ tab, doc, n })} ${line}`).join('\n')
-        const content: Content[] = []
-        if (!shown) {
-          const img = await wc.capturePage()
-          if (!img.isEmpty()) content.push({ type: 'image', data: img.toPNG().toString('base64'), mimeType: 'image/png' })
+        let scope: Ref | undefined
+        if (args.scope != null) {
+          const ref = parseRef(args.scope)
+          if (!ref) return text(badRef(args.scope), true)
+          if (ref.tab !== tab) return text(refMiss(ref, 'tab', ''), true)
+          scope = ref
         }
-        const note = shown ? '\n\nNo screenshot: a saved password Clui filled is visible on the page.' : ''
+        const o = await cdp.observe({ tab, scope, all: args.all === true, cap: SNAPSHOT_CAP })
+        if ('why' in o) return text(refMiss(scope as Ref, o.why, this.shownUrl(handleId, wc.getURL())), true)
         // Left to itself the model clicks an on-screen keyboard key by key, and parallel clicks land out of order.
-        const keyboard =
-          keys >= 10 && (await cdp.takesKeys())
-            ? '\n\nThis page reads keys typed on it and shows an on-screen keyboard: enter letters with press, the whole word and then Enter in one call, not by clicking key buttons.'
-            : ''
-        content.push({ type: 'text', text: `${this.pageLine(handleId, tab, wc)}${note}${keyboard}\n\n${list || '(no interactive elements)'}` })
-        return { content }
+        const keyboard = o.keys >= 10 && (await cdp.takesKeys()) ? KEYBOARD : ''
+        return text(scrub(`${this.pageLine(handleId, tab, wc)}\n${viewLine(o)}${keyboard}\n\n${listing(o)}`, cdp.secrets))
       }
+
+      case 'screenshot':
+        return this.screenshot(handleId, tab, page, args)
 
       case 'click': {
         const before = wc.getURL()
@@ -622,11 +698,7 @@ export class BrowserMcpServer {
           return text(after === before ? 'clicked' : `clicked. The page is now ${this.shownUrl(handleId, after)}`)
         }
         if (args.ref != null) return this.actOnRef(handleId, tab, page, args.ref, (box) => clickAt(box.x, box.y))
-        const x = num(args.x)
-        const y = num(args.y)
-        if (x === null || y === null) return text('click needs a ref, or x and y.', true)
-        await moveCursor(wc, x, y)
-        return clickAt(x, y)
+        return this.atShot(handleId, tab, page, 'click', args, clickAt)
       }
 
       case 'type': {
@@ -675,12 +747,10 @@ export class BrowserMcpServer {
             return text(`Hovering over ${ref.n}.`)
           })
         }
-        const x = num(args.x)
-        const y = num(args.y)
-        if (x === null || y === null) return text('hover needs a ref, or x and y.', true)
-        await moveCursor(wc, x, y)
-        await cdp.hover(x, y)
-        return text(`Hovering at ${x}, ${y}.`)
+        return this.atShot(handleId, tab, page, 'hover', args, async (x, y) => {
+          await cdp.hover(x, y)
+          return text(`Hovering at ${args.x}, ${args.y}.`)
+        })
       }
 
       case 'scroll': {
@@ -708,6 +778,15 @@ export class BrowserMcpServer {
     return text(`Unknown tool ${name}.`, true)
   }
 
+  /** A ref's element in this tab's current page, scrolled into view, or the refusal. */
+  private async find(handleId: string, tab: number, { wc, cdp }: { wc: WebContents; cdp: Cdp }, raw: unknown): Promise<{ ref: Ref; box: Box } | ToolResult> {
+    const ref = parseRef(raw)
+    if (!ref) return text(badRef(raw), true)
+    if (ref.tab !== tab) return text(refMiss(ref, 'tab', ''), true)
+    const at = await cdp.locate(ref)
+    return 'why' in at ? text(refMiss(ref, at.why, this.shownUrl(handleId, wc.getURL())), true) : { ref, box: at }
+  }
+
   /**
    * Resolves a ref in this tab's current page, moves the cursor to it, then reads it again just before act
    * dispatches input: the cursor's glide yields, and the page may move or drop the element meanwhile.
@@ -721,20 +800,91 @@ export class BrowserMcpServer {
     act: (box: Box, ref: Ref) => Promise<ToolResult>,
     password?: string
   ): Promise<ToolResult> {
-    const ref = parseRef(raw)
-    if (!ref) return text(badRef(raw), true)
-    if (ref.tab !== tab) return text(refMiss(ref, 'tab', ''), true)
-    const { wc, cdp } = page
-    const look = async (): Promise<Box | ToolResult> => {
-      const at = await cdp.locate(ref)
-      if ('why' in at) return text(refMiss(ref, at.why, this.shownUrl(handleId, wc.getURL())), true)
-      return at.password && password ? this.refusePassword(wc, refTarget(ref.n), password) : at
+    const look = async (): Promise<{ ref: Ref; box: Box } | ToolResult> => {
+      const at = await this.find(handleId, tab, page, raw)
+      return 'box' in at && at.box.password && password ? this.refusePassword(page.wc, refTarget(at.ref.n), password) : at
     }
     const first = await look()
     if ('content' in first) return first
+    await moveCursor(page.wc, first.box.x, first.box.y)
+    const again = await look()
+    return 'content' in again ? again : act(again.box, again.ref)
+  }
+
+  private shotOf(handleId: string, tab: number, raw: unknown): Shot | string {
+    const m = typeof raw === 'string' ? /^t(\d+):s\d+$/.exec(raw) : null
+    if (!m) return `${String(JSON.stringify(raw)).slice(0, 60)} isn't a shotId. Pass one exactly as screenshot gives it, like t1:s4.`
+    if (Number(m[1]) !== tab) return `Screenshot ${raw} is from tab ${m[1]}.`
+    return this.shots.get(`${handleId}\n${tab}`)?.find((s) => s.id === raw) ?? `Screenshot ${raw} has expired; take a new one.`
+  }
+
+  /** x and y in a screenshot's pixels, checked against the page as it is now, before the cursor moves and again before input. */
+  private async atShot(
+    handleId: string,
+    tab: number,
+    { wc, cdp }: { wc: WebContents; cdp: Cdp },
+    verb: string,
+    args: Record<string, unknown>,
+    act: (x: number, y: number) => Promise<ToolResult>
+  ): Promise<ToolResult> {
+    const x = num(args.x)
+    const y = num(args.y)
+    if (x === null || y === null) return text(`${verb} needs a ref, or x and y with a shotId.`, true)
+    if (args.shotId == null) return text('x and y are pixels of a screenshot: pass its shotId too, or use a ref.', true)
+    const shot = this.shotOf(handleId, tab, args.shotId)
+    if (typeof shot === 'string') return text(shot, true)
+    const first = fromShot(shot, await cdp.view(), x, y)
+    if (typeof first === 'string') return text(first, true)
     await moveCursor(wc, first.x, first.y)
-    const box = await look()
-    return 'content' in box ? box : act(box, ref)
+    const at = fromShot(shot, await cdp.view(), x, y)
+    return typeof at === 'string' ? text(at, true) : act(at.x, at.y)
+  }
+
+  private async screenshot(handleId: string, tab: number, page: { wc: WebContents; cdp: Cdp }, args: Record<string, unknown>): Promise<ToolResult> {
+    const { wc, cdp } = page
+    if (args.ref != null && args.region != null) return text('screenshot takes a ref or a region, not both.', true)
+    let rect: Rect | null = null
+    if (args.ref != null) {
+      const at = await this.find(handleId, tab, page, args.ref)
+      if ('content' in at) return at
+      const { x, y, w, h } = at.box
+      rect = { x: x - w / 2 - SHOT_MARGIN, y: y - h / 2 - SHOT_MARGIN, w: w + 2 * SHOT_MARGIN, h: h + 2 * SHOT_MARGIN }
+    }
+    const v = await cdp.view()
+    if (v.shown) return text('No screenshot: a saved password Clui filled is visible on the page.', true)
+    if (args.region != null) {
+      if (args.shotId == null) return text("A region is in an earlier screenshot's pixels: pass its shotId too.", true)
+      const shot = this.shotOf(handleId, tab, args.shotId)
+      if (typeof shot === 'string') return text(shot, true)
+      const why = stale(shot, v)
+      if (why) return text(why, true)
+      const [rx, ry, rw, rh] = Array.isArray(args.region) && args.region.length === 4 ? args.region.map(num) : []
+      if (rx == null || ry == null || rw == null || rh == null || rw <= 0 || rh <= 0) return text("region is [x, y, w, h] in the screenshot's pixels, with w and h above 0.", true)
+      const x0 = Math.max(0, rx)
+      const y0 = Math.max(0, ry)
+      const x1 = Math.min(shot.w, rx + rw)
+      const y1 = Math.min(shot.h, ry + rh)
+      if (x1 <= x0 || y1 <= y0) return text(`That region is outside screenshot ${shot.id}, which is ${shot.w}×${shot.h}.`, true)
+      rect = { x: shot.x0 + x0 / shot.scale, y: shot.y0 + y0 / shot.scale, w: (x1 - x0) / shot.scale, h: (y1 - y0) / shot.scale }
+    }
+    const area = within(rect ?? { x: 0, y: 0, w: v.vw, h: v.vh }, v)
+    if (area.w <= 0 || area.h <= 0) return text('That part of the page is outside the viewport.', true)
+    const long = Math.max(area.w, area.h)
+    const img = await capture(wc, { rect: area, maxEdge: Math.min(args.detail === 'high' ? HIGH_EDGE : LOW_EDGE, long), format: 'jpeg' })
+    if (!img) return text("The page couldn't be captured. Try again.", true)
+    const key = `${handleId}\n${tab}`
+    const shot: Shot = { ...v, id: `t${tab}:s${++this.shotSeq}`, tab, scale: img.w / area.w, x0: area.x, y0: area.y, w: img.w, h: img.h }
+    this.shots.set(key, [...(this.shots.get(key) ?? []), shot].slice(-SHOTS_KEPT))
+    const of = rect ? `the viewport region at ${area.x},${area.y} sized ${area.w}×${area.h}` : `the viewport ${v.vw}×${v.vh}`
+    return {
+      content: [
+        { type: 'image', data: img.data.toString('base64'), mimeType: 'image/jpeg' },
+        {
+          type: 'text',
+          text: `${this.pageLine(handleId, tab, wc)}\n\nImage ${img.w}×${img.h} of ${of} (scale ${shot.scale.toFixed(2)}). Use shotId ${shot.id} with click or hover x and y in this image's pixels.`
+        }
+      ]
+    }
   }
 
   /** `pressed`: keys that already went through before focus reached the field, so the model knows the page moved. */
@@ -802,7 +952,7 @@ function fillScript(site: string, user: string, pass: string, code: string): str
   return `(() => {
     const local = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
     if ((${PAGE_SITE_KEY})(location) !== ${site} || !(location.protocol === 'https:' || (local && location.protocol === 'http:'))) return null;
-    const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 };
+    const vis = ${PAGE_VIS};
     const all = (s) => [...document.querySelectorAll(s)].filter(vis);
     const pw = all('input[type=password]')[0] || null;
     let user = all('input[autocomplete~=username],input[autocomplete~=email],input[type=email]')[0] || null;

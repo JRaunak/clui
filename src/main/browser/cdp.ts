@@ -37,28 +37,199 @@ export const PAGE_REFS = `(w, cur, next) => {
     if (n === undefined) { n = ++s.n; s.ids.set(e, n); s.els.set(n, new WeakRef(e)); }
     return n;
   };
-  return { doc: s.doc, id };
+  return { doc: s.doc, id, table: s };
 }`
 
-// Password values and anything autofill wrote are never listed, or the list would hand the model the
-// secret. A filled password can still surface elsewhere (a show-password toggle turns the field to
-// text, a script copies it into the page), so any sighting of one is scrubbed from the list and
-// reported, and the caller drops the screenshot.
-const listInteractive = (cur: string | null, next: string): string => `(() => {
-  const refs = (${PAGE_REFS})(window, ${JSON.stringify(cur)}, ${JSON.stringify(next)})
+/** Page-side: an element that takes up space on the page. */
+export const PAGE_VIS = `(e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 }`
+
+/** Page-side: a password autofill wrote is visible outside its field (a show-password toggle turned the field to text,
+ *  a script copied it into the page). A screenshot would hand the model the secret, so the caller refuses one. */
+const PAGE_SHOWN = `(() => {
   const secrets = [...(window.__cluiSecrets || [])]
-  const scrub = (t) => secrets.reduce((acc, v) => acc.split(v).join('•••'), t)
-  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-  const els = [...document.querySelectorAll('a,button,input,select,textarea,[role=button],[contenteditable=""],[contenteditable=true]')]
-    .filter(vis)
-    .slice(0, 150)
-  const shown = secrets.length > 0 && (
+  const vis = ${PAGE_VIS}
+  return secrets.length > 0 && (
     secrets.some((v) => (document.body?.innerText || '').includes(v)) ||
     [...document.querySelectorAll('input,textarea')].some((e) => e.type !== 'password' && vis(e) && secrets.some((v) => e.value.includes(v))))
-  const items = els.map((e) => [refs.id(e), \`\${e.getAttribute('role') || e.tagName.toLowerCase()} "\${scrub((e.getAttribute('aria-label') || e.innerText || (e.type === 'password' || window.__cluiFilled?.has(e) ? '' : e.value) || e.placeholder || '').trim()).slice(0, 80)}"\`])
-  const keys = els.filter((e) => (e.tagName === 'BUTTON' || e.getAttribute('role') === 'button') && /^\\S$/u.test(e.innerText.trim())).length
-  return { doc: refs.doc, items, shown, keys }
 })()`
+
+/** Page-side: counts the table's layout changes, a resize of the document's box, so a screenshot taken before one is refused. */
+const PAGE_EPOCH = `(s) => {
+  if (s.ro) return s.epoch
+  let last = ''
+  s.epoch = 0
+  s.ro = new ResizeObserver(([e]) => {
+    const size = e.contentRect.width + 'x' + e.contentRect.height
+    if (last && size !== last) s.epoch++
+    last = size
+  })
+  s.ro.observe(document.documentElement)
+  return s.epoch
+}`
+
+const PAGE_VIEW = `{ vw: innerWidth, vh: innerHeight, sx: scrollX, sy: scrollY }`
+
+/** The page's metrics a screenshot is taken against, and the document it belongs to. */
+export interface View { doc: string; vw: number; vh: number; sx: number; sy: number; epoch: number }
+
+/**
+ * The semantic snapshot, walked in reading order: section and heading lines, the text in the viewport, and the
+ * controls in it with ref numbers. Text inside a control or its label is the control's name, so it isn't repeated.
+ * Hidden subtrees are skipped. A field's value is shown unless it's a password or autofill wrote it; filled secrets
+ * that surface anyway are scrubbed by the caller. `scope` walks one element's subtree, whole; `all` drops the viewport filter.
+ */
+// ponytail: open shadow roots aren't walked; walk e.shadowRoot and slots once a real site's controls go missing
+const observe = (tab: number, cur: string | null, next: string, scope: number | null, all: boolean, cap: number): string => `(() => {
+  const refs = (${PAGE_REFS})(window, ${JSON.stringify(cur)}, ${JSON.stringify(next)})
+  if (${scope !== null} && refs.doc !== ${JSON.stringify(cur)}) return { why: 'page' }
+  const epoch = (${PAGE_EPOCH})(refs.table)
+  const root = ${scope === null ? 'document.body || document.documentElement' : `refs.table.els.get(${Number(scope)})?.deref()`}
+  if (!root || !root.isConnected) return { why: 'gone' }
+  const ref = (e) => 't${Number(tab)}:d' + refs.doc + ':e' + refs.id(e)
+  const whole = ${all || scope !== null}, vw = innerWidth, vh = innerHeight
+  const CONTROL = 'a,button,input:not([type=hidden]),select,textarea,summary,[contenteditable=""],[contenteditable=true],' +
+    ['button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'combobox', 'textbox', 'searchbox', 'slider', 'spinbutton'].map((r) => '[role=' + r + ']').join(',')
+  // Forms, dialogs and tables are worth a ref to scope to; other landmarks only when they're labelled.
+  const SECTION = { form: 'form', dialog: 'dialog', table: 'table' }
+  const LANDMARK = { nav: 'nav', main: 'main', aside: 'aside', header: 'header', footer: 'footer', search: 'search', section: 'section' }
+  const SECTION_ROLES = new Set(['form', 'dialog', 'alertdialog', 'tabpanel', 'menu', 'listbox', 'tablist', 'table', 'grid'])
+  const LANDMARK_ROLES = new Set(['navigation', 'main', 'banner', 'contentinfo', 'complementary', 'search', 'region'])
+  const BLOCK = new Set(['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'tr', 'td', 'th', 'section', 'article', 'header', 'footer', 'nav', 'main', 'aside', 'ul', 'ol', 'dl', 'dt', 'dd', 'blockquote', 'pre', 'figure', 'figcaption', 'caption', 'table', 'form', 'fieldset', 'legend', 'details', 'dialog', 'br', 'hr'])
+  const SKIP = new Set(['script', 'style', 'noscript', 'template', 'svg', 'iframe', 'frame', 'object', 'embed', 'head', 'option', 'datalist'])
+  const INPUT = { checkbox: 'checkbox', radio: 'radio', button: 'button', submit: 'button', reset: 'button', image: 'button', range: 'slider', search: 'searchbox', number: 'spinbutton', password: 'password', file: 'file', color: 'color' }
+  const TAG = { a: 'link', select: 'combobox', textarea: 'textbox', summary: 'button' }
+  const squash = (t) => (t || '').replace(/\\s+/g, ' ').trim()
+  const clip = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t)
+  const textOf = (e) => squash(e.innerText ?? e.textContent)
+  const byIds = (ids) => squash((ids || '').split(/\\s+/).map((id) => document.getElementById(id)?.textContent || '').join(' '))
+  const field = (e) => e.localName === 'textarea' || (e.localName === 'input' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'image', 'range', 'file', 'color'].includes(e.type)) || e.isContentEditable
+  const nameOf = (e) => squash(e.getAttribute('aria-label')) || byIds(e.getAttribute('aria-labelledby')) ||
+    (e.labels?.length ? squash([...e.labels].map((l) => l.innerText).join(' ')) : '') ||
+    (field(e) || e.localName === 'select' ? '' : textOf(e)) || e.placeholder || e.title || e.alt || squash(e.value && e.type !== 'password' && !field(e) ? e.value : '')
+  const roleOf = (e) => e.getAttribute('role') || (e.localName === 'input' ? INPUT[e.type] || 'textbox' : TAG[e.localName] || e.localName)
+  const describe = (e) => {
+    const s = [roleOf(e) + ' "' + clip(nameOf(e), 80) + '"']
+    if (e.localName === 'select') s.push('= "' + clip(squash(e.selectedOptions?.[0]?.text), 60) + '"')
+    else if (field(e) && e.type !== 'password' && !window.__cluiFilled?.has(e)) { const v = e.isContentEditable ? textOf(e) : e.value; if (v) s.push('= "' + clip(squash(v), 80) + '"') }
+    if (e.checked || e.getAttribute('aria-checked') === 'true') s.push('checked')
+    if (e.disabled || e.getAttribute('aria-disabled') === 'true') s.push('disabled')
+    const x = e.getAttribute('aria-expanded'); if (x) s.push(x === 'true' ? 'expanded' : 'collapsed')
+    if (e.getAttribute('aria-selected') === 'true') s.push('selected')
+    if (e.getAttribute('aria-pressed') === 'true') s.push('pressed')
+    return s.join(' ')
+  }
+  const inView = (r) => r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw
+  const lines = [], below = [], seen = { above: 0, below: 0, nodes: 0 }
+  let size = 0, cut = false, keys = 0, buf = '', prefix = '', row = null, quiet = 0
+  const CUT = {}
+  const push = (t) => {
+    size += t.length + 1
+    if (size > ${cap}) { cut = true; throw CUT }
+    lines.push(t)
+  }
+  const flush = () => {
+    const t = squash(buf)
+    buf = ''
+    if (/[^\\s|]/.test(t)) push(clip(prefix + t, 2000))
+    prefix = ''
+  }
+  const text = (t) => {
+    if (quiet || !t.data.trim()) { buf += ' '; return }
+    if (!whole) {
+      const p = t.parentElement, r = p.getBoundingClientRect()
+      let shown = inView(r)
+      if (shown && r.height > vh) { const g = document.createRange(); g.selectNodeContents(t); shown = inView(g.getBoundingClientRect()) }
+      if (!shown) return
+    }
+    buf += t.data
+  }
+  const control = (e) => {
+    const r = e.getBoundingClientRect()
+    if (!r.width || !r.height) return
+    if ((e.localName === 'button' || e.getAttribute('role') === 'button') && /^\\S$/u.test(textOf(e))) keys++
+    if (!whole && !inView(r)) { if (r.bottom <= 0) seen.above++; else seen.below++; return }
+    // A link inside running text, and any control in a table row, stays in its line.
+    const link = roleOf(e) === 'link'
+    if (row || (link && (/\\S/.test(buf) || [...e.parentElement.childNodes].some((c) => c.nodeType === 3 && c.data.trim())))) {
+      buf += ' [' + (link ? clip(nameOf(e), 80) : describe(e)) + '](' + ref(e) + ') '
+      return
+    }
+    flush()
+    push(ref(e) + ' ' + describe(e))
+  }
+  const visit = (e) => {
+    if (++seen.nodes > 50000) { cut = true; throw CUT }
+    const tag = e.localName
+    if (SKIP.has(tag) || e.getAttribute('aria-hidden') === 'true' || e.hidden || !e.checkVisibility({ visibilityProperty: true })) return
+    if (e.matches(CONTROL)) return control(e)
+    const r = e.getBoundingClientRect(), shown = whole || inView(r)
+    if (tag === 'img' || tag === 'canvas' || tag === 'video' || e.getAttribute('role') === 'img') {
+      if (shown && r.width >= 64 && r.height >= 64) { flush(); push('[' + (tag === 'canvas' || tag === 'video' ? tag : 'image') + (e.alt || e.getAttribute('aria-label') ? ' "' + clip(squash(e.alt || e.getAttribute('aria-label')), 80) + '"' : '') + ' ' + Math.round(r.width) + '×' + Math.round(r.height) + ']') }
+      return
+    }
+    const level = /^h([1-6])$/.exec(tag)?.[1] || (e.getAttribute('role') === 'heading' ? e.getAttribute('aria-level') || '2' : '')
+    if (level && !shown && +level <= 3 && r.top >= vh) below.push(clip(textOf(e), 60))
+    const role = e.getAttribute('role'), labelled = e.hasAttribute('aria-label') || e.hasAttribute('aria-labelledby')
+    const section = SECTION[tag] || ((SECTION_ROLES.has(role) || (labelled && LANDMARK_ROLES.has(role))) && role) || (labelled && LANDMARK[tag])
+    if (section && shown && !row) {
+      flush()
+      const label = squash(e.getAttribute('aria-label')) || byIds(e.getAttribute('aria-labelledby')) || (tag === 'table' ? squash(e.caption?.textContent) : '') || (tag === 'dialog' || role === 'dialog' ? squash(e.querySelector('h1,h2,h3,h4')?.textContent) : '')
+      push(ref(e) + ' [' + section + (label ? ' "' + clip(label, 80) + '"' : '') + (e.matches(':modal') ? ' modal' : '') + ']')
+    }
+    if (tag === 'label' && e.control) quiet++
+    // Rows are the innermost tr: layout tables nest a whole table inside one cell.
+    const outer = row
+    if (tag === 'tr') { flush(); row = e; buf = '| ' }
+    else if (row && (tag === 'td' || tag === 'th')) { if (squash(buf) !== '|') buf += ' | ' }
+    else if (BLOCK.has(tag) && !row) { flush(); if (level) prefix = '#'.repeat(+level) + ' '; else if (tag === 'li') prefix = '- ' }
+    for (const c of e.childNodes) c.nodeType === 3 ? text(c) : c.nodeType === 1 && visit(c)
+    if (tag === 'label' && e.control) quiet--
+    if (row === e) { buf += ' |'; flush(); row = outer; if (row) buf = '| ' }
+    else if (BLOCK.has(tag) && !row) flush()
+  }
+  try { visit(root); flush() } catch (err) { if (err !== CUT) throw err }
+  const f = document.activeElement
+  const focus = f && f !== document.body && f !== document.documentElement && f.isConnected ? describe(f) + ' (' + ref(f) + ')' : null
+  return { doc: refs.doc, ...${PAGE_VIEW}, epoch, sh: document.documentElement.scrollHeight, lines, focus, above: seen.above, below: seen.below, headings: below.slice(0, 8), cut, keys, shown: ${PAGE_SHOWN} }
+})()`
+
+/** A filled password or anything else in `secrets`, raw and URL-encoded, never leaves for the model or the transcript. */
+export function scrub(t: string, secrets: Set<string>): string {
+  for (const v of secrets) for (const form of [v, encodeURIComponent(v)]) t = t.split(form).join('•••')
+  return t
+}
+
+/** One encoder for every capture: the tool screenshots, the annotate crop and the tab still. `rect` is in CSS pixels, the
+ *  result in image pixels, which are device pixels unless `maxEdge` caps the longer side. Null for an empty capture. */
+export async function capture(
+  wc: WebContents,
+  { rect, maxEdge, format, quality = 85 }: { rect?: Rect; maxEdge?: number; format: 'jpeg' | 'png'; quality?: number }
+): Promise<{ data: Buffer; w: number; h: number } | null> {
+  let img = await wc.capturePage(rect && { x: rect.x, y: rect.y, width: rect.w, height: rect.h })
+  if (img.isEmpty()) return null
+  const { width, height } = img.getSize()
+  const k = maxEdge ? maxEdge / Math.max(width, height) : 1
+  if (k < 1) img = img.resize({ width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)), quality: 'good' })
+  const out = img.getSize()
+  return { data: format === 'jpeg' ? img.toJPEG(quality) : img.toPNG(), w: out.width, h: out.height }
+}
+
+export interface Rect { x: number; y: number; w: number; h: number }
+
+/** Lines carry their refs already spelled out, as formatRef does. */
+export interface Observed extends View {
+  sh: number
+  lines: string[]
+  focus: string | null
+  above: number
+  below: number
+  /** Headings (h1-h3) below the viewport, so the model knows what scrolling reaches. */
+  headings: string[]
+  cut: boolean
+  /** Single-character buttons: the shape of an on-screen keyboard or keypad. */
+  keys: number
+  shown: boolean
+}
 
 /** A snapshot ref: the tab, the document it was taken in, and the element's number there. */
 export interface Ref { tab: number; doc: string; n: number }
@@ -74,7 +245,8 @@ export const refTarget = (n: number): string => `window.__cluiRefs?.els.get(${Nu
 
 export type RefMiss = 'gone' | 'page' | 'hidden'
 
-export interface Box { x: number; y: number; password: boolean }
+/** Where to act on an element: its centre and size in CSS pixels of the viewport. */
+export interface Box { x: number; y: number; w: number; h: number; password: boolean }
 
 /** url is set for a failed resource load, whose location is the request rather than a script line. */
 export interface LogEntry { n: number; level: 'error' | 'warn' | 'log' | 'nav'; text: string; where: string; url?: string }
@@ -182,7 +354,7 @@ export class Cdp {
   readonly secrets = new Set<string>()
   private logSeq = 0
   private netSeq = 0
-  /** The nonce of the document the last snapshot ran in. Null until one runs, and again once a new document or a
+  /** The nonce of the document the last snapshot or screenshot ran in. Null until one runs, and again once a new document or a
    *  new renderer replaces it; the world's own table catches a replacement these events miss. */
   private doc: string | null = null
 
@@ -398,12 +570,20 @@ export class Cdp {
     return this.wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }])
   }
 
-  /** `shown`: a password autofill wrote is visible somewhere on the page. `keys` counts single-character buttons,
-   *  the shape of an on-screen keyboard or keypad. */
-  async listInteractive(): Promise<{ doc: string; items: [n: number, line: string][]; shown: boolean; keys: number }> {
-    const out = await this.world<{ doc: string; items: [number, string][]; shown: boolean; keys: number }>(
-      listInteractive(this.doc, randomBytes(4).toString('hex'))
-    )
+  /** The semantic snapshot; see `observe`. `scope` is an element of the current document, else it's `page`. */
+  async observe({ tab, scope, all, cap }: { tab: number; scope?: Ref; all: boolean; cap: number }): Promise<Observed | { why: RefMiss }> {
+    if (scope && scope.doc !== this.doc) return { why: 'page' }
+    const out = await this.world<Observed | { why: RefMiss }>(observe(tab, this.doc, randomBytes(4).toString('hex'), scope?.n ?? null, all, cap))
+    if ('doc' in out) this.doc = out.doc
+    return out
+  }
+
+  /** The document and viewport a screenshot is taken in, or a coordinate is checked against. `shown` as in PAGE_SHOWN. */
+  async view(): Promise<View & { shown: boolean }> {
+    const out = await this.world<View & { shown: boolean }>(`(() => {
+      const refs = (${PAGE_REFS})(window, ${JSON.stringify(this.doc)}, ${JSON.stringify(randomBytes(4).toString('hex'))})
+      return { doc: refs.doc, ...${PAGE_VIEW}, epoch: (${PAGE_EPOCH})(refs.table), shown: ${PAGE_SHOWN} }
+    })()`)
     this.doc = out.doc
     return out
   }
@@ -444,7 +624,7 @@ export class Cdp {
         c = centre()
       }
       if (!c.r.width || !c.r.height) return { why: 'hidden' }
-      return { x: c.x, y: c.y, password: e instanceof HTMLInputElement && e.type === 'password' }
+      return { x: c.x, y: c.y, w: c.r.width, h: c.r.height, password: e instanceof HTMLInputElement && e.type === 'password' }
     })()`)
   }
 

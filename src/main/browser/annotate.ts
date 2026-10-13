@@ -7,12 +7,12 @@
 import type { BrowserWindow, Event as ElectronEvent, Input, WebContents } from 'electron'
 import { MAX_PINS, type AnnotateEvent, type AnnotateTarget, type AnnotationPin } from '../../shared/annotate'
 import { IpcChannels } from '../../shared/ipc'
-import type { Cdp } from './cdp'
+import { capture, scrub, type Cdp } from './cdp'
 import type { BrowserManager } from './manager'
 import { getSettingsSync } from '../settings/store'
 
 const MARGIN = 24
-const CROP_MAX_W = 800
+const CROP_MAX_EDGE = 800
 const GROUP = 'clui-annotate'
 const HIGHLIGHT = {
   borderColor: { r: 230, g: 230, b: 230, a: 1 },
@@ -306,14 +306,9 @@ export class Annotator {
     const height = Math.min(vh, Math.ceil(b.y + b.height + MARGIN)) - y
     if (width <= 0 || height <= 0) return null
     await cdp.command('Overlay.hideHighlight').catch(() => {})
-    let img = await wc.capturePage({ x, y, width, height })
-    if (img.isEmpty()) return null
     // A Retina capture doubles the pixels, which quadruples the image tokens and shows a UI bug no better.
-    const px = img.getSize(Math.max(...img.getScaleFactors()))
-    const target = Math.min(width, CROP_MAX_W)
-    if (px.width > target) img = img.resize({ width: target, quality: 'good' })
-    const out = img.getSize(Math.max(...img.getScaleFactors()))
-    return { data: img.toJPEG(85).toString('base64'), w: out.width, h: out.height }
+    const img = await capture(wc, { rect: { x, y, w: width, h: height }, maxEdge: Math.min(Math.max(width, height), CROP_MAX_EDGE), format: 'jpeg' })
+    return img && { data: img.data.toString('base64'), w: img.w, h: img.h }
   }
 
   private pinsOf(handleId: string): { id: number; tab: number }[] {
@@ -370,6 +365,5 @@ export class Annotator {
 /** A password Clui filled can surface in page text (a show-password toggle, a script copying it), so it never leaves. */
 function scrubbed(t: AnnotateTarget, secrets: Set<string>): AnnotateTarget {
   if (!secrets.size) return t
-  const scrub = (s: string): string => [...secrets].reduce((acc, v) => acc.split(v).join('•••'), s)
-  return { ...t, name: scrub(t.name), text: scrub(t.text), html: scrub(t.html) }
+  return { ...t, name: scrub(t.name, secrets), text: scrub(t.text, secrets), html: scrub(t.html, secrets) }
 }

@@ -400,6 +400,7 @@ function registerIpc(): void {
     // The token in the config is bound to the handle, so the handle exists before the process does.
     const handleId = randomUUID()
     const withBrowser = settings.browserEnabled && !opts.ephemeral
+    if (withBrowser) mcp.setBundles(handleId, { visual: settings.browserVisual, interact: settings.browserInteract, debug: settings.browserDebug })
     manager.start(handleId, {
       cliPath: info.path,
       cwd: opts.cwd,

@@ -98,7 +98,7 @@ ok(!fillAllowed('http://example.com/login') && !fillAllowed('http://127.0.0.1.ev
 
 // Boundary: every page tool takes a tab, and a call lands in the tab it names, else the one Claude
 // last used, else the viewed one. A tab that isn't open is refused, never silently redirected.
-const PAGE = ['navigate', 'snapshot', 'click', 'type', 'scroll', 'press', 'hover', 'back', 'autofill_login']
+const PAGE = ['navigate', 'snapshot', 'screenshot', 'click', 'type', 'scroll', 'press', 'hover', 'back', 'autofill_login']
 ok(TOOLS.filter((t) => PAGE.includes(t.name)).every((t) => (t.inputSchema.properties as Record<string, { type?: string }>).tab?.type === 'number'), 'tabs: every page tool takes an optional tab')
 ok(TOOLS.filter((t) => PAGE.includes(t.name)).every((t) => !('required' in t.inputSchema) || !(t.inputSchema.required as string[]).includes('tab')), 'tabs: tab is never required on a page tool')
 equal(JSON.stringify((TOOLS.find((t) => t.name === 'close_tab')?.inputSchema as { required?: string[] }).required), '["tab"]', 'tabs: close_tab requires its tab')
@@ -142,7 +142,7 @@ const init = await call({ headers: auth, body: rpc('initialize', { protocolVersi
 equal(init.json?.result?.protocolVersion, '2099-01-01', 'mcp: initialize echoes the protocol version')
 equal((await call({ headers: auth, body: rpc('server/discover') })).json?.error?.code, -32601, 'mcp: an unknown method is -32601')
 const listed = await call({ headers: auth, body: rpc('tools/list') })
-equal(listed.json?.result?.tools?.map((t: { name: string }) => t.name).join(','), 'navigate,snapshot,click,type,scroll,press,hover,back,autofill_login,console,network,network_body,cookies,storage,tabs,new_tab,close_tab', 'mcp: tools/list')
+equal(listed.json?.result?.tools?.map((t: { name: string }) => t.name).join(','), 'navigate,snapshot,screenshot,click,type,scroll,press,hover,back,autofill_login,console,network,network_body,cookies,storage,tabs,new_tab,close_tab', 'mcp: tools/list')
 const called = await call({ headers: auth, body: rpc('tools/call', { name: 'snapshot', arguments: {} }) })
 equal(called.json?.result?.content?.[0]?.text, 'The browser is off for this session.', 'mcp: a refused call answers with text')
 mcp.revoke('h1')
@@ -186,7 +186,8 @@ equal(said(await pending3), 'error: Tab 3 was closed.', "tabs: Claude's own clos
 equal(said(await tabsMcp.callTool('h2', 'click', { tab: 9 })), "error: There's no tab 9. Call tabs to see the open tabs.", 'tabs: a call naming a closed tab is refused')
 
 // The debug tools put page data into the transcript, so what they hide is pinned here.
-import { requestUrl, scrub, isLocal } from '../src/main/browser/mcp.ts'
+import { requestUrl, isLocal } from '../src/main/browser/mcp.ts'
+import { scrub } from '../src/main/browser/cdp.ts'
 equal(requestUrl('https://cdn.example.com/a.js?sig=SECRET&exp=1&exp=2'), 'https://cdn.example.com/a.js?sig=…&exp=…', 'debug: off-machine query keeps names only')
 equal(requestUrl('https://user:pw@example.com/x'), 'https://example.com/x', 'debug: userinfo never shown')
 equal(requestUrl('http://localhost:5173/api?token=abc'), 'http://localhost:5173/api?token=abc', 'debug: localhost keeps query values')
@@ -272,8 +273,15 @@ equal(siteFromInput('   '), null, 'site input: blank is not a site')
     hover: (x: number, y: number) => (clicks.push(`hover ${x},${y}`), Promise.resolve()),
     focusedIsPassword: () => Promise.resolve(false),
     insertText: () => Promise.resolve(),
-    listInteractive: () => Promise.resolve({ doc: '0123abcd', items: [[3, 'button "Go"'], [7, 'input "Q"']], shown: true, keys: 0 })
+    observe: () =>
+      Promise.resolve({ doc: '0123abcd', vw: 1280, vh: 800, sx: 0, sy: 0, epoch: 0, sh: 2000, lines: ['t1:d0123abcd:e3 button "Go"', 'Some text', 't1:d0123abcd:e7 textbox "Q"'], focus: 'textbox "Q" (t1:d0123abcd:e7)', above: 0, below: 2, headings: ['Legacy'], cut: false, keys: 0, shown: false }),
+    view: () => Promise.resolve({ ...view }),
+    secrets: new Set<string>()
   }
+  // Device pixels are twice CSS pixels, as on Retina.
+  const image = (w: number, h: number) => ({ isEmpty: () => false, getSize: () => ({ width: w, height: h }), resize: (o: { width: number; height: number }) => image(o.width, o.height), toJPEG: () => Buffer.from(`${w}x${h}`) })
+  Object.assign(wc, { capturePage: (r?: { width: number; height: number }) => Promise.resolve(image(2 * (r?.width ?? view.vw), 2 * (r?.height ?? view.vh))) })
+  let view = { doc: '0123abcd', vw: 2560, vh: 1600, sx: 0, sy: 0, epoch: 0, shown: false }
   const pageStub = {
     tabsOf: () => ({ viewed: 1, lastUsed: 1, tabs: [{ id: 1 }] }),
     used: () => {},
@@ -287,11 +295,15 @@ equal(siteFromInput('   '), null, 'site input: blank is not a site')
   const go = async (name: string, args: Record<string, unknown>, queued: Spot[] = []): Promise<string> => {
     spots = queued
     clicks.length = 0
-    return said(await pm.callTool('h3', name, args))
+    const r = await pm.callTool('h3', name, args)
+    return `${r.isError ? 'error: ' : ''}${r.content.map((c) => ('text' in c ? c.text : '')).join('')}`
   }
   const ref = 't1:d0123abcd:e3'
   const snapText = await go('snapshot', {})
-  ok(snapText.endsWith('\n\nt1:d0123abcd:e3 button "Go"\nt1:d0123abcd:e7 input "Q"'), 'act: snapshot lists full refs')
+  ok(snapText.endsWith('\n\nt1:d0123abcd:e3 button "Go"\nSome text\nt1:d0123abcd:e7 textbox "Q"\nOff screen: 2 controls below; sections below: "Legacy". Scroll, or snapshot all:true.'), 'snapshot: the page lines, then what is off screen')
+  ok(snapText.includes('\nViewport 1280×800 · scrolled 0/1200 · focus: textbox "Q" (t1:d0123abcd:e7)\n'), 'snapshot: viewport, scroll and focus line')
+  equal(await go('snapshot', { scope: 't2:d0123abcd:e3' }), 'error: Ref 3 is from tab 2.', 'snapshot: a scope from another tab is refused')
+  equal(await go('snapshot', { scope: 3 }), `error: ${badRef(3)}`, 'snapshot: a scope must be a ref')
   equal(await go('click', { ref: 3 }), `error: ${badRef(3)}`, 'act: a numeric ref is refused')
   equal(await go('click', { ref: 't2:d0123abcd:e3' }), 'error: Ref 3 is from tab 2.', 'act: a ref from another tab is refused')
   equal(await go('click', { ref }, [{ why: 'page' }]), 'error: Ref 3 belongs to the previous page (now https://example.com/b). Take a new snapshot.', 'act: a ref from the previous page names it')
@@ -307,4 +319,60 @@ equal(siteFromInput('   '), null, 'site input: blank is not a site')
   ok(worldCode.some((c) => c.includes(`pill(${refTarget(3)}, `)), 'act: the refusal pill points at the ref')
   ok((await go('press', { keys: 'x', ref }, [{ x: 1, y: 1, password: false }, { x: 1, y: 1, password: true }])).startsWith('error: Pressing keys in password fields is blocked.') && clicks.length === 0, 'act: a field that turned into a password field is refused at the re-read')
   equal(await go('type', { ref, text: 'x' }, [{ x: 1, y: 1, password: false }, { x: 1, y: 1, password: false }]), 'Typed into 3.', 'act: type by ref')
+
+  // Coordinates are a screenshot's pixels, mapped through the shot's scale and offset, and only while the page still
+  // matches it: every mismatch is refused before any input goes out.
+  const { fromShot } = await import('../src/main/browser/mcp.ts')
+  const v0 = { doc: '0123abcd', vw: 2560, vh: 1600, sx: 0, sy: 0, epoch: 0 }
+  const half = { ...v0, id: 't1:s1', tab: 1, scale: 0.5, x0: 0, y0: 0, w: 1280, h: 800 }
+  equal(JSON.stringify(fromShot(half, v0, 612, 287)), '{"x":1224,"y":574}', 'shot: image (612,287) at scale 0.5 is CSS (1224,574)')
+  const crop = { ...v0, id: 't1:s2', tab: 1, scale: 1, x0: 100, y0: 200, w: 300, h: 100 }
+  equal(JSON.stringify(fromShot(crop, v0, 50, 20)), '{"x":150,"y":220}', 'shot: a crop adds its offset')
+  equal(fromShot(crop, v0, 350, 20), '350, 20 is outside screenshot t1:s2, which is 300×100.', 'shot: a point past the crop is refused')
+  ok(/page changed/.test(String(fromShot(half, { ...v0, doc: 'ffffffff' }, 1, 1))) && /resized/.test(String(fromShot(half, { ...v0, vw: 2000 }, 1, 1))) &&
+    /scrolled/.test(String(fromShot(half, { ...v0, sy: 40 }, 1, 1))) && /layout changed/.test(String(fromShot(half, { ...v0, epoch: 1 }, 1, 1))), 'shot: new document, resize, scroll and layout change are stale')
+
+  const shotOf = (r: string): string => /shotId (t\d+:s\d+)/.exec(r)?.[1] ?? ''
+  const low = await go('screenshot', {})
+  ok(low.includes('Image 1280×800 of the viewport 2560×1600 (scale 0.50).'), 'screenshot: low caps the long edge at 1280', low.split('\n').at(-1))
+  equal(await go('click', { x: 612, y: 287, shotId: shotOf(low) }), 'clicked', 'shot: click at image pixels')
+  equal(clicks.join(' '), '1224,574', 'shot: lands at the CSS point')
+  const high = await go('screenshot', { detail: 'high' })
+  ok(high.includes('Image 1568×980 of the viewport 2560×1600 (scale 0.61).'), 'screenshot: high caps at 1568, where no model downscales it', high.split('\n').at(-1))
+  const refusals: string[] = []
+  for (const [change, args] of [
+    [{ doc: 'ffffffff' }, {}],
+    [{ vw: 2000 }, {}],
+    [{ sy: 300 }, {}],
+    [{ epoch: 1 }, {}],
+    [{}, { shotId: 't2:s1' }],
+    [{}, { shotId: 't1:s999' }],
+    [{}, { shotId: undefined }]
+  ] as [Partial<typeof view>, Record<string, unknown>][]) {
+    const was = view
+    view = { ...view, ...change }
+    refusals.push(await go('click', { x: 10, y: 10, shotId: shotOf(low), ...args }))
+    view = was
+  }
+  equal(clicks.length, 0, 'shot: no stale or mismatched shot reaches input')
+  ok(refusals.every((r) => r.startsWith('error: ')), 'shot: each is an error', refusals.join(' | '))
+  ok(/is from tab 2/.test(refusals[4]) && /expired/.test(refusals[5]) && /pass its shotId/.test(refusals[6]), 'shot: wrong tab, unknown and missing shotId name the problem')
+  const part = await go('screenshot', { region: [100, 50, 200, 100], shotId: shotOf(low) })
+  ok(part.includes('Image 400×200 of the viewport region at 200,100 sized 400×200 (scale 1.00).'), 'screenshot: a region maps through the shot it names', part.split('\n').at(-1))
+  equal(await go('hover', { x: 50, y: 20, shotId: shotOf(part) }), 'Hovering at 50, 20.', 'shot: hover in a crop')
+  equal(clicks.join(' '), 'hover 250,120', 'shot: the crop offset is added')
+  ok((await go('click', { x: 450, y: 20, shotId: shotOf(part) })).includes('outside screenshot') && clicks.length === 0, 'shot: a point outside the crop is refused before input')
+  view = { ...view, shown: true }
+  ok((await go('screenshot', {})).startsWith('error: No screenshot: a saved password'), 'screenshot: refused while a filled password shows')
+  view = { ...view, shown: false }
+
+  // Bundles: a turned-off tool is neither listed nor run.
+  const { toolsFor } = await import('../src/main/browser/mcp.ts')
+  const names = (b: { visual: boolean; interact: boolean; debug: boolean }): string => toolsFor(b).map((t) => t.name).join(',')
+  equal(names({ visual: false, interact: false, debug: false }), 'navigate,snapshot,back,tabs', 'bundles: observe alone')
+  ok(!names({ visual: true, interact: true, debug: false }).includes('cookies') && names({ visual: true, interact: true, debug: false }).includes('screenshot'), 'bundles: debug off keeps visual')
+  pm.setBundles('h3', { interact: false })
+  equal(await go('click', { ref }), 'error: click is turned off for this session.', 'bundles: a filtered tool is refused')
+  ok(!(await go('snapshot', {})).startsWith('error'), 'bundles: observe tools still run')
+  pm.setBundles('h3', {})
 }
