@@ -11,7 +11,7 @@
 import { createReadStream } from 'node:fs'
 import { readdir, stat, readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { claudeHome } from '../lib/claude-home'
 import type { HistoryMessage, HistoryToolCall, TranscriptResult } from '../../shared/sessions'
 import { parseCliMessage, type TurnUsage } from '../../shared/events'
@@ -164,6 +164,28 @@ async function findTranscriptFile(sessionId: string): Promise<string | null> {
     }
   }
   return null
+}
+
+/** A session's main transcript and every subagent/workflow-agent transcript under `<session>/subagents/`. */
+export async function sessionTranscriptFiles(sessionId: string): Promise<{ main: string | null; agents: string[] }> {
+  const main = await findTranscriptFile(sessionId)
+  if (!main) return { main: null, agents: [] }
+  const agents: string[] = []
+  async function walk(dir: string, depth: number): Promise<void> {
+    if (depth > 3) return
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      if (e.isDirectory()) await walk(join(dir, e.name), depth + 1)
+      else if (e.isFile() && e.name.startsWith('agent-') && e.name.endsWith('.jsonl')) agents.push(join(dir, e.name))
+    }
+  }
+  await walk(join(dirname(main), sessionId, 'subagents'), 0)
+  return { main, agents }
 }
 
 /**

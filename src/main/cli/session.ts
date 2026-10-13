@@ -79,6 +79,8 @@ export interface ClaudeSessionOptions {
 export declare interface ClaudeSession {
   on(event: 'event', listener: (e: DomainEvent) => void): this
   on(event: 'exit', listener: (code: number | null) => void): this
+  /** Raw user/assistant envelopes, for the change ledger: they carry tool results the mapper drops. */
+  on(event: 'wire', listener: (raw: unknown) => void): this
 }
 
 /** Result of an awaited control_request: success flag + the response payload (so a
@@ -407,6 +409,7 @@ export class ClaudeSession extends EventEmitter {
     if (this.stderrBuf.trim()) this.classifyStderrLine(this.stderrBuf)
     this.stderrBuf = ''
     for (const raw of this.parser.flush()) {
+      this.emitWire(raw)
       for (const ev of this.mapper.map(raw)) this.emitEvent(ev)
     }
     this.emitEvent({ type: 'process-exit', code })
@@ -418,6 +421,7 @@ export class ClaudeSession extends EventEmitter {
       // In gated mode, intercept control-protocol envelopes (the mapper ignores
       // control_response) to drive the handshake before mapping to domain events.
       if (this.opts.gated) this.handleControlEnvelope(raw)
+      this.emitWire(raw)
       const life = raw as { type?: string; command_uuid?: string; state?: string }
       if (life?.type === 'command_lifecycle' && life.command_uuid && this.pendingCuts.has(life.command_uuid)) {
         if (life.state === 'queued') this.cutFor(life.command_uuid)
@@ -566,6 +570,11 @@ export class ClaudeSession extends EventEmitter {
   /** Convenience: awaited control_request resolving true on success. */
   private async sendControl(subtype: string, extra: Record<string, unknown> = {}, timeoutMs = 5000): Promise<boolean> {
     return (await this.sendControlResult(subtype, extra, timeoutMs)).ok
+  }
+
+  private emitWire(raw: unknown): void {
+    const type = (raw as { type?: unknown } | null)?.type
+    if (type === 'user' || type === 'assistant') this.emit('wire', raw)
   }
 
   private emitEvent(e: DomainEvent): void {

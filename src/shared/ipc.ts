@@ -16,6 +16,7 @@ import type {
 import type { ConfigBundle } from './config'
 import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, LocalNetSite, PaneBounds, SavedLoginInfo } from './browser'
 import type { AnnotateEvent } from './annotate'
+import type { ChangeGitStatus, ChangesEvent, FileChangeSummary } from './changes'
 import type {
   CluiSettings,
   EffortChoice,
@@ -223,9 +224,10 @@ export interface CluiApi {
   openInEditor: (filePath: string) => Promise<void>
   /** Open an http(s) URL in the user's default browser (markdown links). */
   openExternal: (url: string) => Promise<void>
-  /** Given a list of paths, return only those that still exist on disk, to
-   *  prune the changed-files list when a file is deleted (even by the agent). */
-  filterExistingFiles: (paths: string[]) => Promise<string[]>
+  /** The session's Claude changes, with each file's on-disk presence re-checked. Null once the session is gone. */
+  getChanges: (handleId: string) => Promise<FileChangeSummary[] | null>
+  /** Git decoration for the session's changed files, read in main from its ledger paths. Null once the session is gone. */
+  getChangeGitStatus: (handleId: string) => Promise<ChangeGitStatus | null>
   /** List files under a workspace (git-aware; relative paths, capped) for the
    *  composer's @-file picker. Returns [] on error. */
   listWorkspaceFiles: (cwd: string) => Promise<{ files: string[]; truncated: boolean }>
@@ -274,6 +276,8 @@ export interface CluiApi {
   getPathForFile: (file: File) => string
   /** Subscribe to streamed events. Returns an unsubscribe fn. */
   onSessionEvent: (cb: (evt: TaggedEvent) => void) => () => void
+  /** Subscribe to the ledger's summary updates. Returns an unsubscribe fn. */
+  onChangesEvent: (cb: (evt: ChangesEvent) => void) => () => void
   /**
    * Subscribe to application-menu actions (⌘N/⌘W/⌘, are driven by a native menu
    * in main so they compose with the OS shortcut layer, then pushed here).
@@ -391,7 +395,8 @@ export const IpcChannels = {
   readConfig: 'clui:readConfig',
   openInEditor: 'clui:openInEditor',
   openExternal: 'clui:openExternal',
-  filterExistingFiles: 'clui:filterExistingFiles',
+  getChanges: 'clui:getChanges',
+  getChangeGitStatus: 'clui:getChangeGitStatus',
   listWorkspaceFiles: 'clui:listWorkspaceFiles',
   openDiff: 'clui:openDiff',
   getSettings: 'clui:getSettings',
@@ -409,6 +414,8 @@ export const IpcChannels = {
   getResolvedThemeSync: 'clui:getResolvedThemeSync',
   /** main → renderer push channel */
   sessionEvent: 'clui:sessionEvent',
+  /** main → renderer push channel for Claude change summaries */
+  changesEvent: 'clui:changesEvent',
   /** main → renderer push channel for native application-menu actions */
   menuAction: 'clui:menuAction',
   getReducedTransparency: 'clui:getReducedTransparency',

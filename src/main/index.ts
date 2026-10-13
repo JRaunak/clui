@@ -10,7 +10,6 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import {
@@ -40,6 +39,7 @@ import { deleteSessionUsage } from './sessions/usage'
 import { readConfig } from './config/reader'
 import { openInEditor, openDiff } from './ide/open'
 import { listWorkspaceFiles } from './workspace/files'
+import { readGitStatus } from './workspace/git-status'
 import {
   getResolvedSettings,
   getSettings,
@@ -321,24 +321,26 @@ function registerIpc(): void {
     })
   }
 
-  const manager = new SessionManager((handleId, event) => {
-    browser.onSessionEvent(handleId, event)
-    if (event.type === 'process-exit') disposeBrowser(handleId)
-    // A `claude` child's stdout can arrive WHILE the window is tearing down. When the
-    // BrowserWindow itself is destroyed, even READING `mainWindow.webContents` throws
-    // "Object has been destroyed" (the getter throws), so we must check
-    // `mainWindow.isDestroyed()` BEFORE touching `.webContents`, and guard the
-    // webContents too. Wrapped in try/catch as a final backstop (a teardown race can
-    // still slip between the check and the send). A latent race, amplified by the
-    // ~200 task_progress events a workflow emits.
+  // A `claude` child's stdout can arrive while the window tears down, and on a destroyed
+  // BrowserWindow even reading `.webContents` throws, so isDestroyed() goes first. The catch
+  // covers a teardown that lands between the check and the send.
+  const push = (channel: string, payload: unknown): void => {
     try {
       if (!mainWindow || mainWindow.isDestroyed()) return
       const wc = mainWindow.webContents
-      if (!wc.isDestroyed()) wc.send(IpcChannels.sessionEvent, { handleId, event })
+      if (!wc.isDestroyed()) wc.send(channel, payload)
     } catch {
       /* window torn down mid-send; drop the event */
     }
-  })
+  }
+  const manager = new SessionManager(
+    (handleId, event) => {
+      browser.onSessionEvent(handleId, event)
+      if (event.type === 'process-exit') disposeBrowser(handleId)
+      push(IpcChannels.sessionEvent, { handleId, event })
+    },
+    (handleId, summaries) => push(IpcChannels.changesEvent, { handleId, summaries })
+  )
   sessionManager = manager
 
   // Reject IPC that doesn't come from the top frame of a real app window: an injected
@@ -668,17 +670,10 @@ function registerIpc(): void {
     }
   })
 
-  handle(IpcChannels.filterExistingFiles, async (_e, paths: string[]) => {
-    // Prune paths that no longer exist (deleted this turn, including by the agent
-    // via Bash rm, which never surfaces a file_path). Keeps the changed-files list
-    // accurate. Best-effort: any stat error → treat as gone.
-    return (Array.isArray(paths) ? paths : []).filter((p) => {
-      try {
-        return existsSync(p)
-      } catch {
-        return false
-      }
-    })
+  handle(IpcChannels.getChanges, (_e, handleId: string) => (typeof handleId === 'string' ? manager.changes(handleId) : null))
+  handle(IpcChannels.getChangeGitStatus, async (_e, handleId: string) => {
+    const changes = typeof handleId === 'string' ? await manager.changes(handleId) : null
+    return changes && readGitStatus(changes.map((c) => c.path))
   })
 
   handle(IpcChannels.getSettings, async () => getResolvedSettings())

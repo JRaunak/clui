@@ -18,6 +18,7 @@ import type { CluiSettings, EffortChoice, ModelChoice, SettingsKey } from '../sh
 import type { BrowserEvent } from '../shared/browser'
 import type { ElicitationResponse } from '../shared/events'
 import type { AnnotateEvent } from '../shared/annotate'
+import type { ChangesEvent } from '../shared/changes'
 
 const api: CluiApi = {
   pickWorkspace: () => ipcRenderer.invoke(IpcChannels.pickWorkspace),
@@ -76,8 +77,8 @@ const api: CluiApi = {
   readConfig: (cwd: string | null) => ipcRenderer.invoke(IpcChannels.readConfig, cwd),
   openInEditor: (filePath: string) => ipcRenderer.invoke(IpcChannels.openInEditor, filePath),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.openExternal, url),
-  filterExistingFiles: (paths: string[]) =>
-    ipcRenderer.invoke(IpcChannels.filterExistingFiles, paths),
+  getChanges: (handleId: string) => ipcRenderer.invoke(IpcChannels.getChanges, handleId),
+  getChangeGitStatus: (handleId: string) => ipcRenderer.invoke(IpcChannels.getChangeGitStatus, handleId),
   listWorkspaceFiles: (cwd: string) => ipcRenderer.invoke(IpcChannels.listWorkspaceFiles, cwd),
   openDiff: (left: string, right: string) =>
     ipcRenderer.invoke(IpcChannels.openDiff, left, right),
@@ -102,6 +103,11 @@ const api: CluiApi = {
     const listener = (_e: unknown, payload: TaggedEvent): void => cb(payload)
     ipcRenderer.on(IpcChannels.sessionEvent, listener)
     return () => ipcRenderer.removeListener(IpcChannels.sessionEvent, listener)
+  },
+  onChangesEvent: (cb: (evt: ChangesEvent) => void) => {
+    const listener = (_e: unknown, payload: ChangesEvent): void => cb(payload)
+    ipcRenderer.on(IpcChannels.changesEvent, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.changesEvent, listener)
   },
   onMenuAction: (cb: (action: MenuAction) => void) => {
     const listener = (_e: unknown, action: MenuAction): void => cb(action)

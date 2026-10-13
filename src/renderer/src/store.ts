@@ -26,6 +26,7 @@ import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, supportsUltr
 import type { ProcessedAttachment } from './lib/images'
 import { CAP_NOTE, pinWords, clipName, messageGist, type AnnotateEvent, type AnnotationPin } from '../../shared/annotate'
 import type { Via } from './lib/motion'
+import type { ChangeGitStatus, FileChangeSummary, GitPathStatus } from '../../shared/changes'
 import { turnEndLine } from './lib/turnEnd'
 
 export type SettingsSection = 'general' | 'sessions' | 'browser'
@@ -324,8 +325,8 @@ export interface PerSessionState {
   draftText: string
   draftAttachments: ProcessedAttachment[]
   pendingPermissions: PendingPermission[]
-  /** Files written/edited this session, most-recent first. */
-  changedFiles: string[]
+  /** Files Claude changed this session, most-recent first, mirrored from the main-side ledger. */
+  changes: FileChangeSummary[]
   /** Background tasks keyed by taskId (running + recently-terminal, ordered by start). */
   backgroundTasks: Record<string, BackgroundTask>
   /** Plugin status lines in first-arrival order. The CLI never replays them, so they last as long as the process. */
@@ -660,8 +661,13 @@ interface SessionStore {
    *  trays (fired when they're opened, displaced by new same-kind work, or a grace timer
    *  elapses). Never touches running items. `kind` scopes it to one tray or both. */
   clearCompletedBgWork: (kind?: 'subagent' | 'workflow') => void
-  /** Drop changed-files that no longer exist on disk (deleted this turn). */
-  pruneChangedFiles: (handleId: string) => Promise<void>
+  /** Re-read the session's Claude changes, which re-checks each file's presence on disk. */
+  refreshChanges: (handleId: string) => Promise<void>
+  /** Git decoration by absolute path, the last reply for each path whichever session asked, so a
+   *  checkout shared by two sessions decorates at once. */
+  gitStatus: ChangeGitStatus
+  /** Re-read Git decoration for a session's changed files. A reply older than the handle's latest request is dropped. */
+  refreshGitStatus: (handleId: string) => Promise<void>
   /** Change the active session's permission mode mid-session (per-session only). */
   setPermissionMode: (mode: PermissionModeChoice) => Promise<void>
   /** Change the active session's model live (per-session only). */
@@ -842,22 +848,12 @@ const EMPTY_MOD_STATUS: ModStatusLine[] = []
 /** Stable empty ref for a session's staged draft attachments (zustand-v5 selector safety). */
 export const EMPTY_ATTACHMENTS: ProcessedAttachment[] = []
 
-/** Read shares the file_path key but writes nothing, so changed-files gates on the tool
- *  name, not the key's presence. */
-const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
+/** Stable empty ref for a session's Claude changes (zustand-v5 selector safety). */
+export const EMPTY_CHANGES: FileChangeSummary[] = []
 
-/** The file a finished tool call actually wrote, or null. */
-function writtenPath(t: ToolCall): string | null {
-  if (t.result === undefined || t.isError || !WRITE_TOOLS.has(t.name)) return null
-  const inp = t.input as { file_path?: unknown; notebook_path?: unknown }
-  const fp = typeof inp?.file_path === 'string' ? inp.file_path : inp?.notebook_path
-  return typeof fp === 'string' && fp ? fp : null
-}
-
-/** Most recent first, each path once. */
-function withChangedFile(files: string[], fp: string): string[] {
-  return [fp, ...files.filter((f) => f !== fp)]
-}
+/** Latest Git status request per handle. */
+const gitGen = new Map<string, number>()
+const sameGit = (a: GitPathStatus | undefined, b: GitPathStatus): boolean => !!a && JSON.stringify(a) === JSON.stringify(b)
 
 const EMPTY_WOKEN: WokenTask[] = []
 const EMPTY_CHECKING: Record<string, true> = {}
@@ -982,10 +978,11 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
   subscribed = true
   window.clui.onSessionEvent(({ handleId, event }) => {
     applyEvent(handleId, event)
-    // After a turn ends, prune changed-files that were deleted this turn (incl. by
-    // the agent via Bash rm, which surfaces no file_path). Fire-and-forget.
-    if (event.type === 'result') void useSession.getState().pruneChangedFiles(handleId)
+    // A turn can delete a changed file without a tool result naming it (Bash rm), so its
+    // end re-checks which files are still on disk.
+    if (event.type === 'result') void useSession.getState().refreshChanges(handleId)
   })
+  window.clui.onChangesEvent(({ handleId, summaries }) => useSession.setState((s) => patchSlice(s, handleId, { changes: summaries })))
 }
 
 /** Insert a freshly-created slice and flush any events that raced ahead of it. */
@@ -1182,10 +1179,7 @@ async function beginSession(
     draftText: '',
     draftAttachments: EMPTY_ATTACHMENTS,
     pendingPermissions: [],
-    changedFiles: history.flatMap((m) => m.tools).reduce<string[]>((files, t) => {
-      const fp = writtenPath(t)
-      return fp ? withChangedFile(files, fp) : files
-    }, []),
+    changes: EMPTY_CHANGES,
     backgroundTasks: {},
     modStatus: EMPTY_MOD_STATUS,
     subagentMessages: {},
@@ -1214,8 +1208,9 @@ async function beginSession(
     browserAutoOpenSuppressed: false,
     annotate: IDLE_ANNOTATE
   })
-  // Files the history wrote may be gone since.
-  if (opts.resumeSessionId) void get().pruneChangedFiles(handleId)
+  // Main rebuilds a resume's changes from its transcripts. A push that lands before the slice
+  // exists is dropped, so pull once the slice is in.
+  if (opts.resumeSessionId) void get().refreshChanges(handleId)
 }
 
 /** In-flight resume ids: a reservation so two concurrent resumes of the SAME durable
@@ -2119,22 +2114,24 @@ export const useSession = create<SessionStore>((set, get) => ({
       return patchSlice(s, active.handleId, patch)
     }),
 
-  pruneChangedFiles: async (handleId) => {
-    const slice = get().sessions[handleId]
-    if (!slice || slice.changedFiles.length === 0) return
-    const snapshot = slice.changedFiles
-    const existing = new Set(await window.clui.filterExistingFiles(snapshot))
-    // No change → don't touch state (avoid a needless re-render).
-    if (existing.size === snapshot.length) return
-    // Remove ONLY snapshot paths proven missing. A path added during the async check
-    // wasn't tested, so filtering the current list by the snapshot's keep-set would drop
-    // it even though it exists.
-    const missing = new Set(snapshot.filter((f) => !existing.has(f)))
-    set((s) => {
-      const cur = s.sessions[handleId]
-      if (!cur) return {}
-      return patchSlice(s, handleId, { changedFiles: cur.changedFiles.filter((f) => !missing.has(f)) })
-    })
+  refreshChanges: async (handleId) => {
+    const changes = await window.clui.getChanges(handleId)
+    // Null once main let go of the session; the slice keeps the last summaries it had.
+    if (changes) set((s) => patchSlice(s, handleId, { changes }))
+  },
+
+  gitStatus: {},
+  refreshGitStatus: async (handleId) => {
+    const gen = (gitGen.get(handleId) ?? 0) + 1
+    gitGen.set(handleId, gen)
+    const reply = await window.clui.getChangeGitStatus(handleId)
+    if (gitGen.get(handleId) !== gen) return
+    if (!reply || !get().sessions[handleId]) {
+      gitGen.delete(handleId)
+      return
+    }
+    // The tray polls every 2s; an unchanged reply leaves state alone so rows don't re-render.
+    set((s) => (Object.entries(reply).every(([p, g]) => sameGit(s.gitStatus[p], g)) ? s : { gitStatus: { ...s.gitStatus, ...reply } }))
   },
 
   respondPermission: async (verdict) => {
@@ -2381,10 +2378,6 @@ export const useSession = create<SessionStore>((set, get) => ({
         case 'tool-use-stop': {
           // Not necessarily the last message: a message sent mid-turn can land between a tool's start and stop.
           const t = messages.findLast((m) => m.tools.some((t) => t.id === e.id))?.tools.find((t) => t.id === e.id)
-          // Record the input only. The changed-file is published on the tool's SUCCESSFUL
-          // RESULT (below), not here at propose-time: a denied/failed edit must not appear
-          // as a changed file, and existence-pruning can't retract one to a file that
-          // already existed.
           if (t) t.input = e.input
           break
         }
@@ -2396,9 +2389,6 @@ export const useSession = create<SessionStore>((set, get) => ({
               t.isError = e.isError
               if (e.notRun) t.notRun = true
               if (e.stopped) t.stopped = true
-              // A write/edit that actually SUCCEEDED is a real changed file.
-              const fp = writtenPath(t)
-              if (fp) patch.changedFiles = withChangedFile(slice.changedFiles, fp)
               break
             }
           }

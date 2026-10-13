@@ -1,4 +1,5 @@
 // Boundary: the wire→DomainEvent mapper.
+import { readFileSync } from 'node:fs'
 import { EventMapper } from '../src/main/cli/event-mapper.ts'
 import { ok } from './support/harness.mjs'
 
@@ -418,4 +419,13 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   const plain = new EventMapper()
   const [denied] = feed(plain, [{ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', is_error: true, content: 'x' }] }, tool_result_meta: [{ id: 't', non_execution_kind: 'user-rejected' }] }])
   ok(!denied.stopped, 'mapper: a refused permission with no interrupt out is not stopped')
+}
+
+// The raw tool result (whole-file texts and patches) is the ledger's, never the renderer's.
+{
+  const raw = readFileSync(new URL('./fixtures/ledger/s0-6.stream.jsonl', import.meta.url), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+  const texts = raw.flatMap((e) => [e.tool_use_result?.originalFile, e.tool_use_result?.original_file, e.tool_use_result?.updated_file]).filter((t) => typeof t === 'string')
+  const out = JSON.stringify(feed(new EventMapper(), raw))
+  ok(texts.length === 5 && !/originalFile|original_file|updated_file|structuredPatch/.test(out), 'mapper: tool_use_result fields never reach a DomainEvent')
+  ok(texts.every((t) => !out.includes(JSON.stringify(t).slice(1, -1))), 'mapper: no whole-file text reaches a DomainEvent')
 }

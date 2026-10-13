@@ -438,3 +438,42 @@ const q = (id: string, text: string): any => ({ id, text })
   ok(chipMode('inherit', null).mode === 'default' && chipMode('inherit', null).raw === null, 'chip: nothing reported reads Interactive')
   ok(chipMode('bypassPermissions', 'bypassPermissions').raw === null, 'chip: a known mode shows its own label')
 }
+
+// Changes mirror main's ledger; a session main has let go of keeps its last summaries.
+{
+  const row = { path: '/w/a.ts', added: 3, removed: 1, created: false, missingOnDisk: false, approximate: false, diffAvailable: true, segments: 1, editIds: ['t1'] }
+  reset({ changes: [] })
+  replies.getChanges = () => [row]
+  await st().refreshChanges('h1')
+  ok(cur().changes.length === 1 && cur().changes[0].added === 3, 'store: refreshChanges mirrors main')
+  replies.getChanges = () => null
+  await st().refreshChanges('h1')
+  ok(cur().changes.length === 1, 'store: a null reply keeps the last summaries')
+  delete replies.getChanges
+}
+
+// Git decoration mirrors main by path; a reply older than the handle's latest request is dropped.
+{
+  reset()
+  useSession.setState({ gitStatus: {} })
+  const release: Array<() => void> = []
+  const replyWith = (x: string) => () => new Promise((r) => release.push(() => r({ '/w/a.ts': { state: 'changed', x, y: '.' } })))
+  replies.getChangeGitStatus = replyWith('A')
+  const older = st().refreshGitStatus('h1')
+  replies.getChangeGitStatus = replyWith('M')
+  const newer = st().refreshGitStatus('h1')
+  release[1]()
+  await newer
+  release[0]()
+  await older
+  equal((st().gitStatus['/w/a.ts'] as any)?.x, 'M', 'git: a stale reply cannot overwrite the newer one')
+  const before = st().gitStatus
+  replies.getChangeGitStatus = () => ({ '/w/a.ts': { state: 'changed', x: 'M', y: '.' } })
+  await st().refreshGitStatus('h1')
+  ok(st().gitStatus === before, 'git: an unchanged poll leaves state alone')
+  replies.getChangeGitStatus = () => ({ '/w/a.ts': { state: 'unlisted' } })
+  useSession.setState({ sessions: {} })
+  await st().refreshGitStatus('h1')
+  equal((st().gitStatus['/w/a.ts'] as any)?.x, 'M', 'git: a reply for a closed session is dropped')
+  delete replies.getChangeGitStatus
+}

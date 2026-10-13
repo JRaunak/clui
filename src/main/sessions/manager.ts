@@ -6,6 +6,8 @@
 import { ClaudeSession, type ClaudeSessionOptions } from '../cli/session'
 import type { DomainEvent, ElicitationResponse } from '../../shared/events'
 import type { ModeChangeResult, PermissionVerdict, WireAttachment } from '../../shared/ipc'
+import type { FileChangeSummary } from '../../shared/changes'
+import { ChangeLedger, type PublishFn } from '../surfaces/ledger'
 import { readTasks } from './tasks'
 
 export type EventSink = (handleId: string, event: DomainEvent) => void
@@ -36,11 +38,21 @@ export class SessionManager {
    *  one started is dropped, so a slow stale snapshot can't overwrite the newer state. */
   private readonly taskReadSeq = new Map<string, number>()
 
-  constructor(private readonly sink: EventSink) {}
+  private readonly ledger: ChangeLedger
+
+  constructor(private readonly sink: EventSink, publishChanges: PublishFn) {
+    this.ledger = new ChangeLedger(publishChanges)
+  }
 
   start(handleId: string, opts: ClaudeSessionOptions): void {
     const session = new ClaudeSession(opts)
+    // A resume keeps its id, so its ledger key is known now. A fork or a new session goes by its
+    // handle until init names the session; a fork's inherited history is the source's transcript.
+    this.ledger.attach(handleId, opts.resumeSessionId && !opts.fork ? opts.resumeSessionId : handleId)
+    if (opts.resumeSessionId && !opts.ephemeral) void this.ledger.replay(handleId, opts.resumeSessionId)
+    session.on('wire', (raw) => this.ledger.wire(handleId, raw))
     session.on('event', (e) => {
+      if (e.type === 'session-init' && e.sessionId) this.ledger.rekey(handleId, e.sessionId)
       this.sink(handleId, e)
       if (mutatesTasks(e.type)) this.scheduleTaskRead(handleId, session)
     })
@@ -61,6 +73,12 @@ export class SessionManager {
     this.taskTimers.delete(handleId)
     this.lastTaskSnapshot.delete(handleId)
     this.taskReadSeq.delete(handleId)
+    this.ledger.detach(handleId)
+  }
+
+  /** The handle's Claude changes; null once its session is gone. */
+  changes(handleId: string): Promise<FileChangeSummary[] | null> {
+    return this.ledger.changes(handleId)
   }
 
   /** Trailing-debounced re-read of the session's on-disk task list, emitting a
