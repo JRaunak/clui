@@ -3,6 +3,7 @@
  * works without OS focus, which sendInputEvent needs. Element refs live only in isolated
  * world 1001, never in the DOM, so a page can't forge or move them.
  */
+import { randomBytes } from 'node:crypto'
 import type { WebContents } from 'electron'
 import { WORLD } from './cursor'
 
@@ -22,25 +23,56 @@ const WEBAUTHN_PROBE = `(() => {
   }
 })()`
 
+/**
+ * The world's ref table as a page-side function source: element numbers for one document, reused while an
+ * element lives. A table that isn't for the document main last saw (`cur`) is thrown away and restarted
+ * under `next`, so a number from an earlier document can never name an element in this one.
+ */
+export const PAGE_REFS = `(w, cur, next) => {
+  let s = w.__cluiRefs;
+  if (!s || s.doc !== cur) s = w.__cluiRefs = { doc: next, ids: new WeakMap(), els: new Map(), n: 0 };
+  for (const [n, r] of s.els) if (!r.deref()) s.els.delete(n);
+  const id = (e) => {
+    let n = s.ids.get(e);
+    if (n === undefined) { n = ++s.n; s.ids.set(e, n); s.els.set(n, new WeakRef(e)); }
+    return n;
+  };
+  return { doc: s.doc, id };
+}`
+
 // Password values and anything autofill wrote are never listed, or the list would hand the model the
 // secret. A filled password can still surface elsewhere (a show-password toggle turns the field to
 // text, a script copies it into the page), so any sighting of one is scrubbed from the list and
 // reported, and the caller drops the screenshot.
-const LIST_INTERACTIVE = `(() => {
+const listInteractive = (cur: string | null, next: string): string => `(() => {
+  const refs = (${PAGE_REFS})(window, ${JSON.stringify(cur)}, ${JSON.stringify(next)})
   const secrets = [...(window.__cluiSecrets || [])]
   const scrub = (t) => secrets.reduce((acc, v) => acc.split(v).join('•••'), t)
   const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
   const els = [...document.querySelectorAll('a,button,input,select,textarea,[role=button],[contenteditable=""],[contenteditable=true]')]
     .filter(vis)
     .slice(0, 150)
-  window.__cluiRefs = new Map(els.map((e, i) => [i + 1, e]))
   const shown = secrets.length > 0 && (
     secrets.some((v) => (document.body?.innerText || '').includes(v)) ||
     [...document.querySelectorAll('input,textarea')].some((e) => e.type !== 'password' && vis(e) && secrets.some((v) => e.value.includes(v))))
-  const list = els.map((e, i) => \`\${i + 1} \${e.getAttribute('role') || e.tagName.toLowerCase()} "\${scrub((e.getAttribute('aria-label') || e.innerText || (e.type === 'password' || window.__cluiFilled?.has(e) ? '' : e.value) || e.placeholder || '').trim()).slice(0, 80)}"\`).join('\\n')
+  const items = els.map((e) => [refs.id(e), \`\${e.getAttribute('role') || e.tagName.toLowerCase()} "\${scrub((e.getAttribute('aria-label') || e.innerText || (e.type === 'password' || window.__cluiFilled?.has(e) ? '' : e.value) || e.placeholder || '').trim()).slice(0, 80)}"\`])
   const keys = els.filter((e) => (e.tagName === 'BUTTON' || e.getAttribute('role') === 'button') && /^\\S$/u.test(e.innerText.trim())).length
-  return { list, shown, keys }
+  return { doc: refs.doc, items, shown, keys }
 })()`
+
+/** A snapshot ref: the tab, the document it was taken in, and the element's number there. */
+export interface Ref { tab: number; doc: string; n: number }
+
+const REF = /^t(\d+):d([0-9a-f]{8}):e(\d+)$/
+export const formatRef = ({ tab, doc, n }: Ref): string => `t${tab}:d${doc}:e${n}`
+export function parseRef(v: unknown): Ref | null {
+  const m = typeof v === 'string' ? REF.exec(v) : null
+  return m ? { tab: Number(m[1]), doc: m[2], n: Number(m[3]) } : null
+}
+/** The ref's element as an isolated-world expression, for a pill. Undefined once it's gone. */
+export const refTarget = (n: number): string => `window.__cluiRefs?.els.get(${Number(n)})?.deref()`
+
+export type RefMiss = 'gone' | 'page' | 'hidden'
 
 export interface Box { x: number; y: number; password: boolean }
 
@@ -150,6 +182,9 @@ export class Cdp {
   readonly secrets = new Set<string>()
   private logSeq = 0
   private netSeq = 0
+  /** The nonce of the document the last snapshot ran in. Null until one runs, and again once a new document or a
+   *  new renderer replaces it; the world's own table catches a replacement these events miss. */
+  private doc: string | null = null
 
   constructor(wc: WebContents, onAct: () => void, onWebAuthn: () => void) {
     this.wc = wc
@@ -162,6 +197,8 @@ export class Cdp {
     // No re-attach on 'detach': a closing page detaches before isDestroyed() turns true, and
     // re-attaching there loops and starves main. send() re-attaches on the next command instead.
     void this.attach()
+    wc.on('did-navigate', () => (this.doc = null))
+    wc.on('render-process-gone', () => (this.doc = null))
   }
 
   private async attach(): Promise<void> {
@@ -361,10 +398,14 @@ export class Cdp {
     return this.wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }])
   }
 
-  /** `shown`: a password autofill wrote is visible somewhere on the page. */
-  /** keys counts single-character buttons, the shape of an on-screen keyboard or keypad. */
-  listInteractive(): Promise<{ list: string; shown: boolean; keys: number }> {
-    return this.world<{ list: string; shown: boolean; keys: number }>(LIST_INTERACTIVE)
+  /** `shown`: a password autofill wrote is visible somewhere on the page. `keys` counts single-character buttons,
+   *  the shape of an on-screen keyboard or keypad. */
+  async listInteractive(): Promise<{ doc: string; items: [n: number, line: string][]; shown: boolean; keys: number }> {
+    const out = await this.world<{ doc: string; items: [number, string][]; shown: boolean; keys: number }>(
+      listInteractive(this.doc, randomBytes(4).toString('hex'))
+    )
+    this.doc = out.doc
+    return out
   }
 
   /** Whether the page itself listens for key presses, as games and keypads do. Page script can't read listeners, so this asks the debugger. */
@@ -384,10 +425,27 @@ export class Cdp {
     }
   }
 
-  boxOf(ref: number): Promise<Box | null> {
-    return this.world<Box | null>(
-      `(() => { const e = window.__cluiRefs?.get(${Number(ref)}); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, password: e instanceof HTMLInputElement && e.type === 'password' } })()`
-    )
+  /** Where to act on a ref: its centre, scrolled into the viewport first when it's outside. */
+  async locate(ref: Ref): Promise<Box | { why: RefMiss }> {
+    if (ref.doc !== this.doc) return { why: 'page' }
+    return this.world<Box | { why: RefMiss }>(`(async () => {
+      const s = window.__cluiRefs
+      if (!s || s.doc !== ${JSON.stringify(ref.doc)}) return { why: 'page' }
+      const e = s.els.get(${Number(ref.n)})?.deref()
+      if (!e || !e.isConnected) return { why: 'gone' }
+      const centre = () => { const r = e.getBoundingClientRect(); return { r, x: r.x + r.width / 2, y: r.y + r.height / 2 } }
+      let c = centre()
+      if (c.x < 0 || c.y < 0 || c.x >= innerWidth || c.y >= innerHeight) {
+        // Instant, or a page's scroll-behavior: smooth would still be moving it when the box is read.
+        e.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' })
+        // A tab nobody is viewing gets no frames, so the wait is capped.
+        await new Promise((ok) => { requestAnimationFrame(() => ok()); setTimeout(ok, 100) })
+        if (!e.isConnected) return { why: 'gone' }
+        c = centre()
+      }
+      if (!c.r.width || !c.r.height) return { why: 'hidden' }
+      return { x: c.x, y: c.y, password: e instanceof HTMLInputElement && e.type === 'password' }
+    })()`)
   }
 
   /** Focus inside a frame this world can't see into counts as a password field, since it might be one. */

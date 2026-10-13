@@ -9,7 +9,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { WebContents } from 'electron'
 import { siteKeyOf } from '../../shared/browser'
 import { TEXT, WAITING, type BrowserManager } from './manager'
-import { keyEvent } from './cdp'
+import { keyEvent, formatRef, parseRef, refTarget, type Box, type Cdp, type Ref, type RefMiss } from './cdp'
 import { moveCursor, clickRing, pill, injectCursor, WORLD } from './cursor'
 import { loginsForSite, secretOf, vaultAvailable } from './vault'
 import { totp } from './totp'
@@ -30,20 +30,22 @@ const PAGE_TOOLS = [
   },
   {
     name: 'snapshot',
-    description: 'Screenshot the page and list its interactive elements with numeric refs for click and type.',
+    description:
+      'Screenshot the page and list its interactive elements with refs for click, type, press and hover. A ref stays ' +
+      'valid while its element is on the page, and no ref survives a new page.',
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'click',
-    description: 'Click an element by its ref from the latest snapshot, or at viewport coordinates.',
-    inputSchema: { type: 'object', properties: { ref: { type: 'number' }, x: { type: 'number' }, y: { type: 'number' } } }
+    description: 'Click an element by its ref from snapshot, or at viewport coordinates.',
+    inputSchema: { type: 'object', properties: { ref: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } }
   },
   {
     name: 'type',
     description: 'Click an element by ref and type text into it; submit presses Enter. Password fields are refused: use autofill_login.',
     inputSchema: {
       type: 'object',
-      properties: { ref: { type: 'number' }, text: { type: 'string' }, submit: { type: 'boolean' } },
+      properties: { ref: { type: 'string' }, text: { type: 'string' }, submit: { type: 'boolean' } },
       required: ['ref', 'text']
     }
   },
@@ -67,7 +69,7 @@ const PAGE_TOOLS = [
           anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' }, maxItems: MAX_KEYS }],
           description: 'One key name, or a list pressed in order.'
         },
-        ref: { type: 'number', description: 'Element to click before pressing, from the latest snapshot.' }
+        ref: { type: 'string', description: 'Element to click before pressing, from snapshot.' }
       },
       required: ['keys']
     }
@@ -75,7 +77,7 @@ const PAGE_TOOLS = [
   {
     name: 'hover',
     description: 'Move the mouse over an element by ref, or to viewport coordinates, without clicking. Use it to open hover menus and tooltips, then snapshot.',
-    inputSchema: { type: 'object', properties: { ref: { type: 'number' }, x: { type: 'number' }, y: { type: 'number' } } }
+    inputSchema: { type: 'object', properties: { ref: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } }
   },
   { name: 'back', description: 'Go back one page.', inputSchema: { type: 'object', properties: {} } },
   {
@@ -203,6 +205,16 @@ export function pressKeys(v: unknown): string[] | string {
     if (!keyEvent(k)) return `press doesn't know the key "${k}". Use a DOM key name like Enter or ArrowLeft, a single character, or type for text.`
   }
   return keys as string[]
+}
+
+export const badRef = (raw: unknown): string =>
+  `${String(JSON.stringify(raw)).slice(0, 60)} isn't a snapshot ref. Pass a ref exactly as snapshot lists it, like t1:d0f3a9c2e:e12.`
+
+/** Why a ref can't be acted on, for the model. `url` is the page the tab shows now. */
+export function refMiss(ref: Ref, why: RefMiss | 'tab', url: string): string {
+  if (why === 'tab') return `Ref ${ref.n} is from tab ${ref.tab}.`
+  if (why === 'page') return `Ref ${ref.n} belongs to the previous page (now ${url}). Take a new snapshot.`
+  return why === 'gone' ? `Ref ${ref.n} is no longer on the page. Take a new snapshot.` : `Ref ${ref.n} has no visible box (hidden or zero-size).`
 }
 
 /** The tab a call acts in: the one it names, else the one Claude last used, else the viewed one. A string is the refusal. */
@@ -583,7 +595,8 @@ export class BrowserMcpServer {
       }
 
       case 'snapshot': {
-        const { list, shown, keys } = await cdp.listInteractive()
+        const { doc, items, shown, keys } = await cdp.listInteractive()
+        const list = items.map(([n, line]) => `${formatRef({ tab, doc, n })} ${line}`).join('\n')
         const content: Content[] = []
         if (!shown) {
           const img = await wc.capturePage()
@@ -600,81 +613,74 @@ export class BrowserMcpServer {
       }
 
       case 'click': {
-        let x = num(args.x)
-        let y = num(args.y)
-        const ref = num(args.ref)
-        if (ref !== null) {
-          const box = await cdp.boxOf(ref)
-          if (!box) return text(`No element has ref ${ref}. Take a new snapshot.`, true)
-          x = box.x
-          y = box.y
-        }
-        if (x === null || y === null) return text('click needs a ref, or x and y.', true)
         const before = wc.getURL()
+        const clickAt = async (x: number, y: number): Promise<ToolResult> => {
+          void clickRing(wc, x, y)
+          await cdp.click(x, y)
+          await settle(wc)
+          const after = wc.getURL()
+          return text(after === before ? 'clicked' : `clicked. The page is now ${this.shownUrl(handleId, after)}`)
+        }
+        if (args.ref != null) return this.actOnRef(handleId, tab, page, args.ref, (box) => clickAt(box.x, box.y))
+        const x = num(args.x)
+        const y = num(args.y)
+        if (x === null || y === null) return text('click needs a ref, or x and y.', true)
         await moveCursor(wc, x, y)
-        void clickRing(wc, x, y)
-        await cdp.click(x, y)
-        await settle(wc)
-        const after = wc.getURL()
-        return text(after === before ? 'clicked' : `clicked. The page is now ${this.shownUrl(handleId, after)}`)
+        return clickAt(x, y)
       }
 
       case 'type': {
-        const ref = num(args.ref)
-        if (ref === null || typeof args.text !== 'string') return text('type needs a ref and text.', true)
-        const box = await cdp.boxOf(ref)
-        if (!box) return text(`No element has ref ${ref}. Take a new snapshot.`, true)
-        if (box.password) return this.refusePassword(wc, `window.__cluiRefs.get(${ref})`)
-        await moveCursor(wc, box.x, box.y)
-        void clickRing(wc, box.x, box.y)
-        await cdp.click(box.x, box.y)
-        if (await cdp.focusedIsPassword()) return this.refusePassword(wc, 'document.activeElement')
-        await cdp.insertText(args.text)
-        if (args.submit === true) {
-          await cdp.key('Enter')
-          await settle(wc)
-        }
-        return text(args.submit === true ? `Typed into ${ref} and pressed Enter.` : `Typed into ${ref}.`)
+        const typed = args.text
+        if (args.ref == null || typeof typed !== 'string') return text('type needs a ref and text.', true)
+        return this.actOnRef(handleId, tab, page, args.ref, async (box, ref) => {
+          void clickRing(wc, box.x, box.y)
+          await cdp.click(box.x, box.y)
+          if (await cdp.focusedIsPassword()) return this.refusePassword(wc, 'document.activeElement')
+          await cdp.insertText(typed)
+          if (args.submit === true) {
+            await cdp.key('Enter')
+            await settle(wc)
+          }
+          return text(args.submit === true ? `Typed into ${ref.n} and pressed Enter.` : `Typed into ${ref.n}.`)
+        }, 'Typing into')
       }
 
       case 'press': {
         const keys = pressKeys(args.keys)
         if (typeof keys === 'string') return text(keys, true)
-        const ref = num(args.ref)
         const before = wc.getURL()
-        if (ref !== null) {
-          const box = await cdp.boxOf(ref)
-          if (!box) return text(`No element has ref ${ref}. Take a new snapshot.`, true)
-          if (box.password) return this.refusePassword(wc, `window.__cluiRefs.get(${ref})`, 'Pressing keys in')
-          await moveCursor(wc, box.x, box.y)
+        const pressAll = async (): Promise<ToolResult> => {
+          for (let i = 0; i < keys.length; i++) {
+            // Checked before every key: Tab, or Enter on a link, can move focus into a password field mid-sequence.
+            if (await cdp.focusedIsPassword()) return this.refusePassword(wc, 'document.activeElement', 'Pressing keys in', i)
+            await cdp.key(keys[i])
+          }
+          await settle(wc)
+          const after = wc.getURL()
+          const done = keys.length === 1 ? `Pressed ${keyName(keys[0])}.` : `Pressed ${keys.length} keys.`
+          return text(after === before ? done : `${done} The page is now ${this.shownUrl(handleId, after)}`)
+        }
+        if (args.ref == null) return pressAll()
+        return this.actOnRef(handleId, tab, page, args.ref, async (box) => {
           void clickRing(wc, box.x, box.y)
           await cdp.click(box.x, box.y)
-        }
-        for (let i = 0; i < keys.length; i++) {
-          // Checked before every key: Tab, or Enter on a link, can move focus into a password field mid-sequence.
-          if (await cdp.focusedIsPassword()) return this.refusePassword(wc, 'document.activeElement', 'Pressing keys in', i)
-          await cdp.key(keys[i])
-        }
-        await settle(wc)
-        const after = wc.getURL()
-        const done = keys.length === 1 ? `Pressed ${keyName(keys[0])}.` : `Pressed ${keys.length} keys.`
-        return text(after === before ? done : `${done} The page is now ${this.shownUrl(handleId, after)}`)
+          return pressAll()
+        }, 'Pressing keys in')
       }
 
       case 'hover': {
-        let x = num(args.x)
-        let y = num(args.y)
-        const ref = num(args.ref)
-        if (ref !== null) {
-          const box = await cdp.boxOf(ref)
-          if (!box) return text(`No element has ref ${ref}. Take a new snapshot.`, true)
-          x = box.x
-          y = box.y
+        if (args.ref != null) {
+          return this.actOnRef(handleId, tab, page, args.ref, async (box, ref) => {
+            await cdp.hover(box.x, box.y)
+            return text(`Hovering over ${ref.n}.`)
+          })
         }
+        const x = num(args.x)
+        const y = num(args.y)
         if (x === null || y === null) return text('hover needs a ref, or x and y.', true)
         await moveCursor(wc, x, y)
         await cdp.hover(x, y)
-        return text(ref !== null ? `Hovering over ${ref}.` : `Hovering at ${x}, ${y}.`)
+        return text(`Hovering at ${x}, ${y}.`)
       }
 
       case 'scroll': {
@@ -700,6 +706,35 @@ export class BrowserMcpServer {
         return this.autofill(handleId, tab, wc)
     }
     return text(`Unknown tool ${name}.`, true)
+  }
+
+  /**
+   * Resolves a ref in this tab's current page, moves the cursor to it, then reads it again just before act
+   * dispatches input: the cursor's glide yields, and the page may move or drop the element meanwhile.
+   * `password` names the action to refuse on a password field; without it the field is fair game.
+   */
+  private async actOnRef(
+    handleId: string,
+    tab: number,
+    page: { wc: WebContents; cdp: Cdp },
+    raw: unknown,
+    act: (box: Box, ref: Ref) => Promise<ToolResult>,
+    password?: string
+  ): Promise<ToolResult> {
+    const ref = parseRef(raw)
+    if (!ref) return text(badRef(raw), true)
+    if (ref.tab !== tab) return text(refMiss(ref, 'tab', ''), true)
+    const { wc, cdp } = page
+    const look = async (): Promise<Box | ToolResult> => {
+      const at = await cdp.locate(ref)
+      if ('why' in at) return text(refMiss(ref, at.why, this.shownUrl(handleId, wc.getURL())), true)
+      return at.password && password ? this.refusePassword(wc, refTarget(ref.n), password) : at
+    }
+    const first = await look()
+    if ('content' in first) return first
+    await moveCursor(wc, first.x, first.y)
+    const box = await look()
+    return 'content' in box ? box : act(box, ref)
   }
 
   /** `pressed`: keys that already went through before focus reached the field, so the model knows the page moved. */

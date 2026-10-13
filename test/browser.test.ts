@@ -224,3 +224,87 @@ equal(siteFromInput('   '), null, 'site input: blank is not a site')
   equal(sites.localNetCached('example.com'), undefined, 'sites: forget makes the site ask again')
   equal((await sites.listLocalNet()).map((s) => s.site).join(), 'evil.test', 'sites: forget removes the row')
 }
+
+// Boundary: a ref names one element in one tab's one document. A stale ref must fail with the reason,
+// never land on whatever the new page numbered the same, and the element is re-read before input lands.
+{
+  const { parseRef, formatRef, refTarget, PAGE_REFS } = await import('../src/main/browser/cdp.ts')
+  const { refMiss, badRef } = await import('../src/main/browser/mcp.ts')
+  const r = { tab: 2, doc: '0123abcd', n: 12 }
+  equal(formatRef(r), 't2:d0123abcd:e12', 'ref: spelling')
+  equal(JSON.stringify(parseRef('t2:d0123abcd:e12')), JSON.stringify(r), 'ref: round trip')
+  ok([12, '12', 'e12', 't2:e12', 't2:d0123ABCD:e12', 't2:d0123abc:e12', ' t2:d0123abcd:e12', null].every((v) => parseRef(v) === null), 'ref: numbers, bare locals and near misses are refused')
+  equal(refMiss(r, 'tab', ''), 'Ref 12 is from tab 2.', 'ref: wrong tab')
+  equal(refMiss(r, 'gone', 'https://x.test/'), 'Ref 12 is no longer on the page. Take a new snapshot.', 'ref: removed')
+  equal(refMiss(r, 'page', 'https://x.test/b'), 'Ref 12 belongs to the previous page (now https://x.test/b). Take a new snapshot.', 'ref: new document')
+  equal(refMiss(r, 'hidden', ''), 'Ref 12 has no visible box (hidden or zero-size).', 'ref: zero size')
+  equal(badRef(12), "12 isn't a snapshot ref. Pass a ref exactly as snapshot lists it, like t1:d0f3a9c2e:e12.", 'ref: a number is not a ref')
+  ok(parseRef('t1:d0f3a9c2e:e12') !== null, 'ref: the example in the refusal parses')
+  ok(TOOLS.filter((t) => ['click', 'type', 'press', 'hover'].includes(t.name)).every((t) => (t.inputSchema.properties as Record<string, { type?: string }>).ref?.type === 'string'), 'ref: every tool takes refs as strings')
+
+  // The world's table, run against plain objects: numbers stick while the table is for the current document.
+  const table = new Function(`return ${PAGE_REFS}`)() as (w: object, cur: string | null, next: string) => { doc: string; id: (e: object) => number }
+  const w = {}
+  const [a, b, c] = [{}, {}, {}]
+  const t1 = table(w, null, 'aaaaaaaa')
+  equal(`${t1.doc} ${t1.id(a)} ${t1.id(b)}`, 'aaaaaaaa 1 2', 'ref table: a fresh world adopts the next nonce')
+  const t2 = table(w, 'aaaaaaaa', 'bbbbbbbb')
+  equal(`${t2.doc} ${t2.id(b)} ${t2.id(c)} ${t2.id(a)}`, 'aaaaaaaa 2 3 1', 'ref table: a re-snapshot keeps numbers and extends them')
+  const t3 = table(w, 'zzzzzzzz', 'cccccccc')
+  equal(`${t3.doc} ${t3.id(c)}`, 'cccccccc 1', 'ref table: a world from another document restarts under a new nonce')
+  equal(refTarget(3), 'window.__cluiRefs?.els.get(3)?.deref()', 'ref: pill target dereferences the WeakRef')
+
+  // actOnRef against a stub page: every refusal happens before input, and input lands at the re-read box.
+  type Spot = { x: number; y: number; password: boolean } | { why: string }
+  let spots: Spot[] = []
+  const clicks: string[] = []
+  const worldCode: string[] = []
+  const wc = {
+    isLoading: () => false,
+    isDestroyed: () => false,
+    getURL: () => 'https://example.com/b',
+    getTitle: () => 'B',
+    executeJavaScriptInIsolatedWorld: (_w: number, [{ code }]: { code: string }[]) => (worldCode.push(code), Promise.resolve(false))
+  }
+  const cdp = {
+    locate: () => Promise.resolve(spots.shift() ?? { why: 'gone' }),
+    click: (x: number, y: number) => (clicks.push(`${x},${y}`), Promise.resolve()),
+    hover: (x: number, y: number) => (clicks.push(`hover ${x},${y}`), Promise.resolve()),
+    focusedIsPassword: () => Promise.resolve(false),
+    insertText: () => Promise.resolve(),
+    listInteractive: () => Promise.resolve({ doc: '0123abcd', items: [[3, 'button "Go"'], [7, 'input "Q"']], shown: true, keys: 0 })
+  }
+  const pageStub = {
+    tabsOf: () => ({ viewed: 1, lastUsed: 1, tabs: [{ id: 1 }] }),
+    used: () => {},
+    toolTab: () => {},
+    onTabClosed: () => () => {},
+    beginTool: () => Promise.resolve(null),
+    endTool: () => {},
+    page: () => ({ wc, cdp, view: {} })
+  }
+  const pm = new BrowserMcpServer(pageStub as never)
+  const go = async (name: string, args: Record<string, unknown>, queued: Spot[] = []): Promise<string> => {
+    spots = queued
+    clicks.length = 0
+    return said(await pm.callTool('h3', name, args))
+  }
+  const ref = 't1:d0123abcd:e3'
+  const snapText = await go('snapshot', {})
+  ok(snapText.endsWith('\n\nt1:d0123abcd:e3 button "Go"\nt1:d0123abcd:e7 input "Q"'), 'act: snapshot lists full refs')
+  equal(await go('click', { ref: 3 }), `error: ${badRef(3)}`, 'act: a numeric ref is refused')
+  equal(await go('click', { ref: 't2:d0123abcd:e3' }), 'error: Ref 3 is from tab 2.', 'act: a ref from another tab is refused')
+  equal(await go('click', { ref }, [{ why: 'page' }]), 'error: Ref 3 belongs to the previous page (now https://example.com/b). Take a new snapshot.', 'act: a ref from the previous page names it')
+  equal(await go('hover', { ref }, [{ why: 'hidden' }]), 'error: Ref 3 has no visible box (hidden or zero-size).', 'act: zero size')
+  equal(await go('click', { ref }, [{ x: 1, y: 1, password: false }, { why: 'gone' }]), 'error: Ref 3 is no longer on the page. Take a new snapshot.', 'act: removed during the cursor glide')
+  equal(clicks.length, 0, 'act: and nothing was clicked')
+  equal(await go('click', { ref }, [{ x: 1, y: 1, password: false }, { x: 5, y: 6, password: false }]), 'clicked', 'act: click by ref')
+  equal(clicks.join(' '), '5,6', 'act: input lands at the re-read box')
+  equal(await go('hover', { ref }, [{ x: 1, y: 1, password: false }, { x: 2, y: 2, password: false }]), 'Hovering over 3.', 'act: hover by ref')
+  worldCode.length = 0
+  const refused = await go('type', { ref, text: 'x' }, [{ x: 1, y: 1, password: true }])
+  ok(refused.startsWith('error: Typing into password fields is blocked.') && clicks.length === 0, 'act: type into a password field is refused before any input')
+  ok(worldCode.some((c) => c.includes(`pill(${refTarget(3)}, `)), 'act: the refusal pill points at the ref')
+  ok((await go('press', { keys: 'x', ref }, [{ x: 1, y: 1, password: false }, { x: 1, y: 1, password: true }])).startsWith('error: Pressing keys in password fields is blocked.') && clicks.length === 0, 'act: a field that turned into a password field is refused at the re-read')
+  equal(await go('type', { ref, text: 'x' }, [{ x: 1, y: 1, password: false }, { x: 1, y: 1, password: false }]), 'Typed into 3.', 'act: type by ref')
+}

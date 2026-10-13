@@ -125,11 +125,19 @@ export function browserResultCopy(result: string | undefined): { copy: string; f
   return m ? { copy: m[2], flagged: !!m[1] } : null
 }
 
+/** The element number a row shows. Refs look like `t1:d…:e12`; older transcripts store a plain number. */
+function refNumber(ref: unknown): number | null {
+  if (typeof ref === 'number') return ref
+  const m = typeof ref === 'string' ? /:e(\d+)$/.exec(ref) : null
+  return m ? Number(m[1]) : null
+}
+
 function actionLabel(name: string, input: unknown): string {
   const action = name.slice(BROWSER_PREFIX.length)
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
   if (action === 'navigate' && typeof o.url === 'string') return `navigate ${o.url.replace(/^https?:\/\//, '')}`
-  if ((action === 'click' || action === 'type') && typeof o.ref === 'number') return `${action} ${o.ref}`
+  const ref = refNumber(o.ref)
+  if ((action === 'click' || action === 'type') && ref !== null) return `${action} ${ref}`
   if (action === 'scroll' && typeof o.dy === 'number') return `scroll ${o.dy}`
   if (action === 'press') {
     const keys = typeof o.keys === 'string' ? [o.keys] : Array.isArray(o.keys) ? o.keys : []
@@ -137,7 +145,7 @@ function actionLabel(name: string, input: unknown): string {
     if (typeof keys[0] === 'string') return `press ${keys[0] === ' ' ? 'Space' : keys[0]}`
   }
   if (action === 'hover') {
-    if (typeof o.ref === 'number') return `hover ${o.ref}`
+    if (ref !== null) return `hover ${ref}`
     if (typeof o.x === 'number' && typeof o.y === 'number') return `hover ${o.x}, ${o.y}`
   }
   if (action === 'new_tab' && typeof o.url === 'string') return `new tab ${o.url.replace(/^https?:\/\//, '')}`
