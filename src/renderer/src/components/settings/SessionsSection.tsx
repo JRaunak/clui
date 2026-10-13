@@ -5,6 +5,8 @@ import {
   PERMISSION_MODE_LABELS,
   PERMISSION_MODE_COLORS,
   PERMISSION_MODE_DESCRIPTIONS,
+  QUICK_MODEL_FAMILIES,
+  QUICK_PERMISSION_MODES,
   EFFORT_CHOICES,
   EFFORT_LABELS,
   deriveModelInfo,
@@ -30,30 +32,17 @@ const FALLBACK_NOTES: Record<NonNullable<ModelListResult['reason']>, string> = {
     "Showing Clui's built-in list. The live Bedrock query failed, so newer models may be missing. Check the aws CLI and your credentials, then reopen Settings."
 }
 
-/** Model families offered for quick sessions (the latest live model of the pick is resolved at
- *  spawn; see latestModelInFamily). Not the full live list: a quick chat picks a family, not a
- *  concrete id. */
-const QUICK_FAMILIES: CluiSettings['quickModelFamily'][] = ['opus', 'sonnet', 'haiku']
 const QUICK_FAMILY_LABELS: Record<CluiSettings['quickModelFamily'], string> = {
   opus: 'Opus',
   sonnet: 'Sonnet',
   haiku: 'Haiku'
 }
 
-/** Permission modes a quick session can use: a subset of PERMISSION_MODES (no
- *  Silent Deny / Plan / Auto Edit, which don't fit a throwaway chat). */
-const QUICK_PERMISSION_MODES: CluiSettings['permissionMode'][] = [
-  'inherit',
-  'default',
-  'auto',
-  'bypassPermissions'
-]
-
-/** In a quick session, System Default follows the global permission mode rather than a
- *  settings.json field, so it gets its own description. */
+/** Quick's System Default passes no flag, so the CLI's settings.json decides, not the New sessions mode a
+ *  user would assume it follows. */
 const QUICK_PERMISSION_DESCRIPTIONS: Record<CluiSettings['permissionMode'], string> = {
   ...PERMISSION_MODE_DESCRIPTIONS,
-  inherit: 'Follows your global permission mode'
+  inherit: 'Follows your CLI settings.json, not New sessions'
 }
 
 const INHERITING = 'Currently inheriting from ~/.claude/settings.json.'
@@ -248,7 +237,7 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
           <Dropdown<CluiSettings['quickModelFamily']>
             value={settings.quickModelFamily}
             ariaLabel="Quick session model family"
-            options={QUICK_FAMILIES.map((f) => ({ value: f, label: QUICK_FAMILY_LABELS[f] }))}
+            options={QUICK_MODEL_FAMILIES.map((f) => ({ value: f, label: QUICK_FAMILY_LABELS[f] }))}
             onChange={(f) => set('quickModelFamily', f)}
           />
         </Field>

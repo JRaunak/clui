@@ -504,6 +504,19 @@ export const PERMISSION_MODES: CluiSettings['permissionMode'][] = [
   'bypassPermissions'
 ]
 
+/** Modes a Quick session may launch in. Plan Mode is out because a Quick session withholds the
+ *  plan tools (EPHEMERAL_DISALLOWED_TOOLS), and Silent Deny / Auto Edit don't fit a throwaway chat. */
+export const QUICK_PERMISSION_MODES: CluiSettings['quickPermissionMode'][] = [
+  'inherit',
+  'default',
+  'auto',
+  'bypassPermissions'
+]
+
+/** A Quick session picks a family, not a concrete id: its latest live model is resolved at spawn
+ *  (latestModelInFamily). */
+export const QUICK_MODEL_FAMILIES: CluiSettings['quickModelFamily'][] = ['opus', 'sonnet', 'haiku']
+
 /** Human-friendly labels for the permission-mode pickers. */
 export const PERMISSION_MODE_LABELS: Record<CluiSettings['permissionMode'], string> = {
   inherit: 'System Default',

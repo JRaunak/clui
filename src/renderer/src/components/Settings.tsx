@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import type { CluiSettings, SettingsKey, SettingsSource } from '../../../shared/settings'
+import type { CluiSettings, SettingsKey } from '../../../shared/settings'
 import { useSession, type SettingsSection } from '../store'
 import { Button } from './Button'
 import { IconClose } from './Icon'
@@ -11,6 +11,17 @@ import { Pane } from './settings/shared'
 import { GeneralSection } from './settings/GeneralSection'
 import { SessionsSection } from './settings/SessionsSection'
 import { BrowserSection } from './settings/BrowserSection'
+import {
+  draftPatch,
+  draftValues,
+  editDraft,
+  isDirty,
+  isOverridden as overridden,
+  rebaseDraft,
+  resetDraft,
+  type Draft,
+  type StagedKey
+} from './settings/draft'
 
 const SECTIONS: { key: SettingsSection; label: string }[] = [
   { key: 'general', label: 'General' },
@@ -22,35 +33,24 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
   const section = useSession((s) => s.settingsSection) ?? 'general'
   const openSettings = useSession((s) => s.openSettings)
   const closeSettings = useSession((s) => s.closeSettings)
-  const [settings, setSettings] = useState<CluiSettings | null>(null)
+  // The theme is applied on change but persisted on Save, so closing with a staged theme reverts to the saved one.
+  const [draft, setDraft] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  // Per-key provenance from the main process, plus the keys staged for reset. Both drive the reset control;
-  // the modal commits on Save, so a reset is staged until then, and re-picking a value un-stages it.
-  const [sources, setSources] = useState<Record<SettingsKey, SettingsSource> | null>(null)
-  const [cleared, setCleared] = useState<SettingsKey[]>([])
-  // `baseline` is what getSettings() loaded. The draft diffs against it, and closing without saving reverts
-  // the live theme preview to its theme, which is applied on change but only persisted on Save.
-  // `previewedTheme` is null until the user changes the dropdown, so the unmount revert only fires when
-  // there's a real preview to undo. Avoids reverting when StrictMode's simulated mount/unmount fires cleanup
-  // before the async getSettings() resolves.
-  const baseline = useRef<CluiSettings | null>(null)
-  const previewedTheme = useRef<CluiSettings['theme'] | null>(null)
+  const latest = useRef<Draft | null>(null)
+  useEffect(() => {
+    latest.current = draft
+  }, [draft])
 
   useEffect(() => {
-    window.clui.getSettings().then(({ values, sources: src }) => {
-      setSettings(values)
-      setSources(src)
-      baseline.current = values
-    })
+    window.clui.getSettings().then((saved) => setDraft((d) => rebaseDraft(d, saved)))
   }, [])
 
-  // On unmount, revert an unsaved live theme preview, but only if one was made and we know the persisted baseline.
+  // `latest` is null until loaded, so StrictMode's simulated unmount before getSettings() resolves reverts nothing.
   useEffect(() => {
     return () => {
-      if (previewedTheme.current !== null && baseline.current !== null) {
-        applyTheme(baseline.current.theme)
-      }
+      const d = latest.current
+      if (d?.edits.theme !== undefined) applyTheme(d.saved.values.theme)
     }
   }, [])
 
@@ -63,41 +63,32 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
   // Through the escape stack, so an open dropdown inside closes first.
   useEscape(true, closeSettings)
 
-  const set = <K extends keyof CluiSettings>(key: K, value: CluiSettings[K]): void => {
-    setSettings((s) => (s ? { ...s, [key]: value } : s))
-    // Editing a field un-stages its pending reset.
-    setCleared((c) => (c.includes(key) ? c.filter((k) => k !== key) : c))
+  const set = <K extends StagedKey>(key: K, value: CluiSettings[K]): void => {
+    setDraft((d) => d && editDraft(d, key, value))
     setSaveError(null)
   }
 
-  /** Stage a reset: the key is cleared on Save. */
   const reset = (key: SettingsKey): void => {
-    setCleared((c) => (c.includes(key) ? c : [...c, key]))
+    setDraft((d) => d && resetDraft(d, key))
     setSaveError(null)
   }
-
-  /** True while this field holds a user override. */
-  const isOverridden = (key: SettingsKey): boolean => sources?.[key] === 'override' && !cleared.includes(key)
 
   const previewTheme = (t: CluiSettings['theme']): void => {
     set('theme', t)
-    previewedTheme.current = t
     applyTheme(t)
   }
 
   // Save commits + dismisses (dialog contract: the primary action of a modal both applies and closes).
   // But close only on success: if the write fails we keep the modal open and surface the error.
   const save = async (): Promise<void> => {
-    if (!settings || saving) return
+    if (!draft || saving) return
     setSaving(true)
     setSaveError(null)
-    // The browser switch saves itself the moment it's flipped, so this draft's copy may be stale.
-    const { browserEnabled: _, ...values } = settings
+    const { patch, clear } = draftPatch(draft)
     try {
-      await window.clui.updateSettings(values, cleared)
-      // The live-applied theme is now persisted, so mark it so the unmount revert is a no-op.
-      baseline.current = settings
-      previewedTheme.current = null
+      const saved = await window.clui.updateSettings(patch, clear)
+      // Nothing is staged any more, so the unmount revert leaves the saved theme alone.
+      latest.current = rebaseDraft(null, saved)
       closeSettings()
     } catch (e) {
       setSaving(false)
@@ -125,11 +116,14 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
     if (next !== i) openSettings(SECTIONS[next].key)
   }
 
-  const draft = settings && sources ? { settings, sources, set, reset, isOverridden } : null
-  const loaded = baseline.current
-  const dirty =
-    cleared.length > 0 ||
-    (!!settings && !!loaded && (Object.keys(settings) as SettingsKey[]).some((k) => k !== 'browserEnabled' && settings[k] !== loaded[k]))
+  const props = draft && {
+    settings: draftValues(draft),
+    sources: draft.saved.sources,
+    set,
+    reset,
+    isOverridden: (k: SettingsKey) => overridden(draft, k)
+  }
+  const dirty = !!draft && isDirty(draft)
   // Browser applies its changes right away, so it only needs Save while another section holds an edit.
   const footer = section !== 'browser' || dirty || !!saveError
   const loading = <p className="text-meta text-dim">Loading…</p>
@@ -184,10 +178,10 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
 
         <div className="relative min-w-0 flex-1">
           <Pane section="general" active={section === 'general'} className="flex flex-col gap-5">
-            {draft ? <GeneralSection {...draft} previewTheme={previewTheme} /> : loading}
+            {props ? <GeneralSection {...props} previewTheme={previewTheme} /> : loading}
           </Pane>
           <Pane section="sessions" active={section === 'sessions'} className="flex flex-col gap-10">
-            {draft ? <SessionsSection {...draft} /> : loading}
+            {props ? <SessionsSection {...props} /> : loading}
           </Pane>
           <BrowserSection active={section === 'browser'} />
         </div>
@@ -206,7 +200,7 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
           <Button variant="outline" size="md" onClick={closeSettings}>
             Cancel
           </Button>
-          <Button variant="primary" size="md" onClick={() => void save()} disabled={saving || !draft}>
+          <Button variant="primary" size="md" onClick={() => void save()} disabled={saving || !props}>
             {saving ? 'Saving…' : 'Save'}
           </Button>
         </div>

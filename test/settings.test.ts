@@ -1,6 +1,6 @@
 // Boundary: settings persistence + model reconciliation.
 // Uses a fresh module instance per case (?v=) to reset the module-level cache.
-import { writeFileSync, readFileSync } from 'node:fs'
+import { writeFileSync, readFileSync, chmodSync } from 'node:fs'
 import { app } from './support/electron-stub.mjs'
 import { join } from 'node:path'
 import {
@@ -11,8 +11,21 @@ import {
   supports1m,
   contextSizeLabel,
   reconcileModelChoice,
-  effortLabel
+  effortLabel,
+  DEFAULT_SETTINGS,
+  type CluiSettings,
+  type ResolvedSettings,
+  type SettingsKey
 } from '../src/shared/settings.ts'
+import {
+  rebaseDraft,
+  editDraft,
+  resetDraft,
+  draftPatch,
+  draftValues,
+  isDirty,
+  isOverridden
+} from '../src/renderer/src/components/settings/draft.ts'
 import { ok } from './support/harness.mjs'
 
 const SP = join(app.getPath('userData'), 'settings.json')
@@ -142,3 +155,100 @@ ok(!supportsUltracodeToggle('claude-haiku-4-5'), 'supportsUltracodeToggle: haiku
 // Agent effort reads in the composer's words; a level a CLI bump adds shows raw rather than vanishing.
 ok(effortLabel('xhigh') === 'X-High', 'settings: effortLabel maps a known level')
 ok(effortLabel('turbo') === 'turbo', 'settings: effortLabel passes an unknown level through')
+
+// Quick keys are enum-checked like their siblings: Plan Mode is withheld from Quick sessions.
+{
+  writeFileSync(SP, JSON.stringify({ schemaVersion: 1, quickModelFamily: 'fable', quickPermissionMode: 'plan' }))
+  const r = await (await fresh()).getResolvedSettings()
+  ok(r.values.quickModelFamily === 'haiku', 'settings: off-enum quickModelFamily dropped')
+  ok(r.values.quickPermissionMode === 'default', 'settings: non-quick quickPermissionMode dropped')
+}
+
+// Two independent updates in flight at once both land, on disk and in the cache.
+{
+  writeFileSync(SP, JSON.stringify({ schemaVersion: 1 }))
+  const m = await fresh()
+  await m.getResolvedSettings()
+  const [, second] = await Promise.all([m.updateSettings({ theme: 'light' }), m.updateSettings({ editorCommand: 'vim' })])
+  const d = onDisk()
+  ok(d.theme === 'light' && d.editorCommand === 'vim', 'settings: simultaneous updates both persist')
+  ok(second.values.theme === 'light', 'settings: a later update builds on the earlier one')
+  const c = m.getSettingsSync()
+  ok(c.theme === 'light' && c.editorCommand === 'vim', 'settings: cache holds both simultaneous updates')
+}
+
+// A reset racing an unrelated update stays a reset.
+{
+  writeFileSync(SP, JSON.stringify({ schemaVersion: 1, theme: 'light' }))
+  const m = await fresh()
+  await m.getResolvedSettings()
+  await Promise.all([m.updateSettings({}, ['theme']), m.updateSettings({ editorCommand: 'vim' })])
+  const d = onDisk()
+  ok(!('theme' in d) && d.editorCommand === 'vim', 'settings: reset survives a concurrent unrelated update')
+}
+
+// A failed write changes neither disk nor the cache, and the next update doesn't carry it.
+{
+  writeFileSync(SP, JSON.stringify({ schemaVersion: 1, editorCommand: 'vim' }))
+  const before = readFileSync(SP, 'utf8')
+  const m = await fresh()
+  await m.getResolvedSettings()
+  const dir = app.getPath('userData')
+  chmodSync(dir, 0o500)
+  let failed = false
+  try {
+    await m.updateSettings({ theme: 'light' })
+  } catch {
+    failed = true
+  } finally {
+    chmodSync(dir, 0o700)
+  }
+  ok(failed, 'settings: an unwritable file rejects the update')
+  ok(readFileSync(SP, 'utf8') === before, 'settings: failed write leaves disk untouched')
+  ok(m.getSettingsSync().theme === 'dark', 'settings: failed write leaves the cache untouched')
+  await m.updateSettings({ cliPath: '/bin/claude' })
+  ok(!('theme' in onDisk()), 'settings: next update does not carry the failed value')
+}
+
+// The modal's Save after the Browser pane saved its own switches leaves those switches alone.
+{
+  writeFileSync(SP, JSON.stringify({ schemaVersion: 1 }))
+  const m = await fresh()
+  let d = rebaseDraft(null, await m.getResolvedSettings())
+  await m.updateSettings({ browserEnabled: true })
+  await m.updateSettings({ linkTarget: 'system' })
+  await m.updateSettings({ annotateScreenshots: false })
+  d = editDraft(d, 'editorCommand', 'vim')
+  const { patch, clear } = draftPatch(d)
+  ok(JSON.stringify(patch) === '{"editorCommand":"vim"}' && clear.length === 0, 'draft: Save sends only the edited field')
+  await m.updateSettings(patch, clear)
+  const disk = onDisk()
+  ok(
+    disk.browserEnabled === true && disk.linkTarget === 'system' && disk.annotateScreenshots === false && disk.editorCommand === 'vim',
+    'draft: Save keeps immediate browser, link and screenshot changes'
+  )
+}
+
+// Draft bookkeeping: clean fields follow newer settings, staged edits and resets survive them.
+{
+  const saved = (values: Partial<CluiSettings>, overrides: SettingsKey[] = []): ResolvedSettings => ({
+    values: { ...DEFAULT_SETTINGS, ...values },
+    sources: Object.fromEntries(
+      Object.keys(DEFAULT_SETTINGS).map((k) => [k, overrides.includes(k as SettingsKey) ? 'override' : 'default'])
+    ) as ResolvedSettings['sources']
+  })
+  let d = rebaseDraft(null, saved({ theme: 'light', cliPath: '/a' }, ['theme', 'cliPath']))
+  ok(!isDirty(d), 'draft: a fresh draft is clean')
+  d = editDraft(d, 'editorCommand', 'vim')
+  d = resetDraft(d, 'cliPath')
+  d = rebaseDraft(d, saved({ theme: 'dark', cliPath: '/a', model: 'm2' }, ['cliPath', 'model']))
+  const v = draftValues(d)
+  ok(v.theme === 'dark' && v.model === 'm2', 'draft: an external update refreshes clean fields')
+  ok(v.editorCommand === 'vim', 'draft: an external update keeps a staged edit')
+  ok(JSON.stringify(draftPatch(d)) === '{"patch":{"editorCommand":"vim"},"clear":["cliPath"]}', 'draft: staged edit and reset survive a rebase')
+  ok(!isOverridden(d, 'cliPath') && isOverridden(d, 'model'), 'draft: provenance follows the rebase, minus staged resets')
+  d = rebaseDraft(d, saved({ editorCommand: 'vim' }, ['editorCommand']))
+  ok(!isDirty(d), 'draft: edits matched elsewhere and resets with nothing to clear go clean')
+  d = editDraft(resetDraft(editDraft(d, 'theme', 'light'), 'theme'), 'theme', 'dark')
+  ok(!isDirty(d), 'draft: re-picking the saved value un-stages the edit and the reset')
+}

@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import type { CluiSettings, SettingsKey, SettingsSource } from '../../../../shared/settings'
 import type { SettingsSection } from '../../store'
+import type { StagedKey } from './draft'
 import { IconCheck } from '../Icon'
 
 export type DraftProps = {
   settings: CluiSettings
   sources: Record<SettingsKey, SettingsSource>
-  set: <K extends keyof CluiSettings>(key: K, value: CluiSettings[K]) => void
+  set: <K extends StagedKey>(key: K, value: CluiSettings[K]) => void
   reset: (key: SettingsKey) => void
   isOverridden: (key: SettingsKey) => boolean
 }

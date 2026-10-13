@@ -19,6 +19,8 @@ import {
   THEME_CHOICES,
   LINK_TARGETS,
   PERMISSION_MODES,
+  QUICK_MODEL_FAMILIES,
+  QUICK_PERMISSION_MODES,
   clampEffort,
   isEffortChoice,
   type CluiSettings,
@@ -46,6 +48,8 @@ function isValidValue(key: SettingsKey, v: unknown): boolean {
   if (key === 'linkTarget') return (LINK_TARGETS as readonly string[]).includes(v as string)
   if (key === 'permissionMode') return (PERMISSION_MODES as readonly string[]).includes(v as string)
   if (key === 'effort') return isEffortChoice(v)
+  if (key === 'quickModelFamily') return (QUICK_MODEL_FAMILIES as readonly string[]).includes(v as string)
+  if (key === 'quickPermissionMode') return (QUICK_PERMISSION_MODES as readonly string[]).includes(v as string)
   return true
 }
 
@@ -53,6 +57,8 @@ function isValidValue(key: SettingsKey, v: unknown): boolean {
 let cache: ResolvedSettings | null = null
 /** The raw persisted partial, kept so a write never re-materializes resolved values. */
 let stored: StoredSettings | null = null
+/** One load shared by every early caller, so a slow first read can't publish over a later update. */
+let loading: Promise<ResolvedSettings> | null = null
 
 const settingsPath = (): string => join(app.getPath('userData'), 'settings.json')
 
@@ -226,7 +232,10 @@ export async function getSettings(): Promise<CluiSettings> {
 
 /** Resolved values + per-key provenance. Backs the reset affordance in Settings. */
 export async function getResolvedSettings(): Promise<ResolvedSettings> {
-  return cache ?? load()
+  // Cleared once settled: a rejected load retries on the next call, a resolved one has already set `cache`.
+  return cache ?? (loading ??= load().finally(() => {
+    loading = null
+  }))
 }
 
 /**
@@ -257,36 +266,37 @@ export async function updateSettings(
   patch: Partial<CluiSettings>,
   clear: SettingsKey[] = []
 ): Promise<ResolvedSettings> {
+  // Outside the queue: load() enqueues its own migration write and would wait on itself.
   await getResolvedSettings()
-  const cli = await readCliSettings()
-  const next: StoredSettings = { ...stored }
-  const cleared = new Set(clear)
+  // The whole read/modify/persist/publish runs in the queue, so a concurrent update builds on
+  // this one's result instead of on the snapshot both started from.
+  return serializeSettings(async () => {
+    const cli = await readCliSettings()
+    const next: StoredSettings = { ...stored }
+    const cleared = new Set(clear)
 
-  for (const key of clear) delete next[key]
+    for (const key of clear) delete next[key]
 
-  // Iterate in DEFAULT_SETTINGS order rather than the patch's own key order, so
-  // `model` is always resolved before `effort` (whose clamp depends on it) and the
-  // result never depends on how the renderer happened to build the object.
-  for (const key of Object.keys(DEFAULT_SETTINGS) as SettingsKey[]) {
-    if (!(key in patch)) continue
-    // A key being reset THIS save must not be re-applied from the full-settings patch the
-    // UI submits: the patch still carries the field's old value, and re-adding it would
-    // undo the reset.
-    if (cleared.has(key)) continue
-    const v = patch[key]
-    if (v === undefined || !isValidValue(key, v)) continue
-    delete next[key]
-    // `next` has the key removed, so this is the value the user would see after a
-    // reset, including the clamp, since that clamped value is what the picker shows.
-    // Re-picking it means "inherit", not "override with the same thing".
-    if (v === resolveInherited(next, cli).values[key]) continue
-    Object.assign(next, { [key]: v })
-  }
+    // Iterate in DEFAULT_SETTINGS order rather than the patch's own key order, so
+    // `model` is always resolved before `effort` (whose clamp depends on it) and the
+    // result never depends on how the renderer happened to build the object.
+    for (const key of Object.keys(DEFAULT_SETTINGS) as SettingsKey[]) {
+      if (!(key in patch)) continue
+      if (cleared.has(key)) continue
+      const v = patch[key]
+      if (v === undefined || !isValidValue(key, v)) continue
+      delete next[key]
+      // `next` has the key removed, so this is the value the user would see after a
+      // reset, including the clamp, since that clamped value is what the picker shows.
+      // Re-picking it means "inherit", not "override with the same thing".
+      if (v === resolveInherited(next, cli).values[key]) continue
+      Object.assign(next, { [key]: v })
+    }
 
-  // Publish in-memory state only AFTER a successful atomic write, serialized against other
-  // saves so a failed/racing write can't leave memory ahead of disk.
-  await serializeSettings(() => persist(next))
-  stored = next
-  cache = resolveInherited(next, cli)
-  return cache
+    // Publish only after the write lands, so a failed write leaves memory matching disk.
+    await persist(next)
+    stored = next
+    cache = resolveInherited(next, cli)
+    return cache
+  })
 }
