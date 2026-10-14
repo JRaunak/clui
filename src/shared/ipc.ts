@@ -358,6 +358,7 @@ export type MenuAction =
   | 'browser-stop'
   | 'browser-annotate'
   | 'browser-toggle'
+  | 'pane-external'
 
 /** IPC channel names (single source of truth). */
 export const IpcChannels = {
@@ -454,4 +455,6 @@ export const IpcChannels = {
 export interface MenuState {
   browser: 'none' | 'shown' | 'hidden'
   pane: 'none' | 'split' | 'full'
+  /** The active surface's Open externally target; 'none' while it can't open (or nothing is shown). */
+  external: 'browser' | 'none'
 }

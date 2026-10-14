@@ -233,86 +233,94 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   const browser = { tabs: [], viewed: 1, multi: false, toolTabs: {}, enter: [], announce: '' }
   const pane = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
     browser,
-    browserOpen: false,
-    browserAutoOpen: false,
-    browserAutoOpenSuppressed: false,
+    paneOpen: false,
+    surfacePaneFull: true,
+    paneAutoOpen: false,
+    paneAutoOpenSuppressed: false,
     statusAnnounce: '',
     ...over
   })
   const fresh = (over?: Record<string, unknown>): void => {
     reset(pane(over))
-    useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [], browserPaneFull: true })
+    useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [] })
   }
   const said = (h = 'h1'): boolean => st().sessions[h].statusAnnounce.startsWith('Claude opened the browser')
 
   fresh()
   ok(st().autoOpenBrowser('h1') && said(), 'browser auto-open: the viewed closed pane opens and is announced')
-  fresh({ browserOpen: true })
+  fresh({ paneOpen: true })
   ok(!st().autoOpenBrowser('h1') && !said(), 'browser auto-open: an open pane is left alone')
   fresh({ browser: null })
   ok(!st().autoOpenBrowser('h1'), 'browser auto-open: a session without the browser never opens')
 
-  fresh({ browserOpen: true, browserAutoOpen: true })
+  fresh({ paneOpen: true, paneAutoOpen: true })
   st().toggleBrowser()
-  ok(!cur().browserOpen && cur().browserAutoOpenSuppressed, 'browser auto-open: a manual hide suppresses')
-  ok(!cur().browserAutoOpen, 'browser auto-open: a manual hide drops a pending open')
+  ok(!cur().paneOpen && cur().paneAutoOpenSuppressed, 'browser auto-open: a manual hide suppresses')
+  ok(!cur().paneAutoOpen, 'browser auto-open: a manual hide drops a pending open')
   ok(!st().autoOpenBrowser('h1'), 'browser auto-open: suppressed until the next prompt')
   await st().sendMessage('next')
-  ok(!cur().browserAutoOpenSuppressed && st().autoOpenBrowser('h1'), 'browser auto-open: a prompt lifts the suppression')
+  ok(!cur().paneAutoOpenSuppressed && st().autoOpenBrowser('h1'), 'browser auto-open: a prompt lifts the suppression')
 
-  fresh({ browserOpen: true })
+  fresh({ paneOpen: true })
   st().setBrowserPane('collapsed')
-  ok(!cur().browserAutoOpenSuppressed, 'browser auto-open: a programmatic collapse does not suppress')
+  ok(!cur().paneAutoOpenSuppressed, 'browser auto-open: a programmatic collapse does not suppress')
 
   fresh()
   useSession.setState({ viewingSubagent: 't1', subagentTrail: ['t1'] })
-  ok(!st().autoOpenBrowser('h1') && !cur().browserAutoOpen, 'browser auto-open: skipped, not deferred, over a subagent pane')
+  ok(!st().autoOpenBrowser('h1') && !cur().paneAutoOpen, 'browser auto-open: skipped, not deferred, over a subagent pane')
   fresh()
   useSession.setState({ stageWide: false })
-  ok(!st().autoOpenBrowser('h1') && !cur().browserAutoOpen, 'browser auto-open: skipped, not deferred, on a narrow Stage')
+  ok(!st().autoOpenBrowser('h1') && !cur().paneAutoOpen, 'browser auto-open: skipped, not deferred, on a narrow Stage')
 
   fresh()
   useSession.setState({ sessions: { ...st().sessions, h2: slice({ handleId: 'h2', ...pane() }) } })
   ok(!st().autoOpenBrowser('h2'), 'browser auto-open: a background session does not open now')
   const h2 = st().sessions.h2
-  ok(h2.browserAutoOpen && !h2.browserOpen && !said('h2') && !said(), 'browser auto-open: a background session is marked, silently')
-  ok(st().browserPaneFull, 'browser auto-open: a deferral leaves the pane size alone')
+  ok(h2.paneAutoOpen && !h2.paneOpen && !said('h2') && !said(), 'browser auto-open: a background session is marked, silently')
+  ok(h2.surfacePaneFull, 'browser auto-open: a deferral leaves the pane size alone')
   useSession.setState({ stageWide: false })
   st().activateSession('h2')
-  ok(!st().sessions.h2.browserOpen && st().sessions.h2.browserAutoOpen, 'browser auto-open: a narrow Stage holds the deferred open')
+  ok(!st().sessions.h2.paneOpen && st().sessions.h2.paneAutoOpen, 'browser auto-open: a narrow Stage holds the deferred open')
   st().activateSession('h1')
   useSession.setState({ stageWide: true })
   st().activateSession('h2')
   const back = st().sessions.h2
-  ok(back.browserOpen && !back.browserAutoOpen && said('h2'), 'browser auto-open: activation opens the deferred pane and announces')
-  ok(!st().browserPaneFull, 'browser auto-open: the deferred open is half')
+  ok(back.paneOpen && !back.paneAutoOpen && said('h2'), 'browser auto-open: activation opens the deferred pane and announces')
+  ok(!back.surfacePaneFull, 'browser auto-open: the deferred open is half')
 
   // Arriving at a session whose pane is already open mounts it without taking focus. If the Stage
   // already shows a browser pane nothing mounts, so no flag may be left behind.
   fresh()
-  useSession.setState({ paneOpenedQuietly: false, sessions: { ...st().sessions, h2: slice({ handleId: 'h2', ...pane({ browserOpen: true }) }) } })
+  useSession.setState({ paneOpenedQuietly: false, sessions: { ...st().sessions, h2: slice({ handleId: 'h2', ...pane({ paneOpen: true }) }) } })
   st().activateSession('h2')
   ok(st().paneOpenedQuietly, 'session switch: an open pane mounts quietly')
-  useSession.setState({ paneOpenedQuietly: false, sessions: { ...st().sessions, h1: { ...st().sessions.h1, browserOpen: true } } })
+  useSession.setState({ paneOpenedQuietly: false, sessions: { ...st().sessions, h1: { ...st().sessions.h1, paneOpen: true } } })
   st().activateSession('h1')
   ok(!st().paneOpenedQuietly, 'session switch: a pane already on the Stage sets no flag')
 
   // The hand-offs that pick a neighbour without activateSession open it the same way.
   const pair = (h1: Record<string, unknown>): void => {
     fresh({ createdMs: 2, lastActivityMs: 2, ...h1 })
-    const h2 = slice({ handleId: 'h2', createdMs: 1, lastActivityMs: 1, ...pane({ browserAutoOpen: true }) })
+    const h2 = slice({ handleId: 'h2', createdMs: 1, lastActivityMs: 1, ...pane({ paneAutoOpen: true }) })
     useSession.setState({ sessions: { ...st().sessions, h2 } })
   }
   pair({})
   await st().closeSession('h1')
-  ok(st().activeHandleId === 'h2' && st().sessions.h2.browserOpen && said('h2'), 'browser auto-open: closing hands off to an opened neighbour')
+  ok(st().activeHandleId === 'h2' && st().sessions.h2.paneOpen && said('h2'), 'browser auto-open: closing hands off to an opened neighbour')
   pair({ model: null })
   st().applyEvent('h1', { type: 'process-exit', code: 1 })
-  ok(st().activeHandleId === 'h2' && st().sessions.h2.browserOpen && said('h2'), 'browser auto-open: a failed launch hands off to an opened neighbour')
+  ok(st().activeHandleId === 'h2' && st().sessions.h2.paneOpen && said('h2'), 'browser auto-open: a failed launch hands off to an opened neighbour')
   pair({})
   useSession.setState({ activeHandleId: 'h2', sessions: { ...st().sessions, h3: slice({ handleId: 'h3', ...pane() }) } })
   await st().closeSession('h3')
-  ok(!st().sessions.h2.browserOpen, 'browser auto-open: closing a background session leaves the viewed one alone')
+  ok(!st().sessions.h2.paneOpen, 'browser auto-open: closing a background session leaves the viewed one alone')
+
+  fresh({ paneOpen: true, surfacePaneFull: false })
+  useSession.setState({ paneFull: false, sessions: { ...st().sessions, h2: slice({ handleId: 'h2', ...pane({ surfacePaneFull: false }) }) } })
+  st().setBrowserPane('full')
+  ok(cur().surfacePaneFull && !st().sessions.h2.surfacePaneFull && !st().paneFull, 'pane size: kept per session, apart from the subagent pane')
+  st().setBrowserPane('collapsed')
+  ok(cur().surfacePaneFull, 'pane size: hiding keeps the choice for the next open')
 }
 
 const res = (over: Record<string, unknown> = {}): any => ({ type: 'result', sessionId: 's', isError: false, result: null, ...over })

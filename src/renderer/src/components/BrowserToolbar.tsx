@@ -4,7 +4,7 @@ import { DRIVING_NOTE, useActive, useSession, viewedTabOf, type BrowserTabs } fr
 import type { DriveState } from '../../../shared/browser'
 import { CAP_NOTE, MAX_PINS } from '../../../shared/annotate'
 import { IconChevron, IconClose, IconRefresh, IconStop, IconTarget } from './Icon'
-import { PANE_BTN } from './Stage'
+import { PANE_BTN } from './surfaces/PaneHeader'
 
 // The toolbar sits over the pane's flat floor, where the solid form is pixel-identical and skips a filter.
 const SOLID = { ['--control-material' as string]: 'solid' } as CSSProperties

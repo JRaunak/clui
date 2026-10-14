@@ -19,7 +19,7 @@
  */
 import { useEffect } from 'react'
 import { activeSlice, anyTabIn, useSession } from '../store'
-import { closeTab } from '../components/BrowserTabs'
+import { closeTab } from '../components/surfaces/SurfaceTabs'
 import type { PaletteMode } from '../components/CommandPalette'
 
 /**
@@ -67,8 +67,8 @@ export function useKeyboardShortcuts(opts: {
           // In the tab strip or the page itself, ⌘W means the tab. A focused native page leaves the
           // renderer's document without focus.
           const slice = activeSlice(store)
-          const inTabs = !!document.activeElement?.closest('[data-ui="browser-tabs"]')
-          const inPage = !document.hasFocus() && !!slice?.browserOpen && !store.viewingSubagent
+          const inTabs = !!document.activeElement?.closest('[data-ui="surface-tabs"]')
+          const inPage = !document.hasFocus() && !!slice?.paneOpen && !store.viewingSubagent
           if (slice?.browser && (inTabs || inPage)) closeTab(slice.browser.viewed, true)
           else if (store.activeHandleId) void store.closeSession(store.activeHandleId)
           break
@@ -102,6 +102,10 @@ export function useKeyboardShortcuts(opts: {
         case 'toggle-pane-size':
           document.querySelector<HTMLElement>('[data-ui="pane-expand"]')?.click()
           break
+        // The button owns the target, the disabled reason and the double-launch guard.
+        case 'pane-external':
+          document.querySelector<HTMLElement>('[data-ui="pane-external"]')?.click()
+          break
         case 'browser-toggle': {
           // A menu accelerator is a keyboard path, so the pane changes without a transition. With
           // focus in the native page the renderer's document doesn't have it, and a hidden page
@@ -109,12 +113,12 @@ export function useKeyboardShortcuts(opts: {
           if (!activeSlice(store)?.browser) break
           const fromPage = !document.hasFocus()
           store.toggleBrowser()
-          if (fromPage && !activeSlice(useSession.getState())?.browserOpen)
+          if (fromPage && !activeSlice(useSession.getState())?.paneOpen)
             document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
           break
         }
         case 'browser-annotate':
-          if (activeSlice(store)?.browserOpen && !store.viewingSubagent) store.toggleAnnotate()
+          if (activeSlice(store)?.paneOpen && !store.viewingSubagent) store.toggleAnnotate()
           break
         case 'browser-stop': {
           if (anyTabIn(activeSlice(store)?.browser, 'driving', 'user')) void store.browserDrive('stop')

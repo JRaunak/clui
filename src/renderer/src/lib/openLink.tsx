@@ -40,7 +40,7 @@ export async function openLink(href: string, invert: boolean): Promise<void> {
   } catch {
     return void window.clui.openExternal(href)
   }
-  if (!active.browserOpen) s.setBrowserPane(s.browserPaneFull ? 'full' : 'half')
+  if (!active.paneOpen) s.setBrowserPane(active.surfacePaneFull ? 'full' : 'half')
   useSession.setState({ browserAnnounce: `Opened in Clui's browser${'\u200b'.repeat(++announceSeq % 2)}` })
 }
 

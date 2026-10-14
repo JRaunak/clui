@@ -19,7 +19,7 @@ export function lumenKeyOf(s: PerSessionState | null): string {
   if (!s || s.pendingPermissions.length > 0) return ''
   // With the driven page on screen the only light is the agent cursor; a collapsed browser, or Claude
   // working in a tab the user isn't viewing, hands it back to the running tool's bead.
-  if (viewedTabOf(s.browser)?.drive === 'driving' && s.browserOpen) return ''
+  if (viewedTabOf(s.browser)?.drive === 'driving' && s.paneOpen) return ''
   if (!s.busy && !s.compacting) return ''
   const running = runningToolsOf(s)
   // One running tool is the site of work; with several in parallel there is no single site, so the turn's tail holds it.

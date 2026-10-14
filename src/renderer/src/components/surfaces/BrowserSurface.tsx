@@ -1,17 +1,39 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useActive, useSession, viewedTabOf } from '../store'
-import { onOcclusion } from '../lib/browserOcclusion'
-import { getStage } from '../lib/stage'
-import { siteKeyOf } from '../../../shared/browser'
-import { PaneHeader, PANE_BTN } from './Stage'
-import { BrowserDriveStrip, BrowserNetStrip, BrowserToolbar } from './BrowserToolbar'
-import { BrowserTabs } from './BrowserTabs'
-import { Button } from './Button'
-import { IconExternal, IconSettings } from './Icon'
+import { useActive, useSession, viewedTabOf } from '../../store'
+import { onOcclusion } from '../../lib/browserOcclusion'
+import { getStage } from '../../lib/stage'
+import { PANE_BTN, type PaneExternal } from './PaneHeader'
+import { BrowserDriveStrip, BrowserNetStrip, BrowserToolbar } from '../BrowserToolbar'
+import { Button } from '../Button'
+import { IconSettings } from '../Icon'
 
-export function BrowserPane(): JSX.Element | null {
-  const handleId = useSession((s) => s.activeHandleId)
-  return handleId ? <Pane handleId={handleId} /> : null
+const EXTERNAL_LABEL = 'Open in default browser'
+
+/** Why the viewed page can't go to the default browser, which only takes web addresses. */
+export function browserExternalBlock(url: string): string | undefined {
+  if (!url || url === 'about:blank') return 'Nothing to open yet.'
+  if (!/^https?:\/\//i.test(url)) return 'Only web addresses open there.'
+}
+
+export function useBrowserExternal(): PaneExternal {
+  const url = useActive((s) => viewedTabOf(s?.browser)?.url ?? '')
+  return { label: EXTERNAL_LABEL, disabledReason: browserExternalBlock(url), onOpen: () => window.clui.openExternal(url) }
+}
+
+export function BrowserSettingsButton(): JSX.Element {
+  const openSettings = useSession((s) => s.openSettings)
+  return (
+    <button
+      type="button"
+      data-ui="browser-settings"
+      aria-label="Browser settings"
+      title="Browser settings"
+      onClick={() => openSettings('browser')}
+      className={PANE_BTN}
+    >
+      <IconSettings className="h-4 w-4" />
+    </button>
+  )
 }
 
 /**
@@ -20,14 +42,12 @@ export function BrowserPane(): JSX.Element | null {
  * surface overlaps it, a transition runs, a suspended tab is reloading) the viewed tab's last still
  * shows in its place.
  */
-function Pane({ handleId }: { handleId: string }): JSX.Element {
+export function BrowserSurface({ handleId }: { handleId: string }): JSX.Element {
   const areaRef = useRef<HTMLDivElement>(null)
   const url = useActive((s) => viewedTabOf(s?.browser)?.url ?? '')
   const still = useActive((s) => viewedTabOf(s?.browser)?.still ?? null)
   const wall = useActive((s) => viewedTabOf(s?.browser)?.loginWall === 'hardware')
   const announce = useSession((s) => s.browserAnnounce)
-  const openSettings = useSession((s) => s.openSettings)
-  const external = !!siteKeyOf(url)
 
   useEffect(() => {
     const el = areaRef.current
@@ -76,38 +96,7 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
   )
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <PaneHeader
-        actions={
-          <>
-            <button
-              type="button"
-              data-ui="browser-external"
-              aria-label="Open in your browser"
-              title={external ? 'Open in your browser' : 'Open in your browser. Nothing to open yet.'}
-              aria-disabled={!external || undefined}
-              onClick={() => {
-                if (external) void window.clui.openExternal(url)
-              }}
-              className={`${PANE_BTN} aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:pointer-fine:hover:bg-transparent aria-disabled:pointer-fine:hover:text-dim`}
-            >
-              <IconExternal className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              data-ui="browser-settings"
-              aria-label="Browser settings"
-              title="Browser settings"
-              onClick={() => openSettings('browser')}
-              className={PANE_BTN}
-            >
-              <IconSettings className="h-4 w-4" />
-            </button>
-          </>
-        }
-      >
-        <BrowserTabs key={handleId} />
-      </PaneHeader>
+    <>
       <div aria-hidden="true" className="shrink-0" style={{ height: 'var(--top-h, 0px)' }} />
       <BrowserToolbar handleId={handleId} />
       <BrowserNetStrip />
@@ -123,7 +112,7 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
                 regular browser, or use a password sign-in if the site offers one.
               </p>
               <Button variant="control" size="sm" data-pane-title="" className="self-start" onClick={() => void window.clui.openExternal(url)}>
-                Open in your browser
+                {EXTERNAL_LABEL}
               </Button>
             </div>
           </div>
@@ -132,6 +121,6 @@ function Pane({ handleId }: { handleId: string }): JSX.Element {
           {announce}
         </span>
       </div>
-    </div>
+    </>
   )
 }

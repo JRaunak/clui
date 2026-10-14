@@ -1315,8 +1315,8 @@ body {
   animation: vt-fade-in var(--dur-base) var(--ease-out) both;
 }
 
-/* A clipped edge of the browser's tab strip fades out. It's the only sign more tabs sit past it. */
-[data-ui='browser-tabs'] {
+/* A clipped edge of the pane's tab strip fades out. It's the only sign more tabs sit past it. */
+[data-ui='surface-tabs'] {
   mask-image: linear-gradient(
     to right,
     transparent,
@@ -1325,10 +1325,10 @@ body {
     transparent
   );
 }
-[data-ui='browser-tabs'][data-clip-start] {
+[data-ui='surface-tabs'][data-clip-start] {
   --clip-s: 24px;
 }
-[data-ui='browser-tabs'][data-clip-end] {
+[data-ui='surface-tabs'][data-clip-end] {
   --clip-e: 24px;
 }
 

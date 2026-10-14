@@ -173,7 +173,7 @@ export function InstrumentRow({
   const subType = subagentType(tool.input)
   const effort = subagentEffort(tool.input)
   const name = isSubagent ? 'Agent' : browser ? 'Browser' : tool.name
-  const lastOpen = useSession((s) => (activeSlice(s)?.browser ? (s.browserPaneFull ? 'full' : 'half') : null))
+  const lastOpen = useActive((s) => (s?.browser ? (s.surfacePaneFull ? 'full' : 'half') : null))
   // Only a foreground Bash is worth moving; other tools finish too fast to bother.
   const canSendToBackground = tool.result === undefined && !isBackgroundedTool(tool) && tool.name === 'Bash'
   const actions = isSubagent || canSendToBackground || (browser && !!lastOpen)

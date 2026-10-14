@@ -18,10 +18,10 @@ const pane = (): HTMLElement | null => document.querySelector<HTMLElement>('[dat
 // In full the primary pane is unmounted, so its presence is the half/full test.
 const primaryShown = (): boolean => !!document.querySelector('[data-ui="pane-primary"]')
 
-/** The browser pane has no title; its viewed tab stands in for one. */
+/** The Surfaces pane has no title; its active tab stands in for one. */
 export function focusPaneTitle(): void {
   document
-    .querySelector<HTMLElement>('[data-ui="pane-title"], [data-ui="browser-tabs"] [aria-selected="true"]')
+    .querySelector<HTMLElement>('[data-ui="pane-title"], [data-ui="surface-tabs"] [aria-selected="true"]')
     ?.focus({ preventScroll: true })
 }
 
@@ -143,7 +143,7 @@ export function setBrowserPaneVia(next: BrowserPaneState, via: Via): void {
   const st = useSession.getState()
   const cur = activeSlice(st)
   if (!cur) return
-  const from: BrowserPaneState = st.viewingSubagent || !cur.browserOpen ? 'collapsed' : st.browserPaneFull ? 'full' : 'half'
+  const from: BrowserPaneState = st.viewingSubagent || !cur.paneOpen ? 'collapsed' : cur.surfacePaneFull ? 'full' : 'half'
   if (from === next) return
   if (from !== 'collapsed' && next !== 'collapsed') return resizePane(next === 'full', via)
   const stage = getStage()
@@ -155,7 +155,7 @@ export function setBrowserPaneVia(next: BrowserPaneState, via: Via): void {
       via,
       scope: stage,
       update,
-      after: () => document.querySelector<HTMLElement>('[data-ui="browser-toggle"]')?.focus()
+      after: () => document.querySelector<HTMLElement>('[data-ui="pane-toggle"]')?.focus()
     })
     const clear = (): void => {
       p?.style.removeProperty('view-transition-name')

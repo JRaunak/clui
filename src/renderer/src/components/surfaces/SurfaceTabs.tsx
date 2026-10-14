@@ -1,14 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { activeSlice, useActive, useSession, EMPTY_TABS } from '../store'
-import { siteKeyOf, type TabState } from '../../../shared/browser'
-import { PANE_BTN } from './Stage'
-import { IconClose, IconPlus } from './Icon'
+import { activeSlice, useActive, useSession, EMPTY_TABS } from '../../store'
+import { siteKeyOf, type TabState } from '../../../../shared/browser'
+import { PANE_BTN } from './PaneHeader'
+import { IconAgentBrowser, IconClose, IconPlus } from '../Icon'
 
 const NEAREST: ScrollIntoViewOptions = { block: 'nearest', inline: 'nearest' }
 const EMPTY_IDS: number[] = []
 
 const tabButton = (id: number): HTMLElement | null =>
-  document.querySelector<HTMLElement>(`[data-ui="browser-tabs"] [data-tab="${id}"]`)
+  document.querySelector<HTMLElement>(`[data-ui="surface-tabs"] [data-tab="browser:${id}"]`)
 
 const focusAddress = (): void => document.querySelector<HTMLElement>('[data-ui="browser-url"]')?.focus()
 
@@ -45,10 +45,10 @@ function stateOf(t: TabState): 'driving' | 'user' | 'suspended' | null {
 }
 
 /**
- * The browser pane's tabs, in the header row. Arrows only move focus: viewing a suspended tab
- * reloads it, so a tab is viewed on Enter, Space or a click, never by passing over it.
+ * The pane's tabs, in the header row. Arrows only move focus: viewing a suspended tab reloads it, so
+ * a tab is viewed on Enter, Space or a click, never by passing over it.
  */
-export function BrowserTabs(): JSX.Element {
+export function SurfaceTabs(): JSX.Element {
   const tabs = useActive((s) => s?.browser?.tabs ?? EMPTY_TABS)
   const viewed = useActive((s) => s?.browser?.viewed ?? 0)
   const enter = useActive((s) => s?.browser?.enter ?? EMPTY_IDS)
@@ -126,9 +126,9 @@ export function BrowserTabs(): JSX.Element {
       <div
         ref={listRef}
         role="tablist"
-        aria-label="Browser tabs"
+        aria-label="Pane tabs"
         aria-orientation="horizontal"
-        data-ui="browser-tabs"
+        data-ui="surface-tabs"
         onBlur={(e) => {
           if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) focused.current = null
         }}
@@ -144,6 +144,7 @@ export function BrowserTabs(): JSX.Element {
           return (
             <div
               key={t.id}
+              data-kind="browser"
               data-enter={fade || undefined}
               className={`group/tab relative flex h-7 w-[200px] min-w-[96px] shrink items-center rounded-md ${
                 fade ? 'transition-opacity duration-fast ease-out starting:opacity-0 motion-reduce:transition-none' : ''
@@ -152,7 +153,7 @@ export function BrowserTabs(): JSX.Element {
               <button
                 type="button"
                 role="tab"
-                data-tab={t.id}
+                data-tab={`browser:${t.id}`}
                 aria-selected={on}
                 aria-keyshortcuts="Delete"
                 tabIndex={on ? 0 : -1}
@@ -176,14 +177,19 @@ export function BrowserTabs(): JSX.Element {
                     : 'border-transparent pr-2.5 text-dim pointer-fine:group-hover/tab:bg-[var(--glass-row-hover)] pointer-fine:group-hover/tab:text-content'
                 }`}
               >
-                {state === 'driving' ? (
-                  <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-                ) : state === 'user' ? (
-                  <span aria-hidden="true" className="flex shrink-0 gap-0.5">
-                    <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
-                    <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
-                  </span>
-                ) : null}
+                {/* Live state outranks the kind, so it takes the glyph's place rather than adding to the row. */}
+                <span aria-hidden="true" className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                  {state === 'driving' ? (
+                    <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                  ) : state === 'user' ? (
+                    <span className="flex gap-0.5">
+                      <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
+                      <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
+                    </span>
+                  ) : (
+                    <IconAgentBrowser className="h-3.5 w-3.5" />
+                  )}
+                </span>
                 <span className="min-w-0 truncate">{label}</span>
                 <span className="sr-only">
                   , tab {t.id}
@@ -194,7 +200,7 @@ export function BrowserTabs(): JSX.Element {
                   On an unviewed tab it paints the tab's hover fill over the title's tail. */}
               <button
                 type="button"
-                data-ui="browser-tab-close"
+                data-ui="surface-tab-close"
                 aria-label={`Close tab ${t.id}`}
                 title="Close tab"
                 tabIndex={-1}
@@ -215,8 +221,8 @@ export function BrowserTabs(): JSX.Element {
       <button
         type="button"
         data-ui="browser-tab-new"
-        aria-label="New tab"
-        title="New tab"
+        aria-label="New browser tab"
+        title="New browser tab"
         onClick={() => {
           focusAddress()
           void newTab()

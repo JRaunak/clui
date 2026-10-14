@@ -100,7 +100,7 @@ export function IconOpenPane(p: IconProps): JSX.Element {
   )
 }
 
-/** Out to the system browser: a window open at its top-right corner with an arrow leaving through
+/** Out of Clui, into another app: a window open at its top-right corner with an arrow leaving through
  *  the gap. IconOpenPane's square box means the pane inside Clui. */
 export function IconExternal(p: IconProps): JSX.Element {
   return (
@@ -263,6 +263,17 @@ export function IconFile(p: IconProps): JSX.Element {
     <Svg {...p}>
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
       <path d="M14 2v6h6" />
+    </Svg>
+  )
+}
+
+/** A plus over a minus: lines Claude added and removed. */
+export function IconDiff(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M12 3v14" />
+      <path d="M5 10h14" />
+      <path d="M5 21h14" />
     </Svg>
   )
 }

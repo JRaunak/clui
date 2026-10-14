@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { activeSlice, anyTabIn, selectBrowserOpen, useActive, useSession } from '../store'
+import { activeSlice, anyTabIn, selectPaneOpen, useActive, useSession } from '../store'
 import { CurrentTurnHeader } from './CurrentTurnHeader'
 import { FindBar } from './FindBar'
 import { IconAgentBrowser } from './Icon'
@@ -32,7 +32,7 @@ export function TopBand({
   scrolled: boolean
 }): JSX.Element {
   const reported = useSession((s) => s.activeHandleId !== null && s.primaryScrolledFor === s.activeHandleId)
-  const hasBrowser = useActive((s) => !!s?.browser)
+  const showToggle = useActive((s) => !!s?.browser)
   // An open find bar's dim text sits on the band, and a compositor-scrolled first frame can reach
   // it before any script runs, so the band stays tinted for as long as find is open.
   const findOpen = useSession((s) => s.findOpen && !s.viewingSubagent)
@@ -97,15 +97,15 @@ export function TopBand({
         style={split ? { width: `calc(var(--primary-w, 50%) - ${leftInset}px)` } : { flex: '1 1 0%' }}
       >
         <div data-ui="top-band-drag" aria-hidden="true" className="h-full w-6 shrink-0 [-webkit-app-region:drag]" />
-        <TopSlot leftInset={leftInset} rightInset={hasBrowser && !split ? RIGHT_INSET : EDGE_INSET} split={split} />
+        <TopSlot leftInset={leftInset} rightInset={showToggle && !split ? RIGHT_INSET : EDGE_INSET} split={split} />
         <div data-ui="top-band-drag" aria-hidden="true" className="h-full w-6 shrink-0 [-webkit-app-region:drag]" />
       </div>
       {split && (
         <div data-ui="top-band-drag" aria-hidden="true" className="h-full min-w-0 flex-1 [-webkit-app-region:drag]" />
       )}
-      {hasBrowser && (
+      {showToggle && (
         <div data-ui="top-band-actions" className="flex shrink-0 items-center gap-1">
-          <BrowserToggle />
+          <PaneToggle />
         </div>
       )}
       <div data-ui="top-band-drag" aria-hidden="true" className="h-full w-2 shrink-0 [-webkit-app-region:drag]" />
@@ -113,9 +113,9 @@ export function TopBand({
   )
 }
 
-// The trailing w-2 inset, the 28px Browser toggle and an 8px gap, the same gap leftInset keeps past
+// The trailing w-2 inset, the 28px pane toggle and an 8px gap, the same gap leftInset keeps past
 // the collapsed toggle, so the header never touches it. In a split the toggle sits over the other pane,
-// past the slot's edge, and a session without the browser has no toggle, so only the inset is left.
+// past the slot's edge, and a session with nothing to show has no toggle, so only the inset is left.
 const RIGHT_INSET = 44
 const EDGE_INSET = 8
 
@@ -159,25 +159,25 @@ export function TopSlot({
   )
 }
 
-/** Shows or hides this session's browser, a disclosure for the right sidebar. While Claude drives a
+/** Shows or hides this session's pane, a disclosure for the right sidebar. While Claude drives a
  *  hidden browser, a static dot marks it, since the light itself stays in the transcript. */
-function BrowserToggle(): JSX.Element {
-  const open = useSession((s) => !s.viewingSubagent && selectBrowserOpen(activeSlice(s)))
+function PaneToggle(): JSX.Element {
+  const open = useSession((s) => !s.viewingSubagent && selectPaneOpen(activeSlice(s)))
   const driving = useActive((s) => anyTabIn(s?.browser, 'driving'))
   const toggleBrowser = useSession((s) => s.toggleBrowser)
   return (
     <button
       type="button"
-      title={open ? 'Hide browser ⌘⇧B' : 'Show browser ⌘⇧B'}
-      data-ui="browser-toggle"
+      title={open ? 'Hide browser ⇧⌘B' : 'Show browser ⇧⌘B'}
+      data-ui="pane-toggle"
       aria-label={driving && !open ? 'Browser, Claude is driving' : 'Browser'}
       aria-expanded={open}
-      aria-controls={open ? 'browser-pane-region' : undefined}
+      aria-controls={open ? 'surface-pane-region' : undefined}
       onClick={(e) => {
         const via = viaOf(e)
         toggleBrowser((next) => setBrowserPaneVia(next, via))
       }}
-      className="toggle-press relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim transition-colors pointer-fine:hover:bg-[var(--glass-row-hover)] pointer-fine:hover:text-content"
+      className="toggle-press relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim transition-colors focus-visible:-outline-offset-2 pointer-fine:hover:bg-[var(--glass-row-hover)] pointer-fine:hover:text-content"
     >
       <IconAgentBrowser className="h-4 w-4" />
       {driving && !open && <span aria-hidden="true" className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent ring-2 ring-bg" />}

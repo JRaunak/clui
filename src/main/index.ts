@@ -103,7 +103,8 @@ function resolveTheme(): 'dark' | 'light' {
  * and standard window commands keep working in text fields (a custom menu that
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
-let menuState: MenuState = { browser: 'none', pane: 'none' }
+let menuState: MenuState = { browser: 'none', pane: 'none', external: 'none' }
+const EXTERNAL_LABEL: Record<MenuState['external'], string> = { browser: 'Open in Default Browser', none: 'Open Externally' }
 
 function buildMenu(): void {
   const send = (action: string): void => {
@@ -160,6 +161,12 @@ function buildMenu(): void {
           accelerator: 'CmdOrCtrl+Shift+B',
           enabled: menuState.browser !== 'none',
           click: () => send('browser-toggle')
+        },
+        {
+          label: EXTERNAL_LABEL[menuState.external],
+          accelerator: 'Shift+CmdOrCtrl+O',
+          enabled: menuState.external !== 'none',
+          click: () => send('pane-external')
         },
         { label: 'Stop Browser Agent', accelerator: 'CmdOrCtrl+.', click: () => send('browser-stop') },
         { label: 'Annotate', accelerator: 'CmdOrCtrl+Shift+A', click: () => send('browser-annotate') },
@@ -487,7 +494,7 @@ function registerIpc(): void {
 
   ipcMain.on(IpcChannels.menuState, (e, next: MenuState) => {
     if (!fromTrustedFrame(e)) return
-    if (next.browser === menuState.browser && next.pane === menuState.pane) return
+    if (next.browser === menuState.browser && next.pane === menuState.pane && next.external === menuState.external) return
     menuState = next
     buildMenu()
   })
