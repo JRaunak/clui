@@ -5,7 +5,7 @@ import { formatElapsed } from '../lib/turnEnd'
 import { Lumen } from './Lumen'
 import { lumenSiteOf } from '../lib/lumen'
 import { viaOf } from '../lib/motion'
-import { diveInto, setBrowserPaneVia } from '../lib/dive'
+import { diveInto, setPaneVia } from '../lib/dive'
 import {
   STATE_TEXT,
   browserLabel,
@@ -132,7 +132,6 @@ export function InstrumentRow({
   // Once the session has had a second tab every browser row names its tab, earlier rows included.
   const tabNo = useActive((s) => (browser && s?.browser?.multi ? (s.browser.toolTabs[tool.id] ?? 0) : 0))
   const tabGone = useActive((s) => !!tabNo && !s?.browser?.tabs.some((t) => t.id === tabNo))
-  const viewTab = useSession((s) => s.viewBrowserTab)
   const summary = browser ? browserLabel(tool.name, tool.input, tabNo) : summarizeInput(tool.input)
   const counted = browser && !tool.isError ? browserResultCopy(tool.result) : null
   // The header already shows the summary, so Input starts collapsed when there is one.
@@ -173,10 +172,11 @@ export function InstrumentRow({
   const subType = subagentType(tool.input)
   const effort = subagentEffort(tool.input)
   const name = isSubagent ? 'Agent' : browser ? 'Browser' : tool.name
-  const lastOpen = useActive((s) => (s?.browser ? (s.surfacePaneFull ? 'full' : 'half') : null))
+  const hasBrowser = useActive((s) => !!s?.browser)
+  const revealBrowser = useSession((s) => s.revealBrowser)
   // Only a foreground Bash is worth moving; other tools finish too fast to bother.
   const canSendToBackground = tool.result === undefined && !isBackgroundedTool(tool) && tool.name === 'Bash'
-  const actions = isSubagent || canSendToBackground || (browser && !!lastOpen)
+  const actions = isSubagent || canSendToBackground || (browser && hasBrowser)
   const errLine = tool.isError ? firstLine(tool.result ?? '') : ''
   const failed = state === 'failed'
   const toggleBody = (e: MouseEvent): void => {
@@ -279,15 +279,15 @@ export function InstrumentRow({
                     <IconSendToTray className="h-3.5 w-3.5" />
                   </button>
                 )}
-                {browser && lastOpen && (
+                {browser && hasBrowser && (
                   <button
                     type="button"
                     data-ui="row-open-browser"
                     aria-disabled={tabGone || undefined}
                     onClick={(e) => {
                       if (tabGone) return
-                      if (tabNo) viewTab(tabNo)
-                      setBrowserPaneVia(lastOpen, viaOf(e))
+                      const via = viaOf(e)
+                      void revealBrowser(tabNo || null, (next) => setPaneVia(next, via))
                     }}
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px] aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:text-dim"
                     title={tabGone ? `Tab ${tabNo} is closed` : tabNo ? `Show tab ${tabNo} in browser` : 'Show in browser'}

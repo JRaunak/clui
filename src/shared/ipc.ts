@@ -455,6 +455,6 @@ export const IpcChannels = {
 export interface MenuState {
   browser: 'none' | 'shown' | 'hidden'
   pane: 'none' | 'split' | 'full'
-  /** The active surface's Open externally target; 'none' while it can't open (or nothing is shown). */
-  external: 'browser' | 'none'
+  /** The active surface's Open externally target, and whether it can open now. */
+  external: { kind: 'browser' | 'none'; enabled: boolean }
 }

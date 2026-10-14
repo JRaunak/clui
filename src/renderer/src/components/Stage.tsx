@@ -10,7 +10,7 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import { useActive, useSession, viewedTabOf, EMPTY_PENDING, selectPaneOpen } from '../store'
+import { browserTabOf, useActive, useSession, viewedTabOf, EMPTY_PENDING, selectPaneOpen } from '../store'
 import { Chat } from './Chat'
 import { Composer } from './Composer'
 import { ChangedFiles } from './ChangedFiles'
@@ -27,7 +27,7 @@ import { focusPaneTitle } from '../lib/dive'
 export type PaneState = 'collapsed' | 'half' | 'full'
 
 interface PaneApi {
-  kind: 'subagent' | 'browser' | null
+  kind: 'subagent' | 'surfaces' | null
   state: PaneState
   /** Half only exists when the Stage is at least SPLIT_MIN wide. */
   canToggleSize: boolean
@@ -117,22 +117,24 @@ export function Stage({
 
   const paneOpen = useActive(selectPaneOpen)
   const surfacePaneFull = useActive((s) => !!s?.surfacePaneFull)
-  const kind: 'subagent' | 'browser' | null = cwd && viewingSubagent ? 'subagent' : cwd && paneOpen ? 'browser' : null
-  const full = kind === 'browser' ? surfacePaneFull : paneFull
+  const kind: 'subagent' | 'surfaces' | null = cwd && viewingSubagent ? 'subagent' : cwd && paneOpen ? 'surfaces' : null
+  const full = kind === 'surfaces' ? surfacePaneFull : paneFull
   const state: PaneState = !kind ? 'collapsed' : wide && !full ? 'half' : 'full'
   useEffect(() => {
     if (!kind) setFocusInSecondary(false)
   }, [kind])
   const hasBrowser = useActive((s) => !!s?.browser)
+  const browserActive = useActive((s) => browserTabOf(s?.surfaces.active) !== null)
+  const onBrowser = kind === 'surfaces' && browserActive
   const externalBlocked = useActive((s) => !!browserExternalBlock(viewedTabOf(s?.browser)?.url ?? ''))
   // The native menu can't read the renderer, so its pane, browser and Open externally items follow what this Stage shows.
   useEffect(() => {
     window.clui.menuState({
-      browser: !hasBrowser ? 'none' : paneOpen ? 'shown' : 'hidden',
+      browser: !hasBrowser ? 'none' : onBrowser ? 'shown' : 'hidden',
       pane: !kind || !wide ? 'none' : state === 'full' ? 'full' : 'split',
-      external: kind === 'browser' && !externalBlocked ? 'browser' : 'none'
+      external: onBrowser ? { kind: 'browser', enabled: !externalBlocked } : { kind: 'none', enabled: false }
     })
-  }, [hasBrowser, paneOpen, kind, wide, state, externalBlocked])
+  }, [hasBrowser, onBrowser, kind, wide, state, externalBlocked])
 
   const pane = useMemo<PaneApi>(
     () => ({
@@ -142,7 +144,7 @@ export function Stage({
       toggleSize: () => {
         const goingFull = !full
         const fromTranscript = !!document.activeElement?.closest('[data-ui="pane-primary"]')
-        if (kind === 'browser') useSession.getState().setBrowserPane(goingFull ? 'full' : 'half')
+        if (kind === 'surfaces') useSession.getState().setPane(goingFull ? 'full' : 'half')
         else setPaneFull(goingFull)
         // Going full unmounts the transcript, so focus that was in it moves to the pane's title.
         if (goingFull && fromTranscript) requestAnimationFrame(focusPaneTitle)
@@ -150,7 +152,7 @@ export function Stage({
       close: closeSubagentView,
       needsYou: state === 'full' && gatePending,
       resolveNeedsYou: () => {
-        if (kind === 'browser') useSession.getState().setBrowserPane(wide ? 'half' : 'collapsed')
+        if (kind === 'surfaces') useSession.getState().setPane(wide ? 'half' : 'collapsed')
         else if (wide) setPaneFull(false)
         else closeSubagentView()
         requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="gate-title"]')?.focus())
@@ -188,12 +190,12 @@ export function Stage({
             {kind && (
               <SurfacePane
                 key={kind}
-                id={kind === 'browser' ? 'surface-pane-region' : undefined}
-                label={kind === 'browser' ? 'Browser' : 'Detail pane'}
+                id={kind === 'surfaces' ? 'surface-pane-region' : undefined}
+                label={kind === 'surfaces' ? 'Pane' : 'Detail pane'}
                 split={state === 'half'}
                 onFocusWithin={setFocusInSecondary}
               >
-                {kind === 'browser' ? <SurfaceHost /> : <SubagentView />}
+                {kind === 'surfaces' ? <SurfaceHost /> : <SubagentView />}
               </SurfacePane>
             )}
           </div>

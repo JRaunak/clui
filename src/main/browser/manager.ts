@@ -47,6 +47,7 @@ export const TEXT = {
   declined: (site: string) => `The user declined opening ${site}.`,
   siteWaiting: 'Waiting for the user to answer the approval in Clui. Call the tool again after they answer.',
   noTab: (tab: unknown) => `There's no tab ${String(tab)}. Call tabs to see the open tabs.`,
+  noTabs: 'No tabs are open. Open one with new_tab.',
   closed: (tab: number, by: TabActor) => (by === 'user' ? `The user closed tab ${tab}.` : `Tab ${tab} was closed.`)
 } as const
 
@@ -76,6 +77,8 @@ interface Tab {
   /** Reasons to keep the view in the window while nobody views it, so its page has a real viewport. */
   parks: number
   agentActingUntil: number
+  /** When the last user-input event went out, so a drag or a held key sends one a second. */
+  inputSentAt: number
   stillTimer: ReturnType<typeof setTimeout> | null
   /** Resolves the wait for the renderer's next bounds report. */
   onBounds: (() => void) | null
@@ -192,6 +195,7 @@ export class BrowserManager {
       attached: false,
       parks: 0,
       agentActingUntil: 0,
+      inputSentAt: 0,
       stillTimer: null,
       onBounds: null,
       closers: new Set(),
@@ -333,7 +337,18 @@ export class BrowserManager {
     })
   }
 
+  /** Why a tool can't reach `tab`. */
+  private missing(handleId: string, tab: number): string {
+    const e = this.entries.get(handleId)
+    return !e ? TEXT.off : e.tabs.length ? TEXT.noTab(tab) : TEXT.noTabs
+  }
+
   private userActed(handleId: string, t: Tab): void {
+    const now = Date.now()
+    if (now - t.inputSentAt >= 1000) {
+      t.inputSentAt = now
+      this.emit(handleId, { type: 'user-input', tab: t.id })
+    }
     if (t.state.drive === 'driving') this.setDrive(handleId, t, 'user')
     if (t.state.drive === 'user') this.scheduleStill(handleId, t, 500)
   }
@@ -397,7 +412,9 @@ export class BrowserManager {
     const e = this.entries.get(handleId)
     if (!e) return null
     const t = this.addTab(e)
+    // With no tab left to stand behind, Claude's becomes the viewed one, though nothing shows it yet.
     if (by === 'user') this.show(handleId, e, t)
+    else if (e.tabs.length === 1) e.viewed = t.id
     this.emit(handleId, { type: 'tab-opened', tab: { ...t.state, id: t.id }, by, viewed: e.viewed, ...(url ? { url } : {}) })
     if (by === 'user') return t.id
     this.ensureView(handleId, e, t)
@@ -409,7 +426,7 @@ export class BrowserManager {
     return t.id
   }
 
-  /** Closing the last tab opens a fresh one first, so a session always has a tab to view. */
+  /** Closing the last tab leaves none and hides the view; "+" or Show Browser opens a new one. */
   closeTab(handleId: string, tab: number, by: TabActor): void {
     const f = this.find(handleId, tab)
     if (!f) return
@@ -417,13 +434,8 @@ export class BrowserManager {
     const i = e.tabs.indexOf(t)
     // Focus inside a closing page would stay with the dead view, where the renderer can't move it.
     const hadFocus = !!t.view && !t.view.webContents.isDestroyed() && t.view.webContents.isFocused()
-    if (e.tabs.length === 1) {
-      const fresh = this.addTab(e)
-      this.show(handleId, e, fresh)
-      this.emit(handleId, { type: 'tab-opened', tab: { ...fresh.state, id: fresh.id }, by, viewed: fresh.id })
-    } else if (e.viewed === tab) {
-      this.show(handleId, e, e.tabs[i + 1] ?? e.tabs[i - 1])
-    }
+    if (e.tabs.length === 1) e.shown = false
+    else if (e.viewed === tab) this.show(handleId, e, e.tabs[i + 1] ?? e.tabs[i - 1])
     e.tabs.splice(i, 1)
     this.drop(handleId, t)
     if (hadFocus) this.window()?.webContents.focus()
@@ -519,7 +531,11 @@ export class BrowserManager {
   async setVisible(handleId: string, visible: boolean): Promise<string | null> {
     const e = this.entries.get(handleId)
     const t = e?.tabs.find((x) => x.id === e.viewed)
-    if (!e || !t) return null
+    if (!e) return null
+    if (!t) {
+      e.shown = false
+      return null
+    }
     if (visible) {
       for (const [h, other] of this.entries) if (h !== handleId && other.shown) await this.setVisible(h, false)
       e.shown = true
@@ -568,7 +584,7 @@ export class BrowserManager {
     const site = siteKeyOf(url)
     if (!site) return TEXT.refused
     const f = this.find(handleId, tab)
-    if (!f) return this.entries.has(handleId) ? TEXT.noTab(tab) : TEXT.off
+    if (!f) return this.missing(handleId, tab)
     const [e, t] = f
     if (cause === 'user') e.userSites.add(site)
     else if (cause === 'agent' || t.state.drive === 'driving') {
@@ -779,7 +795,7 @@ export class BrowserManager {
   /** Null when Claude may act on a page at `url`: blank, opened by the user from the address bar, or approved. */
   async allowAgentAt(handleId: string, tab: number, url: string): Promise<string | null> {
     const f = this.find(handleId, tab)
-    if (!f) return this.entries.has(handleId) ? TEXT.noTab(tab) : TEXT.off
+    if (!f) return this.missing(handleId, tab)
     if (url === 'about:blank') return null
     const site = siteKeyOf(url)
     if (!site) return TEXT.refused
@@ -793,7 +809,7 @@ export class BrowserManager {
    */
   async beginTool(handleId: string, tab: number, tool: string): Promise<string | null> {
     const f = this.find(handleId, tab)
-    if (!f) return this.entries.has(handleId) ? TEXT.noTab(tab) : TEXT.off
+    if (!f) return this.missing(handleId, tab)
     const [e, t] = f
     if (t.state.drive === 'stopped') return TEXT.stopped
     if (t.state.drive === 'user') return TEXT.userDriving

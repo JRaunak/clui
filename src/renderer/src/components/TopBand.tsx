@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { activeSlice, anyTabIn, selectPaneOpen, useActive, useSession } from '../store'
+import { activeSlice, anyTabIn, paneTarget, selectPaneOpen, surfaceKindOf, useActive, useSession } from '../store'
 import { CurrentTurnHeader } from './CurrentTurnHeader'
 import { FindBar } from './FindBar'
-import { IconAgentBrowser } from './Icon'
+import { IconAgentBrowser, IconDiff, IconFile, IconFolder } from './Icon'
 import { viaOf } from '../lib/motion'
-import { setBrowserPaneVia } from '../lib/dive'
+import { setPaneVia } from '../lib/dive'
 
 /**
  * The top band over the Stage's top 44px, which the transcript scrolls beneath. Its glass layer shows
@@ -159,27 +159,43 @@ export function TopSlot({
   )
 }
 
-/** Shows or hides this session's pane, a disclosure for the right sidebar. While Claude drives a
- *  hidden browser, a static dot marks it, since the light itself stays in the transcript. */
+/** Shows or hides this session's pane, a disclosure for the right sidebar. Its glyph and name are the
+ *  tab it would show or is showing. While Claude drives a hidden browser, a static dot marks it, since
+ *  the light itself stays in the transcript. */
 function PaneToggle(): JSX.Element {
   const open = useSession((s) => !s.viewingSubagent && selectPaneOpen(activeSlice(s)))
   const driving = useActive((s) => anyTabIn(s?.browser, 'driving'))
-  const toggleBrowser = useSession((s) => s.toggleBrowser)
+  const kind = useActive((s) => (s ? surfaceKindOf(s.surfaces, paneTarget(s)) : null))
+  const title = useActive((s) => {
+    const id = s && paneTarget(s)
+    return (id && s?.surfaces.tabs[id]?.title) ?? ''
+  })
+  const togglePane = useSession((s) => s.togglePane)
+  const verb = open ? 'Hide' : 'Show'
+  const { Glyph, name, tip } =
+    kind === 'diff'
+      ? { Glyph: IconDiff, name: 'Claude changes', tip: `${verb} Claude changes` }
+      : kind === 'file'
+        ? { Glyph: IconFile, name: `File, ${title}`, tip: `${verb} ${title}` }
+        : kind === 'tree'
+          ? { Glyph: IconFolder, name: 'File tree', tip: `${verb} file tree` }
+          : { Glyph: IconAgentBrowser, name: driving && !open ? 'Browser, Claude is driving' : 'Browser', tip: `${verb} browser ⇧⌘B` }
   return (
     <button
       type="button"
-      title={open ? 'Hide browser ⇧⌘B' : 'Show browser ⇧⌘B'}
+      title={tip}
       data-ui="pane-toggle"
-      aria-label={driving && !open ? 'Browser, Claude is driving' : 'Browser'}
+      data-kind={kind ?? 'browser'}
+      aria-label={name}
       aria-expanded={open}
       aria-controls={open ? 'surface-pane-region' : undefined}
       onClick={(e) => {
         const via = viaOf(e)
-        toggleBrowser((next) => setBrowserPaneVia(next, via))
+        togglePane((next) => setPaneVia(next, via))
       }}
       className="toggle-press relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim transition-colors focus-visible:-outline-offset-2 pointer-fine:hover:bg-[var(--glass-row-hover)] pointer-fine:hover:text-content"
     >
-      <IconAgentBrowser className="h-4 w-4" />
+      <Glyph className="h-4 w-4" />
       {driving && !open && <span aria-hidden="true" className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent ring-2 ring-bg" />}
     </button>
   )

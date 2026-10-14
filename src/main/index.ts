@@ -103,8 +103,8 @@ function resolveTheme(): 'dark' | 'light' {
  * and standard window commands keep working in text fields (a custom menu that
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
-let menuState: MenuState = { browser: 'none', pane: 'none', external: 'none' }
-const EXTERNAL_LABEL: Record<MenuState['external'], string> = { browser: 'Open in Default Browser', none: 'Open Externally' }
+let menuState: MenuState = { browser: 'none', pane: 'none', external: { kind: 'none', enabled: false } }
+const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = { browser: 'Open in Default Browser', none: 'Open Externally' }
 
 function buildMenu(): void {
   const send = (action: string): void => {
@@ -163,9 +163,9 @@ function buildMenu(): void {
           click: () => send('browser-toggle')
         },
         {
-          label: EXTERNAL_LABEL[menuState.external],
+          label: EXTERNAL_LABEL[menuState.external.kind],
           accelerator: 'Shift+CmdOrCtrl+O',
-          enabled: menuState.external !== 'none',
+          enabled: menuState.external.enabled,
           click: () => send('pane-external')
         },
         { label: 'Stop Browser Agent', accelerator: 'CmdOrCtrl+.', click: () => send('browser-stop') },
@@ -234,7 +234,8 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  // Probe runs set CLUI_TEST_INACTIVE so the window opens behind whatever the user is working in.
+  mainWindow.on('ready-to-show', () => (process.env.CLUI_TEST_INACTIVE === '1' ? mainWindow?.showInactive() : mainWindow?.show()))
 
   // macOS hides the traffic lights in fullscreen; push the state so the renderer shifts its controls.
   const pushFullscreen = (): void => {
@@ -494,7 +495,12 @@ function registerIpc(): void {
 
   ipcMain.on(IpcChannels.menuState, (e, next: MenuState) => {
     if (!fromTrustedFrame(e)) return
-    if (next.browser === menuState.browser && next.pane === menuState.pane && next.external === menuState.external) return
+    const same =
+      next.browser === menuState.browser &&
+      next.pane === menuState.pane &&
+      next.external.kind === menuState.external.kind &&
+      next.external.enabled === menuState.external.enabled
+    if (same) return
     menuState = next
     buildMenu()
   })

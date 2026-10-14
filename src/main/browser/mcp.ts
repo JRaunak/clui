@@ -512,6 +512,7 @@ export class BrowserMcpServer {
   private listTabs(handleId: string): ToolResult {
     const info = this.browser.tabsOf(handleId)
     if (!info) return text(TEXT.off, true)
+    if (!info.tabs.length) return text(TEXT.noTabs)
     const open = info.tabs.map((t) => t.id)
     const last = targetTab(undefined, open, info.lastUsed, info.viewed)
     // Titles come from the page, so whitespace collapses: a newline in one can't forge another tab's line.

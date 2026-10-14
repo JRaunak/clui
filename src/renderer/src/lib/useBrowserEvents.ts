@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
-import { useSession } from '../store'
-import { setBrowserPaneVia } from './dive'
+import { notePaneInput, placement, useSession } from '../store'
+import { setPaneVia } from './dive'
 
 const typingNow = (): boolean => {
   const el = document.activeElement as HTMLElement | null
@@ -16,7 +16,8 @@ export function useBrowserEvents(): void {
         store.applyBrowserEvent(handleId, e)
         // The pane slides in as it would on a click, except while the user types: the slide snapshots
         // the Stage, which would freeze their text while it runs. 'keyboard' only skips the slide; this open moves no focus.
-        if (e.type === 'tool-tab' && store.autoOpenBrowser(handleId)) setBrowserPaneVia('half', typingNow() ? 'keyboard' : 'pointer')
+        if (e.type === 'tool-tab' && store.autoOpenPane(handleId, placement(e.tab))) setPaneVia('half', typingNow() ? 'keyboard' : 'pointer')
+        if (e.type === 'user-input' && handleId === store.activeHandleId) notePaneInput()
       }),
     []
   )

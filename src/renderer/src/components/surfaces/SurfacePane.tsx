@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
-import { useSession } from '../../store'
+import { notePaneInput, useSession } from '../../store'
 
 /** The right sidebar. Its scrollers clear the band and its own header (--top-h 80px), and it hands
  *  focus to its title on open and back to the opener on close. */
@@ -56,6 +56,8 @@ export function SurfacePane({
       className={`relative flex min-h-0 flex-1 flex-col bg-bg [--dock-h:0px] [--top-h:80px] ${
         split ? 'min-w-[440px] border-l border-border' : 'min-w-0'
       }`}
+      onPointerDownCapture={() => notePaneInput()}
+      onKeyDownCapture={() => notePaneInput()}
       onFocus={() => onFocusWithin(true)}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onFocusWithin(false)

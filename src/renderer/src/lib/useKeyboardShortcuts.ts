@@ -18,7 +18,7 @@
  * safety guarantee against hijacking typing.
  */
 import { useEffect } from 'react'
-import { activeSlice, anyTabIn, useSession } from '../store'
+import { activeSlice, anyTabIn, browserTabOf, useSession } from '../store'
 import { closeTab } from '../components/surfaces/SurfaceTabs'
 import type { PaletteMode } from '../components/CommandPalette'
 
@@ -68,8 +68,9 @@ export function useKeyboardShortcuts(opts: {
           // renderer's document without focus.
           const slice = activeSlice(store)
           const inTabs = !!document.activeElement?.closest('[data-ui="surface-tabs"]')
-          const inPage = !document.hasFocus() && !!slice?.paneOpen && !store.viewingSubagent
-          if (slice?.browser && (inTabs || inPage)) closeTab(slice.browser.viewed, true)
+          const onBrowser = !!slice?.paneOpen && !store.viewingSubagent && browserTabOf(slice.surfaces.active) !== null
+          const inPage = !document.hasFocus() && onBrowser
+          if (slice?.surfaces.active && (inTabs || inPage)) closeTab(slice.surfaces.active, true)
           else if (store.activeHandleId) void store.closeSession(store.activeHandleId)
           break
         }
@@ -113,12 +114,13 @@ export function useKeyboardShortcuts(opts: {
           if (!activeSlice(store)?.browser) break
           const fromPage = !document.hasFocus()
           store.toggleBrowser()
-          if (fromPage && !activeSlice(useSession.getState())?.paneOpen)
+          const after = activeSlice(useSession.getState())
+          if (fromPage && (!after?.paneOpen || browserTabOf(after.surfaces.active) === null))
             document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
           break
         }
         case 'browser-annotate':
-          if (activeSlice(store)?.paneOpen && !store.viewingSubagent) store.toggleAnnotate()
+          if (activeSlice(store)?.paneOpen && !store.viewingSubagent && browserTabOf(activeSlice(store)?.surfaces.active) !== null) store.toggleAnnotate()
           break
         case 'browser-stop': {
           if (anyTabIn(activeSlice(store)?.browser, 'driving', 'user')) void store.browserDrive('stop')

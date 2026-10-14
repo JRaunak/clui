@@ -1,6 +1,6 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { useSession, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode } from '../src/renderer/src/store.ts'
+import { useSession, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -230,9 +230,12 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
 // Auto-open on Claude's browser use: half, only from closed, held back by a manual hide until the
 // next prompt, deferred for a background session, skipped over a subagent pane or a narrow Stage.
 {
-  const browser = { tabs: [], viewed: 1, multi: false, toolTabs: {}, enter: [], announce: '' }
+  const browser = { tabs: [{ id: 1, url: 'about:blank', title: '', drive: 'idle' }], viewed: 1, multi: false, toolTabs: {}, enter: [], announce: '' }
+  const surfaces = { order: ['browser:1'], active: 'browser:1', tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
   const pane = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
     browser,
+    surfaces,
+    annotate: { tab: null, pins: [], note: null },
     paneOpen: false,
     surfacePaneFull: true,
     paneAutoOpen: false,
@@ -247,34 +250,34 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   const said = (h = 'h1'): boolean => st().sessions[h].statusAnnounce.startsWith('Claude opened the browser')
 
   fresh()
-  ok(st().autoOpenBrowser('h1') && said(), 'browser auto-open: the viewed closed pane opens and is announced')
+  ok(st().autoOpenPane('h1', 'browser:1') && said(), 'browser auto-open: the viewed closed pane opens and is announced')
   fresh({ paneOpen: true })
-  ok(!st().autoOpenBrowser('h1') && !said(), 'browser auto-open: an open pane is left alone')
-  fresh({ browser: null })
-  ok(!st().autoOpenBrowser('h1'), 'browser auto-open: a session without the browser never opens')
+  ok(!st().autoOpenPane('h1', 'browser:1') && !said(), 'browser auto-open: an open pane is left alone')
+  fresh({ browser: null, surfaces: { ...surfaces, order: [], active: null } })
+  ok(!st().autoOpenPane('h1', 'browser:1'), 'browser auto-open: a session without the browser never opens')
 
   fresh({ paneOpen: true, paneAutoOpen: true })
-  st().toggleBrowser()
+  st().togglePane()
   ok(!cur().paneOpen && cur().paneAutoOpenSuppressed, 'browser auto-open: a manual hide suppresses')
   ok(!cur().paneAutoOpen, 'browser auto-open: a manual hide drops a pending open')
-  ok(!st().autoOpenBrowser('h1'), 'browser auto-open: suppressed until the next prompt')
+  ok(!st().autoOpenPane('h1', 'browser:1'), 'browser auto-open: suppressed until the next prompt')
   await st().sendMessage('next')
-  ok(!cur().paneAutoOpenSuppressed && st().autoOpenBrowser('h1'), 'browser auto-open: a prompt lifts the suppression')
+  ok(!cur().paneAutoOpenSuppressed && st().autoOpenPane('h1', 'browser:1'), 'browser auto-open: a prompt lifts the suppression')
 
   fresh({ paneOpen: true })
-  st().setBrowserPane('collapsed')
+  st().setPane('collapsed')
   ok(!cur().paneAutoOpenSuppressed, 'browser auto-open: a programmatic collapse does not suppress')
 
   fresh()
   useSession.setState({ viewingSubagent: 't1', subagentTrail: ['t1'] })
-  ok(!st().autoOpenBrowser('h1') && !cur().paneAutoOpen, 'browser auto-open: skipped, not deferred, over a subagent pane')
+  ok(!st().autoOpenPane('h1', 'browser:1') && !cur().paneAutoOpen, 'browser auto-open: skipped, not deferred, over a subagent pane')
   fresh()
   useSession.setState({ stageWide: false })
-  ok(!st().autoOpenBrowser('h1') && !cur().paneAutoOpen, 'browser auto-open: skipped, not deferred, on a narrow Stage')
+  ok(!st().autoOpenPane('h1', 'browser:1') && !cur().paneAutoOpen, 'browser auto-open: skipped, not deferred, on a narrow Stage')
 
   fresh()
   useSession.setState({ sessions: { ...st().sessions, h2: slice({ handleId: 'h2', ...pane() }) } })
-  ok(!st().autoOpenBrowser('h2'), 'browser auto-open: a background session does not open now')
+  ok(!st().autoOpenPane('h2', 'browser:1'), 'browser auto-open: a background session does not open now')
   const h2 = st().sessions.h2
   ok(h2.paneAutoOpen && !h2.paneOpen && !said('h2') && !said(), 'browser auto-open: a background session is marked, silently')
   ok(h2.surfacePaneFull, 'browser auto-open: a deferral leaves the pane size alone')
@@ -317,10 +320,155 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
 
   fresh({ paneOpen: true, surfacePaneFull: false })
   useSession.setState({ paneFull: false, sessions: { ...st().sessions, h2: slice({ handleId: 'h2', ...pane({ surfacePaneFull: false }) }) } })
-  st().setBrowserPane('full')
+  st().setPane('full')
   ok(cur().surfacePaneFull && !st().sessions.h2.surfacePaneFull && !st().paneFull, 'pane size: kept per session, apart from the subagent pane')
-  st().setBrowserPane('collapsed')
+  st().setPane('collapsed')
   ok(cur().surfacePaneFull, 'pane size: hiding keeps the choice for the next open')
+}
+
+// Surface intents (focus, open, prepare) and browser placement reconciliation.
+{
+  const tab = (id: number, over: Record<string, unknown> = {}): any => ({ id, url: 'about:blank', title: '', drive: 'idle', ...over })
+  const browserOf = (ids: number[], viewed = ids[0]): any => ({ tabs: ids.map((id) => tab(id)), viewed, multi: ids.length > 1, toolTabs: {}, enter: [], announce: '' })
+  const empty = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
+  const fresh = (over: Record<string, unknown> = {}): void => {
+    reset({ browser: null, surfaces: empty, paneOpen: false, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, pins: [], note: null }, ...over })
+    useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [], paneOpenedQuietly: false, settingsSection: null })
+    notePaneInput(0)
+  }
+  const sur = (): any => cur().surfaces
+  const DIFF = { kind: 'diff' as const, key: '', title: 'Claude changes' }
+  const FILE = { kind: 'file' as const, key: '/tmp/w/src/a.ts', title: 'a.ts' }
+  const openDiff = (): void => void st().openSurface('h1', DIFF, 'open', 'user', 'user')
+
+  // focus · user · any → active, pane opens, focus moves (the mount isn't quiet).
+  fresh()
+  const id = st().openSurface('h1', FILE, 'focus', 'user', 'user')
+  ok(id === 'file:/tmp/w/src/a.ts' && sur().active === id && cur().paneOpen && !st().paneOpenedQuietly, 'intent: a user focus activates, opens and takes focus')
+  useSession.setState({ viewingSubagent: 't1', subagentTrail: ['t1'] })
+  st().openSurface('h1', DIFF, 'focus', 'user', 'user')
+  ok(sur().active === 'diff' && st().viewingSubagent === null, 'intent: an explicit user activation closes the subagent view')
+
+  // focus · Claude · open, user on another tab and touched the pane in the last 10s → prepare.
+  fresh({ paneOpen: true })
+  openDiff()
+  notePaneInput(Date.now() - 2000)
+  st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
+  ok(sur().active === 'diff' && sur().tabs[id].unseen === true, 'intent: Claude focus downgrades to prepare after recent pane input')
+  notePaneInput(Date.now() - PANE_RECENT_MS - 1)
+  st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
+  ok(sur().active === id && !sur().tabs[id].unseen && !st().paneOpenedQuietly, 'intent: Claude focus with an open pane activates once the input is older than 10s')
+
+  // focus · Claude while a Gate or the subagent view is up → prepare.
+  fresh({ paneOpen: true, pendingPermissions: [{ requestId: 'r', toolName: 'Bash', input: {} }] })
+  openDiff()
+  st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
+  ok(sur().active === 'diff', 'intent: Claude focus waits while a Gate is up')
+  fresh({ paneOpen: true })
+  openDiff()
+  useSession.setState({ viewingSubagent: 't1', subagentTrail: ['t1'] })
+  st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
+  ok(sur().active === 'diff' && st().viewingSubagent === 't1', 'intent: Claude focus preserves the subagent takeover')
+
+  // focus · Claude · closed → active; the pane opens only under the auto-open conditions.
+  fresh()
+  st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
+  ok(sur().active === id && cur().paneOpen && st().paneOpenedQuietly && cur().statusAnnounce.startsWith('Claude opened a.ts'), 'intent: Claude focus on a closed pane auto-opens quietly and says so')
+  fresh()
+  useSession.setState({ stageWide: false })
+  st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
+  ok(sur().active === id && !cur().paneOpen, 'intent: a narrow Stage keeps the pane closed')
+  fresh({ paneAutoOpenSuppressed: true })
+  st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
+  ok(sur().active === id && !cur().paneOpen, 'intent: a manual hide keeps the pane closed')
+  fresh()
+  useSession.setState({ sessions: { ...st().sessions, h2: slice({ handleId: 'h2', browser: null, surfaces: empty, paneOpen: false, annotate: { tab: null, pins: [], note: null } }) } })
+  st().openSurface('h2', FILE, 'focus', 'claude', 'claude')
+  ok(st().sessions.h2.surfaces.active === id && !st().sessions.h2.paneOpen && st().sessions.h2.paneAutoOpen, 'intent: a background session opens on its next visit')
+
+  // open · any · open → active; open · closed → a user open opens the pane, Claude's follows the auto-open conditions.
+  fresh({ paneOpen: true })
+  openDiff()
+  st().openSurface('h1', FILE, 'open', 'claude', 'link')
+  ok(sur().active === id, 'intent: open with the pane up activates')
+  fresh()
+  st().openSurface('h1', FILE, 'open', 'user', 'link')
+  ok(cur().paneOpen && !st().paneOpenedQuietly, 'intent: a user open on a closed pane opens it with focus')
+  fresh()
+  useSession.setState({ stageWide: false })
+  st().openSurface('h1', FILE, 'open', 'claude', 'link')
+  ok(sur().active === id && !cur().paneOpen, 'intent: a Claude open on a closed pane follows the auto-open conditions')
+
+  // prepare → placed unseen, nothing else moves; on the active tab the destination waits in pendingShow.
+  fresh({ paneOpen: true })
+  openDiff()
+  st().openSurface('h1', { ...FILE, location: { line: 9 } }, 'prepare', 'claude', 'claude')
+  ok(sur().active === 'diff' && sur().tabs[id].unseen && sur().tabs[id].location.line === 9, 'intent: prepare places an unseen tab behind')
+  fresh()
+  st().openSurface('h1', DIFF, 'prepare', 'claude', 'change')
+  ok(!cur().paneOpen && sur().active === null && sur().order.join() === 'diff', 'intent: prepare never opens the pane')
+  fresh({ paneOpen: true })
+  openDiff()
+  st().openSurface('h1', { ...DIFF, location: { file: 'b.ts' } }, 'prepare', 'claude', 'change')
+  ok(sur().tabs.diff.pendingShow?.location.file === 'b.ts' && !sur().tabs.diff.location, 'intent: prepare on the active tab only records pendingShow')
+  st().openSurface('h1', FILE, 'open', 'user', 'user')
+  st().activateSurface('h1', 'diff')
+  ok(sur().tabs.diff.location?.file === 'b.ts' && !sur().tabs.diff.pendingShow, 'intent: a later activation applies the pending destination')
+  st().openSurface('h1', DIFF, 'open', 'user', 'user')
+  ok(sur().order.filter((x: string) => x === 'diff').length === 1, 'intent: the diff is a session singleton')
+
+  // Reconciliation: seeded tab 1, Claude's tab behind and unseen, optimistic close, neighbour, last tab.
+  fresh({ browser: browserOf([1]), surfaces: { ...empty, order: ['browser:1'], active: 'browser:1' }, paneOpen: true })
+  st().applyBrowserEvent('h1', { type: 'tab-opened', tab: tab(2), by: 'agent', viewed: 1 })
+  ok(sur().order.join() === 'browser:1,browser:2' && sur().active === 'browser:1' && sur().browserUnseen['browser:2'], 'placement: a Claude tab is placed behind, unseen')
+  st().applyBrowserEvent('h1', { type: 'tab-opened', tab: tab(3), by: 'user', viewed: 3 })
+  ok(sur().active === 'browser:3', "placement: the user's own new tab is active")
+  st().activateSurface('h1', 'browser:2')
+  ok(sur().active === 'browser:2' && !sur().browserUnseen['browser:2'] && cur().browser.viewed === 2 && calls.some((c) => c.name === 'browserViewTab' && c.args[1] === 2), 'placement: activating views the tab in main and clears unseen')
+  openDiff()
+  st().applyBrowserEvent('h1', { type: 'tool-tab', toolUseId: 'u1', tab: 2 })
+  ok(sur().browserUnseen['browser:2'], "placement: Claude's work in an inactive tab marks it unseen")
+  st().activateSurface('h1', 'browser:2')
+  st().closeSurface('h1', 'browser:2')
+  ok(sur().order.join() === 'browser:1,browser:3,diff' && sur().active === 'browser:3' && cur().browser.viewed === 3 && calls.some((c) => c.name === 'browserCloseTab'), 'placement: an optimistic close hands the active placement to its right neighbour')
+  st().applyBrowserEvent('h1', { type: 'tab-closed', tab: 2, by: 'user', viewed: 3 })
+  ok(sur().active === 'browser:3', 'placement: main confirming the close changes nothing')
+  st().applyBrowserEvent('h1', { type: 'tab-closed', tab: 3, by: 'agent', viewed: 1 })
+  ok(sur().active === 'diff' && sur().order.join() === 'browser:1,diff', 'placement: an active placement Claude closed hands over to its neighbour in the strip')
+  st().activateSurface('h1', 'diff')
+  st().applyBrowserEvent('h1', { type: 'tab-closed', tab: 1, by: 'agent', viewed: 1 })
+  ok(sur().active === 'diff' && cur().paneOpen, 'placement: closing a browser tab behind another surface leaves it active')
+  st().closeSurface('h1', 'diff')
+  ok(!cur().paneOpen && sur().order.length === 0 && sur().active === null, 'placement: closing the last tab hides the pane')
+
+  // Claude's closes are said from where the strip lands; emptying the pane goes through the status line.
+  fresh({ browser: browserOf([1, 2]), surfaces: { ...empty, order: ['browser:1', 'browser:2'], active: 'browser:2' }, paneOpen: true })
+  openDiff()
+  st().activateSurface('h1', 'browser:2')
+  st().applyBrowserEvent('h1', { type: 'tab-closed', tab: 2, by: 'agent', viewed: 1 })
+  ok(cur().browser.announce.startsWith('Claude closed tab 2. Showing Claude changes'), 'announce: a close that lands on another kind names it')
+  st().closeSurface('h1', 'diff')
+  st().applyBrowserEvent('h1', { type: 'tab-closed', tab: 1, by: 'agent', viewed: 1 })
+  ok(!cur().paneOpen && cur().statusAnnounce.startsWith('Claude closed tab 1. Browser hidden.'), 'announce: closing the last tab is said by the status line')
+
+  // The toggle opens on the tab Claude drives; ⇧⌘B stays on the browser.
+  fresh({ browser: { ...browserOf([1, 2]), tabs: [tab(1), tab(2, { drive: 'driving' })] }, surfaces: { ...empty, order: ['browser:1', 'browser:2', 'diff'], active: 'diff', tabs: { diff: { id: 'diff', kind: 'diff', key: '', title: 'Claude changes', openedBy: 'user', openedAt: 0, lastViewedAt: 0 } } } })
+  ok(paneTarget(cur()) === 'browser:2', 'toggle: a driven tab is the target while the pane is hidden')
+  st().togglePane()
+  ok(cur().paneOpen && sur().active === 'browser:2', 'toggle: opening activates the target')
+  st().activateSurface('h1', 'diff')
+  st().toggleBrowser()
+  ok(cur().paneOpen && sur().active === 'browser:2', 'browser toggle: from another kind it shows the browser')
+  st().toggleBrowser()
+  ok(!cur().paneOpen && cur().paneAutoOpenSuppressed, 'browser toggle: on the browser it hides and suppresses')
+  await st().sendMessage('next')
+  ok(!cur().paneAutoOpenSuppressed, 'suppression: cleared on the next prompt')
+
+  // setSurfaceView refuses a viewState of another kind.
+  st().setSurfaceView('h1', 'diff', { viewState: { kind: 'file', topLine: 1, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
+  ok(!sur().tabs.diff.viewState, 'view state: a mismatched kind is refused')
+  st().setSurfaceView('h1', 'diff', { viewState: { kind: 'diff', offsetPx: 12 } })
+  ok(sur().tabs.diff.viewState?.offsetPx === 12, 'view state: a matching kind is kept')
 }
 
 const res = (over: Record<string, unknown> = {}): any => ({ type: 'result', sessionId: 's', isError: false, result: null, ...over })

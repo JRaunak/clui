@@ -118,10 +118,10 @@ export function resizePane(full: boolean, via: Via): void {
     via,
     scope: getStage(),
     update: () => {
-      // The subagent pane outranks the browser in the Stage, so whichever is showing is resized.
+      // The subagent pane outranks the Surfaces pane in the Stage, so whichever is showing is resized.
       const st = useSession.getState()
       if (st.viewingSubagent) st.setPaneFull(full)
-      else st.setBrowserPane(full ? 'full' : 'half')
+      else st.setPane(full ? 'full' : 'half')
     },
     after: () => {
       if (full && fromTranscript) focusPaneTitle()
@@ -136,10 +136,10 @@ export function resizePane(full: boolean, via: Via): void {
   else clear()
 }
 
-/** Open, hide or resize the browser pane. Opening slides it in from the right edge (and the
+/** Open, hide or resize the Surfaces pane. Opening slides it in from the right edge (and the
  *  transcript recedes when it opens to full); hiding slides it out and returns focus to the
  *  top-band toggle. Half and full go through resizePane. */
-export function setBrowserPaneVia(next: BrowserPaneState, via: Via): void {
+export function setPaneVia(next: BrowserPaneState, via: Via): void {
   const st = useSession.getState()
   const cur = activeSlice(st)
   if (!cur) return
@@ -147,7 +147,7 @@ export function setBrowserPaneVia(next: BrowserPaneState, via: Via): void {
   if (from === next) return
   if (from !== 'collapsed' && next !== 'collapsed') return resizePane(next === 'full', via)
   const stage = getStage()
-  const update = (): void => useSession.getState().setBrowserPane(next)
+  const update = (): void => useSession.getState().setPane(next)
   if (next === 'collapsed') {
     const p = pane()
     p?.style.setProperty('view-transition-name', 'pane')

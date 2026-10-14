@@ -27,6 +27,7 @@ import type { ProcessedAttachment } from './lib/images'
 import { CAP_NOTE, pinWords, clipName, messageGist, type AnnotateEvent, type AnnotationPin } from '../../shared/annotate'
 import type { Via } from './lib/motion'
 import type { ChangeGitStatus, FileChangeSummary, GitPathStatus } from '../../shared/changes'
+import type { OpenIntent, OpenedBy, SurfaceKind, SurfaceSet, SurfaceTab } from '../../shared/surfaces'
 import { turnEndLine } from './lib/turnEnd'
 
 export type SettingsSection = 'general' | 'sessions' | 'browser'
@@ -395,6 +396,8 @@ export interface PerSessionState {
   paneAutoOpen: boolean
   /** The user hid the pane, so Claude's browser use leaves it hidden until their next prompt. */
   paneAutoOpenSuppressed: boolean
+  /** The pane's tabs. Browser placements follow `browser` inside patchSlice. */
+  surfaces: SurfaceSet
   annotate: AnnotateDraft
 }
 
@@ -535,9 +538,9 @@ interface SessionStore {
   /** The Stage is at least SPLIT_MIN wide, the only width where a half pane renders as half. */
   stageWide: boolean
   setStageWide: (wide: boolean) => void
-  /** Called on Claude's browser tool use. True means open the viewed session's pane now; a background
-   *  session is marked to open when it's next activated. */
-  autoOpenBrowser: (handleId: string) => boolean
+  /** Called on Claude's browser tool use in placement `id`. True means open the viewed session's pane
+   *  now on that tab; a background session is marked to open when it's next activated. */
+  autoOpenPane: (handleId: string, id: string) => boolean
   /** The next side pane to mount opened without being asked for, so it must leave focus alone. */
   paneOpenedQuietly: boolean
   /** Content sits under the top band or the pane header, the only time their glass shows. Written
@@ -718,22 +721,35 @@ interface SessionStore {
   decideLocalNet: (site: string, allow: boolean) => Promise<boolean>
   /** Answer an MCP elicitation Gate. */
   respondElicitation: (requestId: string, response: ElicitationResponse) => Promise<void>
-  /** Set the active session's browser pane. Opening it replaces a subagent view. Half or full is an
-   *  explicit size choice, kept for that session. */
-  setBrowserPane: (next: BrowserPaneState) => void
-  /** Show or hide the active session's browser. `apply` makes the pane change, so a pointer caller
-   *  can wrap it in a transition. A session without the tools has no browser, so this is a no-op there. */
+  /** Set the active session's pane. Opening it replaces a subagent view and needs a tab to show. Half
+   *  or full is an explicit size choice, kept for that session. */
+  setPane: (next: BrowserPaneState) => void
+  /** The band's toggle: hides a showing pane, else opens it on paneTarget, or on a new browser tab when
+   *  there's nothing to show. `apply` makes the pane change, so a pointer caller can wrap it in a transition. */
+  togglePane: (apply?: (next: BrowserPaneState) => void) => void
+  /** ⇧⌘B: hides a pane that shows the browser, else shows a browser tab. */
   toggleBrowser: (apply?: (next: BrowserPaneState) => void) => void
+  /** Shows browser tab `tab`, else the last one viewed, else a new one, opening the pane if it's hidden. */
+  revealBrowser: (tab: number | null, apply?: (next: BrowserPaneState) => void) => Promise<void>
+  /** Places a non-browser surface and applies its intent. Returns its id. */
+  openSurface: (handleId: string, spec: SurfaceSpec, intent: OpenIntent, actor: 'user' | 'claude', openedBy: OpenedBy) => string
+  /** Closing the active tab activates its neighbour in `order`; a browser placement closes its tab in main. The last tab hides the pane. */
+  closeSurface: (handleId: string, id: string) => void
+  /** Clears `unseen`, applies a pending destination, and views a browser placement's tab in main. */
+  activateSurface: (handleId: string, id: string) => void
+  /** View fields of a non-browser tab. A viewState whose kind isn't the tab's is refused. */
+  setSurfaceView: (handleId: string, id: string, patch: SurfaceViewPatch) => void
   /** Stop and reset act on every tab and Stop also interrupts the running turn; the others act on the viewed tab. */
   browserDrive: (action: 'stop' | 'handback' | 'takeover' | 'reset') => Promise<void>
-  /** Views the tab at once; main shows its page, reloading it if it was suspended. */
+  /** Activates the tab's placement at once; main shows its page, reloading it if it was suspended. */
   viewBrowserTab: (tab: number) => void
-  /** Main appends and views the new tab, and its tab-opened event puts it in the strip. */
+  /** Main appends and views the new tab, and its tab-opened event puts it in the strip, active. */
   newBrowserTab: () => Promise<void>
-  /** A tab with a neighbour goes at once and the neighbour takes the view if it was viewed. The last
-   *  tab stays until main has opened its replacement, so the strip is never empty. */
-  closeBrowserTab: (tab: number) => void
 }
+
+export type SurfaceSpec = Pick<SurfaceTab, 'kind' | 'key' | 'title'> &
+  Partial<Pick<SurfaceTab, 'mode' | 'location' | 'highlight' | 'provenance'>>
+export type SurfaceViewPatch = Partial<Pick<SurfaceTab, 'mode' | 'location' | 'selection' | 'highlight' | 'viewState' | 'sourceView'>>
 
 /**
  * The effort ceiling the CLI will enforce for a model, or undefined when none is set. A
@@ -798,8 +814,140 @@ function patchSlice(
   patch: Partial<PerSessionState>
 ): Partial<SessionStore> {
   const cur = s.sessions[handleId]
-  return cur ? { sessions: { ...s.sessions, [handleId]: { ...cur, ...patch } } } : {}
+  if (!cur) return {}
+  const next = { ...cur, ...patch }
+  return { sessions: { ...s.sessions, [handleId]: next.browser !== cur.browser ? placeBrowser(next) : next } }
 }
+
+export const EMPTY_SURFACES: SurfaceSet = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
+
+/** How long after the user last touched the pane a Claude focus request waits in the background. */
+export const PANE_RECENT_MS = 10_000
+let paneInputAt = 0
+/** Input in the pane: the renderer's own, or genuine input in its native page that main forwards. */
+export function notePaneInput(at = Date.now()): void {
+  paneInputAt = at
+}
+
+export const placement = (tab: number): string => `browser:${tab}`
+
+/** The browser tab a placement id names, else null. */
+export function browserTabOf(id: string | null | undefined): number | null {
+  return id?.startsWith('browser:') ? Number(id.slice(8)) : null
+}
+
+export function surfaceKindOf(set: SurfaceSet, id: string | null): SurfaceKind | null {
+  if (!id) return null
+  return browserTabOf(id) !== null ? 'browser' : (set.tabs[id]?.kind ?? null)
+}
+
+/** The placement of main's viewed tab, else the last browser placement in the strip. */
+export function browserTargetOf(s: PerSessionState): string | null {
+  const b = s.browser
+  if (!b) return null
+  if (b.tabs.some((t) => t.id === b.viewed)) return placement(b.viewed)
+  return s.surfaces.order.findLast((id) => browserTabOf(id) !== null) ?? null
+}
+
+/** What the band's toggle shows or would show. A tab Claude drives wins while the pane is hidden, so the
+ *  toggle's dot, glyph and click agree. */
+export function paneTarget(s: PerSessionState): string | null {
+  if (s.paneOpen) return s.surfaces.active
+  const b = s.browser
+  const used = b ? Object.values(b.toolTabs) : []
+  const driving = b?.tabs.filter((t) => t.drive === 'driving').map((t) => t.id) ?? []
+  const recent = used.findLast((n) => driving.includes(n)) ?? driving[0]
+  return recent !== undefined ? placement(recent) : (s.surfaces.active ?? browserTargetOf(s))
+}
+
+/** The nearest survivor in `now` to where `id` sat in `was`, right first, then left. */
+function neighbourOf(was: string[], id: string, now: string[]): string | null {
+  const i = was.indexOf(id)
+  return was.slice(i + 1).find((x) => now.includes(x)) ?? was.slice(0, Math.max(0, i)).findLast((x) => now.includes(x)) ?? null
+}
+
+const without = <T>(rec: Record<string, T>, keep: (id: string) => boolean): Record<string, T> => {
+  const ids = Object.keys(rec)
+  return ids.every(keep) ? rec : Object.fromEntries(ids.filter(keep).map((id) => [id, rec[id]]))
+}
+
+/**
+ * Keeps the browser placements in step with `browser`, in the same update: every tab has one, a closed
+ * tab's goes, and an active placement that went hands over to its neighbour. An active browser
+ * placement follows main's viewed tab. With nothing left to show the pane hides.
+ */
+function placeBrowser(slice: PerSessionState): PerSessionState {
+  const set = slice.surfaces
+  const b = slice.browser
+  const live = b ? b.tabs.map((t) => placement(t.id)) : []
+  const kept = set.order.filter((id) => browserTabOf(id) === null || live.includes(id))
+  const added = live.filter((id) => !set.order.includes(id))
+  const order = kept.length === set.order.length && !added.length ? set.order : [...kept, ...added]
+  let active = set.active && !order.includes(set.active) ? neighbourOf(set.order, set.active, order) : set.active
+  const viewed = b && b.tabs.some((t) => t.id === b.viewed) ? placement(b.viewed) : null
+  if (viewed && browserTabOf(active) !== null) active = viewed
+  const surfaces =
+    order === set.order && active === set.active
+      ? set
+      : {
+          ...set,
+          order,
+          active,
+          browserUnseen: without(set.browserUnseen, (id) => order.includes(id) && id !== active),
+          browserLastViewedAt: without(set.browserLastViewedAt, (id) => order.includes(id))
+        }
+  return { ...slice, surfaces, paneOpen: slice.paneOpen && order.length > 0 }
+}
+
+/** The slice fields that make `id` the active tab: unseen cleared, a pending destination applied, and
+ *  a browser placement's tab viewed. The caller asks main to view that tab. */
+function activation(slice: PerSessionState, id: string, now: number): Partial<PerSessionState> {
+  const set = slice.surfaces
+  const tab = browserTabOf(id)
+  if (tab !== null) {
+    const { [id]: _seen, ...unseen } = set.browserUnseen
+    return {
+      surfaces: { ...set, active: id, browserUnseen: unseen, browserLastViewedAt: { ...set.browserLastViewedAt, [id]: now } },
+      ...(slice.browser && slice.browser.viewed !== tab ? { browser: { ...slice.browser, viewed: tab } } : {})
+    }
+  }
+  const cur = set.tabs[id]
+  const { pendingShow, unseen: _u, ...rest } = cur
+  const next: SurfaceTab = { ...rest, ...pendingShow, lastViewedAt: now }
+  return { surfaces: { ...set, active: id, tabs: { ...set.tabs, [id]: next } } }
+}
+
+/** A tab's visible label in the strip. */
+export function surfaceLabel(t: SurfaceTab): string {
+  switch (t.kind) {
+    case 'diff':
+      return 'Claude changes'
+    case 'tree':
+      return t.title
+    case 'file':
+    case 'image':
+    case 'doc':
+    case 'sheet':
+    case 'artifact':
+      return basename(t.key)
+    default: {
+      const none: never = t.kind
+      return none
+    }
+  }
+}
+
+/** Tree and diff are session singletons; a path resource is one tab whatever its presentation. */
+const surfaceIdOf = (spec: SurfaceSpec): string =>
+  spec.kind === 'tree' || spec.kind === 'diff'
+    ? spec.kind
+    : `${spec.kind}:${spec.key}${spec.provenance?.creatingEditId ? `#${spec.provenance.creatingEditId}` : ''}`
+
+/** Focus sits in the pane, where a switch Claude asked for would unmount it. A renderer without focus
+ *  over a browser tab has handed it to the native page. */
+const focusInPane = (onBrowser: boolean): boolean =>
+  typeof document !== 'undefined' &&
+  (!!document.activeElement?.closest('[data-ui="pane-secondary"]') || (onBrowser && !document.hasFocus()))
 
 /**
  * Select a field from the ACTIVE session's slice (null when none is open). Keeps
@@ -1207,6 +1355,7 @@ async function beginSession(
     surfacePaneFull: false,
     paneAutoOpen: false,
     paneAutoOpenSuppressed: false,
+    surfaces: browser ? { ...EMPTY_SURFACES, order: [placement(1)], active: placement(1) } : EMPTY_SURFACES,
     annotate: IDLE_ANNOTATE
   })
   // Main rebuilds a resume's changes from its transcripts. A push that lands before the slice
@@ -1299,6 +1448,10 @@ let announceSeq = 0
 /** The toggling zero-width space makes a repeated announcement a text change, which is what gets read. */
 const toggled = (text: string): string => `${text}${'\u200b'.repeat(++announceSeq % 2)}`
 const BROWSER_OPENED = 'Claude opened the browser'
+const openedCopy = (s: PerSessionState): string => {
+  const tab = s.surfaces.active ? s.surfaces.tabs[s.surfaces.active] : undefined
+  return tab ? `Claude opened ${tab.title}` : BROWSER_OPENED
+}
 
 /** The Stage already shows a Surfaces pane, so the next session's pane reuses it without remounting. */
 const surfacePaneShown = (s: SessionStore): boolean => !s.viewingSubagent && !!(s.activeHandleId && s.sessions[s.activeHandleId]?.paneOpen)
@@ -1314,14 +1467,14 @@ function arriveWithPane(
   paneShown: boolean
 ): Partial<SessionStore> {
   const cur = handleId ? sessions[handleId] : undefined
-  if (!handleId || !cur?.browser) return {}
+  if (!handleId || !cur) return {}
   const quiet = paneShown ? {} : { paneOpenedQuietly: true }
   if (cur.paneOpen) return quiet
   if (!cur.paneAutoOpen || !stageWide) return {}
   return {
     sessions: {
       ...sessions,
-      [handleId]: { ...cur, paneOpen: true, surfacePaneFull: false, paneAutoOpen: false, statusAnnounce: toggled(BROWSER_OPENED) }
+      [handleId]: { ...cur, paneOpen: true, surfacePaneFull: false, paneAutoOpen: false, statusAnnounce: toggled(openedCopy(cur)) }
     },
     ...quiet
   }
@@ -3021,7 +3174,14 @@ export const useSession = create<SessionStore>((set, get) => ({
           const tabs = [...b.tabs, e.tab]
           const agent = e.by === 'agent'
           const site = siteKeyOf(e.url ?? e.tab.url)
+          const set0 = s.sessions[handleId].surfaces
+          const id = placement(e.tab.id)
+          // Claude's tab goes behind the active one, unseen; the user's own is the one they asked to see.
+          const surfaces = agent
+            ? { ...set0, browserUnseen: { ...set0.browserUnseen, [id]: true as const } }
+            : { ...set0, order: [...set0.order, id], active: id }
           return patchSlice(s, handleId, {
+            surfaces,
             browser: {
               ...b,
               tabs,
@@ -3041,27 +3201,30 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (!b) return {}
           const gone = b.tabs.find((t) => t.id === e.tab)
           const tabs = gone ? b.tabs.filter((t) => t !== gone) : b.tabs
-          let announce = b.announce
-          if (gone && e.by === 'agent') {
-            const site = siteKeyOf(gone.url) ?? 'New page'
-            if (e.tab !== b.viewed) announce = toggled(`Claude closed tab ${e.tab}: ${site}`)
-            else {
-              const now = tabs.find((t) => t.id === e.viewed)
-              const nowSite = now && siteKeyOf(now.url)
-              // A lone blank tab left behind is the one main opened to replace the last.
-              const showing =
-                !now || (!nowSite && tabs.length === 1) ? 'Showing a new page' : `Showing tab ${now.id}: ${nowSite ?? 'New page'}`
-              announce = toggled(`Claude closed tab ${e.tab}. ${showing}`)
-            }
-          }
-          return patchSlice(s, handleId, { browser: { ...b, tabs, viewed: e.viewed, announce } })
+          const browser = { ...b, tabs, viewed: e.viewed }
+          if (!gone || e.by !== 'agent') return patchSlice(s, handleId, { browser })
+          const cur = s.sessions[handleId]
+          const after = placeBrowser({ ...cur, browser }).surfaces
+          // The strip's live region unmounts with the pane, so a close that empties it is said by the status line.
+          if (!after.order.length) return patchSlice(s, handleId, { browser, statusAnnounce: toggled(`Claude closed tab ${e.tab}. Browser hidden.`) })
+          const say = (text: string): Partial<SessionStore> => patchSlice(s, handleId, { browser: { ...browser, announce: toggled(text) } })
+          if (cur.surfaces.active !== placement(e.tab)) return say(`Claude closed tab ${e.tab}: ${siteKeyOf(gone.url) ?? 'New page'}`)
+          const n = browserTabOf(after.active)
+          const shown = n !== null ? tabs.find((t) => t.id === n) : undefined
+          const tab = after.active ? after.tabs[after.active] : undefined
+          const showing = shown ? `Showing tab ${shown.id}: ${siteKeyOf(shown.url) ?? 'New page'}` : tab ? `Showing ${surfaceLabel(tab)}` : ''
+          return say(showing ? `Claude closed tab ${e.tab}. ${showing}` : `Claude closed tab ${e.tab}`)
         })
         break
       case 'tool-tab':
         set((s) => {
-          const b = s.sessions[handleId]?.browser
+          const cur = s.sessions[handleId]
+          const b = cur?.browser
           if (!b) return {}
-          return patchSlice(s, handleId, { browser: { ...b, toolTabs: { ...b.toolTabs, [e.toolUseId]: e.tab } } })
+          const id = placement(e.tab)
+          const set0 = cur.surfaces
+          const unseen = set0.active === id || set0.browserUnseen[id] ? set0 : { ...set0, browserUnseen: { ...set0.browserUnseen, [id]: true as const } }
+          return patchSlice(s, handleId, { surfaces: unseen, browser: { ...b, toolTabs: { ...b.toolTabs, [e.toolUseId]: e.tab } } })
         })
         break
       case 'site-request':
@@ -3137,12 +3300,12 @@ export const useSession = create<SessionStore>((set, get) => ({
     await window.clui.respondElicitation(active.handleId, requestId, response)
   },
 
-  setBrowserPane: (next) => {
+  setPane: (next) => {
     const s = get()
     const active = activeSlice(s)
-    if (!active || (next !== 'collapsed' && !active.browser)) return
+    if (!active || (next !== 'collapsed' && !active.surfaces.order.length)) return
     const open = next !== 'collapsed'
-    // The subagent pane outranks the browser in the Stage, so opening the browser closes it.
+    // The subagent pane outranks the Surfaces pane in the Stage, so opening it closes the subagent view.
     const closeSubagent = open && !!s.viewingSubagent
     set({
       ...patchSlice(s, active.handleId, { paneOpen: open, ...(open ? { surfacePaneFull: next === 'full' } : {}) }),
@@ -3150,29 +3313,160 @@ export const useSession = create<SessionStore>((set, get) => ({
     })
   },
 
-  toggleBrowser: (apply) => {
-    const active = activeSlice(get())
-    if (!active?.browser) return
-    const show = apply ?? get().setBrowserPane
+  togglePane: (apply) => {
     const st = get()
-    const shown = !st.viewingSubagent && active.paneOpen
-    if (shown) set((s) => patchSlice(s, active.handleId, { paneAutoOpenSuppressed: true, paneAutoOpen: false }))
+    const active = activeSlice(st)
+    if (!active) return
+    const show = apply ?? st.setPane
+    if (!st.viewingSubagent && active.paneOpen) {
+      set((s) => patchSlice(s, active.handleId, { paneAutoOpenSuppressed: true, paneAutoOpen: false }))
+      return show('collapsed')
+    }
+    const target = paneTarget(active)
+    if (!target) return void st.revealBrowser(null, apply)
+    st.activateSurface(active.handleId, target)
     // A narrow Stage renders half as full, and keeps the user's choice for when it grows back.
-    show(shown ? 'collapsed' : active.surfacePaneFull ? 'full' : 'half')
+    show(active.surfacePaneFull ? 'full' : 'half')
   },
 
-  autoOpenBrowser: (handleId) => {
+  toggleBrowser: (apply) => {
+    const st = get()
+    const active = activeSlice(st)
+    if (!active?.browser) return
+    const onBrowser = !st.viewingSubagent && active.paneOpen && browserTabOf(active.surfaces.active) !== null
+    if (!onBrowser) return void st.revealBrowser(null, apply)
+    set((s) => patchSlice(s, active.handleId, { paneAutoOpenSuppressed: true, paneAutoOpen: false }))
+    ;(apply ?? st.setPane)('collapsed')
+  },
+
+  revealBrowser: async (tab, apply) => {
+    const active = activeSlice(get())
+    if (!active?.browser) return
+    const handleId = active.handleId
+    const asked = tab !== null && active.browser.tabs.some((t) => t.id === tab) ? placement(tab) : null
+    const id = asked ?? browserTargetOf(active)
+    // Main's tab-opened event for the user's own tab places it and makes it active.
+    if (id) get().activateSurface(handleId, id)
+    else await window.clui.browserNewTab(handleId)
+    const st = get()
+    const now = st.sessions[handleId]
+    if (!now || handleId !== st.activeHandleId || (now.paneOpen && !st.viewingSubagent)) return
+    ;(apply ?? st.setPane)(now.surfacePaneFull ? 'full' : 'half')
+  },
+
+  autoOpenPane: (handleId, id) => {
     const s = get()
     const slice = s.sessions[handleId]
-    if (!slice?.browser || slice.paneOpen || slice.paneAutoOpenSuppressed) return false
+    if (!slice || slice.paneOpen || slice.paneAutoOpenSuppressed || !slice.surfaces.order.includes(id)) return false
+    const tab = browserTabOf(id)
+    const view = (): void => {
+      if (tab !== null && slice.browser?.viewed !== tab) void window.clui.browserViewTab(handleId, tab)
+    }
     // A background session waits for its next visit, which judges the Stage as it is then.
     if (handleId !== s.activeHandleId) {
-      set(patchSlice(s, handleId, { paneAutoOpen: true }))
+      set(patchSlice(s, handleId, { paneAutoOpen: true, ...activation(slice, id, Date.now()) }))
+      view()
       return false
     }
     if (s.viewingSubagent || !s.stageWide) return false
-    set({ ...patchSlice(s, handleId, { paneAutoOpen: false, statusAnnounce: toggled(BROWSER_OPENED) }), paneOpenedQuietly: true })
+    const shown = activation(slice, id, Date.now())
+    set({ ...patchSlice(s, handleId, { ...shown, paneAutoOpen: false, statusAnnounce: toggled(openedCopy({ ...slice, ...shown })) }), paneOpenedQuietly: true })
+    view()
     return true
+  },
+
+  openSurface: (handleId, spec, intent, actor, openedBy) => {
+    const id = surfaceIdOf(spec)
+    const s = get()
+    const cur = s.sessions[handleId]
+    if (!cur) return id
+    const now = Date.now()
+    const set0 = cur.surfaces
+    const viewed = handleId === s.activeHandleId
+    const showing = viewed && cur.paneOpen && !s.viewingSubagent
+    let eff = intent
+    if (actor === 'claude' && intent === 'focus') {
+      const onBrowser = browserTabOf(set0.active) !== null
+      const held =
+        (viewed && (!!s.viewingSubagent || s.settingsSection !== null)) ||
+        cur.pendingPermissions.length > 0 ||
+        cur.annotate.tab !== null ||
+        (showing && focusInPane(onBrowser))
+      const recent = showing && set0.active !== id && now - paneInputAt < PANE_RECENT_MS
+      if (held || recent) eff = 'prepare'
+    }
+    const existing = set0.tabs[id]
+    const base: SurfaceTab = existing
+      ? { ...existing, title: spec.title }
+      : { id, kind: spec.kind, key: spec.key, title: spec.title, openedBy, openedAt: now, lastViewedAt: now, ...(spec.mode ? { mode: spec.mode } : {}), ...(spec.provenance ? { provenance: spec.provenance } : {}) }
+    const dest = { ...(spec.location ? { location: spec.location } : {}), ...(spec.highlight ? { highlight: spec.highlight } : {}) }
+    const order = existing ? set0.order : [...set0.order, id]
+    if (eff === 'prepare') {
+      // The active tab keeps its view until the user asks for the new destination.
+      const tab: SurfaceTab =
+        set0.active === id
+          ? { ...base, ...(Object.keys(dest).length ? { pendingShow: dest } : {}) }
+          : { ...base, ...dest, unseen: true }
+      set(patchSlice(s, handleId, { surfaces: { ...set0, order, tabs: { ...set0.tabs, [id]: tab } } }))
+      return id
+    }
+    const placed: PerSessionState = { ...cur, surfaces: { ...set0, order, tabs: { ...set0.tabs, [id]: { ...base, ...dest } } } }
+    const activeNow = activation(placed, id, now)
+    if (showing || (!viewed && cur.paneOpen)) {
+      set(patchSlice(s, handleId, activeNow))
+    } else if (actor === 'user') {
+      // An explicit user open outranks the subagent takeover.
+      set({ ...patchSlice(s, handleId, { ...activeNow, paneOpen: true }), ...(viewed ? { viewingSubagent: null, subagentTrail: [], currentTurn: null } : {}) })
+    } else if (cur.paneAutoOpenSuppressed || (viewed && (!!s.viewingSubagent || !s.stageWide))) {
+      set(patchSlice(s, handleId, activeNow))
+    } else if (!viewed) {
+      set(patchSlice(s, handleId, { ...activeNow, paneAutoOpen: true }))
+    } else {
+      set({ ...patchSlice(s, handleId, { ...activeNow, paneOpen: true, statusAnnounce: toggled(`Claude opened ${spec.title}`) }), paneOpenedQuietly: true })
+    }
+    return id
+  },
+
+  closeSurface: (handleId, id) => {
+    const s = get()
+    const cur = s.sessions[handleId]
+    if (!cur?.surfaces.order.includes(id)) return
+    const set0 = cur.surfaces
+    const order = set0.order.filter((x) => x !== id)
+    const next = set0.active === id ? neighbourOf(set0.order, id, order) : set0.active
+    const tab = browserTabOf(id)
+    const b = cur.browser
+    if (tab !== null && b) {
+      // Main views the neighbouring browser tab the same way, right first, so this agrees with its event.
+      const i = b.tabs.findIndex((t) => t.id === tab)
+      const after = b.tabs[i + 1] ?? b.tabs[i - 1]
+      const browser = { ...b, tabs: b.tabs.filter((t) => t.id !== tab), viewed: b.viewed === tab ? (after?.id ?? b.viewed) : b.viewed }
+      set(patchSlice(s, handleId, { browser, surfaces: { ...set0, active: next } }))
+      void window.clui.browserCloseTab(handleId, tab)
+    } else {
+      const { [id]: _gone, ...tabs } = set0.tabs
+      set(patchSlice(s, handleId, { surfaces: { ...set0, order, active: next, tabs }, paneOpen: cur.paneOpen && order.length > 0 }))
+    }
+    const st = get()
+    const now = st.sessions[handleId]
+    if (next && now?.surfaces.active === next && next !== set0.active) st.activateSurface(handleId, next)
+  },
+
+  activateSurface: (handleId, id) => {
+    const s = get()
+    const cur = s.sessions[handleId]
+    if (!cur?.surfaces.order.includes(id)) return
+    set(patchSlice(s, handleId, activation(cur, id, Date.now())))
+    const tab = browserTabOf(id)
+    if (tab !== null && cur.browser?.viewed !== tab) void window.clui.browserViewTab(handleId, tab)
+  },
+
+  setSurfaceView: (handleId, id, patch) => {
+    const s = get()
+    const set0 = s.sessions[handleId]?.surfaces
+    const tab = set0?.tabs[id]
+    if (!set0 || !tab || (patch.viewState && patch.viewState.kind !== tab.kind)) return
+    set(patchSlice(s, handleId, { surfaces: { ...set0, tabs: { ...set0.tabs, [id]: { ...tab, ...patch } } } }))
   },
 
   browserDrive: async (action) => {
@@ -3257,32 +3551,12 @@ export const useSession = create<SessionStore>((set, get) => ({
 
   viewBrowserTab: (tab) => {
     const s = get()
-    const active = activeSlice(s)
-    const b = active?.browser
-    if (!active || !b || b.viewed === tab || !b.tabs.some((t) => t.id === tab)) return
-    set(patchSlice(s, active.handleId, { browser: { ...b, viewed: tab } }))
-    void window.clui.browserViewTab(active.handleId, tab)
+    if (s.activeHandleId) s.activateSurface(s.activeHandleId, placement(tab))
   },
 
   newBrowserTab: async () => {
     const active = activeSlice(get())
     if (!active?.browser) return
     await window.clui.browserNewTab(active.handleId)
-  },
-
-  closeBrowserTab: (tab) => {
-    const s = get()
-    const active = activeSlice(s)
-    const b = active?.browser
-    const i = b?.tabs.findIndex((t) => t.id === tab) ?? -1
-    if (!active || !b || i < 0) return
-    const next = b.tabs[i + 1] ?? b.tabs[i - 1]
-    if (next)
-      set(
-        patchSlice(s, active.handleId, {
-          browser: { ...b, tabs: b.tabs.filter((t) => t.id !== tab), viewed: b.viewed === tab ? next.id : b.viewed }
-        })
-      )
-    void window.clui.browserCloseTab(active.handleId, tab)
   }
 }))

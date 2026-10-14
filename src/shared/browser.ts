@@ -39,7 +39,7 @@ export type BrowserEvent =
   /** Appended at the end of the strip. `viewed` is the session's viewed tab after the change.
    *  `url` is where Claude is opening it, which the page hasn't loaded yet. */
   | { type: 'tab-opened'; tab: TabState; by: TabActor; viewed: number; url?: string }
-  /** `viewed` is the viewed tab after the close; closing the last tab opens a fresh one first. */
+  /** `viewed` is the viewed tab after the close, or the closed one when it was the last. */
   | { type: 'tab-closed'; tab: number; by: TabActor; viewed: number }
   /** The tab a browser tool call ran in, keyed by the CLI's tool_use id. */
   | { type: 'tool-tab'; toolUseId: string; tab: number }
@@ -48,6 +48,8 @@ export type BrowserEvent =
   | { type: 'site-request'; requestId: string; site: string; cause: 'agent' | 'page'; from: string | null; tab: number }
   | { type: 'login-request'; requestId: string; request: LoginRequest; tab: number }
   | { type: 'filled'; site: string; tab: number }
+  /** The user's own input in a page, at most once a second; input during Claude's own dispatches doesn't count. */
+  | { type: 'user-input'; tab: number }
 
 export interface PaneBounds { x: number; y: number; width: number; height: number }
 
