@@ -19,6 +19,7 @@ import type { BrowserEvent } from '../shared/browser'
 import type { ElicitationResponse } from '../shared/events'
 import type { AnnotateEvent } from '../shared/annotate'
 import type { ChangesEvent } from '../shared/changes'
+import type { FileChangedEvent } from '../shared/files'
 
 const api: CluiApi = {
   pickWorkspace: () => ipcRenderer.invoke(IpcChannels.pickWorkspace),
@@ -82,6 +83,19 @@ const api: CluiApi = {
   listWorkspaceFiles: (handleId: string) => ipcRenderer.invoke(IpcChannels.listWorkspaceFiles, handleId),
   openDiff: (handleId: string, left: string, right: string) =>
     ipcRenderer.invoke(IpcChannels.openDiff, handleId, left, right),
+  getDiff: (handleId, req) => ipcRenderer.invoke(IpcChannels.getDiff, handleId, req),
+  openChangeDiff: (handleId, req) => ipcRenderer.invoke(IpcChannels.openChangeDiff, handleId, req),
+  getChangeMarks: (handleId, path) => ipcRenderer.invoke(IpcChannels.getChangeMarks, handleId, path),
+  readText: (handleId, path) => ipcRenderer.invoke(IpcChannels.readText, handleId, path),
+  statFile: (handleId, path) => ipcRenderer.invoke(IpcChannels.statFile, handleId, path),
+  watchFile: (handleId, path) => ipcRenderer.invoke(IpcChannels.watchFile, handleId, path),
+  unwatchFile: (handleId, id) => ipcRenderer.invoke(IpcChannels.unwatchFile, handleId, id),
+  openPath: (handleId, path) => ipcRenderer.invoke(IpcChannels.openPath, handleId, path),
+  onFileChanged: (cb) => {
+    const listener = (_e: unknown, payload: FileChangedEvent): void => cb(payload)
+    ipcRenderer.on(IpcChannels.fileChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.fileChanged, listener)
+  },
   getSettings: () => ipcRenderer.invoke(IpcChannels.getSettings),
   updateSettings: (patch: Partial<CluiSettings>, clear?: SettingsKey[]) =>
     ipcRenderer.invoke(IpcChannels.updateSettings, patch, clear),

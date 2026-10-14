@@ -254,7 +254,7 @@ export function SurfaceTabs(): JSX.Element {
                 }}
                 className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border pl-2.5 text-label focus-visible:-outline-offset-2 active:bg-border-strong ${
                   on
-                    ? 'border-control-edge bg-control pr-7 font-medium text-content'
+                    ? 'border-control-edge bg-control pr-2.5 font-medium text-content'
                     : `border-transparent pointer-fine:group-hover/tab:bg-[var(--glass-row-hover)] pointer-fine:group-hover/tab:text-content ${
                         unseenShown ? 'pr-7 text-content' : 'pr-2.5 text-dim'
                       }`
@@ -281,8 +281,8 @@ export function SurfaceTabs(): JSX.Element {
                   <span className="h-1.5 w-1.5 rounded-full bg-content" />
                 </span>
               )}
-              {/* The keyboard closes with Delete on the tab, so the button stays out of the Tab order.
-                  On an inactive tab it paints the tab's hover fill over the title's tail and the unseen dot. */}
+              {/* The keyboard closes with Delete on the tab, so the button stays out of the Tab order. It paints the
+                  tab's own fill over the title's tail, so the active tab's title gets the same room as the rest. */}
               <button
                 type="button"
                 data-ui="surface-tab-close"
@@ -293,7 +293,7 @@ export function SurfaceTabs(): JSX.Element {
                 onClick={() => closeTab(v.id, inList())}
                 className={`absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-sm text-dim pointer-fine:hover:text-content ${
                   on
-                    ? 'pointer-fine:hover:bg-[var(--glass-row-hover)]'
+                    ? 'bg-control pointer-fine:hover:bg-[linear-gradient(var(--glass-row-hover),var(--glass-row-hover))]'
                     : 'pointer-events-none bg-bg bg-[linear-gradient(var(--glass-row-hover),var(--glass-row-hover))] opacity-0 pointer-fine:group-hover/tab:pointer-events-auto pointer-fine:group-hover/tab:opacity-100 group-active/tab:bg-border-strong group-active/tab:bg-none'
                 }`}
               >

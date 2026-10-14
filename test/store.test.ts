@@ -597,7 +597,7 @@ const q = (id: string, text: string): any => ({ id, text })
 
 // Changes mirror main's ledger; a session main has let go of keeps its last summaries.
 {
-  const row = { path: '/w/a.ts', added: 3, removed: 1, created: false, missingOnDisk: false, approximate: false, diffAvailable: true, segments: 1, editIds: ['t1'] }
+  const row = { path: '/w/a.ts', added: 3, removed: 1, created: false, missingOnDisk: false, approximate: false, diffAvailable: true, snapshot: true, segments: 1, editIds: ['t1'] }
   reset({ changes: [] })
   replies.getChanges = () => [row]
   await st().refreshChanges('h1')

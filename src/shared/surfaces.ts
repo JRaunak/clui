@@ -4,7 +4,17 @@ export type ViewMode = 'auto' | 'preview' | 'source'
 /** Normalized 0..1 of the rendered page or image. */
 export interface Region { x: number; y: number; w: number; h: number }
 
-export interface SurfaceLocation { line?: number; page?: number; sheet?: string; cell?: string; file?: string }
+export interface SurfaceLocation {
+  line?: number
+  /** The last line of a range starting at `line`. */
+  endLine?: number
+  page?: number
+  sheet?: string
+  cell?: string
+  file?: string
+  /** A Claude changes hunk id, with `file`. */
+  hunk?: string
+}
 export interface SurfaceSelection {
   lines?: { start: number; end: number }
   change?: { segmentId: string; revision: string; hunkId: string; side: 'diff' | 'before' | 'after' }

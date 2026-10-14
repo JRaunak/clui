@@ -40,7 +40,8 @@ import { readConfig } from './config/reader'
 import { openInEditor, openDiff } from './ide/open'
 import { listWorkspaceFiles } from './workspace/files'
 import { readGitStatus } from './workspace/git-status'
-import { createFileAccess } from './surfaces/files'
+import { createFileAccess, readText, statFile } from './surfaces/files'
+import { changeMarks, diffSnapshots, getDiff, parseDiffRequest, type DiffSource } from './surfaces/diff'
 import {
   getResolvedSettings,
   getSettings,
@@ -63,6 +64,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
 let sessionManager: SessionManager | null = null
 let browserManager: BrowserManager | null = null
+let diffs: ReturnType<typeof diffSnapshots> | null = null
+const LAUNCHERS = /\.(app|command|terminal|tool|fileloc|webloc|inetloc|workflow|action|jar|pkg|mpkg|scpt|applescript)$/i
 
 // Backstop: a window-teardown race can throw "Object has been destroyed" from an
 // async child-stdout callback AFTER the window is gone. That's benign (there's
@@ -105,7 +108,7 @@ function resolveTheme(): 'dark' | 'light' {
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
 let menuState: MenuState = { browser: 'none', pane: 'none', external: { kind: 'none', enabled: false } }
-const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = { browser: 'Open in Default Browser', none: 'Open Externally' }
+const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = { file: 'Open in Editor', diff: 'Open Diff in Editor', browser: 'Open in Default Browser', none: 'Open Externally' }
 
 function buildMenu(): void {
   const send = (action: string): void => {
@@ -288,6 +291,8 @@ function registerIpc(): void {
     annotator.dispose(handleId)
     browser.dispose(handleId)
     mcp.revoke(handleId)
+    files.dispose(handleId)
+    for (const [id, owner] of watchOwners) if (owner === handleId) watchOwners.delete(id)
   }
   if (process.env.CLUI_TEST_HOOKS === '1') {
     // For the harness only, from Playwright's app.evaluate; the shipped app never sets this variable.
@@ -351,12 +356,21 @@ function registerIpc(): void {
     (handleId, summaries) => push(IpcChannels.changesEvent, { handleId, summaries })
   )
   sessionManager = manager
-  // ponytail: no files.dispose on session exit; nothing session-bound is granted or watched yet and a
-  // gone handle's null cwd denies everything. Call it from disposeBrowser with the first user grant or watch.
+  /** A watch id answers only to the session that made it. */
+  const watchOwners = new Map<string, string>()
   const files = createFileAccess({
     cwd: (h) => manager.cwd(h),
     changedPaths: async (h) => (await manager.changes(h))?.map((c) => c.path) ?? null
   })
+  const diffSource: DiffSource = {
+    segments: (h, p) => manager.segments(h, p),
+    current: async (h, p) => {
+      const r = await files.resolveAllowed(h, p, { consumer: 'diff', operation: 'read-file' })
+      const t = r.ok ? await readText(r) : null
+      return t?.ok && !t.binary && !t.truncated && !t.unsupportedEncoding ? { text: t.text, revision: t.revision } : null
+    }
+  }
+  diffs = diffSnapshots(join(app.getPath('userData'), 'diff-snapshots'), diffSource, (h, p) => files.registerDerived(h, 'editor', p))
 
   // Reject IPC that doesn't come from the top frame of a real app window: an injected
   // sub-frame or webview must not reach the privileged bridge. Defense in depth
@@ -686,14 +700,78 @@ function registerIpc(): void {
   handle(IpcChannels.openInEditor, async (_e, handleId: string | null, filePath: string) => {
     const target = await editorTarget(handleId, filePath)
     const { editorCommand } = await getSettings()
-    await openInEditor(editorCommand || 'code', target)
+    const cmd = editorCommand || 'code'
+    try {
+      await openInEditor(cmd, target)
+    } catch {
+      throw new Error(`Couldn't open ${basename(target)} in your editor. Clui runs "${cmd}"; check it's on your PATH, or change Editor command in Settings.`)
+    }
   })
 
   handle(IpcChannels.openDiff, async (_e, handleId: string, left: string, right: string) => {
-    if (typeof handleId !== 'string') throw new Error("Clui can't open that diff.")
+    if (typeof handleId !== 'string') throw new Error("Couldn't open the diff. It doesn't belong to an open session.")
     const [a, b] = await Promise.all([editorTarget(handleId, left), editorTarget(handleId, right)])
     const { editorCommand } = await getSettings()
     await openDiff(editorCommand || 'code', a, b)
+  })
+
+  const fileFor = (handleId: unknown, path: unknown, operation: 'read-file' | 'watch-file' | 'open-external') =>
+    files.resolveAllowed(typeof handleId === 'string' ? handleId : '', path as string, { consumer: 'file', operation })
+  handle(IpcChannels.readText, async (_e, handleId: string, path: string) => {
+    const r = await fileFor(handleId, path, 'read-file')
+    return r.ok ? readText(r) : r
+  })
+  handle(IpcChannels.statFile, async (_e, handleId: string, path: string) => {
+    const r = await fileFor(handleId, path, 'read-file')
+    return r.ok ? statFile(r) : r
+  })
+  handle(IpcChannels.watchFile, async (_e, handleId: string, path: string) => {
+    const r = await fileFor(handleId, path, 'watch-file')
+    if (!r.ok) return r
+    let id = ''
+    const w = await files.watch(r, () => push(IpcChannels.fileChanged, { handleId, id }))
+    if (!w.ok) return w
+    // The session may have ended while the watch was being set up; its dispose has already run.
+    if (manager.cwd(handleId) === null) {
+      files.unwatch(w.id)
+      return { ok: false, reason: 'denied' }
+    }
+    watchOwners.set((id = w.id), handleId)
+    return w
+  })
+  handle(IpcChannels.unwatchFile, async (_e, handleId: string, id: string) => {
+    if (typeof id !== 'string' || watchOwners.get(id) !== handleId) return
+    watchOwners.delete(id)
+    files.unwatch(id)
+  })
+  handle(IpcChannels.openPath, async (_e, handleId: string, path: string) => {
+    const r = await fileFor(handleId, path, 'open-external')
+    const name = typeof path === 'string' ? basename(path) : 'the file'
+    if (!r.ok) return { ok: false, message: `Couldn't open ${name}. ${r.reason === 'missing' ? "It's no longer on disk." : "Clui can't open it from this session."}` }
+    // A default app is a viewer here, never a way to run something: no folders, bundles, scripts or executables.
+    const s = await stat(r.path).catch(() => null)
+    if (!s) return { ok: false, message: `Couldn't open ${name}. It's no longer on disk.` }
+    if (LAUNCHERS.test(r.path) || (!s.isDirectory() && s.mode & 0o111)) {
+      return { ok: false, message: `Couldn't open ${name}. Clui doesn't open apps or files that can run as programs. Open it from Finder instead.` }
+    }
+    if (s.isDirectory()) return { ok: false, message: `Couldn't open ${name}. It's a folder, and Clui only opens files.` }
+    const err = await shell.openPath(r.path)
+    return err ? { ok: false, message: `Couldn't open ${name}. ${err}` } : { ok: true }
+  })
+  handle(IpcChannels.getChangeMarks, async (_e, handleId: string, path: string) =>
+    typeof handleId === 'string' && typeof path === 'string' && path.length <= 4096 ? changeMarks(diffSource, handleId, path) : null
+  )
+
+  handle(IpcChannels.getDiff, async (_e, handleId: string, raw: unknown) => {
+    const req = parseDiffRequest(raw)
+    return typeof handleId === 'string' && req ? getDiff(diffSource, handleId, req) : null
+  })
+
+  handle(IpcChannels.openChangeDiff, async (_e, handleId: string, raw: unknown) => {
+    const req = parseDiffRequest(raw)
+    if (typeof handleId !== 'string' || !req || !diffs) return { ok: false, message: "Couldn't open the diff. It doesn't belong to an open session." }
+    const editor = (await getSettings()).editorCommand || 'code'
+    return diffs.open(handleId, req, editor, (a, b) => openDiff(editor, a, b))
   })
 
   handle(IpcChannels.openExternal, async (_e, url: string) => {
@@ -824,4 +902,5 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   sessionManager?.stopAll()
+  diffs?.clear()
 })

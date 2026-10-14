@@ -7,7 +7,7 @@ import { ClaudeSession, type ClaudeSessionOptions } from '../cli/session'
 import type { DomainEvent, ElicitationResponse } from '../../shared/events'
 import type { ModeChangeResult, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import type { FileChangeSummary } from '../../shared/changes'
-import { ChangeLedger, type PublishFn } from '../surfaces/ledger'
+import { ChangeLedger, type PublishFn, type SegmentView } from '../surfaces/ledger'
 import { readTasks } from './tasks'
 
 export type EventSink = (handleId: string, event: DomainEvent) => void
@@ -87,6 +87,11 @@ export class SessionManager {
   /** The handle's Claude changes; null once its session is gone. */
   changes(handleId: string): Promise<FileChangeSummary[] | null> {
     return this.ledger.changes(handleId)
+  }
+
+  /** One file's ledger segments, for its diff; null once the session is gone or the path isn't Claude's. */
+  segments(handleId: string, path: string): Promise<SegmentView[] | null> {
+    return this.ledger.segments(handleId, path)
   }
 
   /** Trailing-debounced re-read of the session's on-disk task list, emitting a

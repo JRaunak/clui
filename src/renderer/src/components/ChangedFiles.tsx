@@ -1,18 +1,19 @@
 import { useEffect, useId, useState, type CSSProperties } from 'react'
 import { useActive, useSession, EMPTY_CHANGES } from '../store'
+import { requestSurfaceFocus } from '../lib/surfaceFocus'
 import type { FileChangeSummary, GitPathStatus, GitUnavailableCause } from '../../../shared/changes'
 import { IconChevron, IconFile } from './Icon'
 
 /** Workspace-relative path; a file outside cwd stays absolute. */
-function toWorkspaceRelative(cwd: string | null, path: string): string {
+export function toWorkspaceRelative(cwd: string | null, path: string): string {
   return cwd && path.startsWith(cwd + '/') ? path.slice(cwd.length + 1) : path
 }
 
-const MINUS = '−'
+export const MINUS = '−'
 const lines = (n: number): string => `${n} ${n === 1 ? 'line' : 'lines'}`
 
 /** The row's screen-reader description and its pointer tooltip's count line. */
-function describe(c: FileChangeSummary): { description: string; countLine: string } {
+export function describe(c: FileChangeSummary): { description: string; countLine: string } {
   const { added, removed, created, approximate } = c
   let fragment: string
   let countLine: string
@@ -41,7 +42,7 @@ function describe(c: FileChangeSummary): { description: string; countLine: strin
   return { description: `${fragment}.`, countLine }
 }
 
-function Figure({ n, sign, tone, width, approx }: { n: number | null; sign: string; tone: string; width: string; approx?: boolean }): JSX.Element {
+export function Figure({ n, sign, tone, width, approx }: { n: number | null; sign: string; tone: string; width: string; approx?: boolean }): JSX.Element {
   return (
     <span className={`inline-block text-right ${width} ${n ? tone : 'text-faint'}`}>
       {approx && <span className="text-faint">~</span>}
@@ -50,7 +51,7 @@ function Figure({ n, sign, tone, width, approx }: { n: number | null; sign: stri
   )
 }
 
-const figureWidth = (n: number | null): number => String(n ?? '?').length + 1
+export const figureWidth = (n: number | null): number => String(n ?? '?').length + 1
 
 const GIT_KIND: Record<string, string> = { M: 'modified', T: 'type changed', A: 'added', D: 'deleted', R: 'renamed', C: 'copied' }
 const GIT_TONE: Record<string, string> = { M: 'text-dim', T: 'text-dim', A: 'text-ok', D: 'text-err', R: 'text-info', C: 'text-info' }
@@ -62,6 +63,8 @@ const GIT_CAUSE: Record<GitUnavailableCause, string> = {
 }
 const GIT_ATTRIBUTION = 'Git shows repository state, which may include changes not made by Claude.'
 const POLL_MS = 2000
+const CLICK_VIEW = "Click to view Claude's changes. ⌘-click to open in editor."
+const OPENS = "Opens Claude's changes. Command-Enter opens it in your editor."
 /** States from a working tree Git did read, which make a failure elsewhere partial. */
 const READ_STATES = new Set<GitPathStatus['state']>(['unlisted', 'changed', 'conflict'])
 
@@ -120,6 +123,14 @@ export function ChangedFiles(): JSX.Element | null {
   }, [open, handleId, hasChanges, changes, refreshGitStatus])
 
   if (!hasChanges) return null
+
+  // Without a cwd there's no pane, so a click opens the editor.
+  const paneAvailable = !!cwd
+  const viewChanges = (path: string): void => {
+    if (!handleId) return
+    requestSurfaceFocus('diff')
+    useSession.getState().openSurface(handleId, { kind: 'diff', key: '', title: 'Claude changes', location: { file: path } }, 'focus', 'user', 'user')
+  }
 
   const openFile = async (path: string): Promise<void> => {
     setError(null)
@@ -190,10 +201,17 @@ export function ChangedFiles(): JSX.Element | null {
                     <button
                       type="button"
                       className="flex h-6 w-full items-baseline gap-2 rounded px-1 text-left leading-6 transition-colors hover:bg-control-hover"
-                      onClick={() => void openFile(c.path)}
+                      onClick={(e) => (paneAvailable && !e.metaKey ? viewChanges(c.path) : void openFile(c.path))}
+                      onKeyDown={(e) => {
+                        // A button's Enter fires click without a reliable modifier, so ⌘Enter is caught here.
+                        if (e.key !== 'Enter' || !e.metaKey) return
+                        e.preventDefault()
+                        void openFile(c.path)
+                      }}
                       aria-label={name}
-                      aria-description={git ? `${description} ${git}.` : description}
-                      title={[c.path, countLine, ...(git ? [git, GIT_ATTRIBUTION] : []), 'Click to open in editor'].join('\n')}
+                      aria-description={[description, git && `${git}.`, paneAvailable && OPENS].filter(Boolean).join(' ')}
+                      aria-keyshortcuts={paneAvailable ? 'Meta+Enter' : undefined}
+                      title={[c.path, countLine, ...(git ? [git, GIT_ATTRIBUTION] : []), paneAvailable ? CLICK_VIEW : 'Click to open in editor'].join('\n')}
                     >
                       {gitColumn && (
                         <span aria-hidden="true" className="inline-flex w-[2ch] shrink-0 font-mono text-badge">

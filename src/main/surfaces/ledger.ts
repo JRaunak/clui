@@ -42,6 +42,8 @@ export interface ClaudeEdit {
   approximate: boolean
   /** A diff of the file's texts measures this edit. A notebook's re-serialized JSON doesn't. */
   textual: boolean
+  /** The result's own hunks, with line numbers from the time of the edit. */
+  patch?: PatchHunk[]
 }
 
 interface Counts {
@@ -144,6 +146,7 @@ export function normalizeEdit(id: string, name: string, input: Obj, result: unkn
     if (r.type === 'create') return { ...edit, before: '', created: true, added: lineCount(content), removed: 0 }
     edit.before = str(r.originalFile)
     const hunks = hunksOf(r.structuredPatch)
+    if (hunks?.length) edit.patch = hunks
     return counted(hunks ? patchCounts(hunks) : edit.before !== undefined ? fragmentCounts(edit.before, content) : null, false)
   }
 
@@ -156,6 +159,7 @@ export function normalizeEdit(id: string, name: string, input: Obj, result: unkn
     return prev !== undefined && next !== undefined ? counted(fragmentCounts(prev, next), true) : edit
   }
   edit.userModified = r.userModified === true
+  if (hunks.length) edit.patch = hunks
   // The jsonl drops originalFile past 10,000 chars, so a replayed big edit has its patch only.
   edit.before = str(r.originalFile)
   if (edit.before !== undefined) edit.after = applyPatch(edit.before, hunks) ?? undefined
@@ -166,6 +170,8 @@ export function normalizeEdit(id: string, name: string, input: Obj, result: unkn
 interface Segment {
   id: string
   editIds: string[]
+  /** Each edit's own hunks, null where the result had none or they were evicted. */
+  patches: (PatchHunk[] | null)[]
   /** The break before this segment was a proven text mismatch rather than missing evidence. */
   provenBreak: boolean
   before?: string
@@ -212,6 +218,20 @@ interface SessionState {
   replay: Promise<void> | null
   flush: Promise<void> | null
 }
+
+/** A file's segment as getDiff reads it: a copy, so a later edit can't change it underneath. */
+export interface SegmentView {
+  id: string
+  revision: string
+  editIds: string[]
+  patches: (PatchHunk[] | null)[]
+  before?: string
+  after?: string
+  provenBreak: boolean
+  created: boolean
+}
+
+const patchChars = (p: PatchHunk[] | null | undefined): number => p?.reduce((n, h) => n + h.lines.reduce((m, l) => m + l.length, 0), 0) ?? 0
 
 const hash = (...parts: string[]): string => createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 32)
 
@@ -290,6 +310,27 @@ export class ChangeLedger {
     return summarize(state)
   }
 
+  /** One file's segments once pending work settles; null for a handle or path the ledger doesn't hold. */
+  async segments(handleId: string, path: string): Promise<SegmentView[] | null> {
+    const state = this.stateOf(handleId)
+    if (!state) return null
+    await state.replay
+    while (state.flush) await state.flush
+    const file = state.files.get(path)
+    return (
+      file?.segments.map((s) => ({
+        id: s.id,
+        revision: s.revision,
+        editIds: [...s.editIds],
+        patches: [...s.patches],
+        before: s.before,
+        after: s.after,
+        provenBreak: s.provenBreak,
+        created: s.created
+      })) ?? null
+    )
+  }
+
   private stateOf(handleId: string): SessionState | undefined {
     const key = this.handles.get(handleId)
     return key ? this.sessions.get(key) : undefined
@@ -333,7 +374,10 @@ export class ChangeLedger {
     const last = file.segments.at(-1)
     if (last && last.after !== undefined && e.before === last.after && !e.userModified) {
       last.editIds.push(e.id)
-      state.textChars += (e.after?.length ?? 0) - last.after.length
+      // An evicted segment can't show its edits whole, so it keeps no new hunks either.
+      const patch = last.evicted ? null : (e.patch ?? null)
+      last.patches.push(patch)
+      state.textChars += (e.after?.length ?? 0) - last.after.length + patchChars(patch)
       last.after = e.after
       last.sum = last.sum && e.added !== null && e.removed !== null ? { added: last.sum.added + e.added, removed: last.sum.removed + e.removed } : null
       last.sumApprox ||= e.approximate
@@ -343,6 +387,7 @@ export class ChangeLedger {
       const seg: Segment = {
         id: hash(e.origin, e.path, e.id),
         editIds: [e.id],
+        patches: [e.patch ?? null],
         provenBreak: !last || (last.after !== undefined && e.before !== undefined),
         before: e.before,
         after: e.after,
@@ -357,7 +402,7 @@ export class ChangeLedger {
         dirty: true,
         evicted: false
       }
-      state.textChars += (e.before?.length ?? 0) + (e.after?.length ?? 0)
+      state.textChars += (e.before?.length ?? 0) + (e.after?.length ?? 0) + patchChars(e.patch)
       file.segments.push(seg)
       state.order.push(seg)
     }
@@ -377,8 +422,9 @@ export class ChangeLedger {
         const isOpen = open.has(seg)
         if (isOpen !== pass || seg.evicted) continue
         seg.beforeHash ??= seg.before === undefined ? '' : hash(seg.before)
-        state.textChars -= seg.before?.length ?? 0
+        state.textChars -= (seg.before?.length ?? 0) + seg.patches.reduce((n, p) => n + patchChars(p), 0)
         seg.before = undefined
+        seg.patches = seg.patches.map(() => null)
         if (!isOpen) {
           seg.afterHash = seg.after === undefined ? '' : hash(seg.after)
           state.textChars -= seg.after?.length ?? 0
@@ -453,7 +499,8 @@ function summarize(state: SessionState): FileChangeSummary[] {
         approximate:
           known.length > 0 &&
           (known.length < segments.length || segments.some((s, i) => s.approximate || (i > 0 && !s.provenBreak))),
-        diffAvailable: segments.every((s) => s.before !== undefined && s.after !== undefined),
+        diffAvailable: segments.every((s) => (s.before !== undefined && s.after !== undefined) || s.patches.every(Boolean)),
+        snapshot: segments.at(-1)?.before !== undefined && segments.at(-1)?.after !== undefined,
         segments: segments.length,
         editIds: segments.flatMap((s) => s.editIds)
       }

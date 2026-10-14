@@ -12,7 +12,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useActive, useSession, EMPTY_MESSAGES } from '../store'
 import { useEscape } from '../lib/useEscape'
-import { IconSearch, IconClose, IconChevron } from './Icon'
+import { FindField } from './FindField'
 import { summarizeInput } from './MessageView'
 
 /** The searchable text of a message: its own text + tool names + the same input summary
@@ -119,66 +119,23 @@ export function FindBar(): JSX.Element | null {
   if (!open) return null
 
   const count = matches.length
+  const q = deferredQuery.trim()
   return (
-    <div data-ui="find-bar" className="flex h-8 w-full min-w-0 items-center gap-1.5 px-2 [-webkit-app-region:no-drag]">
-      <IconSearch className="h-3.5 w-3.5 shrink-0 text-dim" />
-      <input
-        ref={inputRef}
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            if (e.shiftKey) prev()
-            else next()
-          } else if (e.key === 'Escape') {
-            e.preventDefault()
-            close()
-          }
-        }}
-        placeholder="Find in conversation"
-        aria-label="Find in conversation"
-        className="h-7 min-w-0 flex-1 rounded-md bg-control px-2 text-ui text-content placeholder:text-dim focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-[-2px]"
-      />
-      <span
-        className="min-w-[3.5rem] shrink-0 text-right font-mono text-meta tabular-nums text-dim"
-        aria-hidden="true"
-      >
-        {deferredQuery.trim() ? (count ? `${current + 1} of ${count}` : 'No matches') : ''}
-      </span>
-      {/* Matches are message-level, so the visible count elides the unit; the announcement
-          carries the honest one for assistive tech. */}
-      <span className="sr-only" role="status" aria-live="polite">
-        {deferredQuery.trim() ? (count ? `Match ${current + 1} of ${count} messages` : 'No matches') : ''}
-      </span>
-      <div className="flex items-center">
-        <button
-          type="button"
-          onClick={prev}
-          disabled={count === 0}
-          aria-label="Previous match"
-          className="flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:text-content disabled:opacity-40"
-        >
-          <IconChevron className="h-3.5 w-3.5 -rotate-90" />
-        </button>
-        <button
-          type="button"
-          onClick={next}
-          disabled={count === 0}
-          aria-label="Next match"
-          className="flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:text-content disabled:opacity-40"
-        >
-          <IconChevron className="h-3.5 w-3.5 rotate-90" />
-        </button>
-        <button
-          type="button"
-          onClick={close}
-          aria-label="Close find"
-          className="flex h-7 w-7 items-center justify-center rounded text-dim transition-colors hover:text-content"
-        >
-          <IconClose className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </div>
+    <FindField
+      ui="find-bar"
+      inputRef={inputRef}
+      value={query}
+      onChange={setQuery}
+      onEnter={(shift) => (shift ? prev() : next())}
+      onClose={close}
+      onPrev={prev}
+      onNext={next}
+      stepDisabled={count === 0}
+      countText={q ? (count ? `${current + 1} of ${count}` : 'No matches') : ''}
+      // Matches are message-level, so the visible count elides the unit; the announcement carries it.
+      statusText={q ? (count ? `Match ${current + 1} of ${count} messages` : 'No matches') : ''}
+      placeholder="Find in conversation"
+      label="Find in conversation"
+    />
   )
 }

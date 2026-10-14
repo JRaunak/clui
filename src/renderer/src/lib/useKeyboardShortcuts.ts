@@ -21,6 +21,25 @@ import { useEffect } from 'react'
 import { activeSlice, anyTabIn, browserTabOf, useSession } from '../store'
 import { closeTab } from '../components/surfaces/SurfaceTabs'
 import type { PaletteMode } from '../components/CommandPalette'
+import { FILE_FIND_EVENT } from '../components/surfaces/FileSurface'
+
+/**
+ * Find belongs to a File tab while focus is in the pane showing it; elsewhere it's the transcript's.
+ * Only one find is open at a time, so ⌘G never steps two.
+ */
+function fileFind(what: 'open' | 'next' | 'prev'): boolean {
+  const store = useSession.getState()
+  const slice = activeSlice(store)
+  const id = slice?.surfaces.active
+  const mine = !!slice?.paneOpen && !store.viewingSubagent && !!id && slice.surfaces.tabs[id]?.kind === 'file' && !!document.activeElement?.closest('[data-ui="pane-secondary"]')
+  if (!mine) {
+    window.dispatchEvent(new CustomEvent(FILE_FIND_EVENT, { detail: 'close' }))
+    return false
+  }
+  if (store.findOpen) store.setFindOpen(false)
+  window.dispatchEvent(new CustomEvent(FILE_FIND_EVENT, { detail: what }))
+  return true
+}
 
 /**
  * @param onNewSession start a directoryless session in the chat dir (⌘N)
@@ -86,10 +105,12 @@ export function useKeyboardShortcuts(opts: {
         // Find/search route straight to store flags (no App callback needed).
         // ⌘F only means something with a session open; ⌘⇧F is always available.
         case 'find-in-conversation':
+          if (fileFind('open')) break
           if (store.activeHandleId) store.setFindOpen(true)
           break
         case 'find-next':
         case 'find-prev':
+          if (fileFind(action === 'find-next' ? 'next' : 'prev')) break
           // Fallback path when focus isn't in the find input (the input handles
           // Enter/⇧Enter locally). Re-open the bar if closed; the FindBar component
           // reads these via its own menu subscription for match nav.

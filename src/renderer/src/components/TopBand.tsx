@@ -32,7 +32,7 @@ export function TopBand({
   scrolled: boolean
 }): JSX.Element {
   const reported = useSession((s) => s.activeHandleId !== null && s.primaryScrolledFor === s.activeHandleId)
-  const showToggle = useActive((s) => !!s?.browser)
+  const showToggle = useActive((s) => !!s && (!!s.browser || s.surfaces.order.length > 0))
   // An open find bar's dim text sits on the band, and a compositor-scrolled first frame can reach
   // it before any script runs, so the band stays tinted for as long as find is open.
   const findOpen = useSession((s) => s.findOpen && !s.viewingSubagent)

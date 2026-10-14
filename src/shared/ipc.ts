@@ -16,7 +16,8 @@ import type {
 import type { ConfigBundle } from './config'
 import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, LocalNetSite, PaneBounds, SavedLoginInfo } from './browser'
 import type { AnnotateEvent } from './annotate'
-import type { ChangeGitStatus, ChangesEvent, FileChangeSummary } from './changes'
+import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff } from './changes'
+import type { FileChangedEvent, FileStat, Refusal, TextRead } from './files'
 import type {
   CluiSettings,
   EffortChoice,
@@ -234,6 +235,21 @@ export interface CluiApi {
   listWorkspaceFiles: (handleId: string) => Promise<{ files: string[]; truncated: boolean }>
   /** Open a diff of two files the session may see, in the configured editor. */
   openDiff: (handleId: string, left: string, right: string) => Promise<void>
+  /** One changed file's Claude changes as hunks, from the session's ledger. Null when the session or path isn't held. */
+  getDiff: (handleId: string, req: DiffRequest) => Promise<FileDiff | null>
+  /** Opens a segment of Claude's changes, the file's latest by default, as a diff of frozen snapshots in the editor. */
+  openChangeDiff: (handleId: string, req: DiffRequest) => Promise<{ ok: true } | { ok: false; message: string }>
+  /** Where Claude's changes survive in the file's current text. Null when the path isn't Claude's or can't be read. */
+  getChangeMarks: (handleId: string, path: string) => Promise<ChangeMarks | null>
+  /** A file the session may see, as text (5 MiB head at most). */
+  readText: (handleId: string, path: string) => Promise<TextRead | Refusal>
+  statFile: (handleId: string, path: string) => Promise<FileStat | Refusal>
+  /** Watch a file while a surface shows it; changes arrive through onFileChanged with the returned id. */
+  watchFile: (handleId: string, path: string) => Promise<{ ok: true; id: string } | Refusal>
+  unwatchFile: (handleId: string, id: string) => Promise<void>
+  onFileChanged: (cb: (evt: FileChangedEvent) => void) => () => void
+  /** Open a file the session may see in its default app. */
+  openPath: (handleId: string, path: string) => Promise<{ ok: true } | { ok: false; message: string }>
   /**
    * Read app settings: resolved values plus per-key provenance. A key with source
    * 'override' is in Clui's own settings.json; 'cli' is inherited from
@@ -401,6 +417,16 @@ export const IpcChannels = {
   getChangeGitStatus: 'clui:getChangeGitStatus',
   listWorkspaceFiles: 'clui:listWorkspaceFiles',
   openDiff: 'clui:openDiff',
+  getDiff: 'clui:getDiff',
+  openChangeDiff: 'clui:openChangeDiff',
+  getChangeMarks: 'clui:getChangeMarks',
+  readText: 'clui:readText',
+  statFile: 'clui:statFile',
+  watchFile: 'clui:watchFile',
+  unwatchFile: 'clui:unwatchFile',
+  /** main → renderer push channel for watched-file changes */
+  fileChanged: 'clui:fileChanged',
+  openPath: 'clui:openPath',
   getSettings: 'clui:getSettings',
   updateSettings: 'clui:updateSettings',
   detectCliAt: 'clui:detectCliAt',
@@ -457,5 +483,5 @@ export interface MenuState {
   browser: 'none' | 'shown' | 'hidden'
   pane: 'none' | 'split' | 'full'
   /** The active surface's Open externally target, and whether it can open now. */
-  external: { kind: 'browser' | 'none'; enabled: boolean }
+  external: { kind: 'file' | 'diff' | 'browser' | 'none'; enabled: boolean }
 }

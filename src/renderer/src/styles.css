@@ -82,7 +82,7 @@
   --syntax-base: #e6e6e6; /* default code text */
   --syntax-keyword: #de7356; /* keywords, operators: the accent */
   --syntax-string: #4ec9b0; /* strings, regexp */
-  --syntax-number: #ff7b3a; /* numbers, literals, booleans */
+  --syntax-number: #c39bf0; /* numbers, literals, booleans: violet, apart from the keyword's terracotta */
   --syntax-func: #4a9eff; /* function/class titles */
   --syntax-attr: #d9a03a; /* attributes, properties */
   --syntax-comment: #9a9a9a; /* comments (dim, not faint: faint fails AA here) */
@@ -160,9 +160,15 @@
   --color-ok: var(--teal-400);
   --color-warn: var(--amber-400);
   --color-info: var(--blue-400);
-  /* Edit-diff line tints for the permission preview. Faint enough that text-content stays above 4.5:1 on top. */
-  --color-add-surface: color-mix(in oklab, var(--color-ok) 15%, var(--color-bg));
-  --color-del-surface: color-mix(in oklab, var(--color-err) 15%, var(--color-bg));
+  /* Diff row tints, gutter included, for the Claude changes tab and the permission Gate. The add tint's lightness can't
+     pass 0.275 unless the gutter numbers move from faint to dim: faint on it is just over 4.5:1 here. */
+  --color-add-surface: oklch(0.275 0.05 177);
+  --color-del-surface: oklch(0.275 0.065 25);
+  --color-diff-add-sign: var(--color-ok);
+  /* err itself is 4.25:1 on the del tint, so the sign takes a lighter red. */
+  --color-diff-del-sign: #ff8a80;
+  /* The File surface's selected lines: the row form of ::selection. Past 12%, light theme's ok and keyword text drop toward 4.5:1. */
+  --color-line-selected: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg));
   --color-effort-xhigh: var(--orange-400);
   /* Ultracode effort: purple, matching statusline.sh. Deliberately not the terracotta accent and distinct from info-blue. */
   --color-effort-ultra: #a78bfa;
@@ -307,8 +313,9 @@
      near hue 56, close enough to the accent's 45 that a warn banner reads as terracotta. Keep any future value clear of ~45. */
   --color-warn: #7a5c00;
   --color-info: #1d4ed8;
-  --color-add-surface: color-mix(in oklab, var(--color-ok) 12%, var(--color-bg));
-  --color-del-surface: color-mix(in oklab, var(--color-err) 12%, var(--color-bg));
+  --color-add-surface: oklch(0.96 0.035 186);
+  --color-del-surface: oklch(0.95 0.025 30);
+  --color-diff-del-sign: var(--color-err);
   --color-on-warn: #ffffff;
   --color-on-err: #ffffff;
   --color-on-info: #ffffff; /* white on the deep light-mode info-blue */
@@ -319,15 +326,15 @@
   /* Focus ring: the darkened accent (4.97:1 on white). Dark's terracotta is only ~3.1:1 on white (a hair over the 3:1 ring floor, no margin) and fails as text, so light reuses one text-safe accent value for ring and marks alike. */
   --color-ring: #b8502e;
 
-  /* Syntax palette: light values, all verified ≥4.5:1 on the light code surface --color-tool (#f2f2f3). attr uses info.
+  /* Syntax palette: light values, all verified ≥4.5:1 on the light code surface --color-tool (#f2f2f3) and on the diff tints --color-add-surface / --color-del-surface. attr uses info.
      keyword holds the deeper #a8492a (not the brighter accent #b8502e): as code text on the inset the accent is only 4.44:1, below the body floor, so keyword decouples to stay legible. */
   --syntax-base: #1a1a1a;
   --syntax-keyword: #a8492a;
   --syntax-string: #0f766e;
-  --syntax-number: #c02718;
+  --syntax-number: #7a3db8;
   --syntax-func: #1d4ed8;
   --syntax-attr: #1d4ed8;
-  --syntax-comment: #6b6b6b;
+  --syntax-comment: #636363;
   /* Shadows are Tailwind's own black-low-alpha utilities, which already read correctly on paper. */
   --specular: transparent;
   --shadow-content: 0 1px 2px rgb(0 0 0 / 0.04);
@@ -634,6 +641,11 @@ body {
   input[type='range']:focus-visible {
     outline: 2px solid var(--color-ring);
     outline-offset: 2px;
+  }
+
+  /* A pane-filling region's outside ring would be clipped by the pane, so it draws inside. */
+  [data-beside-header]:focus-visible {
+    outline-offset: -2px;
   }
 }
 

@@ -18,6 +18,8 @@ import { SubagentView } from './SubagentView'
 import { SurfacePane } from './surfaces/SurfacePane'
 import { SurfaceHost } from './surfaces/SurfaceHost'
 import { browserExternalBlock } from './surfaces/BrowserSurface'
+import { selectedChange } from './surfaces/DiffSurface'
+import { useFileMissing } from './surfaces/FileSurface'
 import { TopBand } from './TopBand'
 import { StatusBar } from './StatusBar'
 import { Notice } from './Notice'
@@ -126,15 +128,26 @@ export function Stage({
   const hasBrowser = useActive((s) => !!s?.browser)
   const browserActive = useActive((s) => browserTabOf(s?.surfaces.active) !== null)
   const onBrowser = kind === 'surfaces' && browserActive
+  const onDiff = useActive((s) => kind === 'surfaces' && s?.surfaces.active === 'diff')
+  const diffOpenable = useActive((s) => !!selectedChange(s)?.snapshot)
+  const handleId = useSession((s) => s.activeHandleId)
+  const filePath = useActive((s) => (kind === 'surfaces' && s?.surfaces.active && s.surfaces.tabs[s.surfaces.active]?.kind === 'file' ? s.surfaces.tabs[s.surfaces.active].key : null))
+  const fileGone = useFileMissing(handleId, filePath)
   const externalBlocked = useActive((s) => !!browserExternalBlock(viewedTabOf(s?.browser)?.url ?? ''))
   // The native menu can't read the renderer, so its pane, browser and Open externally items follow what this Stage shows.
   useEffect(() => {
     window.clui.menuState({
       browser: !hasBrowser ? 'none' : onBrowser ? 'shown' : 'hidden',
       pane: !kind || !wide ? 'none' : state === 'full' ? 'full' : 'split',
-      external: onBrowser ? { kind: 'browser', enabled: !externalBlocked } : { kind: 'none', enabled: false }
+      external: onBrowser
+        ? { kind: 'browser', enabled: !externalBlocked }
+        : onDiff
+          ? { kind: 'diff', enabled: diffOpenable }
+          : filePath
+            ? { kind: 'file', enabled: !fileGone }
+            : { kind: 'none', enabled: false }
     })
-  }, [hasBrowser, onBrowser, kind, wide, state, externalBlocked])
+  }, [hasBrowser, onBrowser, onDiff, diffOpenable, filePath, fileGone, kind, wide, state, externalBlocked])
 
   const pane = useMemo<PaneApi>(
     () => ({

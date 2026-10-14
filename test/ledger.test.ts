@@ -98,7 +98,7 @@ const one = async (l: ChangeLedger, handle = 'h') => (await l.changes(handle))![
 {
   const l = ledgerWith([...edit('e1', '/f.txt', 'q\n', [hunk(1, 2, 2, [' a', '-b', '+B'])]), ...edit('e2', '/f.txt', 'q\n', [hunk(1, 1, 1, ['-q', '+r'])])])
   const s = await one(l)
-  ok(s.approximate && s.added === 2 && s.removed === 2 && !s.diffAvailable, 'ledger: an opaque edit is approximate and breaks continuity')
+  ok(s.approximate && s.added === 2 && s.removed === 2 && s.diffAvailable, 'ledger: an opaque edit is approximate and breaks continuity; its own hunks still show')
 }
 
 // Re-keying: a handle buffers under itself until init names the session.
@@ -152,7 +152,7 @@ const one = async (l: ChangeLedger, handle = 'h') => (await l.changes(handle))![
 
 // Eviction drops old texts but keeps counts, and the open segment keeps its continuity text.
 {
-  const l = new ChangeLedger(() => {}, 12)
+  const l = new ChangeLedger(() => {}, 20)
   l.attach('h', 'h')
   const envs = [
     ...edit('e1', '/f.txt', 'a\nb\n', [hunk(1, 2, 2, [' a', '-b', '+B'])]),
@@ -204,7 +204,7 @@ const live = (stream: string): Promise<unknown> => ledgerWith(lines(stream), 'li
 {
   copyFileSync(fixture('s0-5.session.jsonl'), join(project, 's05.jsonl'))
   const [big] = (await replayed('s05')) as { added: number; removed: number; approximate: boolean; diffAvailable: boolean }[]
-  ok(big.added === 1 && big.removed === 1 && !big.approximate && !big.diffAvailable, 'ledger: S0-5 big-file replay counts its patch')
+  ok(big.added === 1 && big.removed === 1 && !big.approximate && big.diffAvailable, 'ledger: S0-5 big-file replay counts its patch and can show it')
   const s = await one(
     ledgerWith([
       ...edit('b1', '/big.txt', null, [hunk(10, 1, 1, ['-a', '+b'])]),

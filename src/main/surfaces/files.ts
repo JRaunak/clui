@@ -10,6 +10,7 @@ import { constants, watch as fsWatch, type BigIntStats, type FSWatcher } from 'n
 import { lstat, mkdir, mkdtemp, open, opendir, realpath, rm, symlink, writeFile, type FileHandle } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import type { FileStat, Refusal, TextRead } from '../../shared/files'
 
 export type FileOperation = 'read-file' | 'list-directory' | 'watch-file' | 'watch-directory' | 'open-external'
 export type FileConsumer = 'file' | 'tree' | 'diff' | 'editor'
@@ -27,23 +28,7 @@ export interface FileResource extends FileAccess {
   ino: bigint
 }
 
-export interface Refusal {
-  ok: false
-  reason: 'invalid' | 'denied' | 'missing' | 'wrong-type' | 'changed' | 'too-large' | 'limit' | 'unreadable' | 'unavailable'
-}
-
-export interface TextRead {
-  ok: true
-  text: string
-  size: number
-  mtimeMs: number
-  binary: boolean
-  truncated: boolean
-  /** Not valid UTF-8: `text` is empty rather than a lossy decode. */
-  unsupportedEncoding: boolean
-  /** Hash of the returned bytes, so a touch or a no-op rewrite keeps it. Not the metadata revision readBytes takes. */
-  revision: string
-}
+export type { Refusal, TextRead } from '../../shared/files'
 
 export interface DirEntry {
   name: string
@@ -85,6 +70,7 @@ class Refused extends Error {
 
 const refuse = (reason: Refusal['reason']): Refusal => ({ ok: false, reason })
 const code = (e: unknown): unknown => (e as NodeJS.ErrnoException | null)?.code
+const failed = (e: unknown): 'permission' | 'unreadable' => (code(e) === 'EACCES' || code(e) === 'EPERM' ? 'permission' : 'unreadable')
 const isInt = (v: unknown, min: number, max: number): v is number => Number.isSafeInteger(v) && (v as number) >= min && (v as number) <= max
 const within = (root: string, p: string): boolean => p === root || p.startsWith(root.endsWith('/') ? root : root + '/')
 const dirOp = (op: FileOperation): boolean => op === 'list-directory' || op === 'watch-directory'
@@ -148,7 +134,7 @@ async function openVerified(r: FileResource): Promise<FileHandle> {
   try {
     fh = await open(r.path, READ | (r.type === 'directory' ? constants.O_DIRECTORY : 0))
   } catch (e) {
-    throw new Refused(code(e) === 'ENOENT' ? 'missing' : code(e) === 'ELOOP' || code(e) === 'ENOTDIR' ? 'changed' : 'unreadable')
+    throw new Refused(code(e) === 'ENOENT' ? 'missing' : code(e) === 'ELOOP' || code(e) === 'ENOTDIR' ? 'changed' : failed(e))
   }
   try {
     const s = await fh.stat({ bigint: true })
@@ -233,7 +219,7 @@ export function readBytes(r: FileResource, range: { revision: string; offset: nu
   })
 }
 
-export function statFile(r: FileResource): Promise<{ ok: true; type: FileResource['type']; size: number; mtimeMs: number; revision: string } | Refusal> {
+export function statFile(r: FileResource): Promise<FileStat | Refusal> {
   if (!genuine(r)) return Promise.resolve(refuse('invalid'))
   return guarded(r, async (fh) => {
     const s = await fh.stat({ bigint: true })
@@ -305,7 +291,7 @@ export function createFileAccess(sessions: FileSessions) {
     try {
       s = await lstat(path, { bigint: true })
     } catch (e) {
-      return refuse(code(e) === 'ENOENT' ? 'missing' : 'unreadable')
+      return refuse(code(e) === 'ENOENT' ? 'missing' : failed(e))
     }
     if (s.isSymbolicLink()) return refuse('changed')
     const type = s.isFile() ? 'file' : s.isDirectory() ? 'directory' : null

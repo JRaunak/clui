@@ -278,6 +278,18 @@ export function IconDiff(p: IconProps): JSX.Element {
   )
 }
 
+/** A number sign: go to a line by its number. */
+export function IconHash(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M4 9h16" />
+      <path d="M4 15h16" />
+      <path d="M10 3 8 21" />
+      <path d="M16 3l-2 18" />
+    </Svg>
+  )
+}
+
 export function IconFolder(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>

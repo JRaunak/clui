@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react'
+import { useId, useMemo, useState, type ReactNode } from 'react'
 import { useActive, useSession, type PendingPermission } from '../../store'
 import { Button } from '../Button'
 import { IconCheck, IconOpenPane, IconShield } from '../Icon'
@@ -11,6 +11,7 @@ import { PERMISSION_MODE_LABELS, PERMISSION_MODE_DESCRIPTIONS } from '../../../.
 import type { PermissionModeChoice } from '../../../../shared/ipc'
 import type { PermissionSuggestion } from '../../../../shared/events'
 import { GateFrame, type GateCount } from './GateFrame'
+import { HunkView, type GateEdit } from '../surfaces/HunkView'
 
 /** Allow/Deny Gate for a generic gated tool. Keyed per request so consent state is per-request. */
 export function PermissionGate({
@@ -270,7 +271,7 @@ function PermissionInput({
   toolName,
   input
 }: Pick<PendingPermission, 'toolName' | 'input'>): JSX.Element {
-  const diff = diffOf(toolName, input)
+  const diff = useMemo(() => diffOf(toolName, input), [toolName, input])
   const highlight = diff ? null : highlightOf(input)
   return (
     <div className="flex flex-col gap-2">
@@ -283,7 +284,7 @@ function PermissionInput({
             </pre>
           </div>
           {diff.edits.length > 0 ? (
-            <DiffBlock edits={diff.edits} />
+            <HunkView path={diff.filePath} edits={diff.edits} />
           ) : (
             <div className="text-meta text-dim">No diff available for this edit.</div>
           )}
@@ -307,81 +308,27 @@ function PermissionInput({
   )
 }
 
-interface DiffEdit {
-  label?: string
-  removed: string | null
-  added: string | null
-}
-
-/** Edit/MultiEdit/Write viewed as a diff: removed = old_string, added = new_string (Write is
- *  all-added content). Returns null for other tools so they fall to highlightOf. */
-function diffOf(toolName: string, input: unknown): { filePath: string; edits: DiffEdit[] } | null {
+/** Edit/MultiEdit/Write viewed as a diff: before = old_string, after = new_string (Write adds its
+ *  whole content). Returns null for other tools so they fall to highlightOf. */
+function diffOf(toolName: string, input: unknown): { filePath: string; edits: GateEdit[] } | null {
   if (!input || typeof input !== 'object') return null
   const o = input as Record<string, unknown>
   if (typeof o.file_path !== 'string') return null
+  const pair = (r: Record<string, unknown>): GateEdit | null =>
+    typeof r.old_string === 'string' || typeof r.new_string === 'string'
+      ? { before: typeof r.old_string === 'string' ? r.old_string : '', after: typeof r.new_string === 'string' ? r.new_string : '' }
+      : null
   if (toolName === 'Write') {
-    return { filePath: o.file_path, edits: typeof o.content === 'string' ? [{ removed: null, added: o.content }] : [] }
+    return { filePath: o.file_path, edits: typeof o.content === 'string' ? [{ before: '', after: o.content }] : [] }
   }
   if (toolName === 'Edit') {
-    const removed = typeof o.old_string === 'string' ? o.old_string : null
-    const added = typeof o.new_string === 'string' ? o.new_string : null
-    return { filePath: o.file_path, edits: removed !== null || added !== null ? [{ removed, added }] : [] }
+    const e = pair(o)
+    return { filePath: o.file_path, edits: e ? [e] : [] }
   }
   if (toolName === 'MultiEdit') {
     const raw = Array.isArray(o.edits) ? o.edits : []
-    const edits: DiffEdit[] = []
-    raw.forEach((e, i) => {
-      if (!e || typeof e !== 'object') return
-      const r = e as Record<string, unknown>
-      const removed = typeof r.old_string === 'string' ? r.old_string : null
-      const added = typeof r.new_string === 'string' ? r.new_string : null
-      if (removed !== null || added !== null) edits.push({ label: `Edit ${i + 1}`, removed, added })
-    })
-    return { filePath: o.file_path, edits }
+    const edits = raw.flatMap((e) => (e && typeof e === 'object' ? (pair(e as Record<string, unknown>) ?? []) : []))
+    return { filePath: o.file_path, edits: edits.map((e, i) => ({ ...e, label: `Edit ${i + 1} of ${edits.length}` })) }
   }
   return null
-}
-
-function DiffBlock({ edits }: { edits: DiffEdit[] }): JSX.Element {
-  return (
-    <div className="max-h-[32vh] overflow-auto rounded-md border border-border bg-tool">
-      {edits.map((e, i) => (
-        <div key={i} className={i > 0 ? 'border-t border-border' : ''}>
-          {e.label && (
-            <div className="px-3 py-1 text-caps uppercase text-dim">{e.label}</div>
-          )}
-          <DiffLines removed={e.removed} added={e.added} />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-/** +/- gutter glyph and row tint carry the added/removed state, so line text stays text-content
- *  (state is not conveyed by color alone). */
-function DiffLines({ removed, added }: { removed: string | null; added: string | null }): JSX.Element {
-  const line = (glyph: string, tint: string, glyphColor: string, text: string, key: string): JSX.Element => (
-    <div key={key} className={`flex ${tint}`}>
-      <span className={`w-4 shrink-0 select-none text-center font-mono text-code ${glyphColor}`}>{glyph}</span>
-      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-code text-content">
-        {text}
-      </span>
-    </div>
-  )
-  return (
-    <div>
-      {removed !== null &&
-        truncate(removed, 600)
-          .split('\n')
-          .map((l, i) => line('-', 'bg-del-surface', 'text-err', l, `r${i}`))}
-      {added !== null &&
-        truncate(added, 600)
-          .split('\n')
-          .map((l, i) => line('+', 'bg-add-surface', 'text-ok', l, `a${i}`))}
-    </div>
-  )
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + `\n… (${s.length - n} more chars)` : s
 }
