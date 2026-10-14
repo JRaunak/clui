@@ -91,6 +91,12 @@ const api: CluiApi = {
   watchFile: (handleId, path) => ipcRenderer.invoke(IpcChannels.watchFile, handleId, path),
   unwatchFile: (handleId, id) => ipcRenderer.invoke(IpcChannels.unwatchFile, handleId, id),
   openPath: (handleId, path) => ipcRenderer.invoke(IpcChannels.openPath, handleId, path),
+  listDir: (handleId, rel) => ipcRenderer.invoke(IpcChannels.listDir, handleId, rel),
+  watchDir: (handleId, rel) => ipcRenderer.invoke(IpcChannels.watchDir, handleId, rel),
+  revealPath: (handleId, path) => ipcRenderer.invoke(IpcChannels.revealPath, handleId, path),
+  showContextMenu: (items, at) => ipcRenderer.invoke(IpcChannels.showContextMenu, items, at),
+  // The sandboxed preload has no node:os; one sync read before page scripts run.
+  homeDir: ipcRenderer.sendSync(IpcChannels.getHomeDirSync) as string,
   onFileChanged: (cb) => {
     const listener = (_e: unknown, payload: FileChangedEvent): void => cb(payload)
     ipcRenderer.on(IpcChannels.fileChanged, listener)

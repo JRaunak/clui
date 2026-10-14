@@ -32,3 +32,23 @@ export interface FileChangedEvent {
   handleId: string
   id: string
 }
+
+/** One child of a listed directory. A symlink is never followed into, and isn't a folder here. */
+export interface TreeEntry {
+  name: string
+  type: 'file' | 'directory' | 'symlink' | 'other'
+  /** Ignored by Git, or for a folder outside a repository, one of the usual build and dependency folders. */
+  ignored: boolean
+}
+
+export interface TreeListing {
+  ok: true
+  entries: TreeEntry[]
+  /** Every entry in the directory, counted up to a ceiling; above entries.length when the listing was capped. */
+  total: number
+  /** The count stopped at its ceiling: there are at least `total` entries. */
+  totalCapped: boolean
+}
+
+/** One native context menu row. Only plain data crosses: main builds the items and returns the chosen id. */
+export type ContextMenuItem = { type: 'normal'; id: string; label: string; enabled: boolean } | { type: 'separator' }

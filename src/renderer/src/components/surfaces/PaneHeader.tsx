@@ -8,7 +8,7 @@ import { viaOf } from '../../lib/motion'
 export const PANE_BTN =
   'toggle-press flex h-7 w-7 items-center justify-center rounded-md text-dim transition-colors focus-visible:-outline-offset-2 pointer-fine:hover:bg-[var(--glass-row-hover)] pointer-fine:hover:text-content'
 
-const DISABLED_BTN =
+export const DISABLED_BTN =
   'aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:pointer-fine:hover:bg-transparent aria-disabled:pointer-fine:hover:text-dim'
 
 /** Takes the active surface out of Clui. `label` names where it goes; a `disabledReason` keeps the

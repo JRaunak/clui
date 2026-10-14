@@ -3,6 +3,7 @@ import { activeSlice, browserTabOf, surfaceLabel, useActive, useSession, EMPTY_S
 import { siteKeyOf, type TabState } from '../../../../shared/browser'
 import type { SurfaceKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
+import { tilde } from '../../lib/tree'
 import { IconAgentBrowser, IconClose, IconDiff, IconFile, IconFolder, IconPlus } from '../Icon'
 
 const NEAREST: ScrollIntoViewOptions = { block: 'nearest', inline: 'nearest' }
@@ -131,6 +132,7 @@ export function SurfaceTabs(): JSX.Element {
     const label = surfaceLabel(t)
     const common = { id, kind: t.kind, label, suffix: '', more: '', tip: label, closeName: `Close ${label}`, state: null, unseen: !!t.unseen, fade: t.openedBy === 'claude' && !initial.has(id) }
     if (t.kind === 'diff') return [{ ...common, tip: 'What Claude changed in this session' }]
+    if (t.kind === 'tree') return [{ ...common, more: ', file tree', tip: cwd ? tilde(cwd, window.clui.homeDir) : label }]
     if (t.kind !== 'file') return [common]
     const suffix = dup.get(t.key) ?? ''
     const named = suffix ? `${label} ${suffix}` : label

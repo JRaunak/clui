@@ -40,7 +40,9 @@ import { readConfig } from './config/reader'
 import { openInEditor, openDiff } from './ide/open'
 import { listWorkspaceFiles } from './workspace/files'
 import { readGitStatus } from './workspace/git-status'
-import { createFileAccess, readText, statFile } from './surfaces/files'
+import { createFileAccess, readText, statFile, type FileResource, type Refusal } from './surfaces/files'
+import { listTree, treeTarget } from './surfaces/tree'
+import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
 import { changeMarks, diffSnapshots, getDiff, parseDiffRequest, type DiffSource } from './surfaces/diff'
 import {
   getResolvedSettings,
@@ -108,7 +110,7 @@ function resolveTheme(): 'dark' | 'light' {
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
 let menuState: MenuState = { browser: 'none', pane: 'none', external: { kind: 'none', enabled: false } }
-const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = { file: 'Open in Editor', diff: 'Open Diff in Editor', browser: 'Open in Default Browser', none: 'Open Externally' }
+const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = { file: 'Open in Editor', diff: 'Open Diff in Editor', browser: 'Open in Default Browser', tree: 'Open Folder in Editor', none: 'Open Externally' }
 
 function buildMenu(): void {
   const send = (action: string): void => {
@@ -725,8 +727,7 @@ function registerIpc(): void {
     const r = await fileFor(handleId, path, 'read-file')
     return r.ok ? statFile(r) : r
   })
-  handle(IpcChannels.watchFile, async (_e, handleId: string, path: string) => {
-    const r = await fileFor(handleId, path, 'watch-file')
+  const watchFor = async (handleId: string, r: FileResource | Refusal): Promise<{ ok: true; id: string } | Refusal> => {
     if (!r.ok) return r
     let id = ''
     const w = await files.watch(r, () => push(IpcChannels.fileChanged, { handleId, id }))
@@ -738,6 +739,24 @@ function registerIpc(): void {
     }
     watchOwners.set((id = w.id), handleId)
     return w
+  }
+  handle(IpcChannels.watchFile, async (_e, handleId: string, path: string) => watchFor(handleId, await fileFor(handleId, path, 'watch-file')))
+  const cwdOf = (handleId: unknown): string | null => (typeof handleId === 'string' ? manager.cwd(handleId) : null)
+  handle(IpcChannels.listDir, (_e, handleId: string, rel: string) => listTree(files, handleId, cwdOf(handleId), rel))
+  handle(IpcChannels.watchDir, async (_e, handleId: string, rel: string) => watchFor(handleId, await treeTarget(files, handleId, cwdOf(handleId), rel, 'watch-directory')))
+  handle(IpcChannels.revealPath, async (_e, handleId: string, path: string) => {
+    const r = await files.resolveAllowed(typeof handleId === 'string' ? handleId : '', path, { consumer: 'tree', operation: 'open-external' })
+    const name = typeof path === 'string' ? basename(path) : 'the file'
+    if (!r.ok) return { ok: false, message: `Couldn't show ${name} in Finder. ${r.reason === 'missing' ? "It's no longer on disk." : "Clui only shows items in this session's folder."}` }
+    shell.showItemInFolder(r.path)
+    return { ok: true }
+  })
+  handle(IpcChannels.showContextMenu, (e, raw: unknown, rawAt: unknown) => {
+    const items = parseMenuItems(raw)
+    const at = parseAnchor(rawAt)
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!items || at === null || !win) throw new Error('showContextMenu: invalid menu')
+    return popupMenu(win, items, at)
   })
   handle(IpcChannels.unwatchFile, async (_e, handleId: string, id: string) => {
     if (typeof id !== 'string' || watchOwners.get(id) !== handleId) return
@@ -819,6 +838,9 @@ function registerIpc(): void {
 
   // Synchronous: the preload calls this before first paint to set <html data-theme>
   // with no flash. Returns the concrete resolved theme ('dark' | 'light').
+  ipcMain.on(IpcChannels.getHomeDirSync, (e) => {
+    e.returnValue = fromTrustedFrame(e) ? homedir() : ''
+  })
   ipcMain.on(IpcChannels.getResolvedThemeSync, (e) => {
     // Same trusted-frame gate as the async handlers; an untrusted frame just gets the
     // default theme rather than a live read.

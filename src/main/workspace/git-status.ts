@@ -59,14 +59,26 @@ function classify(err: ExecFileException, stderr: string): Reason {
   return 'unreadable'
 }
 
-function git(root: string, args: string[]): Promise<string> {
+interface GitOpts {
+  input?: string
+  /** An exit status that means "no results" rather than failure, as 1 does for check-ignore. */
+  noneExit?: number
+  /** check-ignore refuses --literal-pathspecs; its caller makes each path literal itself. */
+  literal?: boolean
+}
+
+function git(root: string, args: string[], { input, noneExit, literal = true }: GitOpts = {}): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       'git',
-      ['--no-optional-locks', '--literal-pathspecs', '-c', 'core.fsmonitor=false', '-C', root, ...args],
+      ['--no-optional-locks', ...(literal ? ['--literal-pathspecs'] : []), '-c', 'core.fsmonitor=false', '-C', root, ...args],
       { env: gitEnv(), timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, encoding: 'utf8' },
-      (err, stdout, stderr) => (err ? reject(new GitFailure(classify(err, stderr))) : resolve(stdout))
+      (err, stdout, stderr) => (!err ? resolve(stdout) : err.code === noneExit ? resolve('') : reject(new GitFailure(classify(err, stderr))))
     )
+    if (input === undefined) return
+    // A git that exits early (not a repository) closes its stdin mid-write: EPIPE, already reported by the exit.
+    child.stdin?.on('error', () => {})
+    child.stdin?.end(input)
   })
 }
 
@@ -242,4 +254,20 @@ export async function readGitStatus(paths: string[]): Promise<ChangeGitStatus> {
   )
   await Promise.all([...byTree].map(([top, items]) => readTree(top, items, out)))
   return out
+}
+
+/**
+ * Which of `names`, the children of `dir`, Git ignores: one `check-ignore` for the whole batch. Null
+ * when `dir` isn't in a working tree or Git can't answer, so the caller falls back to its own rule.
+ */
+export async function ignoredNames(dir: string, names: string[]): Promise<Set<string> | null> {
+  if (!names.length) return new Set()
+  try {
+    // The ./ prefix keeps a name such as ":(top)x" from reading as pathspec magic; git echoes it back.
+    const out = await git(dir, ['check-ignore', '--stdin', '-z'], { input: names.map((n) => `./${n}\0`).join(''), noneExit: 1, literal: false })
+    const hit = new Set(out.split('\0').flatMap((p) => (p.startsWith('./') ? [nfc(p.slice(2))] : [])))
+    return new Set(names.filter((n) => hit.has(nfc(n))))
+  } catch {
+    return null
+  }
 }

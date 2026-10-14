@@ -129,6 +129,7 @@ export function Stage({
   const browserActive = useActive((s) => browserTabOf(s?.surfaces.active) !== null)
   const onBrowser = kind === 'surfaces' && browserActive
   const onDiff = useActive((s) => kind === 'surfaces' && s?.surfaces.active === 'diff')
+  const onTree = useActive((s) => kind === 'surfaces' && s?.surfaces.active === 'tree')
   const diffOpenable = useActive((s) => !!selectedChange(s)?.snapshot)
   const handleId = useSession((s) => s.activeHandleId)
   const filePath = useActive((s) => (kind === 'surfaces' && s?.surfaces.active && s.surfaces.tabs[s.surfaces.active]?.kind === 'file' ? s.surfaces.tabs[s.surfaces.active].key : null))
@@ -145,9 +146,11 @@ export function Stage({
           ? { kind: 'diff', enabled: diffOpenable }
           : filePath
             ? { kind: 'file', enabled: !fileGone }
-            : { kind: 'none', enabled: false }
+            : onTree
+              ? { kind: 'tree', enabled: true }
+              : { kind: 'none', enabled: false }
     })
-  }, [hasBrowser, onBrowser, onDiff, diffOpenable, filePath, fileGone, kind, wide, state, externalBlocked])
+  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileGone, kind, wide, state, externalBlocked])
 
   const pane = useMemo<PaneApi>(
     () => ({

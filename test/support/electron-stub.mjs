@@ -21,4 +21,6 @@ export const shell = { trashItem: async () => { throw new Error('no Trash in tes
 // Loaded by the browser manager's module graph; no test constructs them.
 export const session = {}
 export class WebContentsView {}
-export default { app, safeStorage, session, shell, WebContentsView }
+// The context menu module imports it; tests check only its payload parsing.
+export const Menu = {}
+export default { app, safeStorage, session, shell, WebContentsView, Menu }

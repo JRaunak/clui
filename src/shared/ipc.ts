@@ -17,7 +17,7 @@ import type { ConfigBundle } from './config'
 import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, LocalNetSite, PaneBounds, SavedLoginInfo } from './browser'
 import type { AnnotateEvent } from './annotate'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff } from './changes'
-import type { FileChangedEvent, FileStat, Refusal, TextRead } from './files'
+import type { ContextMenuItem, FileChangedEvent, FileStat, Refusal, TextRead, TreeListing } from './files'
 import type {
   CluiSettings,
   EffortChoice,
@@ -250,6 +250,16 @@ export interface CluiApi {
   onFileChanged: (cb: (evt: FileChangedEvent) => void) => () => void
   /** Open a file the session may see in its default app. */
   openPath: (handleId: string, path: string) => Promise<{ ok: true } | { ok: false; message: string }>
+  /** One folder of the session's cwd by its cwd-relative path ('' for the cwd), with Git-ignored entries flagged. */
+  listDir: (handleId: string, rel: string) => Promise<TreeListing | Refusal>
+  /** Watch a listed folder (shallow); changes arrive through onFileChanged, and unwatchFile ends it. */
+  watchDir: (handleId: string, rel: string) => Promise<{ ok: true; id: string } | Refusal>
+  /** Show a file or folder the session may see in Finder. */
+  revealPath: (handleId: string, path: string) => Promise<{ ok: true } | { ok: false; message: string }>
+  /** A native context menu at the pointer, or at `at` in window coordinates; resolves with the chosen id or null. */
+  showContextMenu: (items: ContextMenuItem[], at?: { x: number; y: number }) => Promise<string | null>
+  /** The user's home directory, for printing paths with `~`. */
+  homeDir: string
   /**
    * Read app settings: resolved values plus per-key provenance. A key with source
    * 'override' is in Clui's own settings.json; 'cli' is inherited from
@@ -427,6 +437,10 @@ export const IpcChannels = {
   /** main → renderer push channel for watched-file changes */
   fileChanged: 'clui:fileChanged',
   openPath: 'clui:openPath',
+  listDir: 'clui:listDir',
+  watchDir: 'clui:watchDir',
+  revealPath: 'clui:revealPath',
+  showContextMenu: 'clui:showContextMenu',
   getSettings: 'clui:getSettings',
   updateSettings: 'clui:updateSettings',
   detectCliAt: 'clui:detectCliAt',
@@ -440,6 +454,7 @@ export const IpcChannels = {
    * (an inline <head> script would violate our strict `default-src 'self'` CSP).
    */
   getResolvedThemeSync: 'clui:getResolvedThemeSync',
+  getHomeDirSync: 'clui:getHomeDirSync',
   /** main → renderer push channel */
   sessionEvent: 'clui:sessionEvent',
   /** main → renderer push channel for Claude change summaries */
@@ -483,5 +498,5 @@ export interface MenuState {
   browser: 'none' | 'shown' | 'hidden'
   pane: 'none' | 'split' | 'full'
   /** The active surface's Open externally target, and whether it can open now. */
-  external: { kind: 'file' | 'diff' | 'browser' | 'none'; enabled: boolean }
+  external: { kind: 'file' | 'diff' | 'browser' | 'tree' | 'none'; enabled: boolean }
 }

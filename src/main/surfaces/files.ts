@@ -46,6 +46,8 @@ export const TEXT_MAX = 5 * 1024 * 1024
 export const BYTES_MAX = 200 * 1024 * 1024
 export const CHUNK_MAX = 4 * 1024 * 1024
 export const LIST_MAX = 10_000
+/** How far a capped listing keeps counting, so a huge folder can't hold a listing open. */
+export const COUNT_MAX = 100_000
 export const WATCH_MAX = 32
 const SNIFF = 8192
 const DEBOUNCE_MS = 100
@@ -227,26 +229,27 @@ export function statFile(r: FileResource): Promise<FileStat | Refusal> {
   })
 }
 
-export function listDir(r: FileResource): Promise<{ ok: true; entries: DirEntry[]; truncated: boolean } | Refusal> {
+export function listDir(r: FileResource): Promise<{ ok: true; entries: DirEntry[]; truncated: boolean; total: number; totalCapped: boolean } | Refusal> {
   if (!genuine(r) || r.operation !== 'list-directory' || r.type !== 'directory') return Promise.resolve(refuse('invalid'))
   return guarded(r, async (fh) => {
     // /dev/fd/<fd> lists the verified directory itself, not whatever its path names now. The
     // offset is shared with fh, which is why every listing gets a fresh descriptor.
     const dir = await opendir(`/dev/fd/${fh.fd}`)
     const entries: DirEntry[] = []
-    let truncated = false
+    let total = 0
+    let totalCapped = false
     try {
       for (let d = await dir.read(); d; d = await dir.read()) {
-        if (entries.length === LIST_MAX) {
-          truncated = true
+        if (total === COUNT_MAX) {
+          totalCapped = true
           break
         }
-        entries.push({ name: d.name, type: d.isFile() ? 'file' : d.isDirectory() ? 'directory' : d.isSymbolicLink() ? 'symlink' : 'other' })
+        if (total++ < LIST_MAX) entries.push({ name: d.name, type: d.isFile() ? 'file' : d.isDirectory() ? 'directory' : d.isSymbolicLink() ? 'symlink' : 'other' })
       }
     } finally {
       await dir.close()
     }
-    return { ok: true as const, entries, truncated }
+    return { ok: true as const, entries, truncated: total > LIST_MAX, total, totalCapped }
   })
 }
 

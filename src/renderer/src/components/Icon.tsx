@@ -394,6 +394,19 @@ export function IconPin(p: IconProps): JSX.Element {
   )
 }
 
+/** A crosshair: find where this file sits in the tree. */
+export function IconLocate(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M2 12h3" />
+      <path d="M19 12h3" />
+      <path d="M12 2v3" />
+      <path d="M12 19v3" />
+      <circle cx="12" cy="12" r="7" />
+    </Svg>
+  )
+}
+
 /** A dashed square with a pointer over its corner: annotate an element of the page. */
 export function IconTarget(p: IconProps): JSX.Element {
   return (
