@@ -24,6 +24,8 @@ export type TreeRow =
       dim: Dim
       /** The row's own state, which the description names and `*` respects. */
       own: Dim
+      /** Hidden only by its own leading dot, so its icon keeps the mapped hue. */
+      lit: boolean
       size: number
       pos: number
       parent: string
@@ -67,7 +69,7 @@ export function flatten(dirs: Readonly<Record<string, DirState>>, open: Readonly
       const own: Dim = e.ignored ? 'ignored' : e.name.startsWith('.') ? 'hidden' : null
       const isOpen = isDir && open.has(rel)
       const special = e.type === 'symlink' ? 'link' : e.type === 'other' ? 'other' : null
-      rows.push({ t: 'entry', key: rel, rel, name: e.name, depth, dir: isDir, special, open: isOpen, dim: own ?? dim, own, size, pos: i + 1, parent: dir })
+      rows.push({ t: 'entry', key: rel, rel, name: e.name, depth, dir: isDir, special, open: isOpen, dim: own ?? dim, own, lit: own === 'hidden' && !dim, size, pos: i + 1, parent: dir })
       if (isOpen) walk(rel, depth + 1, own ?? dim)
     })
     if (d.total > size) rows.push({ t: 'more', key: `\0more:${dir}`, parent: dir, depth, shown: size, total: d.total, totalCapped: d.totalCapped })

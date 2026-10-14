@@ -172,6 +172,15 @@
   --color-effort-xhigh: var(--orange-400);
   /* Ultracode effort: purple, matching statusline.sh. Deliberately not the terracotta accent and distinct from info-blue. */
   --color-effort-ultra: #a78bfa;
+  /* File-type icon hues (5-file-icons.md). Each hue is shared by both themes and stays out of 15 to 60, which the accent
+     and err own. Red runs past the 0.13 chroma cap to stay apart from pink, 20 degrees away. */
+  --color-ft-blue: oklch(0.72 0.12 255);
+  --color-ft-cyan: oklch(0.76 0.1 215);
+  --color-ft-green: oklch(0.74 0.13 145);
+  --color-ft-yellow: oklch(0.84 0.13 95);
+  --color-ft-purple: oklch(0.72 0.13 300);
+  --color-ft-pink: oklch(0.74 0.12 345);
+  --color-ft-red: oklch(0.7 0.14 5);
   /* Focus ring, applied globally below. */
   --color-ring: var(--terra-500);
 
@@ -257,6 +266,8 @@
   --lumen-scale-min: 0.86;
   /* A thin state overlay for hover on glass, never a second glass layer. */
   --glass-row-hover: rgb(255 255 255 / 0.06);
+  /* Fill opacity under the stroke for a closed folder's body and an open folder's front face. */
+  --ft-folder-fill: 0.18;
   --window-material: solid;
   /* Solved against the measured dark material; the worst case is a white window behind (12-sidebar-glass.md §13.8). */
   --sidebar-glass-a: 85%;
@@ -322,6 +333,13 @@
   --color-effort-xhigh: #c2410c;
   /* Ultracode purple, darkened for AA on the light surface (#6d28d9 ≈ 7.1:1 on white). */
   --color-effort-ultra: #6d28d9;
+  --color-ft-blue: oklch(0.52 0.12 255);
+  --color-ft-cyan: oklch(0.52 0.09 215);
+  --color-ft-green: oklch(0.52 0.13 145);
+  --color-ft-yellow: oklch(0.56 0.115 95);
+  --color-ft-purple: oklch(0.52 0.13 300);
+  --color-ft-pink: oklch(0.53 0.12 345);
+  --color-ft-red: oklch(0.5 0.15 5);
 
   /* Focus ring: the darkened accent (4.97:1 on white). Dark's terracotta is only ~3.1:1 on white (a hair over the 3:1 ring floor, no margin) and fails as text, so light reuses one text-safe accent value for ring and marks alike. */
   --color-ring: #b8502e;
@@ -359,6 +377,7 @@
   --lumen-min: 0.6;
   --lumen-scale-min: 0.9;
   --glass-row-hover: rgb(0 0 0 / 0.05);
+  --ft-folder-fill: 0.14;
   /* The lowest tint that keeps every sidebar foreground at AA over a black window, the hover visible and warm
      show-through under the chroma cap, solved from the native material. The row lift is solved for visibility only:
      every row foreground passes on both the sidebar and the opaque lift, so it passes on any mix of them. */

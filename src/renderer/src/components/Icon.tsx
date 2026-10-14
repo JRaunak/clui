@@ -5,7 +5,7 @@
  */
 type IconProps = { className?: string; title?: string }
 
-function Svg({
+export function Svg({
   className,
   title,
   children

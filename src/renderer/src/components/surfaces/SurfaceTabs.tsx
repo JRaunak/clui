@@ -4,7 +4,8 @@ import { siteKeyOf, type TabState } from '../../../../shared/browser'
 import type { SurfaceKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
 import { tilde } from '../../lib/tree'
-import { IconAgentBrowser, IconClose, IconDiff, IconFile, IconFolder, IconPlus } from '../Icon'
+import { FileIcon } from '../FileIcon'
+import { IconAgentBrowser, IconClose, IconDiff, IconFolder, IconPlus } from '../Icon'
 
 const NEAREST: ScrollIntoViewOptions = { block: 'nearest', inline: 'nearest' }
 const EMPTY_IDS: number[] = []
@@ -64,7 +65,6 @@ interface TabView {
 
 const GLYPH: Partial<Record<SurfaceKind, (p: { className?: string }) => JSX.Element>> = {
   browser: IconAgentBrowser,
-  file: IconFile,
   diff: IconDiff,
   tree: IconFolder
 }
@@ -271,6 +271,8 @@ export function SurfaceTabs(): JSX.Element {
                       <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
                       <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
                     </span>
+                  ) : v.kind === 'file' ? (
+                    <FileIcon name={v.label} kind="file" className="h-3.5 w-3.5" />
                   ) : (
                     Glyph && <Glyph className="h-3.5 w-3.5" />
                   )}

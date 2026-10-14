@@ -4,7 +4,8 @@ import { useActive, useSession, EMPTY_CHANGES } from '../../store'
 import type { ContextMenuItem, Refusal } from '../../../../shared/files'
 import type { FileChangeSummary } from '../../../../shared/changes'
 import { Button } from '../Button'
-import { IconChevron, IconDiff, IconFile, IconFolder, IconFolderOpen, IconLocate } from '../Icon'
+import { FileIcon } from '../FileIcon'
+import { IconChevron, IconDiff, IconLocate } from '../Icon'
 import { describe, Figure, figureWidth, MINUS } from '../ChangedFiles'
 import { DISABLED_BTN, PANE_BTN, type PaneExternal } from './PaneHeader'
 import { openEditor } from './FileSurface'
@@ -515,7 +516,6 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
               : ''
     const kindLine = r.special === 'link' ? 'Symbolic link.' : r.special === 'other' ? 'Special file.' : ''
     const description = [kindLine, changeLine, dimLine].filter(Boolean).join(' ')
-    const Glyph = r.dir ? (r.open ? IconFolderOpen : IconFolder) : IconFile
     const busy = r.open && dirs[r.rel]?.t === 'loading'
     const hideRemoved = !!change?.created && change.removed === 0
     return (
@@ -540,7 +540,7 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
         <span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center justify-center text-faint">
           {r.dir && <IconChevron className={`h-3.5 w-3.5 ${r.open ? 'rotate-90' : ''}`} />}
         </span>
-        <Glyph className={`h-3.5 w-3.5 shrink-0 ${r.dim ? 'text-faint' : 'text-dim'}`} />
+        <FileIcon name={r.name} kind={r.dir ? 'folder' : 'file'} open={r.open} dim={r.lit ? 'hue' : !!r.dim} />
         <span className={`min-w-0 flex-1 truncate font-mono text-code ${r.dim ? 'text-faint' : 'text-content'}`}>{r.name}</span>
         {change?.created && (
           <span aria-hidden="true" className="shrink-0 text-meta text-dim">
@@ -566,7 +566,7 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
         {SKELETON.map((w, i) => (
           <div key={i} className={ROW} style={indent(0)}>
             <span className="h-4 w-4 shrink-0" />
-            <span className="h-3.5 w-3.5 shrink-0" />
+            <span className="h-4 w-4 shrink-0" />
             <span className="h-3 rounded-sm bg-bg-raised" style={{ width: `${w}%` }} />
           </div>
         ))}
