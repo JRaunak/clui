@@ -141,7 +141,7 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
                       subtitle={a.description}
                       origin={a.origin}
                       chips={[a.model, ...splitTools(a.tools)]}
-                      onOpen={() => void window.clui.openInEditor(a.filePath)}
+                      onOpen={() => void window.clui.openInEditor(null, a.filePath)}
                     />
                   ))
                 ) : (
@@ -159,7 +159,7 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
                       subtitle={s.description}
                       origin={s.origin}
                       chips={[s.version && `v${s.version}`]}
-                      onOpen={() => void window.clui.openInEditor(s.filePath)}
+                      onOpen={() => void window.clui.openInEditor(null, s.filePath)}
                     />
                   ))
                 ) : (
@@ -177,7 +177,7 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
                       subtitle={h.matcher ? `matcher: ${h.matcher}` : ''}
                       origin={h.origin}
                       meta={h.commands}
-                      onOpen={h.filePath ? () => void window.clui.openInEditor(h.filePath) : undefined}
+                      onOpen={h.filePath ? () => void window.clui.openInEditor(null, h.filePath) : undefined}
                     />
                   ))
                 ) : (
@@ -195,7 +195,7 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
                       subtitle={m.target}
                       origin={m.origin}
                       meta={[`transport: ${m.transport}`]}
-                      onOpen={m.filePath ? () => void window.clui.openInEditor(m.filePath) : undefined}
+                      onOpen={m.filePath ? () => void window.clui.openInEditor(null, m.filePath) : undefined}
                     />
                   ))
                 ) : (

@@ -8,8 +8,8 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Menu, shell, systemPr
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { basename, dirname } from 'node:path'
+import { readFile, writeFile, mkdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import {
@@ -40,6 +40,7 @@ import { readConfig } from './config/reader'
 import { openInEditor, openDiff } from './ide/open'
 import { listWorkspaceFiles } from './workspace/files'
 import { readGitStatus } from './workspace/git-status'
+import { createFileAccess } from './surfaces/files'
 import {
   getResolvedSettings,
   getSettings,
@@ -350,6 +351,12 @@ function registerIpc(): void {
     (handleId, summaries) => push(IpcChannels.changesEvent, { handleId, summaries })
   )
   sessionManager = manager
+  // ponytail: no files.dispose on session exit; nothing session-bound is granted or watched yet and a
+  // gone handle's null cwd denies everything. Call it from disposeBrowser with the first user grant or watch.
+  const files = createFileAccess({
+    cwd: (h) => manager.cwd(h),
+    changedPaths: async (h) => (await manager.changes(h))?.map((c) => c.path) ?? null
+  })
 
   // Reject IPC that doesn't come from the top frame of a real app window: an injected
   // sub-frame or webview must not reach the privileged bridge. Defense in depth
@@ -657,16 +664,36 @@ function registerIpc(): void {
     await Promise.all([deleteSessionModel(sessionId), deleteSessionUsage(sessionId)])
   })
 
-  handle(IpcChannels.readConfig, async (_e, cwd: string | null) => readConfig(cwd))
-
-  handle(IpcChannels.openInEditor, async (_e, filePath: string) => {
-    const { editorCommand } = await getSettings()
-    await openInEditor(editorCommand || 'code', filePath)
+  // The sources readConfig returns are the only files the editor may open without a session.
+  handle(IpcChannels.readConfig, async (_e, cwd: string | null) => {
+    const bundle = await readConfig(cwd)
+    const sources = [...bundle.agents, ...bundle.skills, ...bundle.hooks, ...bundle.mcpServers]
+    await Promise.all(sources.map((s) => s.filePath && files.grant(null, 'editor', s.filePath)))
+    return bundle
   })
 
-  handle(IpcChannels.openDiff, async (_e, left: string, right: string) => {
+  const editorTarget = async (handleId: string | null, path: string): Promise<string> => {
+    const r = await files.resolveAllowed(handleId, path, { consumer: 'editor', operation: 'open-external' })
+    if (r.ok) return r.path
+    const name = typeof path === 'string' ? basename(path) : 'the file'
+    throw new Error(
+      r.reason === 'missing'
+        ? `Couldn't open ${name}. It's no longer on disk, so it was deleted or moved.`
+        : `Couldn't open ${name}. Clui only opens files in this session's folder or files Claude changed; open it from your editor instead.`
+    )
+  }
+
+  handle(IpcChannels.openInEditor, async (_e, handleId: string | null, filePath: string) => {
+    const target = await editorTarget(handleId, filePath)
     const { editorCommand } = await getSettings()
-    await openDiff(editorCommand || 'code', left, right)
+    await openInEditor(editorCommand || 'code', target)
+  })
+
+  handle(IpcChannels.openDiff, async (_e, handleId: string, left: string, right: string) => {
+    if (typeof handleId !== 'string') throw new Error("Clui can't open that diff.")
+    const [a, b] = await Promise.all([editorTarget(handleId, left), editorTarget(handleId, right)])
+    const { editorCommand } = await getSettings()
+    await openDiff(editorCommand || 'code', a, b)
   })
 
   handle(IpcChannels.openExternal, async (_e, url: string) => {
@@ -675,9 +702,13 @@ function registerIpc(): void {
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)
   })
 
-  handle(IpcChannels.listWorkspaceFiles, async (_e, cwd: string) => {
+  handle(IpcChannels.listWorkspaceFiles, async (_e, handleId: string) => {
+    const cwd = typeof handleId === 'string' ? manager.cwd(handleId) : null
+    // No home/root narrowing here: it returns paths, not contents, and the session's CLI can already read all of its cwd.
+    const root = cwd === null ? null : await realpath(cwd).catch(() => null)
+    if (!root || !(await stat(root).catch(() => null))?.isDirectory()) return { files: [], truncated: false }
     try {
-      return await listWorkspaceFiles(cwd)
+      return await listWorkspaceFiles(root)
     } catch {
       return { files: [], truncated: false }
     }

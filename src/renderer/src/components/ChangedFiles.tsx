@@ -124,9 +124,10 @@ export function ChangedFiles(): JSX.Element | null {
   const openFile = async (path: string): Promise<void> => {
     setError(null)
     try {
-      await window.clui.openInEditor(path)
+      await window.clui.openInEditor(handleId, path)
     } catch (e) {
-      setError((e as Error).message)
+      // Electron prefixes a handler's error with the channel name; the user reads only main's sentence.
+      setError((e as Error).message.replace(/^Error invoking remote method '[^']*': (Error: )?/, ''))
     }
   }
 

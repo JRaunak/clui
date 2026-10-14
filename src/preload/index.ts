@@ -75,13 +75,13 @@ const api: CluiApi = {
   deleteSessionModel: (sessionId: string) =>
     ipcRenderer.invoke(IpcChannels.deleteSessionModel, sessionId),
   readConfig: (cwd: string | null) => ipcRenderer.invoke(IpcChannels.readConfig, cwd),
-  openInEditor: (filePath: string) => ipcRenderer.invoke(IpcChannels.openInEditor, filePath),
+  openInEditor: (handleId: string | null, filePath: string) => ipcRenderer.invoke(IpcChannels.openInEditor, handleId, filePath),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.openExternal, url),
   getChanges: (handleId: string) => ipcRenderer.invoke(IpcChannels.getChanges, handleId),
   getChangeGitStatus: (handleId: string) => ipcRenderer.invoke(IpcChannels.getChangeGitStatus, handleId),
-  listWorkspaceFiles: (cwd: string) => ipcRenderer.invoke(IpcChannels.listWorkspaceFiles, cwd),
-  openDiff: (left: string, right: string) =>
-    ipcRenderer.invoke(IpcChannels.openDiff, left, right),
+  listWorkspaceFiles: (handleId: string) => ipcRenderer.invoke(IpcChannels.listWorkspaceFiles, handleId),
+  openDiff: (handleId: string, left: string, right: string) =>
+    ipcRenderer.invoke(IpcChannels.openDiff, handleId, left, right),
   getSettings: () => ipcRenderer.invoke(IpcChannels.getSettings),
   updateSettings: (patch: Partial<CluiSettings>, clear?: SettingsKey[]) =>
     ipcRenderer.invoke(IpcChannels.updateSettings, patch, clear),

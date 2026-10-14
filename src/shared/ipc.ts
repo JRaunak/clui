@@ -220,19 +220,20 @@ export interface CluiApi {
   deleteSessionModel: (sessionId: string) => Promise<void>
   /** Read the Customizations bundle (agents/skills/hooks/mcp) for a workspace. */
   readConfig: (cwd: string | null) => Promise<ConfigBundle>
-  /** Open a file in the configured editor. */
-  openInEditor: (filePath: string) => Promise<void>
+  /** Open a file in the configured editor: one the session may see, or with a null handle, a
+   *  Configuration source that readConfig returned. Rejects with a readable message otherwise. */
+  openInEditor: (handleId: string | null, filePath: string) => Promise<void>
   /** Open an http(s) URL in the user's default browser (markdown links). */
   openExternal: (url: string) => Promise<void>
   /** The session's Claude changes, with each file's on-disk presence re-checked. Null once the session is gone. */
   getChanges: (handleId: string) => Promise<FileChangeSummary[] | null>
   /** Git decoration for the session's changed files, read in main from its ledger paths. Null once the session is gone. */
   getChangeGitStatus: (handleId: string) => Promise<ChangeGitStatus | null>
-  /** List files under a workspace (git-aware; relative paths, capped) for the
-   *  composer's @-file picker. Returns [] on error. */
-  listWorkspaceFiles: (cwd: string) => Promise<{ files: string[]; truncated: boolean }>
-  /** Open a two-file diff in the configured editor. */
-  openDiff: (left: string, right: string) => Promise<void>
+  /** List files under the session's workspace (git-aware; relative paths, capped) for the
+   *  composer's @-file picker. Empty on error. */
+  listWorkspaceFiles: (handleId: string) => Promise<{ files: string[]; truncated: boolean }>
+  /** Open a diff of two files the session may see, in the configured editor. */
+  openDiff: (handleId: string, left: string, right: string) => Promise<void>
   /**
    * Read app settings: resolved values plus per-key provenance. A key with source
    * 'override' is in Clui's own settings.json; 'cli' is inherited from

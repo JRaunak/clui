@@ -80,6 +80,7 @@ export function useComposerAutocomplete(
   apply: (nextText: string, nextCaret: number) => void
 ): AutocompleteApi {
   const cwd = useActive((s) => s?.cwd ?? null)
+  const handleId = useActive((s) => s?.handleId ?? null)
   const [files, setFiles] = useState<string[]>([])
   const [sel, setSel] = useState(0)
   const loadedForCwd = useRef<string | null>(null)
@@ -90,10 +91,10 @@ export function useComposerAutocomplete(
 
   // Lazy-load the workspace file list the first time an `@` trigger opens (per cwd).
   useEffect(() => {
-    if (trigger?.char !== '@' || !cwd || loadedForCwd.current === cwd) return
+    if (trigger?.char !== '@' || !cwd || !handleId || loadedForCwd.current === cwd) return
     loadedForCwd.current = cwd
-    void window.clui.listWorkspaceFiles(cwd).then((r) => setFiles(r.files))
-  }, [trigger?.char, cwd])
+    void window.clui.listWorkspaceFiles(handleId).then((r) => setFiles(r.files))
+  }, [trigger?.char, cwd, handleId])
 
   // Build candidate items for the active trigger.
   const skills = useActiveSkills(trigger?.char === '/')

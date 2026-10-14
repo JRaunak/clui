@@ -39,6 +39,7 @@ export class SessionManager {
   private readonly taskReadSeq = new Map<string, number>()
 
   private readonly ledger: ChangeLedger
+  private readonly cwds = new Map<string, string>()
 
   constructor(private readonly sink: EventSink, publishChanges: PublishFn) {
     this.ledger = new ChangeLedger(publishChanges)
@@ -46,6 +47,7 @@ export class SessionManager {
 
   start(handleId: string, opts: ClaudeSessionOptions): void {
     const session = new ClaudeSession(opts)
+    this.cwds.set(handleId, opts.cwd)
     // A resume keeps its id, so its ledger key is known now. A fork or a new session goes by its
     // handle until init names the session; a fork's inherited history is the source's transcript.
     this.ledger.attach(handleId, opts.resumeSessionId && !opts.fork ? opts.resumeSessionId : handleId)
@@ -73,7 +75,13 @@ export class SessionManager {
     this.taskTimers.delete(handleId)
     this.lastTaskSnapshot.delete(handleId)
     this.taskReadSeq.delete(handleId)
+    this.cwds.delete(handleId)
     this.ledger.detach(handleId)
+  }
+
+  /** The live session's working directory; null once it's gone. */
+  cwd(handleId: string): string | null {
+    return this.cwds.get(handleId) ?? null
   }
 
   /** The handle's Claude changes; null once its session is gone. */
