@@ -10,11 +10,9 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readdir } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
+import { WORKSPACE_FILE_CAP as CAP } from '../../shared/files'
 
 const execFileP = promisify(execFile)
-
-/** Max files returned, so a huge repo can't flood the picker or the IPC. */
-const CAP = 3000
 
 /** Dirs never worth walking in the fallback path (git already ignores most); outside a repository the file tree dims them. */
 export const SKIP_DIRS = new Set([

@@ -377,6 +377,7 @@ export type MenuAction =
   | 'open-settings'
   | 'open-palette'
   | 'open-command-palette'
+  | 'open-file'
   | 'find-in-conversation'
   | 'find-next'
   | 'find-prev'
@@ -497,6 +498,8 @@ export const IpcChannels = {
 export interface MenuState {
   browser: 'none' | 'shown' | 'hidden'
   pane: 'none' | 'split' | 'full'
+  /** The active session has a cwd, so it has files to open and a pane to show them in. */
+  canPane: boolean
   /** The active surface's Open externally target, and whether it can open now. */
   external: { kind: 'file' | 'diff' | 'browser' | 'tree' | 'none'; enabled: boolean }
 }

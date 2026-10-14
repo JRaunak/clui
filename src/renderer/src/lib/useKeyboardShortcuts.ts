@@ -20,7 +20,7 @@
 import { useEffect } from 'react'
 import { activeSlice, anyTabIn, browserTabOf, useSession } from '../store'
 import { closeTab } from '../components/surfaces/SurfaceTabs'
-import type { PaletteMode } from '../components/CommandPalette'
+import { OPEN_FILE_EVENT, type PaletteMode } from '../components/CommandPalette'
 import { FILE_FIND_EVENT } from '../components/surfaces/FileSurface'
 
 /**
@@ -65,6 +65,10 @@ export function useKeyboardShortcuts(opts: {
   } = opts
 
   useEffect(() => {
+    const openFile = (): void => {
+      if (activeSlice(useSession.getState())?.cwd) onOpenPalette('file')
+    }
+    window.addEventListener(OPEN_FILE_EVENT, openFile)
     // 1. Native-menu actions (⌘N / ⌘W / ⌘,).
     const off = window.clui.onMenuAction((action) => {
       const store = useSession.getState()
@@ -101,6 +105,9 @@ export function useKeyboardShortcuts(opts: {
           break
         case 'open-command-palette':
           onOpenPalette('command')
+          break
+        case 'open-file':
+          openFile()
           break
         // Find/search route straight to store flags (no App callback needed).
         // ⌘F only means something with a session open; ⌘⇧F is always available.
@@ -203,6 +210,7 @@ export function useKeyboardShortcuts(opts: {
 
     return () => {
       off()
+      window.removeEventListener(OPEN_FILE_EVENT, openFile)
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [

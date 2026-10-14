@@ -51,6 +51,7 @@ const replies: Record<string, (...args: any[]) => unknown> = {}
 }
 const slice = (over: Record<string, unknown> = {}): any => ({
   handleId: 'h1',
+  cwd: '/tmp/w',
   sessionId: null,
   model: 'claude-opus-5-5[1m]',
   modelChoice: 'claude-opus-5-5[1m]',
@@ -439,9 +440,9 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   st().applyBrowserEvent('h1', { type: 'tab-closed', tab: 1, by: 'agent', viewed: 1 })
   ok(sur().active === 'diff' && cur().paneOpen, 'placement: closing a browser tab behind another surface leaves it active')
   st().closeSurface('h1', 'diff')
-  ok(!cur().paneOpen && sur().order.length === 0 && sur().active === null, 'placement: closing the last tab hides the pane')
+  ok(cur().paneOpen && sur().order.length === 0 && sur().active === null, 'placement: closing the last tab leaves the pane on the picker')
 
-  // Claude's closes are said from where the strip lands; emptying the pane goes through the status line.
+  // Claude's closes are said from where the strip lands, including the picker when the pane empties.
   fresh({ browser: browserOf([1, 2]), surfaces: { ...empty, order: ['browser:1', 'browser:2'], active: 'browser:2' }, paneOpen: true })
   openDiff()
   st().activateSurface('h1', 'browser:2')
@@ -449,7 +450,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   ok(cur().browser.announce.startsWith('Claude closed tab 2. Showing Claude changes'), 'announce: a close that lands on another kind names it')
   st().closeSurface('h1', 'diff')
   st().applyBrowserEvent('h1', { type: 'tab-closed', tab: 1, by: 'agent', viewed: 1 })
-  ok(!cur().paneOpen && cur().statusAnnounce.startsWith('Claude closed tab 1. Browser hidden.'), 'announce: closing the last tab is said by the status line')
+  ok(cur().paneOpen && sur().active === null && cur().browser.announce.startsWith('Claude closed tab 1') && !cur().statusAnnounce, 'announce: Claude closing the last tab leaves the picker and says so in the strip')
 
   // The toggle opens on the tab Claude drives; ⇧⌘B stays on the browser.
   fresh({ browser: { ...browserOf([1, 2]), tabs: [tab(1), tab(2, { drive: 'driving' })] }, surfaces: { ...empty, order: ['browser:1', 'browser:2', 'diff'], active: 'diff', tabs: { diff: { id: 'diff', kind: 'diff', key: '', title: 'Claude changes', openedBy: 'user', openedAt: 0, lastViewedAt: 0 } } } })
@@ -469,6 +470,21 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   ok(!sur().tabs.diff.viewState, 'view state: a mismatched kind is refused')
   st().setSurfaceView('h1', 'diff', { viewState: { kind: 'diff', offsetPx: 12 } })
   ok(sur().tabs.diff.viewState?.offsetPx === 12, 'view state: a matching kind is kept')
+
+  // The picker: an empty pane opens with a cwd, and the toggle opens it without a browser.
+  fresh({ cwd: '' })
+  st().setPane('half')
+  ok(!cur().paneOpen, 'picker: no cwd, no pane')
+  fresh()
+  calls.length = 0
+  st().togglePane()
+  ok(cur().paneOpen && sur().active === null && !calls.some((c) => c.name === 'browserNewTab'), 'picker: the toggle opens an empty pane on the picker without a browser')
+  st().togglePane()
+  ok(!cur().paneOpen, 'picker: the toggle hides it again')
+  fresh({ browser: browserOf([]) })
+  calls.length = 0
+  st().togglePane()
+  ok(calls.some((c) => c.name === 'browserNewTab'), 'picker: with a browser and no tab, the toggle makes one')
 }
 
 const res = (over: Record<string, unknown> = {}): any => ({ type: 'result', sessionId: 's', isError: false, result: null, ...over })

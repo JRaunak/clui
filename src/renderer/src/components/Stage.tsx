@@ -140,6 +140,7 @@ export function Stage({
     window.clui.menuState({
       browser: !hasBrowser ? 'none' : onBrowser ? 'shown' : 'hidden',
       pane: !kind || !wide ? 'none' : state === 'full' ? 'full' : 'split',
+      canPane: !!cwd,
       external: onBrowser
         ? { kind: 'browser', enabled: !externalBlocked }
         : onDiff
@@ -150,7 +151,7 @@ export function Stage({
               ? { kind: 'tree', enabled: true }
               : { kind: 'none', enabled: false }
     })
-  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileGone, kind, wide, state, externalBlocked])
+  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileGone, kind, wide, state, externalBlocked, cwd])
 
   const pane = useMemo<PaneApi>(
     () => ({

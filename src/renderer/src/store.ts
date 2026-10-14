@@ -721,11 +721,12 @@ interface SessionStore {
   decideLocalNet: (site: string, allow: boolean) => Promise<boolean>
   /** Answer an MCP elicitation Gate. */
   respondElicitation: (requestId: string, response: ElicitationResponse) => Promise<void>
-  /** Set the active session's pane. Opening it replaces a subagent view and needs a tab to show. Half
-   *  or full is an explicit size choice, kept for that session. */
+  /** Set the active session's pane. Opening it replaces a subagent view and needs a cwd; with no tabs it
+   *  shows the picker. Half or full is an explicit size choice, kept for that session. */
   setPane: (next: BrowserPaneState) => void
   /** The band's toggle: hides a showing pane, else opens it on paneTarget, or on a new browser tab when
-   *  there's nothing to show. `apply` makes the pane change, so a pointer caller can wrap it in a transition. */
+   *  there's nothing to show, or on the picker without a browser. `apply` makes the pane change, so a
+   *  pointer caller can wrap it in a transition. */
   togglePane: (apply?: (next: BrowserPaneState) => void) => void
   /** ⇧⌘B: hides a pane that shows the browser, else shows a browser tab. */
   toggleBrowser: (apply?: (next: BrowserPaneState) => void) => void
@@ -874,7 +875,7 @@ const without = <T>(rec: Record<string, T>, keep: (id: string) => boolean): Reco
 /**
  * Keeps the browser placements in step with `browser`, in the same update: every tab has one, a closed
  * tab's goes, and an active placement that went hands over to its neighbour. An active browser
- * placement follows main's viewed tab. With nothing left to show the pane hides.
+ * placement follows main's viewed tab. With nothing left to show the pane stays open on the picker.
  */
 function placeBrowser(slice: PerSessionState): PerSessionState {
   const set = slice.surfaces
@@ -896,7 +897,7 @@ function placeBrowser(slice: PerSessionState): PerSessionState {
           browserUnseen: without(set.browserUnseen, (id) => order.includes(id) && id !== active),
           browserLastViewedAt: without(set.browserLastViewedAt, (id) => order.includes(id))
         }
-  return { ...slice, surfaces, paneOpen: slice.paneOpen && order.length > 0 }
+  return surfaces === set ? slice : { ...slice, surfaces }
 }
 
 /** The slice fields that make `id` the active tab: unseen cleared, a pending destination applied, and
@@ -3205,8 +3206,6 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (!gone || e.by !== 'agent') return patchSlice(s, handleId, { browser })
           const cur = s.sessions[handleId]
           const after = placeBrowser({ ...cur, browser }).surfaces
-          // The strip's live region unmounts with the pane, so a close that empties it is said by the status line.
-          if (!after.order.length) return patchSlice(s, handleId, { browser, statusAnnounce: toggled(`Claude closed tab ${e.tab}. Browser hidden.`) })
           const say = (text: string): Partial<SessionStore> => patchSlice(s, handleId, { browser: { ...browser, announce: toggled(text) } })
           if (cur.surfaces.active !== placement(e.tab)) return say(`Claude closed tab ${e.tab}: ${siteKeyOf(gone.url) ?? 'New page'}`)
           const n = browserTabOf(after.active)
@@ -3303,7 +3302,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   setPane: (next) => {
     const s = get()
     const active = activeSlice(s)
-    if (!active || (next !== 'collapsed' && !active.surfaces.order.length)) return
+    if (!active || (next !== 'collapsed' && !active.cwd)) return
     const open = next !== 'collapsed'
     // The subagent pane outranks the Surfaces pane in the Stage, so opening it closes the subagent view.
     const closeSubagent = open && !!s.viewingSubagent
@@ -3323,8 +3322,8 @@ export const useSession = create<SessionStore>((set, get) => ({
       return show('collapsed')
     }
     const target = paneTarget(active)
-    if (!target) return void st.revealBrowser(null, apply)
-    st.activateSurface(active.handleId, target)
+    if (!target && active.browser) return void st.revealBrowser(null, apply)
+    if (target) st.activateSurface(active.handleId, target)
     // A narrow Stage renders half as full, and keeps the user's choice for when it grows back.
     show(active.surfacePaneFull ? 'full' : 'half')
   },
@@ -3445,7 +3444,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       void window.clui.browserCloseTab(handleId, tab)
     } else {
       const { [id]: _gone, ...tabs } = set0.tabs
-      set(patchSlice(s, handleId, { surfaces: { ...set0, order, active: next, tabs }, paneOpen: cur.paneOpen && order.length > 0 }))
+      set(patchSlice(s, handleId, { surfaces: { ...set0, order, active: next, tabs } }))
     }
     const st = get()
     const now = st.sessions[handleId]

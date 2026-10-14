@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { activeSlice, anyTabIn, paneTarget, selectPaneOpen, surfaceKindOf, useActive, useSession } from '../store'
 import { CurrentTurnHeader } from './CurrentTurnHeader'
 import { FindBar } from './FindBar'
-import { IconAgentBrowser, IconDiff, IconFile, IconFolder } from './Icon'
+import { IconAgentBrowser, IconDiff, IconFile, IconFolder, IconPaneRight } from './Icon'
 import { viaOf } from '../lib/motion'
 import { setPaneVia } from '../lib/dive'
 
@@ -32,7 +32,7 @@ export function TopBand({
   scrolled: boolean
 }): JSX.Element {
   const reported = useSession((s) => s.activeHandleId !== null && s.primaryScrolledFor === s.activeHandleId)
-  const showToggle = useActive((s) => !!s && (!!s.browser || s.surfaces.order.length > 0))
+  const showToggle = useActive((s) => !!s?.cwd)
   // An open find bar's dim text sits on the band, and a compositor-scrolled first frame can reach
   // it before any script runs, so the band stays tinted for as long as find is open.
   const findOpen = useSession((s) => s.findOpen && !s.viewingSubagent)
@@ -165,6 +165,7 @@ export function TopSlot({
 function PaneToggle(): JSX.Element {
   const open = useSession((s) => !s.viewingSubagent && selectPaneOpen(activeSlice(s)))
   const driving = useActive((s) => anyTabIn(s?.browser, 'driving'))
+  const hasBrowser = useActive((s) => !!s?.browser)
   const kind = useActive((s) => (s ? surfaceKindOf(s.surfaces, paneTarget(s)) : null))
   const title = useActive((s) => {
     const id = s && paneTarget(s)
@@ -179,13 +180,16 @@ function PaneToggle(): JSX.Element {
         ? { Glyph: IconFile, name: `File, ${title}`, tip: `${verb} ${title}` }
         : kind === 'tree'
           ? { Glyph: IconFolder, name: 'File tree', tip: `${verb} file tree` }
-          : { Glyph: IconAgentBrowser, name: driving && !open ? 'Browser, Claude is driving' : 'Browser', tip: `${verb} browser ⇧⌘B` }
+          : // Showing the picker, or nothing to show and no browser to make one in.
+            (open && !kind) || !hasBrowser
+            ? { Glyph: IconPaneRight, name: 'Pane', tip: `${verb} pane` }
+            : { Glyph: IconAgentBrowser, name: driving && !open ? 'Browser, Claude is driving' : 'Browser', tip: `${verb} browser ⇧⌘B` }
   return (
     <button
       type="button"
       title={tip}
       data-ui="pane-toggle"
-      data-kind={kind ?? 'browser'}
+      data-kind={kind ?? (Glyph === IconPaneRight ? 'pane' : 'browser')}
       aria-label={name}
       aria-expanded={open}
       aria-controls={open ? 'surface-pane-region' : undefined}

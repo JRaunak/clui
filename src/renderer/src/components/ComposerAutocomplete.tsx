@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useActive, EMPTY_SLASH_COMMANDS } from '../store'
-import { fuzzyMatch, highlightRuns } from '../lib/fuzzy'
+import { fuzzyMatch, highlightRuns, rankPaths } from '../lib/fuzzy'
 import { resolveSlashCommands } from '../lib/slashCommands'
 import { IconSearch } from './Icon'
 
@@ -25,10 +25,6 @@ interface Item {
    *  `trigger.char + value`. Agents need the quoted `@"name (agent)"` form. */
   insert?: string
 }
-
-/** Score at/above which the query matches a NAME contiguously (substring or better),
- *  not just as scattered letters in a path. The floor and the scoring tiers share it. */
-const NAME_TIER = 1000
 
 /** The active trigger token at the caret, or null if none. */
 interface Trigger {
@@ -93,7 +89,7 @@ export function useComposerAutocomplete(
   useEffect(() => {
     if (trigger?.char !== '@' || !cwd || !handleId || loadedForCwd.current === cwd) return
     loadedForCwd.current = cwd
-    void window.clui.listWorkspaceFiles(handleId).then((r) => setFiles(r.files))
+    void window.clui.listWorkspaceFiles(handleId).then((r) => setFiles(r.files)).catch(() => setFiles([]))
   }, [trigger?.char, cwd, handleId])
 
   // Build candidate items for the active trigger.
@@ -136,49 +132,16 @@ export function useComposerAutocomplete(
     ]
   }, [trigger?.char, skills, agents, files, commands])
 
-  // Fuzzy-filter + rank by the trigger's query.
+  // Fuzzy-filter + rank by the trigger's query. An agent, skill or command that matches by name sits above
+  // every file. Commands render as "/usage" but match on "usage", so their highlight is recomputed on the label.
   const results = useMemo(() => {
     if (!trigger) return []
     const q = trigger.query
-    const ql = q.trim().toLowerCase()
-    const scored = candidates
-      .map((it) => {
-        const m = fuzzyMatch(q, it.value)
-        let score = m.score
-        // Tiers spaced 1000 apart so a lower one can't accumulate into a higher: a flat
-        // bonus let "@basil" rank a .light.png (b/s/l on segment starts) above the basil
-        // agent. `base` is the final path segment for a file, the whole name otherwise.
-        // kindLift floats an agent/skill/command above every file, but only on a real name
-        // hit (substring or better), never a scattered match.
-        if (ql) {
-          const base = it.kind === 'file' ? it.value.slice(it.value.lastIndexOf('/') + 1) : it.value
-          const bl = base.toLowerCase()
-          const bm = fuzzyMatch(q, base)
-          const kindLift = it.kind === 'file' ? 0 : 10000
-          if (bm.score !== null) score = Math.max(score ?? 0, bm.score) // scattered
-          if (bl.includes(ql)) score = Math.max(score ?? 0, kindLift + NAME_TIER + (bm.score ?? 0)) // substring
-          if (bl.startsWith(ql)) score = Math.max(score ?? 0, kindLift + 2 * NAME_TIER + (bm.score ?? 0)) // prefix
-          if (bl === ql) score = Math.max(score ?? 0, kindLift + 3 * NAME_TIER) // exact
-        }
-        // Highlight indices must index the LABEL we actually render. Commands
-        // render as "/usage" but are matched on the value "usage", so value-relative
-        // indices are off by the leading "/" (lit the slash, dropped the last char).
-        // Files have label === value, so reuse the already-computed matches.
-        const matches = it.label === it.value ? m.matches : fuzzyMatch(q, it.label).matches
-        return { it, score, matches }
-      })
-      .filter((r) => r.score !== null)
-    // Tie-break by shorter value: within a tier, "Composer.tsx" beats
-    // "ComposerAutocomplete.tsx" and the exact name beats a longer path that shares its prefix.
-    if (q.trim())
-      scored.sort((a, b) => (b.score as number) - (a.score as number) || a.it.value.length - b.it.value.length)
-    // Drop scattered matches (below NAME_TIER) only when a real name match exists: "@co" on a
-    // deep cwd is a subsequence of ~3000 paths but a name-match of ~150. When nothing scored
-    // higher, keep them, so a deliberately deep query still finds its file, not an empty menu.
-    const floored = scored.some((r) => (r.score as number) >= NAME_TIER)
-      ? scored.filter((r) => (r.score as number) >= NAME_TIER)
-      : scored
-    return floored.slice(0, 50)
+    const ranked = rankPaths(q, candidates, (it) => it.value, (it) => (it.kind === 'file' ? 0 : 10000))
+    return ranked.slice(0, 50).map(({ item: it, matches }) => ({
+      it,
+      matches: it.label === it.value ? matches : fuzzyMatch(q, it.label).matches
+    }))
   }, [candidates, trigger?.query])
 
   const open = trigger !== null && results.length > 0

@@ -109,7 +109,7 @@ function resolveTheme(): 'dark' | 'light' {
  * and standard window commands keep working in text fields (a custom menu that
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
-let menuState: MenuState = { browser: 'none', pane: 'none', external: { kind: 'none', enabled: false } }
+let menuState: MenuState = { browser: 'none', pane: 'none', canPane: false, external: { kind: 'none', enabled: false } }
 const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = { file: 'Open in Editor', diff: 'Open Diff in Editor', browser: 'Open in Default Browser', tree: 'Open Folder in Editor', none: 'Open Externally' }
 
 function buildMenu(): void {
@@ -155,6 +155,7 @@ function buildMenu(): void {
         { label: 'Quick Switcher…', accelerator: 'CmdOrCtrl+K', click: () => send('open-palette') },
         { label: 'Command Palette…', accelerator: 'CmdOrCtrl+Shift+K', click: () => send('open-command-palette') },
         { label: 'Close Session', accelerator: 'CmdOrCtrl+W', click: () => send('close-session') },
+        { label: 'Open File…', accelerator: 'CmdOrCtrl+P', enabled: menuState.canPane, click: () => send('open-file') },
         // A native accelerator, not a DOM key, so it still fires while focus sits inside a native view.
         {
           label: menuState.pane === 'full' ? 'Split Pane' : 'Expand Pane',
@@ -521,6 +522,7 @@ function registerIpc(): void {
     const same =
       next.browser === menuState.browser &&
       next.pane === menuState.pane &&
+      next.canPane === menuState.canPane &&
       next.external.kind === menuState.external.kind &&
       next.external.enabled === menuState.external.enabled
     if (same) return
@@ -803,12 +805,8 @@ function registerIpc(): void {
     const cwd = typeof handleId === 'string' ? manager.cwd(handleId) : null
     // No home/root narrowing here: it returns paths, not contents, and the session's CLI can already read all of its cwd.
     const root = cwd === null ? null : await realpath(cwd).catch(() => null)
-    if (!root || !(await stat(root).catch(() => null))?.isDirectory()) return { files: [], truncated: false }
-    try {
-      return await listWorkspaceFiles(root)
-    } catch {
-      return { files: [], truncated: false }
-    }
+    if (!root || !(await stat(root).catch(() => null))?.isDirectory()) throw new Error('The folder no longer exists.')
+    return listWorkspaceFiles(root)
   })
 
   handle(IpcChannels.getChanges, (_e, handleId: string) => (typeof handleId === 'string' ? manager.changes(handleId) : null))

@@ -37,7 +37,7 @@ const STATE_BODY = 'flex flex-col items-start gap-2 px-4 py-6'
 
 const baseOf = (p: string): string => p.slice(p.lastIndexOf('/') + 1) || p
 const lines = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'}`
-const cleanError = (e: unknown): string => String((e as Error)?.message ?? e).replace(/^Error invoking remote method '[^']*': (Error: )?/, '')
+export const cleanError = (e: unknown): string => String((e as Error)?.message ?? e).replace(/^Error invoking remote method '[^']*': (Error: )?/, '')
 const toLines = (t: string): string[] => {
   const ls = t.split('\n')
   if (ls.length > 1 && ls.at(-1) === '') ls.pop()

@@ -1,5 +1,8 @@
 // What the guarded file reads return, in main and across IPC.
 
+/** The most workspace files listed, so a huge repo can't flood the pickers or the IPC. */
+export const WORKSPACE_FILE_CAP = 3000
+
 export interface Refusal {
   ok: false
   /** `permission` is the OS refusing Clui itself (EACCES/EPERM); `unreadable` is any other read failure. */

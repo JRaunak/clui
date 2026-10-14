@@ -20,7 +20,7 @@ import {
 } from './Icon'
 import { ToastStack, useBrowserToasts } from './Toast'
 import { useGuardedAsync } from '../lib/useGuardedAsync'
-import { usePopover } from './Popover'
+import { Menu, type MenuItem } from './Menu'
 import { runTagged, viaOf, type Via } from '../lib/motion'
 import { getStage } from '../lib/stage'
 
@@ -741,7 +741,7 @@ function SessionRow({
             items={[
               onFork && { key: 'fork', label: 'Branch session', icon: <IconGitFork className="h-4 w-4" />, onClick: onFork },
               onExport && { key: 'export', label: 'Export to Markdown', icon: <IconDownload className="h-4 w-4" />, onClick: onExport },
-              onRename && { key: 'rename', label: 'Rename', icon: <IconEdit className="h-4 w-4" />, onClick: onRename, hint: 'F2' },
+              onRename && { key: 'rename', label: 'Rename', icon: <IconEdit className="h-4 w-4" />, onClick: onRename, hint: 'F2', keys: 'F2' },
               onDelete && {
                 key: 'delete',
                 label: onClose ? 'Close & Delete' : 'Delete transcript',
@@ -749,7 +749,7 @@ function SessionRow({
                 onClick: onDelete,
                 danger: true
               }
-            ].filter(Boolean) as RowMenuItem[]}
+            ].filter(Boolean) as MenuItem[]}
           />
         </div>
       )}
@@ -897,100 +897,20 @@ function SessionMonogram({
   )
 }
 
-interface RowMenuItem {
-  key: string
-  label: string
-  icon: JSX.Element
-  onClick: () => void
-  danger?: boolean
-  /** Keyboard-accelerator hint shown right-aligned, so the visible menu teaches the invisible key. */
-  hint?: string
-}
-
-/** Session-row overflow (kebab) menu holds the rare actions as text-labeled items so they clear the 44px target.
- *  The trigger is a `menu`-button; the open menu is `role="menu"` with roving focus, click-outside closes, focus returns to the trigger.
- *  Renders nothing if there are no items. */
-function RowMenu({
-  title,
-  items
-}: {
-  title: string
-  items: RowMenuItem[]
-}): JSX.Element | null {
-  const [focusIdx, setFocusIdx] = useState(0)
-  const p = usePopover({ placement: 'down', align: 'end' })
-  const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
-
-  useEffect(() => {
-    if (p.open) itemRefs.current[focusIdx]?.focus()
-  }, [p.open, focusIdx])
-
-  if (items.length === 0) return null
-
-  const onMenuKey = (e: React.KeyboardEvent): void => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setFocusIdx((i) => (i + 1) % items.length)
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setFocusIdx((i) => (i - 1 + items.length) % items.length)
-    } else if (e.key === 'Home') {
-      e.preventDefault()
-      setFocusIdx(0)
-    } else if (e.key === 'End') {
-      e.preventDefault()
-      setFocusIdx(items.length - 1)
-    } else if (e.key === 'Tab') {
-      p.close({ via: 'keyboard', returnFocus: false })
-    }
-  }
-
+/** Session-row overflow (kebab) menu holds the rare actions as text-labeled items so they clear the 44px target. */
+function RowMenu({ title, items }: { title: string; items: MenuItem[] }): JSX.Element | null {
   return (
-    <div className="relative">
-      <button
-        {...p.triggerProps}
-        className="flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:opacity-100"
-        aria-haspopup="menu"
-        aria-label={`More actions for “${title}”`}
-        title="More actions"
-        onClick={(e) => {
-          e.stopPropagation()
-          setFocusIdx(0)
-          p.triggerProps.onClick(e)
-        }}
-      >
-        <IconMore className="h-4 w-4" />
-      </button>
-      <div
-        {...p.popoverProps}
-        role="menu"
-        aria-label={`Actions for “${title}”`}
-        className="pop-base pop glass-thick min-w-[188px] rounded-lg p-1"
-        onKeyDown={onMenuKey}
-      >
-        {items.map((it, i) => (
-          <button
-            key={it.key}
-            ref={(el) => (itemRefs.current[i] = el)}
-            role="menuitem"
-            tabIndex={i === focusIdx ? 0 : -1}
-            className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-label text-content -outline-offset-2 hover:bg-[var(--glass-row-hover)] focus-visible:bg-[var(--glass-row-hover)] ${
-              it.danger ? 'mt-1 border-t border-[var(--glass-edge)] pt-2' : ''
-            }`}
-            onClick={(e) => {
-              e.stopPropagation()
-              p.close({ via: viaOf(e), returnFocus: false })
-              it.onClick()
-            }}
-          >
-            {/* Destructive reads by mark and icon, since err text fails on glass. */}
-            {it.danger && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-err" aria-hidden="true" />}
-            <span className={`shrink-0 ${it.danger ? 'text-err' : 'text-dim'}`}>{it.icon}</span>
-            <span className="min-w-0 flex-1 truncate">{it.label}</span>
-            {it.hint && <span className="shrink-0 text-meta text-dim">{it.hint}</span>}
-          </button>
-        ))}
-      </div>
-    </div>
+    <Menu
+      label={`Actions for “${title}”`}
+      items={items}
+      align="end"
+      trigger={{
+        className: 'flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:opacity-100',
+        'aria-label': `More actions for “${title}”`,
+        title: 'More actions'
+      }}
+    >
+      <IconMore className="h-4 w-4" />
+    </Menu>
   )
 }

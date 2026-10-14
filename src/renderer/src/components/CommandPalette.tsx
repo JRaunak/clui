@@ -6,18 +6,42 @@
  * Settings, Customizations, Toggle theme, Close session), matching the VS Code convention;
  * ⌘⇧K opens straight into it.
  *
+ * ⌘P opens it on the active session's files instead (Open file), ranked by the shared path ranker.
+ *
  * Fuzzy subsequence matching with highlighted characters. Keyboard: ↑/↓ move, Enter runs,
  * Esc closes (via the shared escape-stack so a palette over a modal closes the palette first).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSession, activeSlice } from '../store'
+import { useSession, activeSlice, useActive, EMPTY_CHANGES, EMPTY_SURFACES } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { applyTheme } from '../lib/theme'
-import { fuzzyMatch, highlightRuns } from '../lib/fuzzy'
+import { fuzzyMatch, highlightRuns, rankPaths, splitLine } from '../lib/fuzzy'
+import { requestSurfaceFocus } from '../lib/surfaceFocus'
+import { viaOf, type Via } from '../lib/motion'
 import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage } from './Icon'
+import { FileIcon } from './FileIcon'
+import { cleanError, openEditor } from './surfaces/FileSurface'
+import { tilde } from '../lib/tree'
+import { WORKSPACE_FILE_CAP } from '../../../shared/files'
 import type { ProjectGroup } from '../../../shared/sessions'
 
-export type PaletteMode = 'switch' | 'command'
+export type PaletteMode = 'switch' | 'command' | 'file'
+
+/** Asks the app to open the palette on the active session's files. */
+export const OPEN_FILE_EVENT = 'clui:open-file'
+export const openFilePalette = (): void => void window.dispatchEvent(new Event(OPEN_FILE_EVENT))
+
+const RESULT_CAP = 50
+const count = new Intl.NumberFormat('en-US')
+
+interface FileOption {
+  abs: string
+  rel: string
+  matches: number[]
+  group?: 'Open in pane' | 'Changed by Claude'
+}
+
+type FileList = { t: 'ok'; files: string[]; truncated: boolean } | { t: 'error'; message: string }
 
 interface PaletteItem {
   key: string
@@ -28,6 +52,8 @@ interface PaletteItem {
   /** Recency for ordering (ms). Higher = more recent. */
   recency: number
   live?: boolean
+  /** Runs inside the palette instead of closing it. */
+  stay?: boolean
   run: () => void
 }
 
@@ -53,10 +79,17 @@ export function CommandPalette({
   sidebarCollapsed: boolean
 }): JSX.Element {
   const [query, setQuery] = useState(mode === 'command' ? '>' : '')
+  const [fileScope, setFileScope] = useState(mode === 'file')
   const [sel, setSel] = useState(0)
   const [disk, setDisk] = useState<ProjectGroup[]>([])
+  const [list, setList] = useState<FileList | null>(null)
+  const [slow, setSlow] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const handleId = useSession((s) => s.activeHandleId)
+  const cwd = useActive((s) => s?.cwd ?? null)
+  const tabs = useActive((s) => s?.surfaces.tabs ?? EMPTY_SURFACES.tabs)
+  const changes = useActive((s) => s?.changes ?? EMPTY_CHANGES)
 
   useEscape(true, onClose)
 
@@ -70,10 +103,14 @@ export function CommandPalette({
 
   const queryRef = useRef(query)
   queryRef.current = query
+  const scopeRef = useRef(fileScope)
+  scopeRef.current = fileScope
 
   useEffect(() => {
-    if (queryRef.current.startsWith('>') === (mode === 'command')) return
+    const toFile = mode === 'file'
+    if (queryRef.current.startsWith('>') === (mode === 'command') && scopeRef.current === toFile) return
     const q = mode === 'command' ? '>' : ''
+    setFileScope(toFile)
     setQuery(q)
     setSel(0)
     const raf = requestAnimationFrame(() => inputRef.current?.setSelectionRange(q.length, q.length))
@@ -85,6 +122,46 @@ export function CommandPalette({
   // at build time (the palette is short-lived).
   const commandMode = query.startsWith('>')
   const rawQuery = commandMode ? query.slice(1) : query
+  const fileMode = fileScope && !commandMode && !!cwd
+  const folder = cwd ? cwd.slice(cwd.lastIndexOf('/') + 1) || cwd : ''
+
+  // Listed once per palette, the first time it shows files.
+  useEffect(() => {
+    if (!fileScope || !handleId || list) return
+    let live = true
+    const timer = setTimeout(() => setSlow(true), 400)
+    window.clui.listWorkspaceFiles(handleId).then(
+      (r) => live && setList({ t: 'ok', ...r }),
+      (e: unknown) => live && setList({ t: 'error', message: cleanError(e) })
+    )
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [fileScope, handleId, list])
+
+  const { query: fileQuery, line } = splitLine(rawQuery)
+  const files = useMemo((): { options: FileOption[]; total: number } => {
+    const none = { options: [], total: 0 }
+    if (!fileMode || !cwd) return none
+    const relOf = (abs: string): string => (abs.startsWith(`${cwd}/`) ? abs.slice(cwd.length + 1) : tilde(abs, window.clui.homeDir))
+    if (!fileQuery.trim()) {
+      const open = Object.values(tabs)
+        .filter((t) => t.kind === 'file')
+        .sort((a, b) => b.lastViewedAt - a.lastViewedAt)
+        .map((t): FileOption => ({ abs: t.key, rel: relOf(t.key), matches: [], group: 'Open in pane' }))
+      const listed = new Set(open.map((o) => o.abs))
+      // Quick-open lists the workspace, so a change outside it stays in the tray.
+      const changed = changes
+        .filter((c) => c.path.startsWith(`${cwd}/`) && !listed.has(c.path))
+        .map((c): FileOption => ({ abs: c.path, rel: relOf(c.path), matches: [], group: 'Changed by Claude' }))
+      const options = [...open, ...changed]
+      return { options, total: options.length }
+    }
+    if (list?.t !== 'ok') return none
+    const ranked = rankPaths(fileQuery, list.files)
+    return { options: ranked.slice(0, RESULT_CAP).map((r) => ({ abs: `${cwd}/${r.item}`, rel: r.item, matches: r.matches })), total: ranked.length }
+  }, [fileMode, cwd, fileQuery, tabs, changes, list])
 
   const items = useMemo<PaletteItem[]>(() => {
     const store = useSession.getState()
@@ -195,6 +272,23 @@ export function CommandPalette({
         recency: 0,
         run: onToggleSidebar
       },
+      ...(activeSlice(store)?.cwd
+        ? [
+            {
+              key: 'cmd:open-file',
+              kind: 'command' as const,
+              label: 'Open file…',
+              hint: '⌘P',
+              recency: 0,
+              stay: true,
+              run: () => {
+                setFileScope(true)
+                setQuery('')
+                setSel(0)
+              }
+            }
+          ]
+        : []),
       ...(activeId
         ? [
             {
@@ -254,31 +348,46 @@ export function CommandPalette({
     return scored
   }, [items, rawQuery])
 
-  // Keep the selection in range as results change.
+  const rows = fileMode ? files.options.length : filtered.length
+
+  // Keep the selection in range as results change. A new file query starts on its best match.
   useEffect(() => {
-    setSel((s) => (filtered.length ? Math.min(s, filtered.length - 1) : 0))
-  }, [filtered.length])
+    setSel((s) => (rows ? Math.min(s, rows - 1) : 0))
+  }, [rows])
+  useEffect(() => {
+    if (fileMode) setSel(0)
+  }, [fileMode, fileQuery])
 
   const runAt = useCallback(
-    (i: number) => {
+    (i: number, editor: boolean, via: Via) => {
+      if (fileMode) {
+        const f = files.options[i]
+        if (!f || !handleId) return
+        onClose()
+        if (editor) return void openEditor(handleId, f.abs)
+        requestSurfaceFocus(`file:${f.abs}`, via)
+        const title = f.abs.slice(f.abs.lastIndexOf('/') + 1)
+        useSession.getState().openSurface(handleId, { kind: 'file', key: f.abs, title, ...(line ? { location: { line } } : {}) }, 'focus', 'user', 'user')
+        return
+      }
       const row = filtered[i]
       if (!row) return
-      onClose()
+      if (!row.it.stay) onClose()
       row.it.run()
     },
-    [filtered, onClose]
+    [fileMode, files, handleId, line, filtered, onClose]
   )
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setSel((s) => (filtered.length ? (s + 1) % filtered.length : 0))
+      setSel((s) => (rows ? (s + 1) % rows : 0))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setSel((s) => (filtered.length ? (s - 1 + filtered.length) % filtered.length : 0))
+      setSel((s) => (rows ? (s - 1 + rows) % rows : 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      runAt(sel)
+      runAt(sel, e.metaKey, 'keyboard')
     }
   }
 
@@ -296,8 +405,9 @@ export function CommandPalette({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Command palette"
+        aria-label={fileMode ? 'Open file' : 'Command palette'}
         data-ui="palette"
+        data-mode={fileMode ? 'file' : commandMode ? 'command' : 'switch'}
         className="flex max-h-[70vh] w-[min(640px,92%)] flex-col overflow-hidden glass-thick rounded-xl"
         onClick={(e) => e.stopPropagation()}
       >
@@ -308,14 +418,14 @@ export function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search sessions…  (type > for commands)"
+            placeholder={fileMode ? `Search files in ${folder}` : 'Search sessions…  (type > for commands)'}
             className="flex-1 bg-transparent text-sm text-content outline-none placeholder:text-dim"
             spellCheck={false}
             role="combobox"
             aria-autocomplete="list"
             aria-controls="palette-listbox"
-            aria-expanded={filtered.length > 0}
-            aria-activedescendant={filtered.length ? `palette-opt-${sel}` : undefined}
+            aria-expanded={rows > 0}
+            aria-activedescendant={rows ? `palette-opt-${sel}` : undefined}
           />
           <kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-badge text-dim">
             esc
@@ -326,10 +436,24 @@ export function CommandPalette({
           ref={listRef}
           id="palette-listbox"
           role="listbox"
-          aria-label={commandMode ? 'Commands' : 'Sessions and commands'}
+          aria-label={fileMode ? `Files in ${folder}` : commandMode ? 'Commands' : 'Sessions and commands'}
+          aria-description={fileMode ? 'Enter opens in the pane. Command-Enter opens in your editor.' : undefined}
           className="min-h-0 flex-1 overflow-y-auto py-1.5"
         >
-          {filtered.length === 0 ? (
+          {fileMode ? (
+            <FileResults
+              options={files.options}
+              total={files.total}
+              query={fileQuery.trim()}
+              line={line}
+              list={list}
+              slow={slow}
+              folder={folder}
+              sel={sel}
+              onHover={setSel}
+              onRun={(i, e) => runAt(i, e.metaKey, viaOf(e))}
+            />
+          ) : filtered.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-dim">
               No matches for “{rawQuery.trim()}”
             </div>
@@ -342,7 +466,7 @@ export function CommandPalette({
                 selected={i === sel}
                 idx={i}
                 onHover={() => setSel(i)}
-                onClick={() => runAt(i)}
+                onClick={(e) => runAt(i, false, viaOf(e))}
               />
             ))
           )}
@@ -365,7 +489,7 @@ function Row({
   selected: boolean
   idx: number
   onHover: () => void
-  onClick: () => void
+  onClick: (e: React.MouseEvent) => void
 }): JSX.Element {
   const runs = highlightRuns(item.label, matches)
   // State is conveyed by text + tone, never a repeated status dot (the sidebar owns
@@ -451,9 +575,145 @@ function CommandIcon({ label }: { label: string }): JSX.Element {
   if (label.startsWith('Open Settings')) return <IconSettings className="h-3.5 w-3.5" />
   if (label.startsWith('Open Customizations')) return <IconSliders className="h-3.5 w-3.5" />
   if (label.startsWith('Close')) return <IconClose className="h-3.5 w-3.5" />
+  if (label === 'Open file…') return <IconSearch className="h-3.5 w-3.5" />
   return (
     <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden="true">
       <span className="h-1.5 w-1.5 rounded-full bg-faint" />
     </span>
+  )
+}
+
+const MATCH = 'font-semibold text-content underline decoration-dim underline-offset-2'
+
+function Runs({ text, matches }: { text: string; matches: number[] }): JSX.Element {
+  return (
+    <>
+      {highlightRuns(text, matches).map((r, i) =>
+        r.match ? (
+          <span key={i} className={MATCH}>
+            {r.text}
+          </span>
+        ) : (
+          <span key={i}>{r.text}</span>
+        )
+      )}
+    </>
+  )
+}
+
+/** Open file's list: the session's files grouped with no query, ranked matches with one, and each state the
+ *  listing can be in. */
+function FileResults({
+  options,
+  total,
+  query,
+  line,
+  list,
+  slow,
+  folder,
+  sel,
+  onHover,
+  onRun
+}: {
+  options: FileOption[]
+  total: number
+  query: string
+  line: number | null
+  list: FileList | null
+  slow: boolean
+  folder: string
+  sel: number
+  onHover: (i: number) => void
+  onRun: (i: number, e: React.MouseEvent) => void
+}): JSX.Element {
+  const note = (text: string): JSX.Element => <div className="px-4 py-2 text-meta text-dim">{text}</div>
+  const capped =
+    list?.t === 'ok' && list.truncated
+      ? note(`This folder has more than ${count.format(WORKSPACE_FILE_CAP)} files, so only the first ${count.format(WORKSPACE_FILE_CAP)} are searched. Use the file tree to reach the rest.`)
+      : null
+  if (list?.t === 'error') return <div className="px-4 py-6 text-sm text-content">{`Couldn't list the files in ${folder}. ${list.message}`}</div>
+  if (!options.length) {
+    const say = !list
+      ? slow
+        ? 'Listing files…'
+        : null
+      : query
+        ? `No files match “${query}”`
+        : list.files.length
+          ? `Type to search ${count.format(list.files.length)} files.`
+          : `No files in ${folder}.`
+    return (
+      <>
+        {say && <div className="px-4 py-6 text-center text-sm text-dim">{say}</div>}
+        {capped}
+      </>
+    )
+  }
+  return (
+    <>
+      {options.map((f, i) => (
+        <div key={f.abs} role="presentation">
+          {f.group && f.group !== options[i - 1]?.group && (
+            <div role="presentation" className="px-4 pb-0.5 pt-2 text-caps uppercase text-dim">
+              {f.group}
+            </div>
+          )}
+          <FileRow file={f} line={line} selected={i === sel} idx={i} onHover={() => onHover(i)} onClick={(e) => onRun(i, e)} />
+        </div>
+      ))}
+      {total > options.length && note(`Showing ${options.length} of ${count.format(total)} matches. Keep typing to narrow them.`)}
+      {capped}
+    </>
+  )
+}
+
+function FileRow({
+  file,
+  line,
+  selected,
+  idx,
+  onHover,
+  onClick
+}: {
+  file: FileOption
+  line: number | null
+  selected: boolean
+  idx: number
+  onHover: () => void
+  onClick: (e: React.MouseEvent) => void
+}): JSX.Element {
+  const at = file.rel.lastIndexOf('/') + 1
+  const name = file.rel.slice(at)
+  const dir = at ? file.rel.slice(0, at - 1) : ''
+  return (
+    <div
+      data-idx={idx}
+      role="option"
+      id={`palette-opt-${idx}`}
+      aria-selected={selected}
+      aria-label={`${file.rel}, file`}
+      onMouseMove={onHover}
+      onClick={onClick}
+      className={`relative flex w-full cursor-pointer items-center gap-2.5 px-4 py-2 text-left ${selected ? 'bg-[var(--glass-row-hover)]' : ''}`}
+    >
+      {selected && <span className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-content" aria-hidden="true" />}
+      <FileIcon name={name} kind="file" />
+      <span className="min-w-0 shrink truncate font-mono text-code text-content">
+        <Runs text={name} matches={file.matches.filter((m) => m >= at).map((m) => m - at)} />
+      </span>
+      {dir ? (
+        <span className="min-w-0 flex-1 truncate font-mono text-meta text-dim">
+          <Runs text={dir} matches={file.matches.filter((m) => m < at - 1)} />
+        </span>
+      ) : (
+        <span className="flex-1" />
+      )}
+      {selected && (
+        <span className="flex shrink-0 items-center gap-1.5 text-meta text-dim">
+          {line ? `Open at line ${line}` : 'Open'}
+          <kbd className="rounded border border-border px-1 py-0.5 font-mono text-badge text-dim">↵</kbd>
+        </span>
+      )}
+    </div>
   )
 }

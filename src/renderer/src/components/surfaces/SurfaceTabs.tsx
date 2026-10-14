@@ -5,6 +5,8 @@ import type { SurfaceKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
 import { tilde } from '../../lib/tree'
 import { FileIcon } from '../FileIcon'
+import { Menu } from '../Menu'
+import { usePaneEntries } from './PanePicker'
 import { IconAgentBrowser, IconClose, IconDiff, IconFolder, IconPlus } from '../Icon'
 
 const NEAREST: ScrollIntoViewOptions = { block: 'nearest', inline: 'nearest' }
@@ -14,14 +16,12 @@ const UNSEEN_LINE = 'Updated since you last looked'
 const tabButton = (id: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-ui="surface-tabs"] [data-tab="${CSS.escape(id)}"]`)
 
-const focusAddress = (): void => document.querySelector<HTMLElement>('[data-ui="browser-url"]')?.focus()
-
 const tabLabel = (t: Pick<TabState, 'title' | 'url'>): string => t.title || siteKeyOf(t.url) || 'New page'
 
 /**
  * Closes a tab of the active session. The right neighbour takes its place, else the left; `refocus`
  * moves focus to it, which happens before the close so focus never falls to the body. Closing the
- * last tab hides the pane, whose unmount hands focus back.
+ * last tab leaves the pane on the picker, which takes the focus.
  */
 export function closeTab(id: string, refocus: boolean): void {
   const st = useSession.getState()
@@ -103,12 +103,11 @@ export function SurfaceTabs(): JSX.Element {
   const surfaceTabs = useActive((s) => s?.surfaces.tabs ?? EMPTY_SURFACES.tabs)
   const browserUnseen = useActive((s) => s?.surfaces.browserUnseen ?? EMPTY_SURFACES.browserUnseen)
   const browserTabs = useActive((s) => s?.browser?.tabs ?? EMPTY_TABS)
-  const hasBrowser = useActive((s) => !!s?.browser)
   const enter = useActive((s) => s?.browser?.enter ?? EMPTY_IDS)
   const announce = useActive((s) => s?.browser?.announce ?? '')
   const cwd = useActive((s) => s?.cwd ?? null)
   const activate = useSession((s) => s.activateSurface)
-  const newTab = useSession((s) => s.newBrowserTab)
+  const entries = usePaneEntries()
   const listRef = useRef<HTMLDivElement>(null)
   // Tabs already here when the strip mounted don't fade, so reopening the pane stays still.
   const [initial] = useState(() => new Set(order))
@@ -307,23 +306,25 @@ export function SurfaceTabs(): JSX.Element {
           )
         })}
       </div>
-      {hasBrowser && (
-        <button
-          type="button"
-          data-ui="browser-tab-new"
-          aria-label="New browser tab"
-          title="New browser tab"
-          onClick={async () => {
-            focusAddress()
-            await newTab()
-            // From another kind, the address only exists once the new tab's surface has mounted.
-            requestAnimationFrame(focusAddress)
-          }}
-          className={`${PANE_BTN} ml-0.5 shrink-0`}
-        >
-          <IconPlus className="h-4 w-4" />
-        </button>
-      )}
+      <Menu
+        label="Open in pane"
+        align="start"
+        width="min-w-[220px]"
+        items={entries.map((it) => ({
+          key: it.key,
+          label: it.label,
+          icon: <it.Glyph className="h-3.5 w-3.5" />,
+          onClick: it.run,
+          hint: it.meta && (it.mono ? <span className="font-mono">{it.meta}</span> : it.meta),
+          hintTitle: it.meta,
+          description: it.description,
+          keys: it.keys,
+          returnFocus: it.key === 'open-file'
+        }))}
+        trigger={{ 'data-ui': 'pane-add', 'aria-label': 'Open in pane', title: 'Open in pane', className: `${PANE_BTN} ml-0.5 shrink-0` }}
+      >
+        <IconPlus className="h-4 w-4" />
+      </Menu>
       <span className="sr-only" aria-live="polite">
         {announce}
       </span>

@@ -161,6 +161,16 @@ export function IconSidebar(p: IconProps): JSX.Element {
   )
 }
 
+/** A window with its right column marked: the right pane, with nothing chosen in it yet. */
+export function IconPaneRight(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M15 3v18" />
+    </Svg>
+  )
+}
+
 export function IconSliders(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>

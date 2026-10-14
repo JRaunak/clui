@@ -5,10 +5,11 @@ import { BrowserSettingsButton, BrowserSurface, useBrowserExternal } from './Bro
 import { DiffSurface, useDiffExternal } from './DiffSurface'
 import { FileSurface, GoToLineButton, useFileExternal } from './FileSurface'
 import { TreeRevealButton, TreeSurface, treeExternal } from './TreeSurface'
+import { PanePicker } from './PanePicker'
 
 /** The Surfaces pane: one header whose tab strip outlives a switch between kinds, over the active
- *  surface's body. Only the active surface is mounted, so the browser's native view shows only
- *  while a browser tab is active in an open pane. */
+ *  surface's body, or the picker when there are no tabs. Only the active surface is mounted, so the
+ *  browser's native view shows only while a browser tab is active in an open pane. */
 export function SurfaceHost(): JSX.Element | null {
   const handleId = useSession((s) => s.activeHandleId)
   const kind = useActive((s) => (s ? surfaceKindOf(s.surfaces, s.surfaces.active) : null))
@@ -38,6 +39,7 @@ export function SurfaceHost(): JSX.Element | null {
       {kind === 'diff' && <DiffSurface key={handleId} handleId={handleId} />}
       {kind === 'tree' && cwd && <TreeSurface key={handleId} handleId={handleId} cwd={cwd} />}
       {kind === 'file' && activeId && <FileSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />}
+      {!kind && <PanePicker key={handleId} />}
     </div>
   )
 }
