@@ -8,7 +8,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Menu, shell, systemPr
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { basename, dirname } from 'node:path'
+import { basename, dirname, isAbsolute } from 'node:path'
 import { readFile, writeFile, mkdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -42,6 +42,8 @@ import { listWorkspaceFiles } from './workspace/files'
 import { readGitStatus } from './workspace/git-status'
 import { createFileAccess, readText, statFile, type FileResource, type Refusal } from './surfaces/files'
 import { listTree, treeTarget } from './surfaces/tree'
+import { bindSession, deleteSurfaces, flushSurfaces, forgetSession, loadSurfaces, saveSession, trackSession } from './surfaces/persist'
+import type { SurfacesRestore } from '../shared/surfaces'
 import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
 import { changeMarks, diffSnapshots, getDiff, parseDiffRequest, type DiffSource } from './surfaces/diff'
 import {
@@ -295,6 +297,7 @@ function registerIpc(): void {
     browser.dispose(handleId)
     mcp.revoke(handleId)
     files.dispose(handleId)
+    forgetSession(handleId)
     for (const [id, owner] of watchOwners) if (owner === handleId) watchOwners.delete(id)
   }
   if (process.env.CLUI_TEST_HOOKS === '1') {
@@ -353,6 +356,7 @@ function registerIpc(): void {
   const manager = new SessionManager(
     (handleId, event) => {
       browser.onSessionEvent(handleId, event)
+      if (event.type === 'session-init' && event.sessionId) bindSession(handleId, event.sessionId)
       if (event.type === 'process-exit') disposeBrowser(handleId)
       push(IpcChannels.sessionEvent, { handleId, event })
     },
@@ -434,6 +438,8 @@ function registerIpc(): void {
     // The token in the config is bound to the handle, so the handle exists before the process does.
     const handleId = randomUUID()
     const withBrowser = settings.browserEnabled && !opts.ephemeral
+    const restore: SurfacesRestore = opts.resumeSessionId && !opts.ephemeral ? await loadSurfaces(opts.resumeSessionId) : { status: 'none' }
+    const saved = restore.status === 'ok' ? restore.entry : null
     if (withBrowser) mcp.setBundles(handleId, { visual: settings.browserVisual, interact: settings.browserInteract, debug: settings.browserDebug })
     manager.start(handleId, {
       cliPath: info.path,
@@ -457,8 +463,10 @@ function registerIpc(): void {
       browserMcp: withBrowser ? await mcp.configFor(handleId) : undefined,
       mcpConfigPath: process.env.CLUI_TEST_MCP_CONFIG
     })
-    if (withBrowser) browser.enable(handleId)
-    return { handleId, browser: withBrowser }
+    trackSession(handleId, { quick: !!opts.ephemeral, sessionId: opts.fork ? null : (opts.resumeSessionId ?? null), seed: opts.fork ? saved : null })
+    if (withBrowser) browser.enable(handleId, saved?.browserTabs)
+    const surfaces: SurfacesRestore = saved ? { status: 'ok', entry: { ...saved, browserTabs: withBrowser ? browser.records(handleId) : null } } : restore
+    return { handleId, browser: withBrowser, surfaces }
   })
 
   handle(
@@ -679,7 +687,28 @@ function registerIpc(): void {
     }
   )
   handle(IpcChannels.deleteSessionModel, async (_e, sessionId: string) => {
-    await Promise.all([deleteSessionModel(sessionId), deleteSessionUsage(sessionId)])
+    await Promise.all([deleteSessionModel(sessionId), deleteSessionUsage(sessionId), deleteSurfaces(sessionId)])
+  })
+
+  // Browser tabs come from main's own records. A session running without the browser keeps the ones it saved.
+  const saveFor = (handleId: unknown, save: unknown): Promise<void> =>
+    typeof handleId === 'string' ? saveSession(handleId, save, browser.records(handleId) ?? undefined) : Promise.resolve()
+  handle(IpcChannels.saveSurfaces, (_e, handleId: string, save: unknown) => saveFor(handleId, save))
+  ipcMain.on(IpcChannels.saveSurfacesSync, (e, handleId: unknown, save: unknown) => {
+    if (fromTrustedFrame(e)) void saveFor(handleId, save)
+    e.returnValue = null
+  })
+  // The grant covers only the path the dialog returned, for the asking session. The renderer's defaultPath only picks where the dialog starts.
+  handle(IpcChannels.chooseSurfaceFile, async (_e, handleId: string, defaultPath: string) => {
+    if (!mainWindow || typeof handleId !== 'string' || manager.cwd(handleId) === null) return null
+    const res = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      ...(typeof defaultPath === 'string' && isAbsolute(defaultPath) ? { defaultPath } : {})
+    })
+    const picked = res.canceled ? undefined : res.filePaths[0]
+    if (!picked || !(await files.grant(handleId, 'file', picked))) return null
+    const r = await files.resolveAllowed(handleId, picked, { consumer: 'file', operation: 'read-file' })
+    return r.ok ? r.path : null
   })
 
   // The sources readConfig returns are the only files the editor may open without a session.
@@ -923,4 +952,16 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   sessionManager?.stopAll()
   diffs?.clear()
+})
+
+// Quitting waits for the last pane saves the window's unload handed over, at most 2s so a stalled disk
+// can't leave the app unquittable.
+let surfacesFlushed = false
+app.on('will-quit', (e) => {
+  if (surfacesFlushed) return
+  e.preventDefault()
+  surfacesFlushed = true
+  // Electron ignores app.quit() until this event's dispatch returns, and an already-settled flush would
+  // call it from the dispatch's own microtasks, so the quit goes on a later task.
+  void Promise.race([flushSurfaces(), new Promise((r) => setTimeout(r, 2000))]).finally(() => setImmediate(() => app.quit()))
 })

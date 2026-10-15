@@ -277,7 +277,8 @@ export function createFileAccess(sessions: FileSessions) {
       const h = await home
       // A cwd at or above home would expose all of home: exact grants only. The APFS
       // Data volume reaches the same files under /System/Volumes/Data, which realpath keeps as is.
-      if (root?.exists && h !== null && !within(root.path, h) && !within('/System/Volumes', root.path) && within(root.path, path)) return 'workspace'
+      // A cwd that's gone still scopes its own paths, so they read as missing rather than outside.
+      if (root && h !== null && !within(root.path, h) && !within('/System/Volumes', root.path) && within(root.path, path)) return 'workspace'
     }
     if (dirOp(operation)) return null
     if (grants.get(grantKey(null, consumer))?.has(path)) return 'exact'

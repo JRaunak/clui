@@ -16,7 +16,7 @@ const { createFileAccess, listDir, LIST_MAX, COUNT_MAX } = await import('../src/
 const { listTree, treeTarget, validRel } = await import('../src/main/surfaces/tree.ts')
 const { ignoredNames } = await import('../src/main/workspace/git-status.ts')
 const { parseMenuItems, parseAnchor } = await import('../src/main/context-menu.ts')
-const { flatten, sortEntries, typeahead, changeIndex, survivor, ancestorsOf, tilde } = await import('../src/renderer/src/lib/tree.ts')
+const { flatten, sortEntries, typeahead, changeIndex, survivor, ancestorsOf, tilde, vetExpanded } = await import('../src/renderer/src/lib/tree.ts')
 
 const fx = mkdtempSync('/tmp/clui-tree-')
 const ws = join(fx, 'ws')
@@ -200,3 +200,17 @@ const within = <T,>(p: Promise<T>, ms: number): Promise<T | 'timeout'> => Promis
 }
 
 rmSync(fx, { recursive: true, force: true })
+
+// Restore after a relaunch reopens saved folders level by level and never an ignored or hidden one.
+{
+  const dir = (name: string, ignored = false): any => ({ name, type: 'directory', ignored })
+  const dirs: any = { '': { t: 'ok', entries: [dir('src'), dir('node_modules', true), dir('.git'), { name: 'f', type: 'file', ignored: false }], total: 4, totalCapped: false } }
+  const pending = ['src', 'src/lib', 'node_modules', 'node_modules/x', '.git', 'f', 'gone']
+  const first = vetExpanded(pending, new Set<string>(), dirs)
+  equal(first.admit.join(), 'src', 'vet: only a listed, plain folder reopens')
+  equal(first.wait.join(), 'src/lib,node_modules/x', 'vet: children wait on their parent')
+  const second = vetExpanded(first.wait, new Set(['src']), { ...dirs, src: { t: 'loading', slow: false } })
+  equal(second.wait.join(), 'src/lib', 'vet: an ignored folder takes its children with it')
+  const third = vetExpanded(second.wait, new Set(['src']), { ...dirs, src: { t: 'ok', entries: [dir('lib')], total: 1, totalCapped: false } })
+  ok(third.admit.join() === 'src/lib' && !third.wait.length, 'vet: a grandchild reopens once its parent lists')
+}

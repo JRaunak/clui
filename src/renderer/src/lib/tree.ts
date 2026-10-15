@@ -120,3 +120,29 @@ export function survivor(prev: readonly TreeRow[], rows: readonly TreeRow[], key
   for (let p = parent; p; p = parentOf(p)) if (keys.has(p)) return p
   return rows[0]?.key ?? null
 }
+
+/**
+ * Folders saved before a relaunch, split into those to reopen now and those still waiting on their
+ * parent's listing. One that is Git-ignored, hidden or gone drops out with everything under it, so a
+ * restore never reopens what only the user's own expand may open.
+ */
+export function vetExpanded(pending: readonly string[], open: ReadonlySet<string>, dirs: Readonly<Record<string, DirState>>): { admit: string[]; wait: string[] } {
+  const admit: string[] = []
+  const wait: string[] = []
+  for (const rel of pending) {
+    const parent = parentOf(rel)
+    if (parent && !open.has(parent)) {
+      if (pending.includes(parent)) wait.push(rel)
+      continue
+    }
+    const d = dirs[parent]
+    if (!d || d.t === 'loading') {
+      wait.push(rel)
+      continue
+    }
+    const name = nameOf(rel)
+    const e = d.t === 'ok' ? d.entries.find((x) => x.name === name) : undefined
+    if (e && e.type === 'directory' && !e.ignored && !name.startsWith('.')) admit.push(rel)
+  }
+  return { admit, wait }
+}

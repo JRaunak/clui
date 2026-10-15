@@ -27,7 +27,7 @@ import type { ProcessedAttachment } from './lib/images'
 import { CAP_NOTE, pinWords, clipName, messageGist, type AnnotateEvent, type AnnotationPin } from '../../shared/annotate'
 import type { Via } from './lib/motion'
 import type { ChangeGitStatus, FileChangeSummary, GitPathStatus } from '../../shared/changes'
-import type { OpenIntent, OpenedBy, SurfaceKind, SurfaceSet, SurfaceTab } from '../../shared/surfaces'
+import { SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
 import { turnEndLine } from './lib/turnEnd'
 
 export type SettingsSection = 'general' | 'sessions' | 'browser'
@@ -398,7 +398,20 @@ export interface PerSessionState {
   paneAutoOpenSuppressed: boolean
   /** The pane's tabs. Browser placements follow `browser` inside patchSlice. */
   surfaces: SurfaceSet
+  /** Why the saved tabs weren't opened, for the picker until the session's first tab opens. */
+  restoreNote: 'newer' | 'corrupt' | null
+  /** The tab cap has closed a tab in this session, so later ones are only announced. */
+  tabsEvicted: boolean
   annotate: AnnotateDraft
+}
+
+/** A tab the cap closed, held for its card's lifetime so Reopen can put it back where it was. */
+export interface EvictedTab {
+  id: string
+  handleId: string
+  tab: SurfaceTab
+  index: number
+  at: number
 }
 
 /** Elements pinned for the next message. `tab` is the tab being annotated now; `note` replaces the status
@@ -513,6 +526,11 @@ interface SessionStore {
   modToasts: ModToast[]
   /** The latest plugin toast for the toast stack's live region; `at` lets it lose to a newer delete announcement. */
   modToastAnnounce: { text: string; at: number }
+  /** Each session's first eviction by the tab cap, one card each, newest first. */
+  evictedTabs: EvictedTab[]
+  evictedAnnounce: { text: string; at: number }
+  /** Puts an evicted tab back at its old index, else at the end, and shows it. */
+  reopenEvicted: (id: string) => void
   /** Effort ceilings from ~/.claude/settings.json (read-only), so the picker/chip show
    *  the effort that will actually run under a `maxEffortLevel` cap. Read via `effortCap`. */
   effortCaps: EffortCaps
@@ -816,8 +834,10 @@ function patchSlice(
 ): Partial<SessionStore> {
   const cur = s.sessions[handleId]
   if (!cur) return {}
-  const next = { ...cur, ...patch }
-  return { sessions: { ...s.sessions, [handleId]: next.browser !== cur.browser ? placeBrowser(next) : next } }
+  let next = { ...cur, ...patch }
+  if (next.browser !== cur.browser) next = placeBrowser(next)
+  if (next.restoreNote && next.surfaces.order.length) next = { ...next, restoreNote: null }
+  return { sessions: { ...s.sessions, [handleId]: next } }
 }
 
 export const EMPTY_SURFACES: SurfaceSet = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
@@ -877,7 +897,7 @@ const without = <T>(rec: Record<string, T>, keep: (id: string) => boolean): Reco
  * tab's goes, and an active placement that went hands over to its neighbour. An active browser
  * placement follows main's viewed tab. With nothing left to show the pane stays open on the picker.
  */
-function placeBrowser(slice: PerSessionState): PerSessionState {
+function placeBrowser<T extends Pick<PerSessionState, 'surfaces' | 'browser'>>(slice: T): T {
   const set = slice.surfaces
   const b = slice.browser
   const live = b ? b.tabs.map((t) => placement(t.id)) : []
@@ -938,11 +958,63 @@ export function surfaceLabel(t: SurfaceTab): string {
   }
 }
 
-/** Tree and diff are session singletons; a path resource is one tab whatever its presentation. */
-const surfaceIdOf = (spec: SurfaceSpec): string =>
-  spec.kind === 'tree' || spec.kind === 'diff'
-    ? spec.kind
-    : `${spec.kind}:${spec.key}${spec.provenance?.creatingEditId ? `#${spec.provenance.creatingEditId}` : ''}`
+/** The tab came back from the sidecar rather than being opened in this slice. */
+export const restoredTab = (slice: Pick<PerSessionState, 'createdMs'> | null, tab: Pick<SurfaceTab, 'openedAt'>): boolean =>
+  !!slice && tab.openedAt < slice.createdMs
+
+/** The tab the cap closes to make room for `keep`: the inactive one viewed least recently. Tree and
+ *  Claude changes are never closed. */
+export function evictionVictim(set: SurfaceSet, keep: string): string | null {
+  const tabs = Object.values(set.tabs)
+  if (tabs.length < SURFACE_TAB_CAP) return null
+  let pick: SurfaceTab | null = null
+  for (const t of tabs) {
+    if (t.kind === 'tree' || t.kind === 'diff' || t.id === set.active || t.id === keep) continue
+    if (!pick || t.lastViewedAt < pick.lastViewedAt) pick = t
+  }
+  return pick?.id ?? null
+}
+
+function savedTab(t: SurfaceTab): SavedTab {
+  const { id, kind, key, title, openedBy, mode, viewState, sourceView, openedAt, lastViewedAt, provenance } = t
+  return { id, kind, key, title, openedBy, mode, viewState, sourceView, openedAt, lastViewedAt, provenance }
+}
+
+const surfacesSave = (s: PerSessionState): SurfacesSave => ({
+  set: { order: s.surfaces.order, active: s.surfaces.active, tabs: Object.fromEntries(Object.entries(s.surfaces.tabs).map(([id, t]) => [id, savedTab(t)])) },
+  open: s.paneOpen,
+  full: s.surfacePaneFull
+})
+
+/**
+ * A new or resumed slice's pane, from what the sidecar kept. Main has already restored the browser tabs
+ * with their saved ids, so the placements follow them, and without browser access they drop out. Nothing
+ * here counts as a change, so the first save waits for one.
+ */
+export function restoredPane(restore: SurfacesRestore, browser: boolean): Pick<PerSessionState, 'browser' | 'surfaces' | 'paneOpen' | 'surfacePaneFull' | 'restoreNote'> {
+  const tabs = !browser ? null : restore.status === 'ok' && restore.entry.browserTabs ? restore.entry.browserTabs : { tabs: [{ id: 1, url: 'about:blank', lastViewedAt: 0 }], nextId: 2, viewed: 1 }
+  const b: BrowserTabs | null = tabs && {
+    tabs: tabs.tabs.map((t) => ({ ...BLANK_BROWSER, id: t.id, url: t.url })),
+    viewed: tabs.viewed,
+    multi: tabs.nextId > 2,
+    toolTabs: {},
+    enter: [],
+    announce: ''
+  }
+  if (restore.status !== 'ok') {
+    return {
+      browser: b,
+      surfaces: b ? { ...EMPTY_SURFACES, order: [placement(1)], active: placement(1) } : EMPTY_SURFACES,
+      paneOpen: false,
+      surfacePaneFull: false,
+      restoreNote: restore.status === 'none' ? null : restore.status
+    }
+  }
+  const { set, open, full } = restore.entry
+  const lastViewed = Object.fromEntries((tabs?.tabs ?? []).map((t) => [placement(t.id), t.lastViewedAt]))
+  const surfaces: SurfaceSet = { order: set.order, active: set.active, tabs: set.tabs, browserLastViewedAt: lastViewed, browserUnseen: {} }
+  return { ...placeBrowser({ browser: b, surfaces }), paneOpen: open, surfacePaneFull: full, restoreNote: null }
+}
 
 /** Focus sits in the pane, where a switch Claude asked for would unmount it. A renderer without focus
  *  over a browser tab has handed it to the native page. */
@@ -1122,9 +1194,42 @@ export function ensureModelPrefsLoaded(): Promise<void> {
   return modelPrefsLoaded
 }
 
+/** A session's pane saves at most this often. */
+const SAVE_MS = 500
+const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+/** Sends a session's pending save now. `sync` blocks until main has it, for the window's unload. */
+function flushSurfaces(handleId: string, sync = false): void {
+  const t = saveTimers.get(handleId)
+  if (!t) return
+  clearTimeout(t)
+  saveTimers.delete(handleId)
+  const slice = useSession.getState().sessions[handleId]
+  if (!slice) return
+  if (sync) window.clui.saveSurfacesSync(handleId, surfacesSave(slice))
+  else void window.clui.saveSurfaces(handleId, surfacesSave(slice))
+}
+
+/** A slice saves only once something in its pane changes after it was created, restored state included. */
+function watchSurfaces(): void {
+  useSession.subscribe((s, prev) => {
+    if (s.sessions === prev.sessions) return
+    for (const [handleId, slice] of Object.entries(s.sessions)) {
+      const was = prev.sessions[handleId]
+      if (!was || was === slice || saveTimers.has(handleId)) continue
+      if (slice.surfaces === was.surfaces && slice.paneOpen === was.paneOpen && slice.surfacePaneFull === was.surfacePaneFull && slice.browser?.tabs === was.browser?.tabs) continue
+      saveTimers.set(handleId, setTimeout(() => flushSurfaces(handleId), SAVE_MS))
+    }
+  })
+  window.addEventListener('beforeunload', () => {
+    for (const handleId of [...saveTimers.keys()]) flushSurfaces(handleId, true)
+  })
+}
+
 function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void): void {
   if (subscribed) return
   subscribed = true
+  watchSurfaces()
   window.clui.onSessionEvent(({ handleId, event }) => {
     applyEvent(handleId, event)
     // A turn can delete a changed file without a tool result naming it (Bash rm), so its
@@ -1140,14 +1245,19 @@ function insertSlice(
   applyEvent: (handleId: string, e: DomainEvent) => void,
   slice: PerSessionState
 ): void {
-  set((s) => ({
-    sessions: { ...s.sessions, [slice.handleId]: slice },
-    activeHandleId: slice.handleId,
-    // A new/resumed session becomes active, so any open detail view (scoped to the
-    // previously-active session's tool ids) must close.
-    viewingSubagent: null,
-    subagentTrail: []
-  }))
+  set((s) => {
+    const sessions = { ...s.sessions, [slice.handleId]: slice }
+    return {
+      sessions,
+      // A pane restored open mounts without taking focus.
+      ...arriveWithPane(sessions, slice.handleId, s.stageWide, surfacePaneShown(s)),
+      activeHandleId: slice.handleId,
+      // A new/resumed session becomes active, so any open detail view (scoped to the
+      // previously-active session's tool ids) must close.
+      viewingSubagent: null,
+      subagentTrail: []
+    }
+  })
   const buffered = earlyBuffer.get(slice.handleId)
   if (buffered) {
     earlyBuffer.delete(slice.handleId)
@@ -1284,7 +1394,7 @@ async function beginSession(
   // values (from the sidecar). Verified: --model/--effort ARE honored on a --resume
   // spawn, and the CLI otherwise reverts to the settings.json default (dropping the
   // user's mid-session switch). On a fresh session they're the Settings default.
-  const { handleId, browser } = await window.clui.startSession({
+  const { handleId, browser, surfaces } = await window.clui.startSession({
     ...opts,
     permissionMode: choice,
     model: modelChoice,
@@ -1349,14 +1459,10 @@ async function beginSession(
     exited: false,
     createdMs: now,
     lastActivityMs: now,
-    browser: browser
-      ? { tabs: [{ id: 1, ...BLANK_BROWSER }], viewed: 1, multi: false, toolTabs: {}, enter: [], announce: '' }
-      : null,
-    paneOpen: false,
-    surfacePaneFull: false,
+    ...restoredPane(surfaces, browser),
     paneAutoOpen: false,
     paneAutoOpenSuppressed: false,
-    surfaces: browser ? { ...EMPTY_SURFACES, order: [placement(1)], active: placement(1) } : EMPTY_SURFACES,
+    tabsEvicted: false,
     annotate: IDLE_ANNOTATE
   })
   // Main rebuilds a resume's changes from its transcripts. A push that lands before the slice
@@ -1415,6 +1521,7 @@ function evictIfOverCap(
   }
 
   const label = victim.messages.find((m) => m.role === 'user')?.text.slice(0, 40) || 'a session'
+  flushSurfaces(victim.handleId)
   void window.clui.stopSession(victim.handleId)
   retireHandle(victim.handleId)
   set((s) => {
@@ -1443,6 +1550,38 @@ const BLANK_BROWSER: BrowserState = {
   still: null,
   loginWall: null,
   netAsk: null
+}
+
+/** How long an undo card stays up, and so how long Reopen can bring back an evicted tab. */
+export const UNDO_MS = 5000
+let evictSeq = 0
+
+/**
+ * Makes room under the tab cap before `keep` opens. The first eviction in a session gets a card that
+ * can reopen the tab; later ones are only announced, so opening 40 files doesn't bury the stack.
+ */
+function evictFor(
+  get: () => SessionStore,
+  set: (fn: (s: SessionStore) => Partial<SessionStore>) => void,
+  handleId: string,
+  keep: string
+): void {
+  const cur = get().sessions[handleId]
+  const victim = cur && evictionVictim(cur.surfaces, keep)
+  if (!cur || !victim) return
+  const set0 = cur.surfaces
+  const { [victim]: tab, ...tabs } = set0.tabs
+  const surfaces = { ...set0, order: set0.order.filter((x) => x !== victim), tabs }
+  const label = surfaceLabel(tab)
+  if (cur.tabsEvicted) {
+    set((s) => patchSlice(s, handleId, { surfaces, statusAnnounce: toggled(`Closed ${label} to stay under ${SURFACE_TAB_CAP} tabs.`) }))
+    return
+  }
+  const at = Date.now()
+  const card: EvictedTab = { id: `evicted-${++evictSeq}`, handleId, tab, index: set0.order.indexOf(victim), at }
+  const text = toggled(`Closed ${label}. Clui keeps up to ${SURFACE_TAB_CAP} tabs per session and closed the one you viewed least recently.`)
+  set((s) => ({ ...patchSlice(s, handleId, { surfaces, tabsEvicted: true }), evictedTabs: [card, ...s.evictedTabs], evictedAnnounce: { text, at } }))
+  setTimeout(() => set((s) => ({ evictedTabs: s.evictedTabs.filter((c) => c.id !== card.id) })), UNDO_MS)
 }
 
 let announceSeq = 0
@@ -1712,6 +1851,8 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
   modToasts: [],
   modToastAnnounce: { text: '', at: 0 },
+  evictedTabs: [],
+  evictedAnnounce: { text: '', at: 0 },
   effortCaps: {},
   viewingSubagent: null,
   subagentTrail: [],
@@ -1875,6 +2016,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
 
   closeSession: async (handleId) => {
+    flushSurfaces(handleId)
     await window.clui.stopSession(handleId)
     set((s) => {
       // Compute the neighbour BEFORE deleting, using the SAME order the sidebar
@@ -3376,6 +3518,8 @@ export const useSession = create<SessionStore>((set, get) => ({
 
   openSurface: (handleId, spec, intent, actor, openedBy) => {
     const id = surfaceIdOf(spec)
+    // Chosen before the open, so neither the tab being opened nor the one Claude is about to show can go.
+    if (!get().sessions[handleId]?.surfaces.tabs[id]) evictFor(get, set, handleId, id)
     const s = get()
     const cur = s.sessions[handleId]
     if (!cur) return id
@@ -3458,6 +3602,25 @@ export const useSession = create<SessionStore>((set, get) => ({
     set(patchSlice(s, handleId, activation(cur, id, Date.now())))
     const tab = browserTabOf(id)
     if (tab !== null && cur.browser?.viewed !== tab) void window.clui.browserViewTab(handleId, tab)
+  },
+
+  reopenEvicted: (id) => {
+    const card = get().evictedTabs.find((c) => c.id === id)
+    if (!card) return
+    set((s) => ({ evictedTabs: s.evictedTabs.filter((c) => c.id !== id) }))
+    const { handleId, index } = card
+    // Its view state comes back; a destination it was sent to before doesn't run again.
+    const { location: _l, highlight: _h, pendingShow: _p, unseen: _u, ...tab } = card.tab
+    if (!get().sessions[handleId]) return
+    if (!get().sessions[handleId].surfaces.tabs[tab.id]) {
+      evictFor(get, set, handleId, tab.id)
+      set((s) => {
+        const set0 = s.sessions[handleId].surfaces
+        const order = set0.order.toSpliced(Math.min(index, set0.order.length), 0, tab.id)
+        return patchSlice(s, handleId, { surfaces: { ...set0, order, tabs: { ...set0.tabs, [tab.id]: tab } } })
+      })
+    }
+    get().openSurface(handleId, { kind: tab.kind, key: tab.key, title: tab.title, provenance: tab.provenance }, 'focus', 'user', 'user')
   },
 
   setSurfaceView: (handleId, id, patch) => {

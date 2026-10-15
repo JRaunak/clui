@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { useActive, useSession, EMPTY_CHANGES } from '../../store'
+import { restoredTab, useActive, useSession, EMPTY_CHANGES } from '../../store'
 import type { ContextMenuItem, Refusal } from '../../../../shared/files'
 import type { FileChangeSummary } from '../../../../shared/changes'
 import { Button } from '../Button'
@@ -9,14 +9,17 @@ import { IconChevron, IconDiff, IconLocate } from '../Icon'
 import { describe, Figure, figureWidth, MINUS } from '../ChangedFiles'
 import { DISABLED_BTN, PANE_BTN, type PaneExternal } from './PaneHeader'
 import { openEditor } from './FileSurface'
-import { ancestorsOf, changeIndex, flatten, nameOf, parentOf, sortEntries, survivor, tilde, typeahead, type DirState, type TreeRow } from '../../lib/tree'
+import { ancestorsOf, changeIndex, flatten, nameOf, parentOf, sortEntries, survivor, tilde, typeahead, vetExpanded, type DirState, type TreeRow } from '../../lib/tree'
 import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { reducedMotion, viaOf, type Via } from '../../lib/motion'
+import { closeTab } from './SurfaceTabs'
 
 const TAB = 'tree'
 const SKELETON_MS = 400
 const TYPEAHEAD_MS = 500
 const FLASH_MS = 720
+/** The window's unload never unmounts the tree, so its scroll saves once it settles. */
+const VIEW_SETTLE_MS = 250
 const EXPANDED_MAX = 200
 // Below main's 32 per session: a File tab's watch can be set up while the tree's are still being torn down.
 const WATCH_MAX = 28
@@ -49,6 +52,9 @@ const indent = (depth: number): CSSProperties => ({ paddingLeft: `calc(0.5rem + 
 const baseOf = (p: string): string => p.slice(p.lastIndexOf('/') + 1) || p
 
 type Entry = Extract<TreeRow, { t: 'entry' }>
+
+/** Sessions whose tree has reopened its saved folders, after which a remount reopens what the user left open. */
+const vetted = new Set<string>()
 
 export function treeExternal(handleId: string | null, cwd: string | null): PaneExternal {
   return { label: 'Open folder in editor', onOpen: () => (handleId && cwd ? openEditor(handleId, cwd) : undefined) }
@@ -95,11 +101,15 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
   const setView = useSession((s) => s.setSurfaceView)
   const openSurface = useSession((s) => s.openSurface)
   const [restored] = useState(() => {
-    const st = useSession.getState()
-    const v = st.sessions[handleId]?.surfaces.tabs[TAB]?.viewState
-    return { view: v?.kind === 'tree' ? v : null, file: lastFile(st.sessions[handleId] ?? null) }
+    const slice = useSession.getState().sessions[handleId] ?? null
+    const tab = slice?.surfaces.tabs[TAB]
+    const v = tab?.viewState
+    const fromSidecar = !!tab && restoredTab(slice, tab)
+    return { view: v?.kind === 'tree' ? v : null, file: lastFile(slice), fromSidecar, vet: fromSidecar && !vetted.has(handleId) }
   })
-  const [expanded, setExpanded] = useState<string[]>(() => restored.view?.expanded ?? [])
+  // Saved folders reopen level by level as their parents list, so an ignored or hidden one is never opened.
+  const [vetting, setVetting] = useState<string[]>(() => (restored.vet ? (restored.view?.expanded ?? []) : []))
+  const [expanded, setExpanded] = useState<string[]>(() => (restored.vet ? [] : (restored.view?.expanded ?? [])))
   const [dirs, setDirs] = useState<Record<string, DirState>>({})
   const [focused, setFocused] = useState<string | null>(null)
   const [wash, setWash] = useState<{ key: string; via: Via } | null>(null)
@@ -157,17 +167,31 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
   useEffect(() => {
     for (const rel of ['', ...shown]) if (!dirs[rel]) void load(rel, true)
   }, [shown, dirs, load])
+  useEffect(() => {
+    if (!vetting.length) {
+      if (restored.vet) vetted.add(handleId)
+      return
+    }
+    const { admit, wait } = vetExpanded(vetting, open, dirs)
+    if (admit.length) setExpanded((e) => [...e, ...admit])
+    if (wait.length !== vetting.length) setVetting(wait)
+  }, [vetting, open, dirs, restored.vet, handleId])
 
   const scrollTop = useRef(restored.view?.scrollTop ?? 0)
   useEffect(() => {
-    setView(handleId, TAB, { viewState: { kind: 'tree', expanded, scrollTop: scrollTop.current } })
-  }, [expanded, handleId, setView])
+    setView(handleId, TAB, { viewState: { kind: 'tree', expanded: [...expanded, ...vetting], scrollTop: scrollTop.current } })
+  }, [expanded, vetting, handleId, setView])
+  const scrollTimer = useRef<ReturnType<typeof setTimeout>>()
+  const saveScroll = useCallback(() => {
+    const v = useSession.getState().sessions[handleId]?.surfaces.tabs[TAB]?.viewState
+    if (v?.kind === 'tree' && v.scrollTop !== scrollTop.current) setView(handleId, TAB, { viewState: { ...v, scrollTop: scrollTop.current } })
+  }, [handleId, setView])
   useEffect(
     () => () => {
-      const v = useSession.getState().sessions[handleId]?.surfaces.tabs[TAB]?.viewState
-      if (v?.kind === 'tree') setView(handleId, TAB, { viewState: { ...v, scrollTop: scrollTop.current } })
+      clearTimeout(scrollTimer.current)
+      saveScroll()
     },
-    [handleId, setView]
+    [saveScroll]
   )
 
   // Watch the root and the most recently expanded shown folders. Events are hints; a window focus re-lists every shown folder,
@@ -578,6 +602,11 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
         <div className={STATE_BODY}>
           <p className="text-ui font-medium text-content">Folder not found</p>
           <p className="max-w-[60ch] text-meta text-dim">{`${tilde(cwd, window.clui.homeDir)} isn't on disk anymore.`}</p>
+          {restored.fromSidecar && (
+            <Button variant="secondary" size="sm" onClick={() => closeTab(TAB, true)}>
+              Close tab
+            </Button>
+          )}
         </div>
       ) : (
         <div className={STATE_BODY}>
@@ -623,7 +652,11 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
           ? { role: 'tree', 'aria-label': `Files in ${name}`, 'aria-activedescendant': focused !== null && index.has(focused) ? idOf(focused) : undefined }
           : { role: 'region', 'aria-label': `Files in ${name}`, 'aria-busy': !root || root.t === 'loading' || undefined })}
         onKeyDown={ready ? onKeyDown : undefined}
-        onScroll={(e) => void (scrollTop.current = e.currentTarget.scrollTop)}
+        onScroll={(e) => {
+          scrollTop.current = e.currentTarget.scrollTop
+          clearTimeout(scrollTimer.current)
+          scrollTimer.current = setTimeout(saveScroll, VIEW_SETTLE_MS)
+        }}
         style={columns}
         className={`group/tree min-h-0 flex-1 overflow-y-auto ${ready ? 'focus-visible:outline-none' : ''}`}
       >

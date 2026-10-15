@@ -75,6 +75,9 @@ const api: CluiApi = {
     ipcRenderer.invoke(IpcChannels.setSessionModel, sessionId, prefs),
   deleteSessionModel: (sessionId: string) =>
     ipcRenderer.invoke(IpcChannels.deleteSessionModel, sessionId),
+  saveSurfaces: (handleId, save) => ipcRenderer.invoke(IpcChannels.saveSurfaces, handleId, save),
+  saveSurfacesSync: (handleId, save) => void ipcRenderer.sendSync(IpcChannels.saveSurfacesSync, handleId, save),
+  chooseSurfaceFile: (handleId, defaultPath) => ipcRenderer.invoke(IpcChannels.chooseSurfaceFile, handleId, defaultPath),
   readConfig: (cwd: string | null) => ipcRenderer.invoke(IpcChannels.readConfig, cwd),
   openInEditor: (handleId: string | null, filePath: string) => ipcRenderer.invoke(IpcChannels.openInEditor, handleId, filePath),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.openExternal, url),

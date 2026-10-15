@@ -19,6 +19,11 @@ export interface PaneEntry extends PaneItem {
   run: () => void
 }
 
+const RESTORE_NOTE = {
+  newer: "This session's saved tabs were saved by a newer version of Clui, so they weren't opened.",
+  corrupt: "This session's saved tabs couldn't be read, so they weren't opened."
+} as const
+
 const focusAddress = (): void => document.querySelector<HTMLElement>('[data-ui="browser-url"]')?.focus()
 
 /** A new browser tab, with focus on its address bar. */
@@ -68,6 +73,7 @@ export function usePaneEntries(): PaneEntry[] {
 /** The pane with no tabs: what it can open, as a flat list. */
 export function PanePicker(): JSX.Element {
   const entries = usePaneEntries()
+  const note = useActive((s) => s?.restoreNote ?? null)
   const pane = usePane()
   const headingId = useId()
   const listRef = useRef<HTMLDivElement>(null)
@@ -120,6 +126,7 @@ export function PanePicker(): JSX.Element {
               </button>
             ))}
           </div>
+          {note && <p className="px-3 pt-3 text-meta text-dim">{RESTORE_NOTE[note]}</p>}
         </div>
       </div>
     </div>

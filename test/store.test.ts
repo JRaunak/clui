@@ -1,6 +1,6 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { useSession, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
+import { useSession, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -648,4 +648,61 @@ const q = (id: string, text: string): any => ({ id, text })
   await st().refreshGitStatus('h1')
   equal((st().gitStatus['/w/a.ts'] as any)?.x, 'M', 'git: a reply for a closed session is dropped')
   delete replies.getChangeGitStatus
+}
+
+// Restore seeds the slice; the tab cap evicts the least recently viewed eligible tab before an open.
+{
+  const ftab = (n: number, viewed: number): any => ({ id: `file:/w/${n}.ts`, kind: 'file', key: `/w/${n}.ts`, title: `${n}.ts`, openedBy: 'user', openedAt: 1, lastViewedAt: viewed })
+  const singles: any = {
+    tree: { id: 'tree', kind: 'tree', key: '', title: 'w', openedBy: 'user', openedAt: 1, lastViewedAt: 0 },
+    diff: { id: 'diff', kind: 'diff', key: '', title: 'Claude changes', openedBy: 'user', openedAt: 1, lastViewedAt: 0 }
+  }
+  const saved = (browserTabs: any): any => ({
+    status: 'ok',
+    entry: {
+      set: { order: ['browser:3', 'tree', 'file:/w/1.ts', 'browser:5'], active: 'browser:5', tabs: { tree: singles.tree, 'file:/w/1.ts': ftab(1, 9) } },
+      browserTabs,
+      open: true,
+      full: true
+    }
+  })
+  const b = { tabs: [{ id: 3, url: 'https://a.test/', lastViewedAt: 7 }, { id: 5, url: 'about:blank', lastViewedAt: 8 }], nextId: 6, viewed: 5 }
+  const on = restoredPane(saved(b), true)
+  ok(on.surfaces.order.join() === 'browser:3,tree,file:/w/1.ts,browser:5' && on.surfaces.active === 'browser:5' && on.paneOpen && on.surfacePaneFull, 'restore: order, active and pane intent come back')
+  ok(on.browser?.tabs.map((t) => `${t.id}:${t.url}`).join() === '3:https://a.test/,5:about:blank' && on.browser.viewed === 5 && on.browser.multi && !on.browser.enter.length, 'restore: browser tabs keep their ids and addresses, and none fades in')
+  ok(on.surfaces.browserLastViewedAt['browser:3'] === 7, 'restore: browser last-viewed times come from the records')
+  const off = restoredPane(saved(null), false)
+  ok(off.browser === null && off.surfaces.order.join() === 'tree,file:/w/1.ts' && off.surfaces.active === 'file:/w/1.ts', 'restore: without browser access placements drop out and the active one hands over')
+  const newer = restoredPane({ status: 'newer' }, true)
+  ok(newer.restoreNote === 'newer' && newer.surfaces.order.join() === 'browser:1' && !newer.paneOpen, 'restore: a newer sidecar opens like a new session, noted for the picker')
+
+  // The note goes with the first tab and doesn't come back.
+  const empty = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
+  reset({ browser: null, surfaces: empty, restoreNote: 'corrupt', paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, pins: [], note: null }, tabsEvicted: false })
+  useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [], settingsSection: null, evictedTabs: [] })
+  st().openSurface('h1', { kind: 'diff', key: '', title: 'Claude changes' }, 'open', 'user', 'user')
+  st().closeSurface('h1', 'diff')
+  ok(cur().restoreNote === null, "restore: the picker's note is gone once a tab opens")
+
+  // Eviction picks the least recently viewed inactive file; tree, diff and the active tab stay.
+  const full = (): any => {
+    const tabs: any = { ...singles }
+    for (let n = 0; n < 22; n++) tabs[`file:/w/${n}.ts`] = ftab(n, 100 + n)
+    tabs['file:/w/0.ts'].lastViewedAt = 1
+    return { ...empty, order: Object.keys(tabs), active: 'file:/w/0.ts', tabs }
+  }
+  equal(evictionVictim(full(), 'file:/w/new.ts'), 'file:/w/1.ts', 'evict: the active tab is skipped even when it is the oldest')
+  equal(evictionVictim({ ...full(), tabs: { ...singles } }, 'x'), null, 'evict: under the cap nothing goes')
+  reset({ browser: null, surfaces: full(), paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, pins: [], note: null }, tabsEvicted: false, restoreNote: null })
+  st().setSurfaceView('h1', 'file:/w/1.ts', { viewState: { kind: 'file', topLine: 77, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
+  st().openSurface('h1', { kind: 'file', key: '/w/new.ts', title: 'new.ts' }, 'open', 'user', 'user')
+  const sur = (): any => cur().surfaces
+  ok(Object.keys(sur().tabs).length === 24 && !sur().tabs['file:/w/1.ts'] && sur().active === 'file:/w/new.ts', 'evict: opening a 25th tab closes the oldest eligible one first')
+  const card = st().evictedTabs[0]
+  ok(card?.tab.id === 'file:/w/1.ts' && card.index === 3 && st().evictedAnnounce.text.startsWith('Closed 1.ts. Clui keeps up to 24 tabs'), 'evict: the first eviction gets a card and its announcement')
+  st().openSurface('h1', { kind: 'file', key: '/w/new2.ts', title: 'new2.ts' }, 'open', 'user', 'user')
+  ok(st().evictedTabs.length === 1 && !cur().surfaces.tabs['file:/w/0.ts'] && cur().statusAnnounce.startsWith('Closed 0.ts to stay under 24 tabs.'), 'evict: a later one is only announced, and the once-active tab is eligible again')
+  st().reopenEvicted(card.id)
+  ok(sur().order[3] === 'file:/w/1.ts' && sur().active === 'file:/w/1.ts' && sur().tabs['file:/w/1.ts'].viewState.topLine === 77, 'evict: Reopen puts the tab back at its index with its view state')
+  ok(Object.keys(sur().tabs).length === 24 && !sur().tabs['file:/w/2.ts'] && !st().evictedTabs.length, 'evict: Reopen makes room by evicting the next one quietly')
 }

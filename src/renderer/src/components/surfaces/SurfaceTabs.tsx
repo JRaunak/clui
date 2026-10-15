@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { activeSlice, browserTabOf, surfaceLabel, useActive, useSession, EMPTY_STRINGS, EMPTY_SURFACES, EMPTY_TABS } from '../../store'
+import { activeSlice, browserTabOf, restoredTab, surfaceLabel, useActive, useSession, EMPTY_STRINGS, EMPTY_SURFACES, EMPTY_TABS } from '../../store'
+import { blockedOf, recheck, useBlockedVersion, type Blocked } from '../../lib/blockedFiles'
 import { siteKeyOf, type TabState } from '../../../../shared/browser'
 import type { SurfaceKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
@@ -12,6 +13,10 @@ import { IconAgentBrowser, IconClose, IconDiff, IconFolder, IconPlus } from '../
 const NEAREST: ScrollIntoViewOptions = { block: 'nearest', inline: 'nearest' }
 const EMPTY_IDS: number[] = []
 const UNSEEN_LINE = 'Updated since you last looked'
+const BLOCKED: Record<Blocked, { suffix: string; line: string }> = {
+  missing: { suffix: ', not found', line: 'File not found' },
+  outside: { suffix: ", can't open", line: 'Outside this folder. Open it again to view it.' }
+}
 
 const tabButton = (id: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-ui="surface-tabs"] [data-tab="${CSS.escape(id)}"]`)
@@ -106,6 +111,8 @@ export function SurfaceTabs(): JSX.Element {
   const enter = useActive((s) => s?.browser?.enter ?? EMPTY_IDS)
   const announce = useActive((s) => s?.browser?.announce ?? '')
   const cwd = useActive((s) => s?.cwd ?? null)
+  const createdMs = useActive((s) => s?.createdMs ?? 0)
+  useBlockedVersion()
   const activate = useSession((s) => s.activateSurface)
   const entries = usePaneEntries()
   const listRef = useRef<HTMLDivElement>(null)
@@ -114,6 +121,20 @@ export function SurfaceTabs(): JSX.Element {
 
   const files = order.flatMap((id) => (surfaceTabs[id]?.kind === 'file' ? [surfaceTabs[id].key] : []))
   const dup = suffixes(files)
+  // A restored file that can't open keeps its look. Its name and tooltip say why, re-checked when the window regains focus.
+  const restoredFiles = order.flatMap((id) => {
+    const t = surfaceTabs[id]
+    return t?.kind === 'file' && restoredTab({ createdMs }, t) ? [t.key] : []
+  })
+  const restoredKey = restoredFiles.join('\n')
+  useEffect(() => {
+    if (!handleId || !restoredKey) return
+    const paths = restoredKey.split('\n')
+    const check = (): void => recheck(handleId, paths)
+    check()
+    window.addEventListener('focus', check)
+    return () => window.removeEventListener('focus', check)
+  }, [handleId, restoredKey])
   const views = order.flatMap((id): TabView[] => {
     const n = browserTabOf(id)
     if (n !== null) {
@@ -136,7 +157,10 @@ export function SurfaceTabs(): JSX.Element {
     const suffix = dup.get(t.key) ?? ''
     const named = suffix ? `${label} ${suffix}` : label
     const dir = dirOf(relTo(cwd, t.key))
-    return [{ ...common, suffix, more: `${suffix ? ` ${suffix}` : ''}${dir ? `, file in ${dir}` : ', file'}`, tip: relTo(cwd, t.key), closeName: `Close ${named}` }]
+    const why = handleId && restoredTab({ createdMs }, t) ? blockedOf(handleId, t.key) : null
+    const blocked = why ? BLOCKED[why] : null
+    const more = `${suffix ? ` ${suffix}` : ''}${dir ? `, file in ${dir}` : ', file'}${blocked?.suffix ?? ''}`
+    return [{ ...common, suffix, more, tip: blocked ? `${relTo(cwd, t.key)}\n${blocked.line}` : relTo(cwd, t.key), closeName: `Close ${named}` }]
   })
   const ids = views.map((v) => v.id)
   const idsKey = ids.join('\n')

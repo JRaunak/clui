@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { diffLines } from 'diff'
-import { useActive, useSession } from '../../store'
+import { restoredTab, useActive, useSession } from '../../store'
 import type { ChangeMarks } from '../../../../shared/changes'
 import type { SurfaceLocation } from '../../../../shared/surfaces'
 import type { Refusal } from '../../../../shared/files'
@@ -16,6 +16,8 @@ import { highlightTexts, langForPath } from '../../lib/highlight'
 import { escapeHtml, markHtml } from '../../lib/highlightLines'
 import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { reducedMotion, viaOf, type Via } from '../../lib/motion'
+import { noteRead } from '../../lib/blockedFiles'
+import { closeTab } from './SurfaceTabs'
 
 const SKELETON_MS = 400
 const TEXT_MAX_MB = 5
@@ -26,6 +28,8 @@ const MISSING_POLL_MS = 2000
 const ANNOUNCE_MS = 300
 const FIND_MAX = 10_000
 const REMAP_MS = 50
+/** The window's unload never unmounts the open file, so its top line saves once a scroll settles. */
+const VIEW_SETTLE_MS = 250
 const SKELETON = [62, 48, 71, 35, 80, 54, 66, 40, 58, 44, 75, 50]
 const GOTO_EVENT = 'clui:file-goto'
 /** ⌘F, ⌘G and ⇧⌘G routed to the File surface; detail is 'open' | 'next' | 'prev'. */
@@ -56,6 +60,7 @@ const REASON: Record<Refusal['reason'], string> = {
   unavailable: "Clui can't read files safely on this system."
 }
 const RETRY = new Set<Refusal['reason']>(['changed', 'limit', 'unreadable'])
+const CHOOSE = 'Choose file\u2026'
 
 // What a shown file's view holds, for the header buttons and the menu item outside this component.
 const status = new Map<string, Doc['t']>()
@@ -145,6 +150,8 @@ function chipOf(h: ChangeMarks['hunks'][number]): { text: string; label: string 
  */
 export function FileSurface({ handleId, tabId }: { handleId: string; tabId: string }): JSX.Element {
   const tab = useActive((s) => s?.surfaces.tabs[tabId])
+  // Only a tab restored from the sidecar can have lost a grant, and only it offers Close tab in its error states.
+  const restored = useActive((s) => !!tab && restoredTab(s, tab))
   const path = tab?.key ?? ''
   const cwd = useActive((s) => s?.cwd ?? null)
   const busy = useActive((s) => !!s?.busy)
@@ -213,6 +220,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   const load = useCallback(async (): Promise<void> => {
     lastLoad.current = Date.now()
     const r = await window.clui.readText(handleId, path).catch((e: unknown) => ({ ok: false as const, reason: 'unreadable' as const, message: cleanError(e) }))
+    noteRead(handleId, path, r.ok ? null : r.reason)
     const prev = docRef.current
     let next: Doc
     if (!r.ok) next = r.reason === 'missing' ? { t: 'missing' } : { t: 'error', reason: r.reason, message: 'message' in r ? r.message : REASON[r.reason] }
@@ -420,11 +428,20 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.t, location, scroller])
 
-  // A restored tab lands where it was left; unmounting saves its top line.
+  // A restored tab lands where it was left; a settled scroll and unmounting save its top line.
   const restoreAt = useMemo(() => (tab?.viewState?.kind === 'file' && !location?.line ? tab.viewState.topLine : 1), [])
+  const viewTimer = useRef<ReturnType<typeof setTimeout>>()
+  const saveTop = (): void => {
+    if (docRef.current.t !== 'text') return
+    const n = topLine()
+    const v = useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]?.viewState
+    if (v?.kind === 'file' && v.topLine === n) return
+    setView(handleId, tabId, { viewState: { kind: 'file', topLine: n, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
+  }
   useEffect(
     () => () => {
-      if (docRef.current.t === 'text') setView(handleId, tabId, { viewState: { kind: 'file', topLine: topLine(), offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
+      clearTimeout(viewTimer.current)
+      saveTop()
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -681,6 +698,20 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     }
   }
 
+  const closeButton = restored ? (
+    <Button variant="secondary" size="sm" onClick={() => closeTab(tabId, true)}>
+      Close tab
+    </Button>
+  ) : null
+  // Main grants only the file the dialog returns, so a different pick opens as its own tab.
+  const chooseAgain = async (): Promise<void> => {
+    const picked = await window.clui.chooseSurfaceFile(handleId, path).catch(() => null)
+    if (!picked) return
+    if (picked !== path) return void openSurface(handleId, { kind: 'file', key: picked, title: baseOf(picked) }, 'focus', 'user', 'user')
+    void load()
+    setWatchGen((n) => n + 1)
+  }
+
   let content: JSX.Element | null = null
   if (doc.t === 'loading') {
     content = slow ? (
@@ -717,11 +748,29 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
       <div className={STATE_BODY}>
         <p className="text-ui font-medium text-content">File not found</p>
         <p className="max-w-[60ch] text-meta text-dim">{`${rel} isn't on disk anymore. It may have been moved or deleted.`}</p>
-        {change && (
-          <Button variant="secondary" size="sm" onClick={(e) => viewChange(undefined, viaOf(e))}>
-            {"View Claude's changes"}
-          </Button>
+        {(change || restored) && (
+          <div className="flex gap-2">
+            {change && (
+              <Button variant="secondary" size="sm" onClick={(e) => viewChange(undefined, viaOf(e))}>
+                {"View Claude's changes"}
+              </Button>
+            )}
+            {closeButton}
+          </div>
         )}
+      </div>
+    )
+  } else if (doc.t === 'error' && doc.reason === 'denied' && restored) {
+    content = (
+      <div className={STATE_BODY}>
+        <p className="text-ui font-medium text-content">{`Open ${name} again to view it`}</p>
+        <p className="max-w-[60ch] text-meta text-dim">{`It's outside ${baseOf(cwd ?? '')}, and Clui only reopens outside files you choose again yourself.`}</p>
+        <div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={() => void chooseAgain()}>
+            {CHOOSE}
+          </Button>
+          {closeButton}
+        </div>
       </div>
     )
   } else if (doc.t === 'error') {
@@ -729,15 +778,18 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
       <div className={STATE_BODY}>
         <p className="text-ui font-medium text-content">{`Couldn't read ${name}`}</p>
         {doc.message && <p className="max-w-[60ch] text-meta text-dim">{doc.message}</p>}
-        {RETRY.has(doc.reason) ? (
-          <Button variant="secondary" size="sm" onClick={() => void load()}>
-            Try again
-          </Button>
-        ) : doc.reason === 'too-large' ? (
-          <Button variant="secondary" size="sm" onClick={() => void openEditor(handleId, path)}>
-            Open in editor
-          </Button>
-        ) : null}
+        <div className="flex gap-2 empty:hidden">
+          {RETRY.has(doc.reason) || (restored && doc.reason === 'permission') ? (
+            <Button variant="secondary" size="sm" onClick={() => void load()}>
+              Try again
+            </Button>
+          ) : doc.reason === 'too-large' ? (
+            <Button variant="secondary" size="sm" onClick={() => void openEditor(handleId, path)}>
+              Open in editor
+            </Button>
+          ) : null}
+          {closeButton}
+        </div>
       </div>
     )
   } else if (scroller) {
@@ -748,7 +800,11 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
         data={items}
         initialTopMostItemIndex={lineIndex[Math.max(1, Math.min(count, restoreAt))] ?? 0}
         computeItemKey={(_i, it) => (it.t === 'line' ? `l${it.n}` : it.t === 'chip' ? it.key : it.t === 'banner' ? `b${it.end}` : it.t)}
-        rangeChanged={(r) => void (range.current = { start: r.startIndex, end: r.endIndex })}
+        rangeChanged={(r) => {
+          range.current = { start: r.startIndex, end: r.endIndex }
+          clearTimeout(viewTimer.current)
+          viewTimer.current = setTimeout(saveTop, VIEW_SETTLE_MS)
+        }}
         itemContent={(_i, it) => renderItem(it)}
       />
     )

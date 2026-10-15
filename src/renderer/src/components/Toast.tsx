@@ -112,7 +112,7 @@ export const Toast = forwardRef<HTMLDivElement, ToastCardProps>(function Toast(
             onClick={onAction}
             tabIndex={exiting ? -1 : undefined}
           >
-            Undo
+            {toast.actionLabel ?? 'Undo'}
           </button>
         </>
       )}
@@ -150,6 +150,8 @@ export type StackToast =
       title: string
       /** Dim trailing verb naming what Undo reverses (e.g. "· deleted"); never truncates. */
       suffix?: string
+      /** Replaces Undo when the action isn't a reversal. */
+      actionLabel?: string
     }
   | { kind: 'mod'; id: string; plugin: string; text: string; count: number; durationMs: number }
 

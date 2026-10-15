@@ -67,3 +67,37 @@ export interface SurfaceSet {
 
 /** `prepare` places a tab unseen without activating it; a Claude `focus` falls back to it while the user is busy in the pane or a Gate is up. */
 export type OpenIntent = 'focus' | 'open' | 'prepare'
+
+/** Tree and diff are session singletons; a path resource is one tab whatever its presentation. */
+export const surfaceIdOf = (t: Pick<SurfaceTab, 'kind' | 'key' | 'provenance'>): string =>
+  t.kind === 'tree' || t.kind === 'diff' ? t.kind : `${t.kind}:${t.key}${t.provenance?.creatingEditId ? `#${t.provenance.creatingEditId}` : ''}`
+
+/** Non-browser tabs a session keeps; opening another closes the one viewed least recently. */
+export const SURFACE_TAB_CAP = 24
+
+/** A tab as `session-surfaces.json` keeps it: never a selection, a highlight or a pending destination. */
+export type SavedTab = Pick<SurfaceTab, 'id' | 'kind' | 'key' | 'title' | 'openedBy' | 'mode' | 'viewState' | 'sourceView' | 'openedAt' | 'lastViewedAt' | 'provenance'>
+export interface SavedSet {
+  /** Browser placements included. */
+  order: string[]
+  active: string | null
+  tabs: Record<string, SavedTab>
+}
+/** A session's browser tabs by id and address. No content, history or cookies. */
+export interface SavedBrowser {
+  tabs: { id: number; url: string; lastViewedAt: number }[]
+  nextId: number
+  viewed: number
+}
+/** What the renderer saves; main adds the browser tabs from its own records. */
+export interface SurfacesSave {
+  set: SavedSet
+  open: boolean
+  full: boolean
+}
+export interface SurfacesEntry extends SurfacesSave {
+  /** Null when the session never had the browser tools. */
+  browserTabs: SavedBrowser | null
+}
+/** `newer` and `corrupt` open the session with no saved tabs, and the picker says why. */
+export type SurfacesRestore = { status: 'none' | 'newer' | 'corrupt' } | { status: 'ok'; entry: SurfacesEntry }

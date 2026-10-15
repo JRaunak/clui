@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { SessionSummary } from '../../../shared/sessions'
-import { useSession, forgetSessionModel, sessionDisplayTitle } from '../store'
+import { useSession, forgetSessionModel, sessionDisplayTitle, surfaceLabel, UNDO_MS } from '../store'
+import { SURFACE_TAB_CAP } from '../../../shared/surfaces'
 import { sessionStatusOf, statusKey, statusText, type SessionStatus } from '../lib/sessionStatus'
 import {
   IconRefresh,
@@ -68,8 +69,6 @@ function basename(p: string): string {
   return parts[parts.length - 1] || p
 }
 
-/** How long a deleted session can be undone before the on-disk delete fires. */
-const UNDO_MS = 5000
 /** Most undo toasts kept at once; a further delete commits the oldest immediately. */
 const STACK_CAP = 3
 
@@ -122,6 +121,9 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   const modAnnounce = useSession((s) => s.modToastAnnounce)
   const dismissModToast = useSession((s) => s.dismissModToast)
   const browserToasts = useBrowserToasts()
+  const evictedTabs = useSession((s) => s.evictedTabs)
+  const evictedAnnounce = useSession((s) => s.evictedAnnounce)
+  const reopenEvicted = useSession((s) => s.reopenEvicted)
 
   // Export a session to Markdown (on-disk sessions only). Reads the jsonl in main (safe on dormant sessions).
   const exportSession = useCallback(
@@ -391,11 +393,14 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
       items={[
         ...pending.map((p) => ({ kind: 'undo' as const, id: p.id, title: p.title, suffix: '· deleted', at: p.at })),
         ...browserToasts.items,
+        ...evictedTabs.map((c) => ({ kind: 'undo' as const, id: c.id, title: surfaceLabel(c.tab), suffix: `closed, ${SURFACE_TAB_CAP} tab limit`, actionLabel: 'Reopen', at: c.at })),
         ...modToasts.map((t) => ({ kind: 'mod' as const, ...t }))
       ].sort((a, b) => b.at - a.at)}
       durationMs={UNDO_MS}
-      announce={[modAnnounce, browserToasts.announce].reduce((a, b) => (b.at > a.at ? b : a), announce).text}
-      onUndo={(id) => (browserToasts.items.some((t) => t.id === id) ? browserToasts.onUndo(id) : undoDelete(id))}
+      announce={[modAnnounce, browserToasts.announce, evictedAnnounce].reduce((a, b) => (b.at > a.at ? b : a), announce).text}
+      onUndo={(id) =>
+        browserToasts.items.some((t) => t.id === id) ? browserToasts.onUndo(id) : evictedTabs.some((c) => c.id === id) ? reopenEvicted(id) : undoDelete(id)
+      }
       onDismiss={dismissModToast}
     />
   )

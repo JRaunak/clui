@@ -2,7 +2,7 @@
  * Browser tabs per session, each a WebContentsView sharing the 'persist:clui-browser' partition
  * so a single sign-in covers every session. A view is a child of the window while the user views
  * it, or while it's parked: Claude acting in a tab nobody sees. Every new address loads through
- * navigate(); ensureView only loads about:blank or the URL a suspended tab already had.
+ * navigate(); ensureView only loads about:blank or the URL a suspended or restored tab already had.
  */
 import { session, WebContentsView, type BrowserWindow, type WebContents } from 'electron'
 import {
@@ -19,6 +19,7 @@ import {
   type TabState
 } from '../../shared/browser'
 import type { DomainEvent } from '../../shared/events'
+import type { SavedBrowser } from '../../shared/surfaces'
 import { Cdp, capture } from './cdp'
 import { hideCursor, injectCursor, restCursor } from './cursor'
 import { approve, decideLocalNet, forgetLocalNet, isApproved, isApprovedCached, listSites, localNetCached } from './sites'
@@ -185,13 +186,13 @@ export class BrowserManager {
     return e && t ? [e, t] : null
   }
 
-  private addTab(e: Entry): Tab {
+  private addTab(e: Entry, saved?: SavedBrowser['tabs'][number]): Tab {
     const t: Tab = {
-      id: e.nextId++,
+      id: saved?.id ?? e.nextId++,
       view: null,
       cdp: null,
-      state: { ...initialState(), drive: e.stopped ? 'stopped' : 'idle' },
-      lastViewedMs: Date.now(),
+      state: { ...initialState(), drive: e.stopped ? 'stopped' : 'idle', ...(saved ? { url: saved.url } : {}) },
+      lastViewedMs: saved?.lastViewedAt ?? Date.now(),
       attached: false,
       parks: 0,
       agentActingUntil: 0,
@@ -205,8 +206,9 @@ export class BrowserManager {
     return t
   }
 
-  /** A session that starts with the tools, on tab 1. Its page is created the first time it's shown or driven. */
-  enable(handleId: string): void {
+  /** A session that starts with the tools, on tab 1 or on the tabs it saved. A page is created the first time
+   *  its tab is shown or driven, and a saved tab loads its address then. */
+  enable(handleId: string, saved?: SavedBrowser | null): void {
     if (this.entries.has(handleId)) return
     const e: Entry = {
       tabs: [],
@@ -219,8 +221,19 @@ export class BrowserManager {
       deniedSites: new Set(),
       userSites: new Set()
     }
-    this.addTab(e)
+    if (saved) {
+      for (const t of saved.tabs) this.addTab(e, t)
+      e.nextId = saved.nextId
+      e.viewed = e.lastUsed = saved.tabs.some((t) => t.id === saved.viewed) ? saved.viewed : (saved.tabs.at(-1)?.id ?? 1)
+    } else this.addTab(e)
     this.entries.set(handleId, e)
+  }
+
+  /** The session's tabs by id and address, for the Surfaces sidecar. */
+  records(handleId: string): SavedBrowser | null {
+    const e = this.entries.get(handleId)
+    if (!e) return null
+    return { tabs: e.tabs.map((t) => ({ id: t.id, url: t.state.url, lastViewedAt: t.lastViewedMs })), nextId: e.nextId, viewed: e.viewed }
   }
 
   /** Create the view for a new or suspended tab, suspending the stalest page past the cap. */
@@ -251,7 +264,7 @@ export class BrowserManager {
       }
     )
     this.wire(handleId, e, t, wc)
-    const resume = t.state.suspended && siteKeyOf(t.state.url) ? t.state.url : 'about:blank'
+    const resume = siteKeyOf(t.state.url) ? t.state.url : 'about:blank'
     void wc.loadURL(resume).catch(() => {})
     if (t.state.suspended) this.patch(handleId, t, { suspended: false })
     this.sync(e)

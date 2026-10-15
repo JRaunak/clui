@@ -146,6 +146,12 @@ const fdsBefore = fds()
   equal(reason(await fa.resolveAllowed('h2', join(out, 'ledger.txt'), file)), 'denied', 'files: ledger grants are per session')
   equal(reason(await fa.resolveAllowed('h1', out, tree)), 'denied', 'files: a ledger path confers no directory')
   equal(reason(await fa.resolveAllowed('h1', join(ws, 'gone.txt'), file)), 'missing', 'files: a missing workspace file is missing')
+  cwds.set('h3', join(fx, 'moved'))
+  equal(reason(await fa.resolveAllowed('h3', join(fx, 'moved'), tree)), 'missing', 'files: a session cwd that is gone lists as missing')
+  equal(reason(await fa.resolveAllowed('h3', join(fx, 'moved', 'a.txt'), file)), 'missing', 'files: a file under a gone cwd is missing')
+  equal(reason(await fa.resolveAllowed('h3', join(out, 'secret.txt'), file)), 'denied', 'files: a gone cwd still denies outside files')
+  equal(reason(await fa.resolveAllowed('h3', fx, tree)), 'denied', "files: a gone cwd's parent is still outside")
+  cwds.delete('h3')
   // The decisions the openInEditor / openDiff handlers make.
   const editor = { consumer: 'editor', operation: 'open-external' } as const
   ok((await fa.resolveAllowed('h1', join(out, 'ledger.txt'), editor)).ok, 'files: Changed Files opens an outside ledger path in the editor')

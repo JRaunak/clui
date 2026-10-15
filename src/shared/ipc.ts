@@ -18,6 +18,7 @@ import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, L
 import type { AnnotateEvent } from './annotate'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff } from './changes'
 import type { ContextMenuItem, FileChangedEvent, FileStat, Refusal, TextRead, TreeListing } from './files'
+import type { SurfacesRestore, SurfacesSave } from './surfaces'
 import type {
   CluiSettings,
   EffortChoice,
@@ -80,6 +81,9 @@ export interface StartSessionResult {
   handleId: string
   /** The process started with the browser tools, which it keeps until it exits. */
   browser: boolean
+  /** A resume's or fork's saved pane. With the browser tools, its browser tabs are the ones main
+   *  restored; without them they're null here and stay saved for a later resume. */
+  surfaces: SurfacesRestore
 }
 
 /**
@@ -219,6 +223,13 @@ export interface CluiApi {
   setSessionModel: (sessionId: string, prefs: { model?: string; effort?: string; ultracode?: boolean; contextWindow?: number }) => Promise<void>
   /** Remove one session's persisted model/effort (on permanent delete). */
   deleteSessionModel: (sessionId: string) => Promise<void>
+  /** Save a session's pane by handle. Main holds it until the CLI names the session, and drops a Quick session's. */
+  saveSurfaces: (handleId: string, save: SurfacesSave) => Promise<void>
+  /** The same, blocking until main has it, for the window's unload. */
+  saveSurfacesSync: (handleId: string, save: SurfacesSave) => void
+  /** The native open dialog at `defaultPath`. Main grants this session exactly the file chosen and returns its
+   *  canonical path; null when cancelled. */
+  chooseSurfaceFile: (handleId: string, defaultPath: string) => Promise<string | null>
   /** Read the Customizations bundle (agents/skills/hooks/mcp) for a workspace. */
   readConfig: (cwd: string | null) => Promise<ConfigBundle>
   /** Open a file in the configured editor: one the session may see, or with a null handle, a
@@ -421,6 +432,10 @@ export const IpcChannels = {
   getSessionModels: 'clui:getSessionModels',
   setSessionModel: 'clui:setSessionModel',
   deleteSessionModel: 'clui:deleteSessionModel',
+  saveSurfaces: 'clui:saveSurfaces',
+  /** SYNCHRONOUS (ipcRenderer.sendSync), from beforeunload. */
+  saveSurfacesSync: 'clui:saveSurfacesSync',
+  chooseSurfaceFile: 'clui:chooseSurfaceFile',
   readConfig: 'clui:readConfig',
   openInEditor: 'clui:openInEditor',
   openExternal: 'clui:openExternal',
