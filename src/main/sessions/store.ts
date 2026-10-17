@@ -16,7 +16,7 @@ import { basename, join, resolve, sep } from 'node:path'
 import { atomicWriteFile } from '../lib/atomic'
 import { claudeHome } from '../lib/claude-home'
 import type { ProjectGroup, SessionSummary } from '../../shared/sessions'
-import { messageGist } from '../../shared/annotate'
+import { messageGist } from '../../shared/context'
 
 const projectsRoot = (): string => join(claudeHome(), 'projects')
 

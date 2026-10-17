@@ -70,11 +70,13 @@ export interface HistoryToolCall {
 /** An attachment recovered from a resumed USER turn (drop-file). Images
  *  come back as a displayable `data:` URL (bytes are inlined in the jsonl); document/
  *  text attachments come back as a metadata-only CHIP (name + size); we don't re-inline
- *  a PDF's base64 (memory) or re-dump a text file's contents (noise) into the bubble. */
+ *  a PDF's base64 (memory) or re-dump a text file's contents (noise) into the bubble.
+ *  `blockIndex` is the block's index in the user message's content array. */
 export type HistoryAttachment =
-  | { kind: 'image'; dataUrl: string }
-  | { kind: 'document'; name: string; bytes: number }
-  | { kind: 'text'; name: string; bytes: number; lines: number }
+  | { kind: 'image'; dataUrl: string; blockIndex: number }
+  | { kind: 'image-unavailable'; blockIndex: number }
+  | { kind: 'document'; name: string; bytes: number; blockIndex: number }
+  | { kind: 'text'; name: string; bytes: number; lines: number; blockIndex: number }
 
 export interface CompactionMarker {
   trigger: string

@@ -1,4 +1,4 @@
-import { messageGist } from '../../../shared/annotate'
+import { messageGist } from '../../../shared/context'
 import type { ChatMessage, PerSessionState, ToolCall } from '../store'
 import { isBackgroundedTool } from './lumen'
 

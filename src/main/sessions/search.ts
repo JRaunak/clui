@@ -27,6 +27,7 @@ import { join, basename } from 'node:path'
 import { setImmediate as yieldToLoop } from 'node:timers/promises'
 import { readTranscriptAtPath } from './transcript'
 import { claudeHome } from '../lib/claude-home'
+import { messageProse } from '../../shared/context'
 import type { SearchHit, SearchResults, SnippetRange } from '../../shared/sessions'
 
 const projectsRoot = (): string => join(claudeHome(), 'projects')
@@ -92,7 +93,7 @@ function toSearchable(m: {
   tools: { name: string; input: unknown }[]
 }): SearchableMessage {
   const parts: string[] = []
-  if (m.text) parts.push(m.text)
+  if (m.text) parts.push(m.role === 'user' ? messageProse(m.text) : m.text)
   for (const t of m.tools) {
     if (t.name) parts.push(t.name)
     const input = t.input

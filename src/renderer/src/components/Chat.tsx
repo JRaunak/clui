@@ -1,4 +1,4 @@
-import { messageGist, splitAnnotations } from '../../../shared/annotate'
+import { messageGist, parseRefs } from '../../../shared/context'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type StateSnapshot, type VirtuosoHandle } from 'react-virtuoso'
 import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
@@ -520,8 +520,9 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
     requestAnimationFrame(() => (next ?? document.querySelector<HTMLElement>('[data-composer-input]'))?.focus())
   }
   const [editing, setEditing] = useState(false)
-  // The annotation block isn't editable here: edits change the typed text, and the block rides along.
-  const { block, text: typed } = splitAnnotations(q.text)
+  // The reference block isn't editable here: edits change the typed text, and the block rides along.
+  const { refs, rest: typed } = parseRefs(q.text)
+  const block = refs.length ? q.text.slice(0, typed ? q.text.lastIndexOf(typed) : undefined).trim() : ''
   const [draft, setDraft] = useState(typed)
   const taRef = useRef<HTMLTextAreaElement>(null)
 

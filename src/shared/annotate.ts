@@ -70,8 +70,6 @@ function originOf(url: string): string {
 const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim()
 
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-const unesc = (s: string): string => s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-const BLOCK = /<clui-annotations>[\s\S]*?<\/clui-annotations>\s*/
 
 /** The message's lead for Claude: one numbered, tagged line per pin under a header that marks it as page content.
  *  The tags let the bubble show chips instead; a page's own text can't close them early. */
@@ -102,23 +100,4 @@ export function annotationsText(pins: AnnotationPin[]): string {
   })
   out.push('</clui-annotations>')
   return out.join('\n')
-}
-
-/** A sent message split into its annotation chips and the text the user typed. */
-export function splitAnnotations(text: string): { pins: SentPin[]; text: string; block: string } {
-  const block = BLOCK.exec(text)
-  if (!block) return { pins: [], text, block: '' }
-  const pins: SentPin[] = []
-  for (const m of block[0].matchAll(/<clui-annotation ([^>]*)>/g)) {
-    const a = Object.fromEntries([...m[1].matchAll(/(\w+)="([^"]*)"/g)].map(([, k, v]) => [k, unesc(v)]))
-    pins.push({ n: Number(a.n) || pins.length + 1, kind: a.kind ?? '', name: a.name ?? '', host: a.host ?? '', crop: a.crop === '1' })
-  }
-  return { pins, text: text.replace(BLOCK, '').trim(), block: block[0].trim() }
-}
-
-/** A sent message in one line for titles and previews: what the user typed, led by its annotation count. */
-export function messageGist(text: string): string {
-  const { pins, text: typed } = splitAnnotations(text)
-  const count = pins.length ? `${pins.length} annotated ${pins.length === 1 ? 'element' : 'elements'}` : ''
-  return count && typed ? `${count} · ${typed}` : count || typed
 }

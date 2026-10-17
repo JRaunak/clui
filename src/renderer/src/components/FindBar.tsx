@@ -14,15 +14,17 @@ import { useActive, useSession, EMPTY_MESSAGES } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { FindField } from './FindField'
 import { summarizeInput } from './MessageView'
+import { messageProse } from '../../../shared/context'
 
 /** The searchable text of a message: its own text + tool names + the same input summary
  *  the card shows (command/path/description) + tool outputs, so find covers what the user
  *  can actually see in the transcript. */
 function messageText(m: {
+  role: string
   text: string
   tools: { name: string; input?: unknown; result?: string }[]
 }): string {
-  const parts = [m.text]
+  const parts = [m.role === 'user' ? messageProse(m.text) : m.text]
   for (const t of m.tools) {
     if (t.name) parts.push(t.name)
     const summary = summarizeInput(t.input)

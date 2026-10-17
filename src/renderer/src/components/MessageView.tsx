@@ -8,6 +8,7 @@ import {
   type ChatMessage,
   type HookNote,
   type MessageAttachment,
+  type ShownAttachment,
   type PeerMessage,
   type ToolCall,
   type WokenTask
@@ -15,7 +16,8 @@ import {
 import { FileLinkContext, Markdown, StreamingContext } from './Markdown'
 import { AnnotationChip } from './AnnotationChip'
 import { Button } from './Button'
-import { splitAnnotations } from '../../../shared/annotate'
+import { hostOf, pinWords } from '../../../shared/annotate'
+import { parseRefs, refLabel } from '../../../shared/context'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
 import { IconArrowUp, IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShieldOff, IconStop, IconWarn } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
@@ -27,7 +29,7 @@ import type { PermissionDenial, TurnUsage } from '../../../shared/events'
 export { summarizeInput } from '../lib/instrument'
 
 /** Non-image attachments render as a file chip matching the composer pill's language. */
-function MessageAttachmentView({ att }: { att: MessageAttachment }): JSX.Element {
+function MessageAttachmentView({ att }: { att: ShownAttachment }): JSX.Element {
   if (att.kind === 'image') {
     return (
       <img
@@ -154,7 +156,7 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
             </div>
           )}
           {isUser && message.hookNotes && <HookNotes notes={message.hookNotes} />}
-          {isUser && message.blocked && <BlockedPromptNotice prompt={splitAnnotations(message.text).text} blocked={message.blocked} />}
+          {isUser && message.blocked && <BlockedPromptNotice prompt={parseRefs(message.text).rest} blocked={message.blocked} />}
           {!isUser && message.denials && message.denials.length > 0 && <BlockedActionsNotice denials={message.denials} />}
           {!isUser && (message.turnEnd || message.usage) && <TurnFooter message={message} />}
         </div>
@@ -767,24 +769,33 @@ function ThinkingBlock({ text }: { text: string }): JSX.Element {
   )
 }
 
-/** A sent message's annotation block shows as chips; the block itself went to Claude only. Crops travel first
- *  among the images, in pin order, so the first ones are the chips' thumbnails. */
+/** A sent message's reference block shows as chips; the block itself went to Claude only. A current reference
+ *  claims its crop by content-array index. A legacy block can only pair by order: its crops travel first among
+ *  the images, in pin order. */
 function UserContent({ message }: { message: ChatMessage }): JSX.Element {
-  const { pins, text } = splitAnnotations(message.text)
+  const { refs, rest: text } = parseRefs(message.text)
   const all = message.attachments ?? []
-  const images = all.filter((a) => a.kind === 'image')
-  const thumbs = images.slice(0, pins.filter((p) => p.crop).length)
-  const used = new Set<MessageAttachment>(thumbs)
-  const rest = all.filter((a) => !used.has(a))
+  const images = all.filter((a): a is Extract<MessageAttachment, { kind: 'image' }> => a.kind === 'image')
+  const legacyThumbs = images.slice(0, refs.filter((r) => r.kind === 'legacy' && r.value.crop).length)
   let next = 0
+  const chips = refs.map((r) => {
+    if (r.kind === 'legacy') return { ...r.value, thumb: r.value.crop ? legacyThumbs[next++] : undefined }
+    const { ref, visualAttachmentIndex: vi } = r.value
+    const thumb = vi === undefined ? undefined : images.find((a) => a.blockIndex === vi)
+    if (ref.kind === 'browser') return { n: r.n, ...pinWords(ref.pin.target), host: hostOf(ref.pin.target.url), thumb }
+    // ponytail: file and folder refs borrow the pin chip; ContextChip replaces it when the composer writes them (7a-2)
+    return { n: r.n, kind: refLabel(ref), name: '', host: ref.path, thumb }
+  })
+  const used = new Set<MessageAttachment | undefined>(chips.map((c) => c.thumb))
+  const rest = all.filter((a): a is ShownAttachment => a.kind !== 'image-unavailable' && !used.has(a))
+  const lost = all.filter((a) => a.kind === 'image-unavailable').length
   return (
     <>
-      {pins.length > 0 && (
+      {chips.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {pins.map((p) => {
-            const crop = p.crop ? thumbs[next++] : undefined
-            return <AnnotationChip key={p.n} n={p.n} kind={p.kind} name={p.name} host={p.host} thumb={crop?.kind === 'image' ? crop.previewUrl : undefined} />
-          })}
+          {chips.map((c) => (
+            <AnnotationChip key={c.n} n={c.n} kind={c.kind} name={c.name} host={c.host} thumb={c.thumb?.previewUrl} />
+          ))}
         </div>
       )}
       {rest.length > 0 && (
@@ -794,6 +805,7 @@ function UserContent({ message }: { message: ChatMessage }): JSX.Element {
           ))}
         </div>
       )}
+      {lost > 0 && <p data-ui="image-unavailable" className="text-meta text-dim">{lost === 1 ? 'Image not available' : `${lost} images not available`}</p>}
       {text && <div className="whitespace-pre-wrap text-sm leading-relaxed text-content">{renderUserText(text)}</div>}
     </>
   )

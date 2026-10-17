@@ -24,7 +24,8 @@ import type { CluiApi, EffortCaps, PermissionModeChoice, PermissionVerdict, Wire
 import { loadFailureOf, siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
 import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
-import { CAP_NOTE, pinWords, clipName, messageGist, type AnnotateEvent, type AnnotationPin } from '../../shared/annotate'
+import { CAP_NOTE, pinWords, clipName, type AnnotateEvent, type AnnotationPin } from '../../shared/annotate'
+import { messageGist } from '../../shared/context'
 import type { Via } from './lib/motion'
 import type { ChangeGitStatus, FileChangeSummary, GitPathStatus } from '../../shared/changes'
 import { SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
@@ -152,15 +153,17 @@ export interface ModToast {
  *  file chip. Present on live bubbles the composer created AND on resumed user turns
  *  (images recovered from the transcript). */
 export type MessageAttachment =
-  | { kind: 'image'; previewUrl: string; name?: string; w?: number; h?: number }
-  | { kind: 'document'; name: string; bytes: number }
-  | { kind: 'text'; name: string; bytes: number; lines: number }
+  | { kind: 'image'; previewUrl: string; name?: string; w?: number; h?: number; blockIndex?: number }
+  | { kind: 'image-unavailable'; blockIndex: number }
+  | { kind: 'document'; name: string; bytes: number; blockIndex?: number }
+  | { kind: 'text'; name: string; bytes: number; lines: number; blockIndex?: number }
+export type ShownAttachment = Exclude<MessageAttachment, { kind: 'image-unavailable' }>
 
 /** What the composer hands `sendMessage`: the wire payload for the CLI plus the
  *  display metadata for the optimistic user bubble. */
 export interface SendAttachment {
   wire: WireAttachment
-  display: MessageAttachment
+  display: ShownAttachment
 }
 
 /** An inbound cross-session peer message rendered as its own attributed transcript block
@@ -1387,15 +1390,10 @@ async function beginSession(
         blocks: [],
         // Drop-file: recovered attachments render in the user bubble. Images show as
         // thumbnails (the recovered data-URL is the preview), document/text as
-        // metadata chips (name + size; bytes not re-inlined into the store on resume).
+        // metadata chips (name + size; bytes not re-inlined into the store on resume),
+        // and an unrecoverable image as an "Image not available" note.
         attachments: m.attachments?.length
-          ? m.attachments.map((a) =>
-              a.kind === 'image'
-                ? { kind: 'image' as const, previewUrl: a.dataUrl }
-                : a.kind === 'document'
-                  ? { kind: 'document' as const, name: a.name, bytes: a.bytes }
-                  : { kind: 'text' as const, name: a.name, bytes: a.bytes, lines: a.lines }
-            )
+          ? m.attachments.map((a): MessageAttachment => (a.kind === 'image' ? { kind: 'image', previewUrl: a.dataUrl, blockIndex: a.blockIndex } : a))
           : undefined
       }))
       resumedContextTokens = t.contextTokens

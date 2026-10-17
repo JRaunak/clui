@@ -139,7 +139,7 @@ interface ContentBlock {
  *  store bloats memory. (The LIVE path downscales a small preview before storing;
  *  the renderer has canvas, main does not.) Clui-sent images are already ≤1568px, so
  *  this only bites on full-res images from another client. Beyond the cap the block
- *  degrades to the `[image]` text placeholder. */
+ *  degrades to an `image-unavailable` placeholder. */
 const MAX_RECOVERED_IMAGES = 30
 const MAX_RECOVERED_IMAGE_BYTES = 25 * 1024 * 1024
 
@@ -580,7 +580,7 @@ async function parseTranscriptFile(
         thinking: '',
         tools: []
       }
-      for (const b of blocks) {
+      for (const [blockIndex, b] of blocks.entries()) {
         if (!b || typeof b !== 'object') continue // a null/scalar block must not throw
         switch (b.type) {
           case 'text':
@@ -595,7 +595,8 @@ async function parseTranscriptFile(
                   kind: 'text',
                   name: name || 'file.txt',
                   bytes: body.length,
-                  lines: body.split('\n').length
+                  lines: body.split('\n').length,
+                  blockIndex
                 })
               } else {
                 msg.text += b.text
@@ -642,11 +643,11 @@ async function parseTranscriptFile(
               recoveredImages < MAX_RECOVERED_IMAGES &&
               recoveredImageBytes + bytes <= MAX_RECOVERED_IMAGE_BYTES
             ) {
-              ;(msg.attachments ??= []).push({ kind: 'image', dataUrl: `data:${mediaType};base64,${data}` })
+              ;(msg.attachments ??= []).push({ kind: 'image', dataUrl: `data:${mediaType};base64,${data}`, blockIndex })
               recoveredImages += 1
               recoveredImageBytes += bytes
             } else {
-              msg.text += (msg.text ? '\n' : '') + '[image]'
+              ;(msg.attachments ??= []).push({ kind: 'image-unavailable', blockIndex })
             }
             break
           }
@@ -656,7 +657,7 @@ async function parseTranscriptFile(
             // metadata-only chip so the bubble honestly shows a PDF was attached.
             const src = b.source
             const bytes = typeof src?.data === 'string' ? Math.round((src.data.length * 3) / 4) : 0
-            ;(msg.attachments ??= []).push({ kind: 'document', name: 'document.pdf', bytes })
+            ;(msg.attachments ??= []).push({ kind: 'document', name: 'document.pdf', bytes, blockIndex })
             break
           }
           default:

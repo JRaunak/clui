@@ -17,6 +17,7 @@
  */
 import { readTranscript } from './transcript'
 import type { HistoryMessage, HistoryToolCall } from '../../shared/sessions'
+import { messageProse } from '../../shared/context'
 
 export interface ExportMeta {
   title: string
@@ -54,11 +55,12 @@ function renderMessage(m: HistoryMessage): string {
   // Attachment placeholders (never inline base64, which keeps the .md small + readable).
   for (const a of m.attachments ?? []) {
     if (a.kind === 'image') parts.push('![attached image]')
-    else if (a.kind === 'document') parts.push(`[attached ${a.name}]`)
+    else if (a.kind === 'image-unavailable') parts.push('[image]')
     else parts.push(`[attached ${a.name}]`)
   }
 
-  if (m.text.trim()) parts.push(m.text.trim())
+  const text = (m.role === 'user' ? messageProse(m.text) : m.text).trim()
+  if (text) parts.push(text)
 
   // Tool calls as dim one-line markers (summary, not full I/O).
   for (const t of m.tools) parts.push(toolSummary(t))
