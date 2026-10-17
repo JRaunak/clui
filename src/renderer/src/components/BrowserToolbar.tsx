@@ -5,6 +5,7 @@ import { parseAddress, type AddressParse, type DriveState, type LoadError } from
 import { CAP_NOTE, MAX_REFS } from '../../../shared/context'
 import { IconChevron, IconClose, IconRefresh, IconStop, IconTarget } from './Icon'
 import { PANE_BTN } from './surfaces/PaneHeader'
+import { listedDir, openFileAt } from '../lib/openLink'
 
 // The toolbar sits over the pane's flat floor, where the solid form is pixel-identical and skips a filter.
 const SOLID = { ['--control-material' as string]: 'solid' } as CSSProperties
@@ -56,9 +57,10 @@ function recentOf(b: BrowserTabs | null | undefined): number {
   return Math.max(...driving)
 }
 
-function rejectionOf(p: Exclude<AddressParse, { url: string }>): string {
+function rejectionOf(p: Extract<AddressParse, { error: string }>): string {
   if (p.error === 'not-address') return "That isn't a web address. To ask Claude, use the message box."
-  if (p.kind === 'file') return "Local files can't open in the browser."
+  if (p.kind === 'file')
+    return p.reason === 'path' ? 'To open a file here, type its full path as a file:// link.' : "That file link isn't valid. Use file:/// and a full path."
   return `${p.scheme}: links can't open here. The browser opens http and https pages only.`
 }
 
@@ -117,12 +119,23 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
   const go = async (): Promise<void> => {
     if (!draft?.trim()) return
     const p = parseAddress(draft)
-    if (!('url' in p)) {
-      // The field already has focus, so a changed description isn't read; a repeat Enter must say it again.
-      const say = rejectionOf(p)
+    // The field already has focus, so a changed description isn't read; a repeat Enter must say it again.
+    const refuse = (say: string): void => {
       setRejection(say)
       announce(say)
-      return
+    }
+    if ('error' in p) return refuse(rejectionOf(p))
+    if ('file' in p) {
+      const s = useSession.getState().sessions[handleId]
+      const cwd = s && !s.ephemeral ? s.cwd.replace(/(.)\/+$/, '$1') : ''
+      if (!cwd) return refuse("This session has no folder, so files can't open from here.")
+      // Main grants an outside file only through its own dialog, so a typed one is refused here too.
+      if (p.file !== cwd && !p.file.startsWith(`${cwd}/`)) return refuse("Only files in this session's folder open from the address bar.")
+      setRejection(null)
+      setDraft(null)
+      setPending(null)
+      const dir = p.dir || p.file === cwd || listedDir(handleId, p.file.slice(cwd.length + 1))
+      return openFileAt(handleId, p.file, p, dir, 'keyboard')
     }
     setRejection(null)
     // The same address won't change the url, so nothing would ever release the draft.

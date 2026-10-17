@@ -144,6 +144,9 @@ export function openFileLink(handleId: string, path: string, at: Pick<FileRef, '
   openFileAt(handleId, path, at, dir, viaOf(e))
 }
 
+/** Whether `rel` is a folder in the session's listed workspace, for a path that doesn't say so with a slash. */
+export const listedDir = (handleId: string, rel: string): boolean => !!useWorkspaces.getState().sets[handleId]?.dirs.has(rel)
+
 /** A file in the File surface, or a folder revealed in the tree. */
 export function openFileAt(handleId: string, path: string, at: Pick<FileRef, 'line' | 'endLine'>, dir: boolean, via: Via): void {
   const st = useSession.getState()

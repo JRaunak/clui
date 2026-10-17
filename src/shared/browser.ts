@@ -124,8 +124,9 @@ export function siteFromInput(raw: string): string | null {
 
 export type AddressParse =
   | { url: string }
+  | { file: string; dir: boolean; line?: number; endLine?: number }
   | { error: 'not-address' }
-  | { error: 'unsupported'; kind: 'file' }
+  | { error: 'unsupported'; kind: 'file'; reason: 'path' | 'malformed' }
   | { error: 'unsupported'; kind: 'scheme'; scheme: string }
 
 const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
@@ -143,7 +144,8 @@ export function isLocalHost(host: string): boolean {
  *  rather than sent to a search engine from the shared partition. A scheme is never required. */
 export function parseAddress(raw: string): AddressParse {
   const v = raw.trim()
-  if (/^(\/|~\/|file:)/i.test(v)) return { error: 'unsupported', kind: 'file' }
+  if (/^(\/|~\/)/.test(v)) return { error: 'unsupported', kind: 'file', reason: 'path' }
+  if (/^file:/i.test(v)) return fileOf(v)
   const head = v.split(/[/?#]/, 1)[0]
   if (!head || /\s/.test(head)) return { error: 'not-address' }
   // A digit after the colon is a port, so localhost:3000 isn't a scheme, and neither is a dotted host or localhost.
@@ -164,6 +166,26 @@ export function parseAddress(raw: string): AddressParse {
     (single && /^(?!\d+$)[a-z\d-]+$/.test(host) && (!!m[2] || v.length > head.length))
   if (!ok) return { error: 'not-address' }
   return toUrl(`${single || isLocalHost(host) ? 'http' : 'https'}://${v}`) ?? { error: 'not-address' }
+}
+
+/** A local file URL's path, with a GitHub-style `#L12` or `#L12-L20` line. A host other than this machine is refused. */
+function fileOf(text: string): AddressParse {
+  const bad = { error: 'unsupported', kind: 'file', reason: 'malformed' } as const
+  let path: string
+  let hash: string
+  try {
+    const u = new URL(text)
+    if (u.hostname && u.hostname !== 'localhost') return bad
+    path = decodeURIComponent(u.pathname)
+    hash = u.hash
+  } catch {
+    return bad
+  }
+  const m = /^#L(\d+)(?:-L?(\d+))?$/i.exec(hash)
+  const line = m ? Number(m[1]) : 0
+  const end = m?.[2] ? Number(m[2]) : 0
+  const file = path.length > 1 ? path.replace(/\/+$/, '') : path
+  return { file, dir: path.endsWith('/'), ...(line ? { line } : {}), ...(end > line ? { endLine: end } : {}) }
 }
 
 function toUrl(text: string): { url: string } | null {
