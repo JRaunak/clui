@@ -265,10 +265,10 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
           </button>
         </Field>
         <Field
-          label="Open links in"
+          label="Open web links in"
           hint={
             enabled
-              ? `Applies to links in Claude's replies and tool output. ${LINK_MOD}-click opens the other way.`
+              ? `Applies to web links in Claude's replies and tool output. ${LINK_MOD}-click opens the other way.`
               : 'Takes effect when the agentic browser is on. Until then, links open in your default browser.'
           }
           hintId={`${uid}-links`}
@@ -277,7 +277,7 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
         >
           <Dropdown<LinkTarget>
             value={target}
-            ariaLabel="Open links in"
+            ariaLabel="Open web links in"
             options={[
               { value: 'clui', label: "Clui's browser" },
               { value: 'system', label: 'Default browser' }

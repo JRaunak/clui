@@ -79,8 +79,8 @@ const useFileStatus = (handleId: string | null, path: string | null): Doc['t'] |
   useSyncExternalStore(subscribe, () => (handleId && path ? (status.get(`${handleId}\0${path}`) ?? null) : null))
 export const useFileMissing = (handleId: string | null, path: string | null): boolean => useFileStatus(handleId, path) === 'missing'
 
-export const openEditor = (handleId: string, path: string): Promise<void> =>
-  window.clui.openInEditor(handleId, path).catch((e: unknown) => useSession.setState({ notice: { message: cleanError(e), tone: 'error' } }))
+export const openEditor = (handleId: string, path: string, line?: number): Promise<void> =>
+  window.clui.openInEditor(handleId, path, line).catch((e: unknown) => useSession.setState({ notice: { message: cleanError(e), tone: 'error' } }))
 
 export function useFileExternal(handleId: string | null, path: string | null): PaneExternal {
   const gone = useFileMissing(handleId, path)

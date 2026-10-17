@@ -4,6 +4,7 @@ import { useSession, type SettingsSection } from '../store'
 import { Button } from './Button'
 import { IconClose } from './Icon'
 import { applyTheme } from '../lib/theme'
+import { useLinkTarget } from '../lib/openLink'
 import { useEscape } from '../lib/useEscape'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { useOverlayEnter, useOverlayCovered } from '../lib/overlayOrigin'
@@ -87,6 +88,7 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
     const { patch, clear } = draftPatch(draft)
     try {
       const saved = await window.clui.updateSettings(patch, clear)
+      useLinkTarget.setState({ file: saved.values.fileLinkTarget, editor: saved.values.editorCommand || 'code' })
       // Nothing is staged any more, so the unmount revert leaves the saved theme alone.
       latest.current = rebaseDraft(null, saved)
       closeSettings()

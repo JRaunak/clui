@@ -131,7 +131,7 @@ export function SurfaceTabs(): JSX.Element {
     const t = surfaceTabs[id]
     if (!t) return []
     const label = surfaceLabel(t)
-    const common = { id, kind: t.kind, label, suffix: '', more: '', tip: label, closeName: `Close ${label}`, state: null, unseen: !!t.unseen, fade: t.openedBy === 'claude' && !initial.has(id) }
+    const common = { id, kind: t.kind, label, suffix: '', more: '', tip: label, closeName: `Close ${label}`, state: null, unseen: !!t.unseen, fade: (t.openedBy === 'claude' || t.openedBy === 'change') && !initial.has(id) }
     if (t.kind === 'diff') return [{ ...common, tip: 'What Claude changed in this session' }]
     if (t.kind === 'tree') return [{ ...common, more: ', file tree', tip: cwd ? tilde(cwd, window.clui.homeDir) : label }]
     if (t.kind !== 'file') return [common]

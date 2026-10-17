@@ -9,6 +9,7 @@
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import { promisify } from 'node:util'
+import { editorLineStyle } from '../../shared/settings'
 
 const execFileP = promisify(execFile)
 
@@ -17,8 +18,15 @@ const execFileP = promisify(execFile)
  * `cursor`, `subl`). Resolved through a login shell so GUI-launched Electron
  * finds editors on the user's real PATH.
  */
-export async function openInEditor(editorCmd: string, filePath: string): Promise<void> {
-  await runEditor(editorCmd, [filePath])
+export async function openInEditor(editorCmd: string, filePath: string, line?: number): Promise<void> {
+  await runEditor(editorCmd, editorArgs(editorCmd, filePath, line))
+}
+
+/** An editor that doesn't take a line is given the file alone, rather than a path it would read as a new file's name. */
+export function editorArgs(editorCmd: string, filePath: string, line?: number): string[] {
+  const style = line ? editorLineStyle(editorCmd) : null
+  if (style === 'goto') return ['-g', `${filePath}:${line}:1`]
+  return style === 'suffix' ? [`${filePath}:${line}:1`] : [filePath]
 }
 
 /** Open a two-file diff in the editor (VS Code family supports `--diff a b`). */

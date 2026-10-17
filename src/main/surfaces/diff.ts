@@ -190,6 +190,19 @@ async function project(segs: SegmentView[], current: string, patchOf: (k: number
   return placed
 }
 
+/** An edit's first changed line from its own first hunk, numbered as the file stood after it. A later edit above it can
+ *  have moved it since. Null when the edit isn't held or its hunks were evicted. */
+export function editLine(segs: SegmentView[], editId: string): number | null {
+  for (const s of segs) {
+    const i = s.editIds.indexOf(editId)
+    if (i < 0) continue
+    const h = s.patches[i]?.[0]
+    if (!h) return null
+    return Math.max(1, h.newStart + Math.max(0, h.lines.findIndex((l) => !l.startsWith(' '))))
+  }
+  return null
+}
+
 /** Where Claude's changes survive in the file's current text, per Claude changes hunk; null when the path isn't held or can't be read. */
 export async function changeMarks(src: DiffSource, handleId: string, path: string): Promise<ChangeMarks | null> {
   const [segs, current] = await Promise.all([src.segments(handleId, path), src.current(handleId, path)])

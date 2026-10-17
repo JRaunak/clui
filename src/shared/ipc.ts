@@ -233,12 +233,15 @@ export interface CluiApi {
   /** Read the Customizations bundle (agents/skills/hooks/mcp) for a workspace. */
   readConfig: (cwd: string | null) => Promise<ConfigBundle>
   /** Open a file in the configured editor: one the session may see, or with a null handle, a
-   *  Configuration source that readConfig returned. Rejects with a readable message otherwise. */
-  openInEditor: (handleId: string | null, filePath: string) => Promise<void>
+   *  Configuration source that readConfig returned. Rejects with a readable message otherwise. `line`
+   *  reaches only editors that take one (editorLineStyle). */
+  openInEditor: (handleId: string | null, filePath: string, line?: number) => Promise<void>
   /** Open an http(s) URL in the user's default browser (markdown links). */
   openExternal: (url: string) => Promise<void>
   /** The session's Claude changes, with each file's on-disk presence re-checked. Null once the session is gone. */
   getChanges: (handleId: string) => Promise<FileChangeSummary[] | null>
+  /** The first line Claude's edit `editId` changed in `path`, as the file stood after it; null when the ledger has no hunk for it. */
+  editLine: (handleId: string, path: string, editId: string) => Promise<number | null>
   /** Git decoration for the session's changed files, read in main from its ledger paths. Null once the session is gone. */
   getChangeGitStatus: (handleId: string) => Promise<ChangeGitStatus | null>
   /** List files under the session's workspace (git-aware; relative paths, capped) for the
@@ -442,6 +445,7 @@ export const IpcChannels = {
   openInEditor: 'clui:openInEditor',
   openExternal: 'clui:openExternal',
   getChanges: 'clui:getChanges',
+  editLine: 'clui:editLine',
   getChangeGitStatus: 'clui:getChangeGitStatus',
   listWorkspaceFiles: 'clui:listWorkspaceFiles',
   openDiff: 'clui:openDiff',

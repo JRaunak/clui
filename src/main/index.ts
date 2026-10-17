@@ -46,7 +46,7 @@ import { listTree, treeTarget } from './surfaces/tree'
 import { bindSession, deleteSurfaces, flushSurfaces, forgetSession, loadSurfaces, saveSession, trackSession } from './surfaces/persist'
 import type { SurfacesRestore } from '../shared/surfaces'
 import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
-import { changeMarks, diffSnapshots, getDiff, parseDiffRequest, type DiffSource } from './surfaces/diff'
+import { changeMarks, diffSnapshots, editLine, getDiff, parseDiffRequest, type DiffSource } from './surfaces/diff'
 import {
   getResolvedSettings,
   getSettings,
@@ -750,19 +750,23 @@ function registerIpc(): void {
     const r = await files.resolveAllowed(handleId, path, { consumer: 'editor', operation: 'open-external' })
     if (r.ok) return r.path
     const name = typeof path === 'string' ? basename(path) : 'the file'
+    // Only a file Claude changed is known to have existed; any other path may never have.
+    const changed = r.reason === 'missing' && !!handleId && !!(await manager.changes(handleId))?.some((c) => c.path === path)
     throw new Error(
       r.reason === 'missing'
-        ? `Couldn't open ${name}. It's no longer on disk, so it was deleted or moved.`
+        ? changed
+          ? `Couldn't open ${name}. It's no longer on disk, so it was deleted or moved.`
+          : `Couldn't open ${name}. It isn't on disk.`
         : `Couldn't open ${name}. Clui only opens files in this session's folder or files Claude changed; open it from your editor instead.`
     )
   }
 
-  handle(IpcChannels.openInEditor, async (_e, handleId: string | null, filePath: string) => {
+  handle(IpcChannels.openInEditor, async (_e, handleId: string | null, filePath: string, line?: unknown) => {
     const target = await editorTarget(handleId, filePath)
     const { editorCommand } = await getSettings()
     const cmd = editorCommand || 'code'
     try {
-      await openInEditor(cmd, target)
+      await openInEditor(cmd, target, Number.isSafeInteger(line) && (line as number) > 0 ? (line as number) : undefined)
     } catch {
       throw new Error(`Couldn't open ${basename(target)} in your editor. Clui runs "${cmd}"; check it's on your PATH, or change Editor command in Settings.`)
     }
@@ -865,6 +869,11 @@ function registerIpc(): void {
     return listWorkspaceFiles(root)
   })
 
+  handle(IpcChannels.editLine, async (_e, handleId: string, path: string, editId: string) => {
+    if (typeof handleId !== 'string' || typeof path !== 'string' || typeof editId !== 'string') return null
+    const segs = await manager.segments(handleId, path)
+    return segs && editLine(segs, editId)
+  })
   handle(IpcChannels.getChanges, (_e, handleId: string) => (typeof handleId === 'string' ? manager.changes(handleId) : null))
   handle(IpcChannels.getChangeGitStatus, async (_e, handleId: string) => {
     const changes = typeof handleId === 'string' ? await manager.changes(handleId) : null

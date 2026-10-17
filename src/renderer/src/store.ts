@@ -1239,7 +1239,28 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
     // end re-checks which files are still on disk.
     if (event.type === 'result') void useSession.getState().refreshChanges(handleId)
   })
-  window.clui.onChangesEvent(({ handleId, summaries }) => useSession.setState((s) => patchSlice(s, handleId, { changes: summaries })))
+  window.clui.onChangesEvent(({ handleId, summaries }) => {
+    const prev = useSession.getState().sessions[handleId]
+    useSession.setState((s) => patchSlice(s, handleId, { changes: summaries }))
+    if (prev) prepareChanges(handleId, prev, summaries)
+  })
+}
+
+/** Claude's edits mark the Claude changes tab without moving the view or focus. The tab opens next on the first file
+ *  changed while it was unseen. History replayed on a resume isn't news, so an update with nothing before it counts
+ *  only mid-turn. */
+function prepareChanges(handleId: string, prev: PerSessionState, next: FileChangeSummary[]): void {
+  if (prev.changes === EMPTY_CHANGES && !prev.busy) return
+  const before = new Map(prev.changes.map((c) => [c.path, c.editIds.length]))
+  const fresh = next.find((c) => (before.get(c.path) ?? 0) < c.editIds.length)
+  const st = useSession.getState()
+  const set0 = st.sessions[handleId]?.surfaces
+  if (!fresh || !set0 || set0.active === 'diff' || set0.tabs.diff?.unseen) return
+  st.openSurface(handleId, { kind: 'diff', key: '', title: 'Claude changes', location: { file: fresh.path } }, 'prepare', 'claude', 'change')
+  // With no tab to show, a hidden pane's toggle targets the new tab; it stays unseen until the pane is shown on it.
+  const cur = useSession.getState().sessions[handleId]
+  const shown = cur.paneOpen && !(handleId === st.activeHandleId && st.viewingSubagent)
+  if (set0.active === null && !shown) useSession.setState((s) => patchSlice(s, handleId, { surfaces: { ...s.sessions[handleId].surfaces, active: 'diff' } }))
 }
 
 /** Insert a freshly-created slice and flush any events that raced ahead of it. */

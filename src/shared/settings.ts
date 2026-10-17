@@ -64,6 +64,8 @@ export interface CluiSettings {
   /** Where a link Clui renders opens: a new tab in the session's own browser, or the default browser.
    *  'clui' takes effect only in a session with the browser tools; elsewhere links go to the default browser. */
   linkTarget: LinkTarget
+  /** Where a file path in Claude's replies and tool cards opens: the File surface or the editor command. */
+  fileLinkTarget: FileLinkTarget
   /** Send each annotated element with a small screenshot of it, besides its text and HTML. */
   annotateScreenshots: boolean
   /** Browser tool bundles past observing (snapshot, tabs, navigate): screenshot, page input, and the
@@ -109,6 +111,16 @@ export const THEME_CHOICES: ThemeChoice[] = ['dark', 'light', 'system']
 
 export type LinkTarget = 'clui' | 'system'
 export const LINK_TARGETS: LinkTarget[] = ['clui', 'system']
+export type FileLinkTarget = 'clui' | 'editor'
+export const FILE_LINK_TARGETS: FileLinkTarget[] = ['clui', 'editor']
+
+/** How an editor command takes a line: VS Code's family wants `-g path:line:col`, Sublime and Zed a bare
+ *  `path:line:col`. Null for any other editor, which gets the file alone. */
+export function editorLineStyle(cmd: string): 'goto' | 'suffix' | null {
+  const bin = (cmd.trim().split(/\s+/)[0] ?? '').split('/').pop()
+  if (bin === 'code' || bin === 'cursor' || bin === 'code-insiders' || bin === 'windsurf') return 'goto'
+  return bin === 'subl' || bin === 'zed' ? 'suffix' : null
+}
 
 export const THEME_LABELS: Record<ThemeChoice, string> = {
   dark: 'Dark',
@@ -481,6 +493,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   subagentPaneFull: false,
   browserEnabled: false,
   linkTarget: 'clui',
+  fileLinkTarget: 'clui',
   annotateScreenshots: true,
   browserVisual: true,
   browserInteract: true,

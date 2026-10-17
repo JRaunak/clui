@@ -11,11 +11,12 @@
  * partial document never throws.
  */
 import { createContext, memo, useCallback, useContext, useState, type MouseEvent, type ReactNode } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import hljs from '../lib/hljs'
 import { IconCopy, IconCheck } from './Icon'
-import { linkHandlers, linkTitle, useLinkTarget } from '../lib/openLink'
+import { fileLinkTitle, LINK, linkHandlers, linkTitle, openFileLink, useLinkTarget, type LinkRoot } from '../lib/openLink'
+import { isLocalHref, listedIn, resolveCode, resolveHref, type FileRef } from '../lib/fileLinks'
 import { useActive } from '../store'
 import { parseUsageReport, UsageCard, parseContextReport, ContextCard } from './CommandOutput'
 
@@ -23,6 +24,13 @@ type Highlighted = { html: string; used: string | null }
 
 /** True inside the message that is still streaming. */
 export const StreamingContext = createContext(false)
+/** Set only for a completed assistant message, so a path half-written mid-stream never links. */
+export const FileLinkContext = createContext<LinkRoot | null>(null)
+
+const CODE_CHIP = 'rounded bg-bg-raised px-1 py-0.5 font-mono text-[0.9em] text-content'
+
+// Local hrefs get past the default's scheme allowlist; the `a` renderer links only what resolves inside the session's folder.
+const urlTransform: UrlTransform = (url, key) => (key === 'href' && isLocalHref(url) ? url : defaultUrlTransform(url))
 
 const PLAIN_CHARS = 4000
 const PLAIN_LINES = 60
@@ -136,6 +144,7 @@ function childrenToText(children: React.ReactNode): string {
 
 const COMPONENTS: Components = {
   code({ className, children, ...props }) {
+    const root = useContext(FileLinkContext)
     const text = childrenToText(children)
     const match = /language-(\w+)/.exec(className || '')
     // react-markdown v10 dropped the inline flag; treat as a block if it has a language
@@ -144,17 +153,32 @@ const COMPONENTS: Components = {
     if (isBlock) {
       return <CodeBlock code={text.replace(/\n$/, '')} lang={match ? match[1] : null} />
     }
+    const at = root?.ws ? resolveCode(text, root.cwd, root.ws) : null
+    if (root && at) {
+      return (
+        <FileLink root={root} at={at} className={`${CODE_CHIP} underline decoration-[var(--color-dim)] underline-offset-2 pointer-fine:hover:decoration-[var(--color-content)]`}>
+          <code {...props}>{children}</code>
+        </FileLink>
+      )
+    }
     return (
-      <code
-        className="rounded bg-bg-raised px-1 py-0.5 font-mono text-[0.9em] text-content"
-        {...props}
-      >
+      <code className={CODE_CHIP} {...props}>
         {children}
       </code>
     )
   },
   a({ href, children }) {
-    return <MdLink href={href}>{children}</MdLink>
+    const root = useContext(FileLinkContext)
+    const hit = root && href ? resolveHref(href, root.cwd) : null
+    if (!root || !hit) return <MdLink href={href}>{children}</MdLink>
+    // A path outside the folder is nothing Clui can open.
+    if (hit.kind === 'outside') return <span title={`Outside this session's folder: ${hit.path}`}>{children}</span>
+    if (!listedIn(root.ws, hit.ref.rel)) return <>{children}</>
+    return (
+      <FileLink root={root} at={hit.ref} className={LINK}>
+        {children}
+      </FileLink>
+    )
   },
   // Block spacing tuned to the chat density; lists/tables/quotes themed to tokens.
   // max-w-[70ch] caps prose at a comfortable reading measure while code/tables stay full-width.
@@ -214,14 +238,36 @@ export const Markdown = memo(function Markdown({
   const components = headingScale === 'compact' ? { ...COMPONENTS, ...COMPACT_HEADINGS } : COMPONENTS
   return (
     <div className="text-sm leading-relaxed text-content [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={urlTransform}>
         {text}
       </ReactMarkdown>
     </div>
   )
 })
 
-/** Claude's own links keep the accent; where they open follows the "Open links in" setting. */
+/** A path into the session's folder. Neutral where web links keep the accent, which is the cue that it stays in Clui. */
+function FileLink({ root, at, className, children }: { root: LinkRoot; at: FileRef; className: string; children?: ReactNode }): JSX.Element {
+  const target = useLinkTarget((s) => s.file)
+  const editor = useLinkTarget((s) => s.editor)
+  const path = `${root.cwd}/${at.rel}`
+  const dir = !!root.ws?.dirs.has(at.rel)
+  const title = fileLinkTitle(at.rel, at, dir, target, editor)
+  return (
+    <a
+      href={`file://${encodeURI(path)}`}
+      data-ui="file-link"
+      title={title}
+      aria-description={title}
+      className={className}
+      onClick={(e) => openFileLink(root.handleId, path, at, dir, e)}
+      onAuxClick={(e) => e.preventDefault()}
+    >
+      {children}
+    </a>
+  )
+}
+
+/** Claude's own links keep the accent; where they open follows the "Open web links in" setting. */
 function MdLink({ href, children }: { href?: string; children?: ReactNode }): JSX.Element {
   const hasBrowser = useActive((s) => !!s?.browser)
   const target = useLinkTarget((s) => s.target)

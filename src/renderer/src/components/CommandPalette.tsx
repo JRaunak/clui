@@ -18,7 +18,7 @@ import { applyTheme } from '../lib/theme'
 import { fuzzyMatch, highlightRuns, rankPaths, splitLine } from '../lib/fuzzy'
 import { requestSurfaceFocus } from '../lib/surfaceFocus'
 import { viaOf, type Via } from '../lib/motion'
-import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage, IconFolder, IconDiff, IconAgentBrowser, IconPaneRight } from './Icon'
+import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage, IconFolder, IconDiff, IconAgentBrowser, IconPaneRight, IconHalfRing, IconSidebar, IconDownload, IconGitFork } from './Icon'
 import { FileIcon } from './FileIcon'
 import { cleanError, openEditor } from './surfaces/FileSurface'
 import { tilde } from '../lib/tree'
@@ -283,6 +283,7 @@ export function CommandPalette({
         kind: 'command',
         label: 'Toggle light / dark theme',
         hint: 'Switches this session',
+        icon: IconHalfRing,
         recency: 0,
         run: () => {
           const isLight = document.documentElement.getAttribute('data-theme') === 'light'
@@ -296,6 +297,7 @@ export function CommandPalette({
         kind: 'command',
         label: sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
         hint: '⌘B',
+        icon: IconSidebar,
         recency: 0,
         run: onToggleSidebar
       },
@@ -307,6 +309,7 @@ export function CommandPalette({
               kind: 'command' as const,
               label: 'Export current session',
               hint: 'Save as Markdown',
+              icon: IconDownload,
               recency: 0,
               run: () => {
                 const a = activeSlice(store)
@@ -318,6 +321,7 @@ export function CommandPalette({
               kind: 'command' as const,
               label: 'Branch current session',
               hint: 'Branch to a new session',
+              icon: IconGitFork,
               recency: 0,
               run: () => {
                 const a = activeSlice(store)

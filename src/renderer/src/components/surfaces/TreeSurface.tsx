@@ -60,6 +60,15 @@ export function treeExternal(handleId: string | null, cwd: string | null): PaneE
   return { label: 'Open folder in editor', onOpen: () => (handleId && cwd ? openEditor(handleId, cwd) : undefined) }
 }
 
+type Reveal = { path: string; via: Via; open?: boolean }
+let pendingReveal: Reveal | null = null
+
+/** Lands the tree on `path`, opening it too when `open` and it's a folder. A tree that isn't mounted yet takes it on mount. */
+export function revealInTree(path: string, via: Via, open = false): void {
+  pendingReveal = { path, via, open }
+  window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: pendingReveal }))
+}
+
 /** The file tab looked at last; Reveal finds it in the tree. */
 const lastFile = (s: { surfaces: { tabs: Record<string, { kind: string; key: string; lastViewedAt: number }> } } | null): string | null => {
   let best: { key: string; at: number } | null = null
@@ -359,14 +368,18 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
   // Reveal expands the target's folders, ignored or hidden ones included, then lands on its row once it's listed.
   const revealing = useRef<{ rel: string; via: Via } | null>(null)
   useEffect(() => {
-    const onReveal = (e: Event): void => {
-      const { path, via } = (e as CustomEvent<{ path: string; via: Via }>).detail
+    const take = ({ path, via, open }: Reveal): void => {
+      pendingReveal = null
       const rel = relOf(path)
       if (!rel) return
       revealing.current = { rel, via }
-      const need = ancestorsOf(rel)
+      // An asked-for row outranks the last file looked at.
+      adopt.current = null
+      const need = open ? [...ancestorsOf(rel), rel] : ancestorsOf(rel)
       setExpanded((prev) => [...prev.filter((x) => !need.includes(x)), ...need].slice(-EXPANDED_MAX))
     }
+    const onReveal = (e: Event): void => take((e as CustomEvent<Reveal>).detail)
+    if (pendingReveal) take(pendingReveal)
     window.addEventListener(REVEAL_EVENT, onReveal)
     return () => window.removeEventListener(REVEAL_EVENT, onReveal)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -375,7 +388,7 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
     const want = revealing.current
     if (!want) return
     if (!index.has(want.rel)) {
-      const settled = ancestorsOf(want.rel).every((a) => dirs[a] && dirs[a].t !== 'loading') && dirs[parentOf(want.rel)]
+      const settled = [...ancestorsOf(want.rel), parentOf(want.rel)].every((a) => dirs[a] && dirs[a].t !== 'loading')
       if (!settled) return
       // Every folder on the way is listed and the file isn't there: land on the deepest folder that is.
       revealing.current = null

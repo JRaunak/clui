@@ -18,6 +18,7 @@ import {
   DEFAULT_SETTINGS,
   THEME_CHOICES,
   LINK_TARGETS,
+  FILE_LINK_TARGETS,
   PERMISSION_MODES,
   QUICK_MODEL_FAMILIES,
   QUICK_PERMISSION_MODES,
@@ -46,6 +47,7 @@ function isValidValue(key: SettingsKey, v: unknown): boolean {
   if (typeof v !== typeof DEFAULT_SETTINGS[key]) return false
   if (key === 'theme') return (THEME_CHOICES as readonly string[]).includes(v as string)
   if (key === 'linkTarget') return (LINK_TARGETS as readonly string[]).includes(v as string)
+  if (key === 'fileLinkTarget') return (FILE_LINK_TARGETS as readonly string[]).includes(v as string)
   if (key === 'permissionMode') return (PERMISSION_MODES as readonly string[]).includes(v as string)
   if (key === 'effort') return isEffortChoice(v)
   if (key === 'quickModelFamily') return (QUICK_MODEL_FAMILIES as readonly string[]).includes(v as string)

@@ -1,4 +1,5 @@
-import { LinkedText } from '../lib/openLink'
+import { fileLinkTitle, LinkedText, openFileLink, useLinkTarget } from '../lib/openLink'
+import { openFileLabel, toolPathIn } from '../lib/fileLinks'
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { activeSlice, useActive, useSession, type ToolCall } from '../store'
 import { formatElapsed } from '../lib/turnEnd'
@@ -20,9 +21,10 @@ import {
   type RowState
 } from '../lib/instrument'
 import { effortLabel } from '../../../shared/settings'
-import { IconAgentBrowser, IconCheck, IconChevron, IconCircle, IconCopy, IconOpenPane, IconSendToTray, IconShield, IconStop, IconWarn } from './Icon'
+import { IconAgentBrowser, IconCheck, IconChevron, IconCircle, IconCopy, IconFile, IconOpenPane, IconSendToTray, IconShield, IconStop, IconWarn } from './Icon'
 
 type Placement = 'spine' | 'inline'
+const FILE_TOOLS = new Set(['Read', 'Edit', 'Write'])
 type Seg = 'through' | 'end'
 
 const BEAD_FILL: Record<RowState, string> = {
@@ -176,7 +178,10 @@ export function InstrumentRow({
   const revealBrowser = useSession((s) => s.revealBrowser)
   // Only a foreground Bash is worth moving; other tools finish too fast to bother.
   const canSendToBackground = tool.result === undefined && !isBackgroundedTool(tool) && tool.name === 'Bash'
-  const actions = isSubagent || canSendToBackground || (browser && hasBrowser)
+  // A failed call's file may not exist, and a Quick session has no folder to open it in.
+  const cwd = useActive((s) => (FILE_TOOLS.has(tool.name) && s && !s.ephemeral ? s.cwd : null))
+  const filePath = state === 'done' ? toolPathIn(tool.input, cwd) : null
+  const actions = isSubagent || canSendToBackground || (browser && hasBrowser) || !!filePath
   const errLine = tool.isError ? firstLine(tool.result ?? '') : ''
   const failed = state === 'failed'
   const toggleBody = (e: MouseEvent): void => {
@@ -296,6 +301,7 @@ export function InstrumentRow({
                     <IconAgentBrowser className="h-4 w-4" />
                   </button>
                 )}
+                {filePath && cwd && <OpenFileButton tool={tool} path={filePath} cwd={cwd} />}
               </span>
             )}
             {isSubagent ? (
@@ -367,6 +373,41 @@ export function InstrumentRow({
         )}
       </div>
     </div>
+  )
+}
+
+/** A file tool card's way to its file. The header is already the disclosure button, so this sits beside it rather
+ *  than as a link inside it. Read opens at its offset, Edit at the first line it changed, Write at the top. */
+function OpenFileButton({ tool, path, cwd }: { tool: ToolCall; path: string; cwd: string }): JSX.Element {
+  const handleId = useActive((s) => s?.handleId ?? '')
+  const target = useLinkTarget((s) => s.file)
+  const editor = useLinkTarget((s) => s.editor)
+  const [edited, setEdited] = useState<number | null>(null)
+  useEffect(() => {
+    if (tool.name !== 'Edit' || !handleId) return
+    let live = true
+    window.clui.editLine(handleId, path, tool.id).then((n) => live && setEdited(n), () => {})
+    return () => {
+      live = false
+    }
+  }, [tool.name, tool.id, handleId, path])
+  const offset = tool.name === 'Read' ? (tool.input as { offset?: unknown }).offset : undefined
+  const line = typeof offset === 'number' && Number.isSafeInteger(offset) && offset > 0 ? offset : (edited ?? undefined)
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  const label = openFileLabel(name, line, target, editor)
+  const title = fileLinkTitle(path.slice(cwd.length + 1), { line }, false, target, editor)
+  return (
+    <button
+      type="button"
+      data-ui="row-open-file"
+      onClick={(e) => openFileLink(handleId, path, { line }, false, e)}
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px]"
+      title={title}
+      aria-label={label}
+      aria-description={title}
+    >
+      <IconFile className="h-4 w-4" />
+    </button>
   )
 }
 

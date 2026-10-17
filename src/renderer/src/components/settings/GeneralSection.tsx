@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { CliInfo } from '../../../../shared/ipc'
-import { THEME_CHOICES, THEME_LABELS, type CluiSettings } from '../../../../shared/settings'
+import { THEME_CHOICES, THEME_LABELS, type CluiSettings, type FileLinkTarget } from '../../../../shared/settings'
+import { LINK_MOD } from '../../lib/openLink'
 import { Dropdown } from '../Dropdown'
 import { Field, type DraftProps } from './shared'
 
@@ -86,6 +87,22 @@ export function GeneralSection({
           className="w-full rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
           value={settings.editorCommand}
           onChange={(e) => set('editorCommand', e.target.value)}
+        />
+      </Field>
+
+      <Field
+        label="Open file links in"
+        hint={`Applies to file paths in Claude's replies and tool calls. ${LINK_MOD}-click opens the other way.`}
+        onReset={isOverridden('fileLinkTarget') ? () => reset('fileLinkTarget') : undefined}
+      >
+        <Dropdown<FileLinkTarget>
+          value={settings.fileLinkTarget}
+          ariaLabel="Open file links in"
+          options={[
+            { value: 'clui', label: 'Clui' },
+            { value: 'editor', label: 'Editor' }
+          ]}
+          onChange={(v) => set('fileLinkTarget', v)}
         />
       </Field>
     </>
