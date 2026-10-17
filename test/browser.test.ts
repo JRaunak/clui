@@ -1,6 +1,6 @@
 // Boundary: the site key decides which Gate and which saved login apply, and the one-time
 // code must match what an authenticator shows, so both are pinned here.
-import { localNetVerdict, siteKeyOf } from '../src/shared/browser.ts'
+import { loadFailureOf, localNetVerdict, parseAddress, siteKeyOf } from '../src/shared/browser.ts'
 import { totp } from '../src/main/browser/totp.ts'
 import { equal } from './support/harness.mjs'
 
@@ -27,6 +27,61 @@ equal(JSON.stringify(localNetVerdict('about:blank', true, 'null', decided({}))),
 // RFC 6238 appendix B: secret "12345678901234567890", T=59s gives 94287082 at 8 digits.
 equal(totp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', 59_000, 8), '94287082', 'totp: RFC 6238 vector')
 equal(totp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', 59_000), '287082', 'totp: six digits')
+
+// Boundary: the address bar never sends typed text anywhere but the host it names, and picks http only
+// where a plain-http server is the norm.
+const parsed = (raw: string): string => JSON.stringify(parseAddress(raw))
+const loads = (u: string): string => JSON.stringify({ url: u })
+const NOT = JSON.stringify({ error: 'not-address' })
+const FILE = JSON.stringify({ error: 'unsupported', kind: 'file' })
+const scheme = (x: string): string => JSON.stringify({ error: 'unsupported', kind: 'scheme', scheme: x })
+equal(parsed('localhost:3000'), loads('http://localhost:3000/'), 'address: localhost:port is http, not a scheme')
+equal(parsed('  LOCALHOST:3000/app  '), loads('http://localhost:3000/app'), 'address: trimmed, case-folded host')
+equal(parsed('app.localhost'), loads('http://app.localhost/'), 'address: *.localhost is http')
+equal(parsed('127.0.0.1:8000'), loads('http://127.0.0.1:8000/'), 'address: loopback IPv4 is http')
+equal(parsed('[::1]:5173'), loads('http://[::1]:5173/'), 'address: bracketed IPv6 loopback is http')
+equal(parsed('192.168.1.5'), loads('http://192.168.1.5/'), 'address: private 192.168/16 is http')
+equal(parsed('10.0.0.2'), loads('http://10.0.0.2/'), 'address: private 10/8 is http')
+equal(parsed('172.20.0.1'), loads('http://172.20.0.1/'), 'address: private 172.16/12 is http')
+equal(parsed('172.32.0.1'), loads('https://172.32.0.1/'), 'address: 172.32 is public, https')
+equal(parsed('8.8.8.8'), loads('https://8.8.8.8/'), 'address: public IPv4 is https')
+equal(parsed('256.1.1.1'), NOT, 'address: an out-of-range IPv4 is not an address')
+equal(parsed('1.2'), NOT, 'address: a partial IPv4 is not an address')
+equal(parsed('devbox:8080'), loads('http://devbox:8080/'), 'address: single label with a port is http')
+equal(parsed('devbox/'), loads('http://devbox/'), 'address: single label with a path is http')
+equal(parsed('devbox'), NOT, 'address: a bare word is not an address')
+equal(parsed('printer.local'), loads('http://printer.local/'), 'address: mDNS .local is http')
+equal(parsed('example.com'), loads('https://example.com/'), 'address: a dotted host is https')
+equal(parsed('docs.example.co.uk/a?b=1#c'), loads('https://docs.example.co.uk/a?b=1#c'), 'address: path, query and hash kept')
+equal(parsed('xn--bcher-kva.example'), loads('https://xn--bcher-kva.example/'), 'address: punycode host')
+equal(parsed('example.c'), NOT, 'address: a one-letter TLD is not an address')
+equal(parsed('https://x.y'), loads('https://x.y/'), 'address: an explicit https URL loads as typed')
+equal(parsed('http://example.com'), loads('http://example.com/'), 'address: an explicit http URL is never upgraded')
+equal(parsed('HTTPS://Example.com/Path'), loads('https://example.com/Path'), 'address: scheme case')
+equal(parsed('https://'), NOT, 'address: a scheme with no host is not an address')
+equal(parsed('what is rust'), NOT, 'address: a phrase is not an address')
+equal(parsed('note: buy milk'), NOT, 'address: whitespace beats the scheme test')
+equal(parsed('example.com/a b'), loads('https://example.com/a%20b'), 'address: whitespace after the host is path')
+equal(parsed('ftp://x'), scheme('ftp'), 'address: ftp is unsupported')
+equal(parsed('example.com:'), loads('https://example.com/'), 'address: a dotted host with a bare colon is a host')
+equal(parsed('localhost:'), loads('http://localhost/'), 'address: localhost with a bare colon is a host')
+equal(parsed('devbox:'), scheme('devbox'), 'address: a bare word with a bare colon reads as a scheme, like mailto:')
+equal(parsed('SFTP://x'), scheme('sftp'), 'address: the scheme is lowercased')
+equal(parsed('mailto:a@b.c'), scheme('mailto'), 'address: mailto is unsupported')
+equal(parsed('mailto:'), scheme('mailto'), 'address: a bare scheme is still a scheme')
+equal(parsed('javascript:alert(1)'), scheme('javascript'), 'address: javascript is unsupported')
+equal(parsed('javascript:'), scheme('javascript'), 'address: bare javascript: is unsupported')
+equal(parsed('file:///etc/hosts'), FILE, 'address: file URLs are a local file')
+equal(parsed('/Users/x/a.txt'), FILE, 'address: an absolute path is a local file')
+equal(parsed('~/notes.md'), FILE, 'address: a home path is a local file')
+// The failure panel names the host with its port, and only a local refusal suggests starting a server.
+const fail = (u: string, code: number, httpUrl: string | null = null) => loadFailureOf({ url: u, code, name: 'ERR', httpUrl })
+equal(JSON.stringify(fail('http://localhost:3000/', -102)), JSON.stringify({ pre: "Can't reach ", host: 'localhost:3000', post: '', body: 'Nothing answered at this address. If a dev server should be running here, start it and retry.' }), 'failure: local refusal')
+equal(fail('https://example.com/', -102).body, 'The site refused the connection.', 'failure: remote refusal')
+equal(fail('https://localhost:3000/', -107, 'http://localhost:3000/').pre, "Can't make a secure connection to ", 'failure: an http-shaped TLS failure offers http')
+equal(fail('https://expired.example/', -201).post, "'s certificate isn't valid", 'failure: any CERT_ code')
+equal(fail('https://x.example/', -106).host, null, 'failure: offline names no host')
+equal(fail('https://x.example/', -999).pre, "Can't open ", 'failure: unknown code')
 
 // Boundary: the vault is the only store of secrets. The renderer-facing list must never carry
 // a password or seed, an edit with no password keeps it, and an unreadable file must never

@@ -21,7 +21,7 @@ import type { BlockedPrompt, CompactionMarker, ProjectGroup } from '../../shared
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { CluiApi, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
-import { siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
+import { loadFailureOf, siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
 import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
 import { CAP_NOTE, pinWords, clipName, messageGist, type AnnotateEvent, type AnnotationPin } from '../../shared/annotate'
@@ -738,6 +738,8 @@ interface SessionStore {
   /** Answers a page's local network ask; the strip goes once main clears the tab's netAsk. */
   /** False when the choice couldn't be saved: the strip stays up and says so. */
   decideLocalNet: (site: string, allow: boolean) => Promise<boolean>
+  /** Repeats in the browser pane's live region even when `text` matches the last announcement. */
+  announceBrowser: (text: string) => void
   /** Answer an MCP elicitation Gate. */
   respondElicitation: (requestId: string, response: ElicitationResponse) => Promise<void>
   /** Set the active session's pane. Opening it replaces a subagent view and needs a cwd; with no tabs it
@@ -1550,7 +1552,8 @@ const BLANK_BROWSER: BrowserState = {
   suspended: false,
   still: null,
   loginWall: null,
-  netAsk: null
+  netAsk: null,
+  loadError: null
 }
 
 /** How long an undo card stays up, and so how long Reopen can bring back an evicted tab. */
@@ -3320,6 +3323,11 @@ export const useSession = create<SessionStore>((set, get) => ({
           // The strip takes no focus when it appears, so it's said instead.
           const ask = e.patch.netAsk
           if (ask && ask !== cur.netAsk) return { ...next, browserAnnounce: toggled(`${ask} asks to use your local network. Allow or Block above the page.`) }
+          const err = e.patch.loadError
+          if (err && err !== cur.loadError) {
+            const f = loadFailureOf(err)
+            return { ...next, browserAnnounce: toggled(`${f.pre}${f.host ?? ''}${f.post}`) }
+          }
           // The wall hides the page mid-drive, so it has to be said as well as shown.
           if (e.patch.loginWall !== 'hardware' || cur.loginWall === 'hardware') return next
           const text = 'This sign-in needs a hardware key or passkey. Open it in your regular browser.'
@@ -3447,6 +3455,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     set(() => ({ browserAnnounce: toggled(text) }))
     return true
   },
+  announceBrowser: (text) => set({ browserAnnounce: toggled(text) }),
 
   respondElicitation: async (requestId, response) => {
     const active = activeSlice(get())

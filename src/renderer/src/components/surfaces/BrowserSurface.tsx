@@ -6,6 +6,7 @@ import { PANE_BTN, type PaneExternal } from './PaneHeader'
 import { BrowserDriveStrip, BrowserNetStrip, BrowserToolbar } from '../BrowserToolbar'
 import { Button } from '../Button'
 import { IconSettings } from '../Icon'
+import { loadFailureOf, type LoadError } from '../../../../shared/browser'
 
 const EXTERNAL_LABEL = 'Open in default browser'
 
@@ -36,6 +37,36 @@ export function BrowserSettingsButton(): JSX.Element {
   )
 }
 
+/** An overlay rather than a page in the view, which Claude's snapshot would read as the site's own. */
+function LoadFailure({ handleId, tab, err, committed }: { handleId: string; tab: number; err: LoadError; committed: boolean }): JSX.Element {
+  const f = loadFailureOf(err)
+  const http = err.httpUrl
+  // A failure from a blank tab has no page to reload.
+  const retry = (): void =>
+    void (committed ? window.clui.browserNav(handleId, tab, 'reload') : window.clui.browserNavigate(handleId, tab, err.url))
+  return (
+    <div data-ui="browser-load-error" className="absolute inset-0 flex flex-col items-start gap-2 bg-bg px-3 py-6">
+      <p className="text-ui font-medium text-content">
+        {f.pre}
+        {f.host && <span className="font-mono">{f.host}</span>}
+        {f.post}
+      </p>
+      <p className="max-w-[60ch] text-meta text-dim">{f.body}</p>
+      <p className="font-mono text-meta text-faint">{err.name}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" size="sm" data-pane-title="" onClick={retry}>
+          Retry
+        </Button>
+        {http && (
+          <Button variant="secondary" size="sm" onClick={() => void window.clui.browserNavigate(handleId, tab, http)}>
+            Try http://{f.host}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /**
  * The page area is a placeholder the native view is laid over, so the page starts below the band
  * and the pane header: the view covers anything it overlaps. Whenever the view is hidden (another
@@ -47,6 +78,8 @@ export function BrowserSurface({ handleId }: { handleId: string }): JSX.Element 
   const url = useActive((s) => viewedTabOf(s?.browser)?.url ?? '')
   const still = useActive((s) => viewedTabOf(s?.browser)?.still ?? null)
   const wall = useActive((s) => viewedTabOf(s?.browser)?.loginWall === 'hardware')
+  const loadError = useActive((s) => viewedTabOf(s?.browser)?.loadError ?? null)
+  const tab = useActive((s) => s?.browser?.viewed ?? 0)
   const announce = useSession((s) => s.browserAnnounce)
 
   useEffect(() => {
@@ -82,8 +115,8 @@ export function BrowserSurface({ handleId }: { handleId: string }): JSX.Element 
 
   const [occluded, setOccluded] = useState(false)
   useEffect(() => onOcclusion(setOccluded), [])
-  // The card sits in the page area, so the view has to step aside for it too.
-  const visible = !occluded && !wall
+  // The card and the failure panel sit in the page area, so the view has to step aside for them too.
+  const visible = !occluded && !wall && !loadError
   useLayoutEffect(() => {
     void window.clui.browserSetVisible(handleId, visible)
   }, [handleId, visible])
@@ -102,7 +135,8 @@ export function BrowserSurface({ handleId }: { handleId: string }): JSX.Element 
       <BrowserNetStrip />
       <BrowserDriveStrip key={handleId} />
       <div data-ui="browser-pane" ref={areaRef} className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-bg">
-        {still && <img src={still} alt="" className="absolute inset-0 h-full w-full object-cover object-left-top" />}
+        {still && !loadError && <img src={still} alt="" className="absolute inset-0 h-full w-full object-cover object-left-top" />}
+        {loadError && <LoadFailure handleId={handleId} tab={tab} err={loadError} committed={!!url && url !== 'about:blank'} />}
         {wall && (
           <div className="absolute inset-0 grid place-items-center scrim">
             <div className="surface-content flex max-w-[320px] flex-col gap-2 rounded-lg bg-bg-elev p-4">

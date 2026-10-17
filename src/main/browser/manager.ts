@@ -111,6 +111,8 @@ export interface TabsInfo {
 }
 
 const USER_INPUT = new Set(['mouseDown', 'keyDown', 'rawKeyDown', 'mouseWheel'])
+/** SSL_PROTOCOL_ERROR, CONNECTION_CLOSED, CONNECTION_RESET, EMPTY_RESPONSE: how a plain-http server answers a TLS handshake. */
+const HTTP_SHAPED = new Set([-107, -100, -101, -324])
 
 function initialState(): BrowserState {
   return {
@@ -123,7 +125,8 @@ function initialState(): BrowserState {
     suspended: false,
     still: null,
     loginWall: null,
-    netAsk: null
+    netAsk: null,
+    loadError: null
   }
 }
 
@@ -329,10 +332,19 @@ export class BrowserManager {
     wc.on('did-navigate', (_ev, url) => {
       navigated(url)
       if (mine() && t.state.loginWall) this.patch(handleId, t, { loginWall: null })
+      // Cleared on commit, not on start, so a retry that fails again never shows the view in between.
+      // An error page's commit doesn't raise did-navigate.
+      if (mine() && t.state.loadError) this.patch(handleId, t, { loadError: null })
       if (mine() && t.state.netAsk && t.state.netAsk !== siteKeyOf(url)) this.patch(handleId, t, { netAsk: null })
       void injectCursor(wc)
     })
     wc.on('did-navigate-in-page', (_ev, url, isMainFrame) => isMainFrame && navigated(url))
+    // -3 is ERR_ABORTED: Stop, or a newer load replacing this one. An HTTP error status isn't a failure; its page renders.
+    wc.on('did-fail-load', (_ev, code, name, url, isMainFrame) => {
+      if (!isMainFrame || code === -3 || !mine()) return
+      const httpUrl = HTTP_SHAPED.has(code) && url.startsWith('https:') ? `http:${url.slice(6)}` : null
+      this.patch(handleId, t, { loadError: { url, code, name, httpUrl } })
+    })
     wc.on('dom-ready', () => void injectCursor(wc))
     wc.on('page-title-updated', (_ev, title) => mine() && this.patch(handleId, t, { title }))
     wc.on('render-process-gone', () => mine() && this.setDrive(handleId, t, 'stopped'))

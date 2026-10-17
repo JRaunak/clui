@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { FieldError } from './LoginFields'
 import { DRIVING_NOTE, useActive, useSession, viewedTabOf, type BrowserTabs } from '../store'
-import type { DriveState } from '../../../shared/browser'
+import { parseAddress, type AddressParse, type DriveState, type LoadError } from '../../../shared/browser'
 import { CAP_NOTE, MAX_PINS } from '../../../shared/annotate'
 import { IconChevron, IconClose, IconRefresh, IconStop, IconTarget } from './Icon'
 import { PANE_BTN } from './surfaces/PaneHeader'
@@ -56,11 +56,10 @@ function recentOf(b: BrowserTabs | null | undefined): number {
   return Math.max(...driving)
 }
 
-/** A bare host or host:port gets https://; anything with a real scheme goes to main as typed, which
- *  refuses what isn't http(s). */
-function normalize(raw: string): string {
-  const v = raw.trim()
-  return /^[a-z][a-z\d+.-]*:(\/\/|[^\d])/i.test(v) ? v : `https://${v}`
+function rejectionOf(p: Exclude<AddressParse, { url: string }>): string {
+  if (p.error === 'not-address') return "That isn't a web address. To ask Claude, use the message box."
+  if (p.kind === 'file') return "Local files can't open in the browser."
+  return `${p.scheme}: links can't open here. The browser opens http and https pages only.`
 }
 
 /** The display form drops only https://, because a visible http:// is the missing-s warning. */
@@ -82,106 +81,154 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
   const canForward = useActive((s) => viewedTabOf(s?.browser)?.canForward ?? false)
   const driving = useActive((s) => viewedTabOf(s?.browser)?.drive === 'driving')
   const wall = useActive((s) => viewedTabOf(s?.browser)?.loginWall === 'hardware')
+  const loadError = useActive((s) => viewedTabOf(s?.browser)?.loadError ?? null)
   const annotating = useActive((s) => !!s && s.annotate.tab === s.browser?.viewed)
   const setNotice = useSession((s) => s.setNotice)
+  const announce = useSession((s) => s.announceBrowser)
   const toggleAnnotate = useSession((s) => s.toggleAnnotate)
 
-  const shown = url === 'about:blank' ? '' : url
+  const shown = loadError?.url ?? (url === 'about:blank' ? '' : url)
   const [focused, setFocused] = useState(false)
   // Null until the user edits, so a navigation while the field has focus still shows the new URL.
   const [draft, setDraft] = useState<string | null>(null)
+  // A submitted draft stays in the field until the page answers, so the old address doesn't flash back.
+  const [pending, setPending] = useState<{ text: string; from: string; err: LoadError | null } | null>(null)
+  const [rejection, setRejection] = useState<string | null>(null)
   const { origin, rest } = splitUrl(shown)
+
+  const viewKey = `${handleId}:${tab}`
+  const [seenKey, setSeenKey] = useState(viewKey)
+  if (seenKey !== viewKey) {
+    setSeenKey(viewKey)
+    setDraft(null)
+    setPending(null)
+    setRejection(null)
+  }
+
+  useEffect(() => {
+    if (!pending || (url === pending.from && (!loadError || loadError === pending.err))) return
+    setPending(null)
+    setDraft((d) => (d === pending.text ? null : d))
+  }, [pending, url, loadError])
 
   const navBtn = `${PANE_BTN} disabled:pointer-events-none disabled:opacity-40`
   const nav = (action: 'back' | 'forward' | 'reload' | 'stop'): void => void window.clui.browserNav(handleId, tab, action)
 
   const go = async (): Promise<void> => {
     if (!draft?.trim()) return
-    const err = await window.clui.browserNavigate(handleId, tab, normalize(draft))
-    if (err) setNotice(err, 'warn')
-    else setDraft(null)
+    const p = parseAddress(draft)
+    if (!('url' in p)) {
+      // The field already has focus, so a changed description isn't read; a repeat Enter must say it again.
+      const say = rejectionOf(p)
+      setRejection(say)
+      announce(say)
+      return
+    }
+    setRejection(null)
+    // The same address won't change the url, so nothing would ever release the draft.
+    if (p.url === url) setDraft(null)
+    else setPending({ text: draft, from: url, err: loadError })
+    const err = await window.clui.browserNavigate(handleId, tab, p.url)
+    if (!err) return
+    setPending(null)
+    setNotice(err, 'warn')
   }
 
   return (
-    <div className="glass-bar flex h-10 shrink-0 items-center gap-1.5 px-2 [--bar-edge:var(--color-border)] contrast-more:[--bar-edge:var(--color-control-edge)]" style={SOLID}>
-      <button type="button" aria-label="Back" disabled={!canBack} onClick={() => nav('back')} className={navBtn}>
-        <IconChevron className="h-4 w-4 rotate-180" />
-      </button>
-      <button type="button" aria-label="Forward" disabled={!canForward} onClick={() => nav('forward')} className={navBtn}>
-        <IconChevron className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        aria-label={loading ? 'Stop loading' : 'Reload'}
-        onClick={() => nav(loading ? 'stop' : 'reload')}
-        className={navBtn}
-      >
-        {loading ? <IconClose className="h-4 w-4" /> : <IconRefresh className="h-4 w-4" />}
-      </button>
-      <button
-        type="button"
-        data-ui="browser-annotate"
-        aria-label="Annotate"
-        aria-pressed={annotating}
-        aria-keyshortcuts="Meta+Shift+A"
-        aria-disabled={driving || undefined}
-        title={driving ? "Claude is using this tab. Annotate when it's done." : 'Annotate ⌘⇧A'}
-        onClick={() => {
-          if (!driving) toggleAnnotate()
-        }}
-        onKeyDown={(e) => {
-          if (e.key !== 'Escape' || !annotating) return
-          e.preventDefault()
-          toggleAnnotate()
-          document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
-        }}
-        className={`${PANE_BTN} relative aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:pointer-fine:hover:bg-transparent aria-disabled:pointer-fine:hover:text-dim aria-pressed:bg-control-hover aria-pressed:text-content aria-pressed:after:absolute aria-pressed:after:inset-x-1.5 aria-pressed:after:bottom-0 aria-pressed:after:h-0.5 aria-pressed:after:rounded-full aria-pressed:after:bg-accent`}
-      >
-        <IconTarget className="h-4 w-4" />
-      </button>
-
-      <div className="relative flex min-w-40 flex-1">
-        <input
-          data-ui="browser-url"
-          data-pane-title={wall ? undefined : ''}
-          aria-label="Address"
-          placeholder="Enter an address, or ask Claude"
-          spellCheck={false}
-          autoComplete="off"
-          readOnly={driving}
-          title={driving ? 'Claude is driving. Take over to type an address.' : shown || undefined}
-          value={focused ? (draft ?? shown) : shown}
-          onChange={(e) => setDraft(e.target.value)}
-          onFocus={(e) => {
-            setFocused(true)
-            setDraft(null)
-            e.currentTarget.select()
+    <>
+      <div className="glass-bar flex h-10 shrink-0 items-center gap-1.5 px-2 [--bar-edge:var(--color-border)] contrast-more:[--bar-edge:var(--color-control-edge)]" style={SOLID}>
+        <button type="button" aria-label="Back" disabled={!canBack} onClick={() => nav('back')} className={navBtn}>
+          <IconChevron className="h-4 w-4 rotate-180" />
+        </button>
+        <button type="button" aria-label="Forward" disabled={!canForward} onClick={() => nav('forward')} className={navBtn}>
+          <IconChevron className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          aria-label={loading ? 'Stop loading' : 'Reload'}
+          onClick={() => nav(loading ? 'stop' : 'reload')}
+          className={navBtn}
+        >
+          {loading ? <IconClose className="h-4 w-4" /> : <IconRefresh className="h-4 w-4" />}
+        </button>
+        <button
+          type="button"
+          data-ui="browser-annotate"
+          aria-label="Annotate"
+          aria-pressed={annotating}
+          aria-keyshortcuts="Meta+Shift+A"
+          aria-disabled={driving || undefined}
+          title={driving ? "Claude is using this tab. Annotate when it's done." : 'Annotate ⌘⇧A'}
+          onClick={() => {
+            if (!driving) toggleAnnotate()
           }}
-          onBlur={() => setFocused(false)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !driving) {
-              e.preventDefault()
-              void go()
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              const el = e.currentTarget
-              setDraft(null)
-              requestAnimationFrame(() => el.select())
-            }
+            if (e.key !== 'Escape' || !annotating) return
+            e.preventDefault()
+            toggleAnnotate()
+            document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
           }}
-          className={`h-7 min-w-0 flex-1 rounded-md bg-control px-2.5 text-code placeholder:text-dim focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-[-2px] ${
-            focused ? 'text-content' : 'text-transparent'
-          }`}
-        />
-        {!focused && shown && (
-          <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-2.5 right-2.5 flex items-center overflow-hidden whitespace-nowrap text-code">
-            <span className="min-w-0 truncate text-content">{origin}</span>
-            <span className="min-w-0 shrink-[1000] truncate text-dim">{rest}</span>
-          </span>
-        )}
-      </div>
+          className={`${PANE_BTN} relative aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:pointer-fine:hover:bg-transparent aria-disabled:pointer-fine:hover:text-dim aria-pressed:bg-control-hover aria-pressed:text-content aria-pressed:after:absolute aria-pressed:after:inset-x-1.5 aria-pressed:after:bottom-0 aria-pressed:after:h-0.5 aria-pressed:after:rounded-full aria-pressed:after:bg-accent`}
+        >
+          <IconTarget className="h-4 w-4" />
+        </button>
 
-    </div>
+        <div className="relative flex min-w-40 flex-1">
+          <input
+            data-ui="browser-url"
+            data-pane-title={wall || loadError ? undefined : ''}
+            aria-label="Address"
+            aria-invalid={!!rejection || undefined}
+            aria-describedby={rejection ? 'browser-url-err' : undefined}
+            placeholder="Enter a web address"
+            spellCheck={false}
+            autoComplete="off"
+            readOnly={driving}
+            title={driving ? 'Claude is driving. Take over to type an address.' : shown || undefined}
+            value={focused || pending ? (draft ?? shown) : shown}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              setPending(null)
+              setRejection(null)
+            }}
+            onFocus={(e) => {
+              setFocused(true)
+              if (!pending) setDraft(null)
+              e.currentTarget.select()
+            }}
+            onBlur={() => setFocused(false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !driving) {
+                e.preventDefault()
+                void go()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                const el = e.currentTarget
+                setDraft(null)
+                setPending(null)
+                setRejection(null)
+                requestAnimationFrame(() => el.select())
+              }
+            }}
+            className={`h-7 min-w-0 flex-1 rounded-md bg-control px-2.5 text-code placeholder:text-dim focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-[-2px] ${
+              focused || pending ? 'text-content' : 'text-transparent'
+            }`}
+          />
+          {!focused && !pending && shown && (
+            <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-2.5 right-2.5 flex items-center overflow-hidden whitespace-nowrap text-code">
+              <span className="min-w-0 truncate text-content">{origin}</span>
+              <span className="min-w-0 shrink-[1000] truncate text-dim">{rest}</span>
+            </span>
+          )}
+        </div>
+
+      </div>
+      {rejection && (
+        <div data-ui="browser-url-strip" className="shrink-0 border-b border-border bg-tool px-3 py-1.5">
+          <FieldError id="browser-url-err" text={rejection} />
+        </div>
+      )}
+    </>
   )
 }
 

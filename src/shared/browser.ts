@@ -20,7 +20,13 @@ export interface BrowserState {
   loginWall: 'hardware' | null
   /** The site whose page asked to reach the local network, until the user decides or the tab leaves that site. */
   netAsk: string | null
+  /** The main frame's last load failure, until a main-frame navigation commits. */
+  loadError: LoadError | null
 }
+
+/** `name` is Chromium's error name. `httpUrl` is the http form of an https URL that failed the way a
+ *  plain-http server answers a TLS handshake. */
+export interface LoadError { url: string; code: number; name: string; httpUrl: string | null }
 
 export type LoginRequest =
   | { kind: 'choose'; site: string; usernames: string[] }
@@ -114,4 +120,90 @@ export function siteFromInput(raw: string): string | null {
   const host = text.split(/[/:?#]/, 1)[0]
   if (!host || /\s/.test(text) || !(host.includes('.') || host === 'localhost' || host.startsWith('['))) return null
   return siteKeyOf(`https://${text}`)
+}
+
+export type AddressParse =
+  | { url: string }
+  | { error: 'not-address' }
+  | { error: 'unsupported'; kind: 'file' }
+  | { error: 'unsupported'; kind: 'scheme'; scheme: string }
+
+const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
+
+/** Loopback, private IPv4 and mDNS hosts, which serve plain http as a rule. `host` is a lowercase hostname. */
+export function isLocalHost(host: string): boolean {
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host === '[::1]') return true
+  const ip = IPV4.exec(host)?.slice(1).map(Number)
+  if (!ip) return false
+  const [a, b] = ip
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+}
+
+/** What the address bar does with typed text. There's no search fallback: text that isn't an address is refused
+ *  rather than sent to a search engine from the shared partition. A scheme is never required. */
+export function parseAddress(raw: string): AddressParse {
+  const v = raw.trim()
+  if (/^(\/|~\/|file:)/i.test(v)) return { error: 'unsupported', kind: 'file' }
+  const head = v.split(/[/?#]/, 1)[0]
+  if (!head || /\s/.test(head)) return { error: 'not-address' }
+  // A digit after the colon is a port, so localhost:3000 isn't a scheme, and neither is a dotted host or localhost.
+  const scheme = /^([a-z][a-z\d+.-]*):(\/\/|[^\d]|$)/i.exec(v)?.[1].toLowerCase()
+  if (scheme && !scheme.includes('.') && scheme !== 'localhost') {
+    if (scheme !== 'http' && scheme !== 'https') return { error: 'unsupported', kind: 'scheme', scheme }
+    return toUrl(v) ?? { error: 'not-address' }
+  }
+  const m = /^(\[[\da-f:.]+\]|[^:]+)(?::(\d{0,5}))?$/i.exec(head)
+  if (!m) return { error: 'not-address' }
+  const host = m[1].toLowerCase()
+  const single = !host.includes('.') && !host.startsWith('[')
+  const ip = IPV4.exec(host)
+  const ok =
+    isLocalHost(host) ||
+    host.startsWith('[') ||
+    (ip ? ip.slice(1).every((n) => Number(n) <= 255) : /^([^.]+\.)+(\p{L}{2,}|xn--[a-z\d-]+)$/iu.test(host)) ||
+    (single && /^(?!\d+$)[a-z\d-]+$/.test(host) && (!!m[2] || v.length > head.length))
+  if (!ok) return { error: 'not-address' }
+  return toUrl(`${single || isLocalHost(host) ? 'http' : 'https'}://${v}`) ?? { error: 'not-address' }
+}
+
+function toUrl(text: string): { url: string } | null {
+  try {
+    const u = new URL(text)
+    return u.hostname ? { url: u.href } : null
+  } catch {
+    return null
+  }
+}
+
+/** The failure panel's heading and body for a load error. `host` is null when the heading names none. */
+export function loadFailureOf(e: LoadError): { pre: string; host: string | null; post: string; body: string } {
+  let host = e.url
+  let local = false
+  try {
+    const u = new URL(e.url)
+    host = u.host
+    local = isLocalHost(u.hostname)
+  } catch {}
+  const say = (pre: string, post: string, body: string) => ({ pre, host, post, body })
+  if (e.httpUrl) return say("Can't make a secure connection to ", '', 'It may only serve http. Try http only if you trust this network.')
+  if (e.code <= -200 && e.code >= -299)
+    return say('', "'s certificate isn't valid", "Clui won't open it, since the connection can't be trusted.")
+  switch (e.code) {
+    case -105:
+      return say("Can't find ", '', 'Check the spelling, or your connection.')
+    case -102:
+      return say(
+        "Can't reach ",
+        '',
+        local
+          ? 'Nothing answered at this address. If a dev server should be running here, start it and retry.'
+          : 'The site refused the connection.'
+      )
+    case -106:
+      return { pre: "You're offline", host: null, post: '', body: 'Reconnect, then retry.' }
+    case -7:
+    case -118:
+      return say('', ' took too long to respond', 'Retry, or check your connection.')
+  }
+  return say("Can't open ", '', "The page didn't load.")
 }
