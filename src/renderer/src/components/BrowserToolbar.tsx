@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { FieldError } from './LoginFields'
-import { DRIVING_NOTE, useActive, useSession, viewedTabOf, type BrowserTabs } from '../store'
+import { DRIVING_NOTE, refsOf, useActive, useSession, viewedTabOf, type BrowserTabs } from '../store'
 import { parseAddress, type AddressParse, type DriveState, type LoadError } from '../../../shared/browser'
-import { CAP_NOTE, MAX_PINS } from '../../../shared/annotate'
+import { CAP_NOTE, MAX_REFS } from '../../../shared/context'
 import { IconChevron, IconClose, IconRefresh, IconStop, IconTarget } from './Icon'
 import { PANE_BTN } from './surfaces/PaneHeader'
 
@@ -445,9 +445,11 @@ export function BrowserDriveStrip(): JSX.Element {
 
 /** Takes the drive strip's place while the user annotates the viewed tab, which Claude isn't driving. */
 function AnnotateStrip(): JSX.Element {
-  const pinned = useActive((s) => s?.annotate.pins.length ?? 0)
+  const refs = useActive((s) => (s ? refsOf(s, s.referenceEditTarget) : null))
+  const pinned = refs?.filter((d) => d.pinId !== undefined).length ?? 0
+  const full = (refs?.length ?? 0) >= MAX_REFS
   const note = useActive((s) => s?.annotate.note ?? null)
-  const say = note ?? (pinned >= MAX_PINS ? CAP_NOTE : null)
+  const say = note ?? (full ? CAP_NOTE : null)
   return (
     <div data-ui="browser-annotate-strip" className="@container flex h-9 shrink-0 items-center gap-2 border-b border-border bg-tool px-3">
       {say ? (

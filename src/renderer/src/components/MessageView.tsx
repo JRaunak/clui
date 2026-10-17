@@ -14,14 +14,15 @@ import {
   type WokenTask
 } from '../store'
 import { FileLinkContext, Markdown, StreamingContext } from './Markdown'
-import { AnnotationChip } from './AnnotationChip'
+import { ContextChip, legacyChip, refChip } from './ContextChip'
 import { Button } from './Button'
-import { hostOf, pinWords } from '../../../shared/annotate'
-import { parseRefs, refLabel } from '../../../shared/context'
+import { parseRefs, type ContextReference } from '../../../shared/context'
+import { baseOf } from '../lib/refCopy'
+import { viaOf } from '../lib/motion'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
 import { IconArrowUp, IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShieldOff, IconStop, IconWarn } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
-import { useLinkRoot } from '../lib/openLink'
+import { openFileAt, useLinkRoot } from '../lib/openLink'
 import { formatCost } from '../lib/formatCost'
 import { turnEndLine, wokenLine } from '../lib/turnEnd'
 import type { PermissionDenial, TurnUsage } from '../../../shared/events'
@@ -771,21 +772,38 @@ function ThinkingBlock({ text }: { text: string }): JSX.Element {
 
 /** A sent message's reference block shows as chips; the block itself went to Claude only. A current reference
  *  claims its crop by content-array index. A legacy block can only pair by order: its crops travel first among
- *  the images, in pin order. */
+ *  the images, in pin order. A file or folder chip opens it; a page chip stays inert, since its document is gone. */
 function UserContent({ message }: { message: ChatMessage }): JSX.Element {
+  const handleId = useActive((s) => s?.handleId ?? null)
+  const cwd = useActive((s) => s?.cwd ?? null)
   const { refs, rest: text } = parseRefs(message.text)
   const all = message.attachments ?? []
   const images = all.filter((a): a is Extract<MessageAttachment, { kind: 'image' }> => a.kind === 'image')
   const legacyThumbs = images.slice(0, refs.filter((r) => r.kind === 'legacy' && r.value.crop).length)
+  const names = new Map<string, number>()
+  for (const r of refs) if (r.kind === 'current' && r.value.ref.kind === 'file') names.set(baseOf(r.value.ref.path), (names.get(baseOf(r.value.ref.path)) ?? 0) + 1)
   let next = 0
   const chips = refs.map((r) => {
-    if (r.kind === 'legacy') return { ...r.value, thumb: r.value.crop ? legacyThumbs[next++] : undefined }
+    if (r.kind === 'legacy') {
+      const thumb = r.value.crop ? legacyThumbs[next++] : undefined
+      return { view: legacyChip(`l${r.value.n}`, r.value.n, r.value.kind, r.value.name, r.value.host, thumb?.previewUrl), thumb, ref: null }
+    }
     const { ref, visualAttachmentIndex: vi } = r.value
     const thumb = vi === undefined ? undefined : images.find((a) => a.blockIndex === vi)
-    if (ref.kind === 'browser') return { n: r.n, ...pinWords(ref.pin.target), host: hostOf(ref.pin.target.url), thumb }
-    // ponytail: file and folder refs borrow the pin chip; ContextChip replaces it when the composer writes them (7a-2)
-    return { n: r.n, kind: refLabel(ref), name: '', host: ref.path, thumb }
+    const dupe = ref.kind === 'file' && (names.get(baseOf(ref.path)) ?? 0) > 1
+    return { view: refChip(ref, r.n, cwd, thumb?.previewUrl, dupe), thumb, ref }
   })
+  // The sent revision may be stale, so a file opens scrolled to the range with nothing selected.
+  const opener = (ref: ContextReference | null): { label: string; open: (e: { detail: number }) => void } | undefined => {
+    if (!handleId || !ref || ref.kind === 'browser') return undefined
+    const abs = ref.path.startsWith('/') || !cwd ? ref.path : `${cwd.replace(/\/+$/, '')}/${ref.path}`
+    const line = ref.kind === 'file' ? ref.lines?.start : undefined
+    const name = baseOf(ref.path)
+    return {
+      label: ref.kind === 'folder' ? `Show ${name} in the tree` : line ? `Open ${name} at line ${line}` : `Open ${name}`,
+      open: (e) => openFileAt(handleId, abs, { line }, ref.kind === 'folder', viaOf(e))
+    }
+  }
   const used = new Set<MessageAttachment | undefined>(chips.map((c) => c.thumb))
   const rest = all.filter((a): a is ShownAttachment => a.kind !== 'image-unavailable' && !used.has(a))
   const lost = all.filter((a) => a.kind === 'image-unavailable').length
@@ -793,9 +811,10 @@ function UserContent({ message }: { message: ChatMessage }): JSX.Element {
     <>
       {chips.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {chips.map((c) => (
-            <AnnotationChip key={c.n} n={c.n} kind={c.kind} name={c.name} host={c.host} thumb={c.thumb?.previewUrl} />
-          ))}
+          {chips.map((c) => {
+            const o = opener(c.ref)
+            return <ContextChip key={c.view.key} view={c.view} openLabel={o?.label} onOpen={o?.open} />
+          })}
         </div>
       )}
       {rest.length > 0 && (

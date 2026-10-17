@@ -5,7 +5,9 @@
  * isolated world, apart from the agent cursor's world 1001.
  */
 import type { BrowserWindow, Event as ElectronEvent, Input, WebContents } from 'electron'
-import { MAX_PINS, type AnnotateEvent, type AnnotateTarget, type AnnotationPin } from '../../shared/annotate'
+import type { AnnotateEvent, AnnotateTarget } from '../../shared/annotate'
+import { MAX_REFS, type DraftVisual } from '../../shared/context'
+import type { AnnotationOrder } from '../../shared/ipc'
 import { IpcChannels } from '../../shared/ipc'
 import { capture, scrub, type Cdp } from './cdp'
 import type { BrowserManager } from './manager'
@@ -14,6 +16,7 @@ import { getSettingsSync } from '../settings/store'
 const MARGIN = 24
 const CROP_MAX_EDGE = 800
 const GROUP = 'clui-annotate'
+const DOC_TIMEOUT_MS = 2000
 const HIGHLIGHT = {
   borderColor: { r: 230, g: 230, b: 230, a: 1 },
   contentColor: { r: 230, g: 230, b: 230, a: 0.08 }
@@ -41,9 +44,10 @@ const WORLD_SCRIPT = `(() => {
     if (!pins.size) return host.remove();
     if (!host.isConnected) document.documentElement.appendChild(host);
     for (const p of pins.values()) {
-      const r = p.el.isConnected ? p.el.getBoundingClientRect() : null;
+      const r = p.on && p.el.isConnected ? p.el.getBoundingClientRect() : null;
       const shown = !!r && (r.width > 0 || r.height > 0);
-      p.ring.hidden = p.badge.hidden = !shown;
+      p.ring.hidden = !shown;
+      p.badge.hidden = !shown || !p.badge.textContent;
       if (!shown) continue;
       p.ring.style.transform = 'translate(' + r.left + 'px,' + r.top + 'px)';
       p.ring.style.width = r.width + 'px';
@@ -101,23 +105,28 @@ const WORLD_SCRIPT = `(() => {
       };
     },
     add(el, id) {
-      const p = { el, ring: div('o'), badge: div('b') };
+      const p = { el, ring: div('o'), badge: div('b'), on: true };
       root.append(p.ring, p.badge);
       pins.set(id, p);
       if (!raf) draw();
     },
-    number(order) {
-      for (const [id, n] of order) { const p = pins.get(id); if (p) p.badge.textContent = String(n); }
+    /** Drops the pins not in keep; outlines only the shown ones, numbered as their chips are. */
+    sync(keep, shown) {
+      const n = new Map(shown);
+      for (const [id, p] of [...pins]) {
+        if (!keep.includes(id)) {
+          p.ring.remove();
+          p.badge.remove();
+          pins.delete(id);
+          continue;
+        }
+        p.on = n.has(id);
+        p.badge.textContent = p.on ? String(n.get(id)) : '';
+      }
+      if (!raf) draw();
     },
-    remove(id) {
-      const p = pins.get(id);
-      if (!p) return;
-      p.ring.remove();
-      p.badge.remove();
-      pins.delete(id);
-    },
-    clear() {
-      for (const id of [...pins.keys()]) this.remove(id);
+    order() {
+      return [...pins].map(([id, p]) => [id, Number(p.badge.textContent) || 0, p.on]);
     },
     count() {
       return pins.size;
@@ -143,8 +152,10 @@ export class Annotator {
   private readonly browser: BrowserManager
   private readonly window: () => BrowserWindow | null
   private readonly live = new Map<string, Live>()
-  /** Pins per session in pin order, which is their number order. */
+  /** The live pins per session. Their numbers and visibility come from the renderer's sync. */
   private readonly pins = new Map<string, { id: number; tab: number }[]>()
+  /** References the renderer's edit target has room for, from its last sync. */
+  private readonly rooms = new Map<string, number>()
   /** A document's annotate world. A navigation drops it, and the next use makes a new one. */
   private readonly worlds = new WeakMap<WebContents, number>()
   private seq = 0
@@ -260,8 +271,10 @@ export class Annotator {
     const page = this.browser.page(handleId, tab)
     if (!page) return
     const { wc, cdp } = page
-    if (this.pinsOf(handleId).length >= MAX_PINS) return this.emit(handleId, { type: 'refused', why: 'cap' })
+    if (this.room(handleId) <= 0) return this.emit(handleId, { type: 'refused', why: 'cap' })
     try {
+      const docId = await this.docOf(handleId, tab)
+      if (!docId) return this.emit(handleId, { type: 'refused', why: 'failed' })
       const contextId = await this.world(wc, cdp)
       const objectId =
         at === 'focused'
@@ -282,14 +295,15 @@ export class Annotator {
       target.role = role && !GENERIC_ROLE.test(role) ? role : null
       target.name = (read.name || ax?.name?.value || '').replace(/\s+/g, ' ').trim().slice(0, 200)
       const crop = await this.crop(wc, cdp, target.bbox, vw, vh)
-      // Two quick picks both pass the first check, and a send may have cleared the list meanwhile.
-      const list = this.pinsOf(handleId)
-      if (list.length >= MAX_PINS) return this.emit(handleId, { type: 'refused', why: 'cap' })
+      // Two quick picks both pass the first check, and a sync may have lowered the room meanwhile.
+      const room = this.room(handleId)
+      if (room <= 0) return this.emit(handleId, { type: 'refused', why: 'cap' })
       const id = ++this.seq
       await call('function (id) { window.__cluiAnnotate.add(this, id) }', [id])
-      list.push({ id, tab })
-      await this.renumber(handleId)
-      this.emit(handleId, { type: 'pinned', pin: { id, tab, target: scrubbed(target, cdp.secrets), crop } })
+      this.pinsOf(handleId).push({ id, tab })
+      this.rooms.set(handleId, room - 1)
+      const visual: DraftVisual | null = crop && { id: `v${id}`, data: crop.data, mimeType: 'image/jpeg', w: crop.w, h: crop.h }
+      this.emit(handleId, { type: 'pinned', pinId: id, pin: { source: { kind: 'browser', tabId: tab, docId }, target: scrubbed(target, cdp.secrets) }, crop: visual })
     } catch {
       this.emit(handleId, { type: 'refused', why: 'failed' })
     } finally {
@@ -298,7 +312,7 @@ export class Annotator {
   }
 
   /** Taken before the outline is drawn, with the hover highlight hidden, so the crop shows the page as it is. */
-  private async crop(wc: WebContents, cdp: Cdp, b: AnnotateTarget['bbox'], vw: number, vh: number): Promise<AnnotationPin['crop']> {
+  private async crop(wc: WebContents, cdp: Cdp, b: AnnotateTarget['bbox'], vw: number, vh: number): Promise<{ data: string; w: number; h: number } | null> {
     if (!getSettingsSync().annotateScreenshots) return null
     const x = Math.max(0, Math.floor(b.x - MARGIN))
     const y = Math.max(0, Math.floor(b.y - MARGIN))
@@ -317,34 +331,49 @@ export class Annotator {
     return list
   }
 
-  private async eachWorld(handleId: string, code: (tab: number) => string): Promise<void> {
-    const tabs = new Set(this.pinsOf(handleId).map((p) => p.tab))
+  private room(handleId: string): number {
+    return this.rooms.get(handleId) ?? MAX_REFS
+  }
+
+  /** The document a pin belongs to: the top frame's loaderId, which changes on every cross-document load. */
+  async docOf(handleId: string, tab: number): Promise<string | null> {
+    const page = this.browser.page(handleId, tab)
+    if (!page) return null
+    // A hung page can leave the command unanswered, and a send waits on this, so it reads as closed instead.
+    return Promise.race([
+      page.cdp.command<{ frameTree: { frame: { loaderId?: string } } }>('Page.getFrameTree').then((r) => r.frameTree.frame.loaderId ?? null, () => null),
+      new Promise<null>((done) => setTimeout(done, DOC_TIMEOUT_MS, null))
+    ])
+  }
+
+  /** The renderer's word on which pins still back a reference and which the edit target shows. */
+  async sync(handleId: string, s: AnnotationOrder): Promise<void> {
+    const keep = new Set(s.keep)
+    const shown = new Map(s.shown)
+    const list = this.pinsOf(handleId)
+    const tabs = new Set(list.map((p) => p.tab))
+    this.pins.set(handleId, list.filter((p) => keep.has(p.id)))
+    this.rooms.set(handleId, s.room)
     for (const tab of tabs) {
+      const ids = list.filter((p) => p.tab === tab && keep.has(p.id)).map((p) => p.id)
+      const order = ids.flatMap((id) => (shown.has(id) ? [[id, shown.get(id)]] : []))
       const page = this.browser.page(handleId, tab)
       const contextId = page && (await this.known(page.wc, page.cdp))
-      if (page && contextId) await page.cdp.command('Runtime.evaluate', { expression: code(tab), contextId }).catch(() => {})
+      if (page && contextId)
+        await page.cdp.command('Runtime.evaluate', { expression: `window.__cluiAnnotate.sync(${JSON.stringify(ids)}, ${JSON.stringify(order)})`, contextId }).catch(() => {})
     }
   }
 
-  private renumber(handleId: string): Promise<void> {
-    const order = this.pinsOf(handleId).map((p, i) => [p.id, i + 1])
-    return this.eachWorld(handleId, () => `window.__cluiAnnotate.number(${JSON.stringify(order)})`)
+  /** The manager's word that the tab's document is gone. Its pins went with it. */
+  gone(handleId: string, tab: number, reason: 'navigated' | 'closed'): void {
+    const list = this.pins.get(handleId)
+    if (!list?.some((p) => p.tab === tab)) return
+    this.pins.set(handleId, list.filter((p) => p.tab !== tab))
+    this.emit(handleId, { type: 'gone', tab, reason })
   }
 
-  async remove(handleId: string, id: number): Promise<void> {
-    const list = this.pinsOf(handleId)
-    const i = list.findIndex((p) => p.id === id)
-    if (i < 0) return
-    const [gone] = list.splice(i, 1)
-    const page = this.browser.page(handleId, gone.tab)
-    const contextId = page && (await this.known(page.wc, page.cdp))
-    if (page && contextId) await page.cdp.command('Runtime.evaluate', { expression: `window.__cluiAnnotate.remove(${id})`, contextId }).catch(() => {})
-    await this.renumber(handleId)
-  }
-
-  async clear(handleId: string): Promise<void> {
-    await this.eachWorld(handleId, () => 'window.__cluiAnnotate.clear()')
-    this.pins.delete(handleId)
+  holds(handleId: string, tab: number): boolean {
+    return !!this.pins.get(handleId)?.some((p) => p.tab === tab)
   }
 
   /** For the test harness: outlines the page's annotate world holds. */
@@ -356,14 +385,24 @@ export class Annotator {
     return r.result.value as number
   }
 
+  /** For the test harness: `[pinId, n, shown]` per outline in the page's annotate world. */
+  async order(handleId: string, tab: number): Promise<[number, number, boolean][]> {
+    const page = this.browser.page(handleId, tab)
+    const contextId = page && (await this.known(page.wc, page.cdp))
+    if (!page || !contextId) return []
+    const r = await page.cdp.command<{ result: RemoteObject }>('Runtime.evaluate', { expression: 'window.__cluiAnnotate.order()', contextId, returnByValue: true })
+    return r.result.value as [number, number, boolean][]
+  }
+
   dispose(handleId: string): void {
     this.stop(handleId, 'away')
     this.pins.delete(handleId)
+    this.rooms.delete(handleId)
   }
 }
 
 /** A password Clui filled can surface in page text (a show-password toggle, a script copying it), so it never leaves. */
 function scrubbed(t: AnnotateTarget, secrets: Set<string>): AnnotateTarget {
   if (!secrets.size) return t
-  return { ...t, name: scrub(t.name, secrets), text: scrub(t.text, secrets), html: scrub(t.html, secrets) }
+  return { ...t, name: scrub(t.name, secrets), text: scrub(t.text, secrets), html: scrub(t.html, secrets), url: scrub(t.url, secrets) }
 }

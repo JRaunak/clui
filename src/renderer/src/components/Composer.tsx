@@ -9,9 +9,9 @@ import {
   type ChangeEvent,
   type CSSProperties
 } from 'react'
-import { chipMode, effectiveMode, useActive, useSession, EMPTY_ATTACHMENTS, type SendAttachment } from '../store'
-import { annotationsText, hostOf, pinWords, type AnnotationPin } from '../../../shared/annotate'
-import { AnnotationChip } from './AnnotationChip'
+import { chipMode, effectiveMode, useActive, useSession, EMPTY_ATTACHMENTS, EMPTY_NOTICES, EMPTY_REFS, type SendAttachment } from '../store'
+import { attachmentChip } from './ContextChip'
+import { ContextChips, signalRefs } from './ContextChips'
 import { useComposerAutocomplete } from './ComposerAutocomplete'
 import { ModelEffortPicker } from './ModelEffortPicker'
 import { UltracodeToggle } from './UltracodeToggle'
@@ -29,8 +29,6 @@ import {
   IconChecklist,
   IconShieldOff,
   IconPlus,
-  IconFile,
-  IconClose,
   IconFolder,
   IconFolderOpen,
   IconGhost,
@@ -66,9 +64,13 @@ export function Composer(): JSX.Element {
   const addDraftAttachments = useSession((s) => s.addDraftAttachments)
   const removeDraftAttachment = useSession((s) => s.removeDraftAttachment)
   const clearDraft = useSession((s) => s.clearDraft)
-  const pins = useActive((s) => s?.annotate.pins ?? NO_PINS)
-  const removeAnnotation = useSession((s) => s.removeAnnotation)
-  const clearAnnotations = useSession((s) => s.clearAnnotations)
+  const refs = useActive((s) => s?.contextRefs ?? EMPTY_REFS)
+  const noticeMap = useActive((s) => s?.referenceNotices ?? EMPTY_NOTICES)
+  const notices = useMemo(() => Object.values(noticeMap), [noticeMap])
+  const refAnnounce = useActive((s) => s?.refAnnounce ?? '')
+  const clearRefs = useSession((s) => s.clearRefs)
+  const carryRefs = useSession((s) => s.carryRefs)
+  const dockRef = useRef<HTMLDivElement>(null)
   const [caret, setCaret] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -231,6 +233,7 @@ export function Composer(): JSX.Element {
     const cur = useSession.getState().sessions[handleId]
     const draft = cur?.draftText ?? ''
     const carriedAttachments = cur?.draftAttachments ?? []
+    const carriedRefs = cur?.contextRefs ?? []
     const wasEphemeral = cur?.ephemeral ?? false
     await closeSession(handleId)
     await startSession(dir, undefined, wasEphemeral ? { ephemeral: true } : undefined)
@@ -238,6 +241,7 @@ export function Composer(): JSX.Element {
     if (!next) return
     if (draft) setDraftText(next, draft)
     if (carriedAttachments.length) addDraftAttachments(next, carriedAttachments)
+    await carryRefs(next, carriedRefs)
   }
 
   const chooseDirectory = async (): Promise<void> => {
@@ -277,19 +281,7 @@ export function Composer(): JSX.Element {
 
   const submit = async (now = false): Promise<void> => {
     const typed = text.trim()
-    if ((!typed && attachments.length === 0 && pins.length === 0) || !handleId) return
-    const lead = pins.length ? annotationsText(pins) : ''
-    const t = lead && typed ? `${lead}\n\n${typed}` : lead || typed
-    const crops: SendAttachment[] = pins.flatMap((p, i) =>
-      p.crop
-        ? [
-            {
-              wire: { kind: 'image', mediaType: 'image/jpeg', data: p.crop.data },
-              display: { kind: 'image', previewUrl: `data:image/jpeg;base64,${p.crop.data}`, name: `Annotation ${i + 1}`, w: p.crop.w, h: p.crop.h }
-            }
-          ]
-        : []
-    )
+    if ((!typed && attachments.length === 0 && refs.length === 0) || !handleId) return
     const files: SendAttachment[] = attachments.map((a) => ({
       wire: toWireAttachment(a),
       display:
@@ -299,17 +291,23 @@ export function Composer(): JSX.Element {
             ? { kind: 'document', name: a.name, bytes: a.bytes }
             : { kind: 'text', name: a.name, bytes: a.bytes, lines: a.lines }
     }))
-    // Clear only THIS session's draft, the one the send consumed.
-    const send = [...crops, ...files]
+    // Consumed by id in this tick, so a reference added while the send awaits stays in the draft.
     clearDraft(handleId)
-    clearAnnotations(handleId)
+    clearRefs(handleId, refs.map((d) => d.ref.id))
     setCaret(0)
-    await sendMessage(t, send.length ? send : undefined, { now })
+    await sendMessage(typed, files.length ? files : undefined, { now, refs })
   }
+
+  const focusText = (): void => textareaRef.current?.focus()
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
     // When the autocomplete menu is open, let it consume ↑/↓/Enter/Tab/Esc first.
     if (ac.onKeyDown(e)) return
+    // Backspace moves into the row rather than deleting: a chip is removed only by its own Delete.
+    if (e.key === 'Backspace' && !text && refs.length + attachments.length > 0) {
+      e.preventDefault()
+      return void [...(dockRef.current?.querySelectorAll<HTMLElement>('[data-ui="context-chips"] [role="listitem"]') ?? [])].at(-1)?.focus()
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       // ⌘↵ during a turn sends into it instead of queuing; when idle it's a plain send.
@@ -342,6 +340,7 @@ export function Composer(): JSX.Element {
     <div className="@container/composer w-full">
       <div className="mx-auto w-full max-w-5xl px-7">
         <div
+          ref={dockRef}
           data-ui="composer-dock"
           className={`dock-fade-both relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 ${
             dragOver ? 'border-accent' : 'border-border has-[textarea:focus]:border-control-edge'
@@ -362,25 +361,19 @@ export function Composer(): JSX.Element {
               </div>
             </div>
           )}
-          {/* Attachment thumbnails: a strip above the textarea, neutral surfaces. */}
-          {(attachments.length > 0 || pins.length > 0) && (
-            <div className="flex flex-wrap gap-2 px-1 pt-1">
-              {pins.map((p, i) => (
-                <AnnotationPill
-                  key={p.id}
-                  n={i + 1}
-                  pin={p}
-                  onRemove={() => {
-                    removeAnnotation(p.id)
-                    textareaRef.current?.focus()
-                  }}
-                />
-              ))}
-              {attachments.map((a) => (
-                <AttachmentPill key={a.id} att={a} onRemove={() => removeAttachment(a.id)} />
-              ))}
-            </div>
+          {handleId && (
+            <ContextChips
+              handleId={handleId}
+              target={null}
+              refs={refs}
+              notices={notices}
+              attachments={attachments.map((a) => ({ view: attachmentChip(a.id, a), onRemove: () => removeAttachment(a.id) }))}
+              focusText={focusText}
+            />
           )}
+          <span className="sr-only" aria-live="polite">
+            {refAnnounce}
+          </span>
           <div className="relative">
             {ac.render()}
             <textarea
@@ -397,7 +390,10 @@ export function Composer(): JSX.Element {
               aria-activedescendant={ac.activeId}
               value={text}
               onChange={(e) => {
-                if (handleId) setDraftText(handleId, e.target.value)
+                if (handleId) {
+                  setDraftText(handleId, e.target.value)
+                  signalRefs(handleId, null, { note: null })
+                }
                 setCaret(e.target.selectionStart ?? e.target.value.length)
               }}
               onKeyDown={onKeyDown}
@@ -497,7 +493,7 @@ export function Composer(): JSX.Element {
                 contextWindow={contextWindow}
               />
               {(() => {
-                const empty = !text.trim() && attachments.length === 0 && pins.length === 0
+                const empty = !text.trim() && attachments.length === 0 && refs.length === 0
                 const inert = !busy && empty
                 return (
                   <button
@@ -629,56 +625,4 @@ export function PermissionIcon({
 }): JSX.Element {
   const Glyph = PERMISSION_MODE_ICONS[mode]
   return <Glyph className={`${className} shrink-0 ${PERMISSION_MODE_COLORS[mode]}`} />
-}
-
-const NO_PINS: AnnotationPin[] = []
-
-function AnnotationPill({ n, pin, onRemove }: { n: number; pin: AnnotationPin; onRemove: () => void }): JSX.Element {
-  const { kind, name } = pinWords(pin.target)
-  const thumb = pin.crop ? `data:image/jpeg;base64,${pin.crop.data}` : undefined
-  return <AnnotationChip n={n} kind={kind} name={name} host={hostOf(pin.target.url)} thumb={thumb} onRemove={onRemove} />
-}
-
-// A thumbnail chip for one staged attachment: image preview + filename + remove button.
-function AttachmentPill({
-  att,
-  onRemove
-}: {
-  att: ProcessedAttachment
-  onRemove: () => void
-}): JSX.Element {
-  const kb = Math.max(1, Math.round(att.bytes / 1024))
-  const label = att.kind === 'image' ? att.name || 'pasted image' : att.name
-  const meta =
-    att.kind === 'image'
-      ? `${att.w}×${att.h} · ${kb} KB`
-      : att.kind === 'text'
-        ? `${kb} KB · ${att.lines} lines`
-        : `${kb} KB · PDF`
-  return (
-    <div className="group relative flex items-center gap-2 rounded-md border border-border bg-bg-raised py-1 pl-1 pr-2">
-      {att.kind === 'image' ? (
-        <img src={att.previewUrl} alt={label} className="h-10 w-10 rounded bg-tool object-cover" />
-      ) : (
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-tool text-dim">
-          <IconFile className="h-5 w-5" />
-        </span>
-      )}
-      <div className="flex min-w-0 flex-col">
-        <span className="max-w-[120px] truncate text-xs text-content" title={label}>
-          {label}
-        </span>
-        <span className="font-mono text-meta text-faint">{meta}</span>
-      </div>
-      <button
-        type="button"
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-dim transition-colors hover:bg-bg-elev hover:text-content"
-        onClick={onRemove}
-        title="Remove attachment"
-        aria-label={`Remove ${label}`}
-      >
-        <IconClose className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  )
 }

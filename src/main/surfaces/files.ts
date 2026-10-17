@@ -10,6 +10,7 @@ import { constants, watch as fsWatch, type BigIntStats, type FSWatcher } from 'n
 import { lstat, mkdir, mkdtemp, open, opendir, realpath, rm, symlink, writeFile, type FileHandle } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { MAX_REFS } from '../../shared/context'
 import type { FileStat, Refusal, TextRead } from '../../shared/files'
 
 export type FileOperation = 'read-file' | 'list-directory' | 'watch-file' | 'watch-directory' | 'open-external'
@@ -49,6 +50,9 @@ export const LIST_MAX = 10_000
 /** How far a capped listing keeps counting, so a huge folder can't hold a listing open. */
 export const COUNT_MAX = 100_000
 export const WATCH_MAX = 32
+/** Message references watch their own files, so they never take a surface's slot. */
+export type WatchPool = 'surface' | 'context'
+const POOL_MAX: Record<WatchPool, number> = { surface: WATCH_MAX, context: MAX_REFS }
 const SNIFF = 8192
 const DEBOUNCE_MS = 100
 const PATH_MAX = 4096
@@ -255,6 +259,7 @@ export function listDir(r: FileResource): Promise<{ ok: true; entries: DirEntry[
 
 interface Watch {
   r: FileResource
+  pool: WatchPool
   watcher: FSWatcher | null
   timer: ReturnType<typeof setTimeout> | null
   onChange: () => void
@@ -397,13 +402,13 @@ export function createFileAccess(sessions: FileSessions) {
   }
 
   /** Shallow and debounced. Events are hints: the consumer re-resolves before acting on one. */
-  async function watch(r: FileResource, onChange: () => void): Promise<{ ok: true; id: string } | Refusal> {
+  async function watch(r: FileResource, onChange: () => void, pool: WatchPool = 'surface'): Promise<{ ok: true; id: string } | Refusal> {
     if (!genuine(r) || (r.operation !== 'watch-file' && r.operation !== 'watch-directory') || typeof onChange !== 'function') return refuse('invalid')
     let count = 0
-    for (const w of watches.values()) if (w.r.handleId === r.handleId) count++
-    if (count >= WATCH_MAX) return refuse('limit')
+    for (const w of watches.values()) if (w.r.handleId === r.handleId && w.pool === pool) count++
+    if (count >= POOL_MAX[pool]) return refuse('limit')
     const id = randomUUID()
-    const entry: Watch = { r, watcher: null, timer: null, onChange }
+    const entry: Watch = { r, pool, watcher: null, timer: null, onChange }
     watches.set(id, entry)
     entry.watcher = arm(id, entry)
     const s = await lstat(r.path, { bigint: true }).catch(() => null)

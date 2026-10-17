@@ -81,6 +81,12 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   turnTasks: [],
   endedTasks: [],
   turnStartMs: null,
+  annotate: { tab: null, note: null },
+  contextRefs: [],
+  referenceNotices: {},
+  referenceEditTarget: null,
+  refAnnounce: '',
+  surfaces: { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} },
   ...over
 })
 const reset = (over?: Record<string, unknown>, caps = {}): void => {
@@ -236,7 +242,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   const pane = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
     browser,
     surfaces,
-    annotate: { tab: null, pins: [], note: null },
+    annotate: { tab: null, note: null },
     paneOpen: false,
     surfacePaneFull: true,
     paneAutoOpen: false,
@@ -333,7 +339,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   const browserOf = (ids: number[], viewed = ids[0]): any => ({ tabs: ids.map((id) => tab(id)), viewed, multi: ids.length > 1, toolTabs: {}, enter: [], announce: '' })
   const empty = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
   const fresh = (over: Record<string, unknown> = {}): void => {
-    reset({ browser: null, surfaces: empty, paneOpen: false, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, pins: [], note: null }, ...over })
+    reset({ browser: null, surfaces: empty, paneOpen: false, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, note: null }, ...over })
     useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [], paneOpenedQuietly: false, settingsSection: null })
     notePaneInput(0)
   }
@@ -383,7 +389,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
   ok(sur().active === id && !cur().paneOpen, 'intent: a manual hide keeps the pane closed')
   fresh()
-  useSession.setState({ sessions: { ...st().sessions, h2: slice({ handleId: 'h2', browser: null, surfaces: empty, paneOpen: false, annotate: { tab: null, pins: [], note: null } }) } })
+  useSession.setState({ sessions: { ...st().sessions, h2: slice({ handleId: 'h2', browser: null, surfaces: empty, paneOpen: false, annotate: { tab: null, note: null } }) } })
   st().openSurface('h2', FILE, 'focus', 'claude', 'claude')
   ok(st().sessions.h2.surfaces.active === id && !st().sessions.h2.paneOpen && st().sessions.h2.paneAutoOpen, 'intent: a background session opens on its next visit')
 
@@ -512,7 +518,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
 }
 
 const res = (over: Record<string, unknown> = {}): any => ({ type: 'result', sessionId: 's', isError: false, result: null, ...over })
-const q = (id: string, text: string): any => ({ id, text })
+const q = (id: string, text: string): any => ({ id, text, refs: [] })
 
 // A user's message folded into a background-woken turn ends the user's turn at that turn's result.
 {
@@ -541,7 +547,7 @@ const q = (id: string, text: string): any => ({ id, text })
   ok(cur().queuedMessages.map((m: any) => m.id).join() === 'q2', 'store: Send now removes the row synchronously')
   ok(cur().messages.at(-1)?.text === 'a', 'store: Send now appends the user bubble')
   await new Promise((r) => setTimeout(r, 0))
-  ok(calls.some((c) => c.name === 'sendNowMessage' && c.args[1] === 'a'), 'store: Send now goes to sendNowMessage')
+  ok(calls.some((c) => c.name === 'sendMessage' && (c.args[1] as any).text === 'a' && (c.args[1] as any).now === true), 'store: Send now goes through sendMessage with now')
   reset({ interrupting: true, busy: false, queuedMessages: [q('q1', 'a')] })
   st().sendQueuedNow('q1')
   ok(cur().queuedMessages.length === 1, 'store: Send now does nothing while stopping')
@@ -702,7 +708,7 @@ const q = (id: string, text: string): any => ({ id, text })
 
   // The note goes with the first tab and doesn't come back.
   const empty = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
-  reset({ browser: null, surfaces: empty, restoreNote: 'corrupt', paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, pins: [], note: null }, tabsEvicted: false })
+  reset({ browser: null, surfaces: empty, restoreNote: 'corrupt', paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, note: null }, tabsEvicted: false })
   useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [], settingsSection: null, evictedTabs: [] })
   st().openSurface('h1', { kind: 'diff', key: '', title: 'Claude changes' }, 'open', 'user', 'user')
   st().closeSurface('h1', 'diff')
@@ -717,7 +723,7 @@ const q = (id: string, text: string): any => ({ id, text })
   }
   equal(evictionVictim(full(), 'file:/w/new.ts'), 'file:/w/1.ts', 'evict: the active tab is skipped even when it is the oldest')
   equal(evictionVictim({ ...full(), tabs: { ...singles } }, 'x'), null, 'evict: under the cap nothing goes')
-  reset({ browser: null, surfaces: full(), paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, pins: [], note: null }, tabsEvicted: false, restoreNote: null })
+  reset({ browser: null, surfaces: full(), paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, note: null }, tabsEvicted: false, restoreNote: null })
   st().setSurfaceView('h1', 'file:/w/1.ts', { viewState: { kind: 'file', topLine: 77, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
   st().openSurface('h1', { kind: 'file', key: '/w/new.ts', title: 'new.ts' }, 'open', 'user', 'user')
   const sur = (): any => cur().surfaces
@@ -729,4 +735,119 @@ const q = (id: string, text: string): any => ({ id, text })
   st().reopenEvicted(card.id)
   ok(sur().order[3] === 'file:/w/1.ts' && sur().active === 'file:/w/1.ts' && sur().tabs['file:/w/1.ts'].viewState.topLine === 77, 'evict: Reopen puts the tab back at its index with its view state')
   ok(Object.keys(sur().tabs).length === 24 && !sur().tabs['file:/w/2.ts'] && !st().evictedTabs.length, 'evict: Reopen makes room by evicting the next one quietly')
+}
+
+// References: one staged list per target, mirrored to main's outlines and watches, removed only by staleness or the user.
+{
+  const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+  const V = `sha256:${'a'.repeat(32)}`
+  const V2 = `sha256:${'b'.repeat(32)}`
+  const DOC = 'A'.repeat(32)
+  const target = { tag: 'button', role: 'button', name: 'Sign in', text: 'Sign in', selector: '#s', bbox: { x: 0, y: 0, width: 1, height: 1 }, styles: {}, html: '', url: 'http://localhost:5173/' }
+  const pin = (sel = '#s'): any => ({ kind: 'browser', pin: { source: { kind: 'browser', tabId: 1, docId: DOC }, target: { ...target, selector: sel } } })
+  const lines = (start = 1, end = 2, v = V, note?: string): any => ({ kind: 'file', path: '/tmp/w/a.ts', lines: { start, end }, sourceVersion: v, ...(note ? { note } : {}) })
+  const orders = (): any[] => calls.filter((c) => c.name === 'syncAnnotationOrder').map((c) => c.args[1])
+
+  reset({ busy: false })
+  const a = st().addRef('h1', lines())
+  const b = st().addRef('h1', lines())
+  ok(a.status === 'added' && b.status === 'duplicate' && (b as any).id === (a as any).id, 'refs: the same refKey returns the existing id')
+  ok(st().addRef('h1', { kind: 'file', path: 'rel.ts' } as any).status === 'invalid', 'refs: a relative path is refused')
+  for (let i = 3; i <= 21; i++) st().addRef('h1', lines(i, i))
+  ok(cur().contextRefs.length === 20 && st().addRef('h1', lines(40, 40)).status === 'cap', 'refs: 20 per target, the 21st refused')
+
+  reset({ busy: false })
+  st().addRef('h1', pin('#a'), { pinId: 7 })
+  st().addRef('h1', lines())
+  st().addRef('h1', pin('#b'), { pinId: 8 })
+  await tick()
+  ok(orders().length === 1 && JSON.stringify(orders()[0].shown) === '[[7,1],[8,3]]' && orders()[0].room === 17, 'refs: outline numbers are chip positions across kinds, synced once per tick')
+  ok(calls.some((c) => c.name === 'syncRefWatches' && (c.args[1] as any[]).length === 1 && (c.args[1] as any[])[0].version === V), 'refs: the selection is watched')
+  st().moveRef('h1', cur().contextRefs[2].ref.id, -1)
+  await tick()
+  ok(JSON.stringify(orders().at(-1).shown) === '[[7,1],[8,2]]', 'refs: moveRef renumbers the outlines')
+  st().removeRef('h1', cur().contextRefs[0].ref.id)
+  await tick()
+  ok(JSON.stringify(orders().at(-1).keep) === '[8]' && JSON.stringify(orders().at(-1).shown) === '[[8,1]]', 'refs: removeRef drops the pin')
+
+  // Submit consumes the draft by id and the queued item keeps the pins: no sync drops them in between.
+  reset({ busy: true })
+  st().addRef('h1', pin('#a'), { pinId: 7 })
+  await tick()
+  calls.length = 0
+  const refs = cur().contextRefs
+  st().clearRefs('h1', refs.map((d: any) => d.ref.id))
+  await st().sendMessage('later', undefined, { refs })
+  await tick()
+  ok(cur().queuedMessages[0]?.text === 'later' && cur().queuedMessages[0].refs.length === 1 && !cur().contextRefs.length, 'queue: typed text and structured refs, nothing serialized')
+  ok(!orders().some((o) => !o.keep.includes(7)), 'queue: the pin survives the move from draft to queue')
+
+  // A pick the store refuses has its outline taken down.
+  reset({ busy: false })
+  for (let i = 1; i <= 20; i++) st().addRef('h1', lines(i, i))
+  await tick()
+  calls.length = 0
+  st().applyAnnotateEvent('h1', { type: 'pinned', pinId: 9, pin: pin().pin, crop: null })
+  await tick()
+  ok(cur().contextRefs.length === 20 && orders().length === 1 && !orders()[0].keep.includes(9), 'pinned at cap: not added, and the forced sync drops the outline')
+  ok(cur().annotate.note === '20 references max. Remove one to add another.', 'pinned at cap: the strip says why')
+
+  // A document gone: draft and queued pins on that tab leave, with a notice and a paused row.
+  reset({ busy: true, queuedMessages: [{ id: 'q1', text: 'later', refs: [{ ref: { ...pin('#q'), id: 'r900' }, pinId: 3 }] }] })
+  st().addRef('h1', pin('#a'), { pinId: 4 })
+  st().addRef('h1', { kind: 'file', path: '/tmp/w/b.ts' })
+  st().applyAnnotateEvent('h1', { type: 'gone', tab: 1, reason: 'navigated' })
+  const key = `browser:1:${DOC}`
+  ok(cur().contextRefs.length === 1 && cur().contextRefs[0].ref.kind === 'file', 'gone: page refs leave the draft, the file stays')
+  ok(cur().referenceNotices[key]?.label === 'localhost:5173' && cur().referenceNotices[key].removed[0].label === 'button "Sign in"', 'gone: the notice names the host and the element')
+  ok(!cur().queuedMessages[0].refs.length && cur().queuedMessages[0].needsReview?.[0].reason === 'navigated', 'gone: the queued copy pauses')
+  st().sendQueuedNow('q1')
+  ok(cur().queuedMessages.length === 1, 'queue: Send now refuses a paused item')
+  calls.length = 0
+  st().applyEvent('h1', res())
+  ok(cur().queuedMessages.length === 1 && !calls.some((c) => c.name === 'sendMessage'), 'queue: a paused head is not released at a result')
+  st().addRef('h1', { ...pin('#a'), pin: { ...pin('#a').pin, source: { kind: 'browser', tabId: 1, docId: 'B'.repeat(32) } } })
+  ok(!cur().referenceNotices[key], 'gone: a pick in the same tab clears the notice')
+  replies.validateRefs = () => []
+  ok(await st().acceptReview('h1', 'q1'), 'review: no failures passes')
+  ok(cur().queuedMessages.length === 0 && calls.some((c) => c.name === 'sendMessage' && (c.args[1] as any).text === 'later'), 'review: an idle head sends at once')
+  delete replies.validateRefs
+
+  // A file changed: a same-size replacement is a new version, so the selection goes and the whole file stays.
+  const tab = { id: 'file:/tmp/w/a.ts', kind: 'file', key: '/tmp/w/a.ts', title: 'a.ts', openedBy: 'user', openedAt: 0, lastViewedAt: 0, selection: { lines: { start: 1, end: 2 } } }
+  const sent = { id: 'u0', role: 'user', text: 'sent before', thinking: '', tools: [], blocks: [] }
+  reset({ busy: false, messages: [sent], surfaces: { order: [tab.id], active: tab.id, tabs: { [tab.id]: tab }, browserLastViewedAt: {}, browserUnseen: {} } })
+  st().addRef('h1', lines(1, 2, V, 'check the retry'))
+  st().addRef('h1', { kind: 'file', path: '/tmp/w/a.ts' })
+  ok(st().invalidateSource('h1', 'file:/tmp/w/a.ts', { reason: 'changed', version: V }) === 0, 'stale: the same version removes nothing')
+  ok(st().invalidateSource('h1', 'file:/tmp/w/a.ts', { reason: 'changed', version: V2 }) === 1, 'stale: a new version removes the selection')
+  ok(cur().contextRefs.length === 1 && !cur().contextRefs[0].ref.lines, 'stale: the whole-file ref stays')
+  ok(cur().surfaces.tabs[tab.id].selection === undefined, "stale: the File tab's selection clears")
+  ok(cur().messages[0] === sent, 'stale: sent bubbles are untouched')
+  const n = cur().referenceNotices['file:/tmp/w/a.ts']
+  ok(n?.label === 'a.ts' && n.removed[0].label === 'L1–2' && n.removed[0].note === 'check the retry', 'stale: the notice keeps the range and the note')
+  ok(cur().refAnnounce.startsWith('a.ts changed. Lines 1 to 2 were removed from the message.'), 'stale: announced once')
+  st().addRef('h1', lines(3, 4, V2))
+  ok(!cur().referenceNotices['file:/tmp/w/a.ts'] && cur().contextRefs.at(-1).ref.note === 'check the retry', 'stale: reselection clears the notice and brings the note back')
+
+  // Dispatch: a stale reply sends nothing, and the message waits at the queue head.
+  reset({ busy: false })
+  st().addRef('h1', lines())
+  const out = cur().contextRefs
+  let answer!: (v: unknown) => void
+  replies.sendMessage = () => new Promise((r) => (answer = r))
+  st().clearRefs('h1', out.map((d: any) => d.ref.id))
+  const p = st().sendMessage('explain', undefined, { refs: out })
+  ok(cur().busy && cur().messages.at(-1).text.startsWith('<clui-context version="1">\n'), 'dispatch: the optimistic bubble carries the block without a packetId')
+  st().addRef('h1', lines(5, 6))
+  answer({ ok: false, reason: 'stale', invalid: [{ id: out[0].ref.id, reason: 'changed' }] })
+  await p
+  ok(!cur().busy && !cur().messages.length, 'dispatch: stale removes the bubble and rolls back busy')
+  ok(cur().queuedMessages[0]?.text === 'explain' && cur().queuedMessages[0].needsReview?.[0].reason === 'changed' && !cur().queuedMessages[0].refs.length, 'dispatch: the message waits at the head, paused')
+  ok(cur().contextRefs.length === 1 && cur().contextRefs[0].ref.lines.start === 5, 'dispatch: a ref added during the await stays in the draft')
+  replies.sendMessage = () => ({ ok: true, packetId: 'x', text: 'ACCEPTED', joined: false })
+  reset({ busy: false })
+  await st().sendMessage('hi')
+  ok(cur().messages.at(-1)?.text === 'ACCEPTED', "dispatch: the bubble takes main's accepted text")
+  delete replies.sendMessage
 }

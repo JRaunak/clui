@@ -20,12 +20,31 @@ import type { DomainEvent, ElicitationResponse, PermissionDenial, PermissionSugg
 import type { BlockedPrompt, CompactionMarker, ProjectGroup } from '../../shared/sessions'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
-import type { CluiApi, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
+import type { CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { loadFailureOf, siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
 import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
-import { CAP_NOTE, pinWords, clipName, type AnnotateEvent, type AnnotationPin } from '../../shared/annotate'
-import { messageGist } from '../../shared/context'
+import { pinWords, clipName, type AnnotateEvent } from '../../shared/annotate'
+import {
+  CAP_NOTE,
+  isRefInput,
+  MAX_REFS,
+  messageGist,
+  packetLayout,
+  refKey,
+  resourceOf,
+  sentRefs,
+  serializeContext,
+  type ContextReference,
+  type DraftReference,
+  type DraftVisual,
+  type RefFailure,
+  type RefInput,
+  type RefInvalid,
+  type ReferenceInvalidation,
+  type SourceVersion
+} from '../../shared/context'
+import { removalSpoken, pausedText, resourceLabel, shortLabel } from './lib/refCopy'
 import type { Via } from './lib/motion'
 import type { ChangeGitStatus, FileChangeSummary, GitPathStatus } from '../../shared/changes'
 import { SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
@@ -235,9 +254,19 @@ export interface ChatMessage {
  */
 export interface QueuedMessage {
   id: string
+  /** What the user typed, never serialized context. */
   text: string
+  /** With their crop bytes until dispatch. */
+  refs: DraftReference[]
+  /** The user's own attachments only. */
   attachments?: SendAttachment[]
+  /** Set while references it held went stale: the queue waits on it until the user reviews it. */
+  needsReview?: ReferenceInvalidation[]
 }
+
+/** Where a reference action lands: null is the draft, else a queued message's id. */
+export type RefTarget = string | null
+export type AddRefResult = { status: 'added'; id: string } | { status: 'duplicate'; id: string; key: string } | { status: 'cap' } | { status: 'invalid' }
 
 export interface ToolCall {
   id: string
@@ -407,6 +436,14 @@ export interface PerSessionState {
   /** The tab cap has closed a tab in this session, so later ones are only announced. */
   tabsEvicted: boolean
   annotate: AnnotateDraft
+  /** References for the next message, in chip order. */
+  contextRefs: DraftReference[]
+  /** Why references left the draft, by resource, until reselected or dismissed. */
+  referenceNotices: Record<string, ReferenceInvalidation>
+  /** Where File, Tree and page adds land: null is the draft, else a queued message under review. */
+  referenceEditTarget: RefTarget
+  /** The composer's polite announcement for its chips row and notices. */
+  refAnnounce: string
 }
 
 /** A tab the cap closed, held for its card's lifetime so Reopen can put it back where it was. */
@@ -422,11 +459,12 @@ export interface EvictedTab {
  *  line's hint after a refused pick, until the next pick. */
 export interface AnnotateDraft {
   tab: number | null
-  pins: AnnotationPin[]
   note: string | null
 }
 
-const IDLE_ANNOTATE: AnnotateDraft = { tab: null, pins: [], note: null }
+const IDLE_ANNOTATE: AnnotateDraft = { tab: null, note: null }
+export const EMPTY_REFS: DraftReference[] = []
+export const EMPTY_NOTICES: Record<string, ReferenceInvalidation> = {}
 
 export const DRIVING_NOTE = "Annotate when it's done."
 
@@ -661,7 +699,7 @@ interface SessionStore {
    * Send a user turn. `attachments` carries both the lean wire payload (image
    * blocks sent to the CLI) and a display thumbnail for the user's own bubble.
    */
-  sendMessage: (text: string, attachments?: SendAttachment[], opts?: { now?: boolean }) => Promise<void>
+  sendMessage: (text: string, attachments?: SendAttachment[], opts?: { now?: boolean; refs?: DraftReference[] }) => Promise<void>
   /** Send a queued message now, cutting the running turn's step, instead of at the turn's end. */
   sendQueuedNow: (id: string) => void
   /** Edit a still-queued message's text (before it's dispatched at the turn boundary). */
@@ -734,8 +772,21 @@ interface SessionStore {
   applyAnnotateEvent: (handleId: string, e: AnnotateEvent) => void
   /** Annotate on or off in the active session's viewed tab; refused while Claude drives it. */
   toggleAnnotate: () => void
-  removeAnnotation: (id: number) => void
-  clearAnnotations: (handleId: string) => void
+  /** Stage a reference on the edit target (or `opts.target`). Refuses a duplicate, the 21st, or a malformed input. */
+  addRef: (handleId: string, input: RefInput, opts?: { target?: RefTarget; visual?: DraftVisual; pinId?: number }) => AddRefResult
+  removeRef: (handleId: string, id: string, target?: RefTarget) => void
+  moveRef: (handleId: string, id: string, delta: -1 | 1, target?: RefTarget) => void
+  /** Draft only, by id, so a reference added since survives. */
+  clearRefs: (handleId: string, ids: readonly string[]) => void
+  dismissReferenceNotice: (handleId: string, resourceId: string) => void
+  /** The one place staleness removes references. Returns how many went. */
+  invalidateSource: (handleId: string, resourceId: string, cause: { reason: RefFailure | 'session'; version?: SourceVersion }) => number
+  setReferenceEditTarget: (handleId: string, target: RefTarget) => void
+  /** Re-checks a queued message's references; true when it may send, and an idle session's head sends now. */
+  acceptReview: (handleId: string, queueId: string) => Promise<boolean>
+  /** A respawn's draft references: files that pass on the new session stay, the rest become notices. */
+  carryRefs: (handleId: string, refs: readonly DraftReference[]) => Promise<void>
+  announceRefs: (handleId: string, text: string) => void
   /** Answer a sign-in Gate. The verdict goes straight to main. */
   respondBrowserLogin: (requestId: string, verdict: BrowserLoginVerdict) => Promise<void>
   /** Answers a page's local network ask; the strip goes once main clears the tab's netAsk. */
@@ -1242,6 +1293,9 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
     // end re-checks which files are still on disk.
     if (event.type === 'result') void useSession.getState().refreshChanges(handleId)
   })
+  window.clui.onRefSourceChanged(({ handleId, path, reason, version }) => {
+    useSession.getState().invalidateSource(handleId, `file:${path}`, { reason, ...(version ? { version } : {}) })
+  })
   window.clui.onChangesEvent(({ handleId, summaries }) => {
     const prev = useSession.getState().sessions[handleId]
     useSession.setState((s) => patchSlice(s, handleId, { changes: summaries }))
@@ -1485,7 +1539,11 @@ async function beginSession(
     paneAutoOpen: false,
     paneAutoOpenSuppressed: false,
     tabsEvicted: false,
-    annotate: IDLE_ANNOTATE
+    annotate: IDLE_ANNOTATE,
+    contextRefs: EMPTY_REFS,
+    referenceNotices: EMPTY_NOTICES,
+    referenceEditTarget: null,
+    refAnnounce: ''
   })
   // Main rebuilds a resume's changes from its transcripts. A push that lands before the slice
   // exists is dropped, so pull once the slice is in.
@@ -1665,18 +1723,19 @@ function basename(p: string): string {
   return parts[parts.length - 1] || p
 }
 
+type Setter = (fn: (s: SessionStore) => Partial<SessionStore>) => void
+
+const NOT_DELIVERED = 'Message not delivered. The session may have stopped. Resume it and try again.'
+const NOT_BUILT = "Message not sent: Clui couldn't build it. This is a bug; the text is kept above."
+const IDLE_TURN = { busy: false, interrupting: false, turnStartMs: null, thinkingTokens: null, compacting: false } as const
+
 /**
  * Commit a user turn: append the optimistic user bubble, set busy, and write it to the
  * CLI. Used both for an immediate send (idle) and for RELEASING a queued message at a
  * turn boundary, so the queued path and the direct path build the identical bubble.
  */
-async function dispatchTurn(
-  set: (fn: (s: SessionStore) => Partial<SessionStore>) => void,
-  handleId: string,
-  text: string,
-  attachments?: SendAttachment[]
-): Promise<void> {
-  const userMsg = userBubble(text, attachments)
+async function dispatchTurn(set: Setter, handleId: string, text: string, attachments?: SendAttachment[], refs: DraftReference[] = EMPTY_REFS): Promise<void> {
+  const userMsg = userBubble(handleId, text, attachments, refs)
   const now = Date.now()
   set((s) => {
     const slice = s.sessions[handleId]
@@ -1691,71 +1750,160 @@ async function dispatchTurn(
       lastActivityMs: now
     })
   })
-  const wire = attachments && attachments.length ? attachments.map((a) => a.wire) : undefined
-  try {
-    await window.clui.sendMessage(handleId, text, wire)
-  } catch {
-    // The send never reached a live process (dead handle, child write failure). Roll back
-    // busy so the composer isn't stuck in a permanent Stop with no running turn, and
-    // surface it. The optimistic bubble stays visible, so the text isn't lost.
-    set((s) => {
-      if (!s.sessions[handleId]) return {}
-      return patchSlice(s, handleId, {
-        busy: false,
-        interrupting: false,
-        turnStartMs: null,
-        thinkingTokens: null,
-        compacting: false,
-        lastError: 'Message not delivered. The session may have stopped. Resume it and try again.'
-      })
-    })
-  }
+  // Rolling back busy keeps the composer from a permanent Stop with no running turn. The bubble stays, so the text isn't lost.
+  await deliver(set, handleId, userMsg.id, { text, refs, attachments, now: false }, IDLE_TURN)
 }
 
-function userBubble(text: string, attachments?: SendAttachment[]): ChatMessage {
-  return {
-    id: `u-${Date.now()}`,
-    role: 'user',
-    text,
-    thinking: '',
-    tools: [],
-    blocks: [],
-    attachments: attachments && attachments.length ? attachments.map((a) => a.display) : undefined
+/** The optimistic bubble. Its text omits the packetId until main's accepted text replaces it. */
+function userBubble(handleId: string, text: string, attachments: SendAttachment[] | undefined, refs: DraftReference[]): ChatMessage {
+  const { visualIndex, attachmentBase } = packetLayout(refs)
+  let shown = text
+  try {
+    shown = serializeContext(sentRefs(refs, useSession.getState().sessions[handleId]?.cwd ?? null), text, { packetId: null })
+  } catch {
+    // Main refuses the same packet as invalid and says so.
   }
+  const crops: MessageAttachment[] = refs.flatMap((d) =>
+    d.visual ? [{ kind: 'image', previewUrl: `data:image/jpeg;base64,${d.visual.data}`, w: d.visual.w, h: d.visual.h, blockIndex: visualIndex.get(d.ref.id) }] : []
+  )
+  const atts = [...crops, ...(attachments ?? []).map((a, i) => ({ ...a.display, blockIndex: attachmentBase + i }))]
+  return { id: `u-${crypto.randomUUID()}`, role: 'user', text: shown, thinking: '', tools: [], blocks: [], attachments: atts.length ? atts : undefined }
+}
+
+/** One record per resource for `lost`, the shape both a draft notice and a paused queued row read. */
+function invalidations(lost: readonly { ref: ContextReference; reason: RefFailure | 'session' }[]): ReferenceInvalidation[] {
+  const by = new Map<string, ReferenceInvalidation>()
+  for (const { ref, reason } of lost) {
+    const id = resourceOf(ref)
+    const rec = by.get(id) ?? {
+      resourceId: id,
+      label: resourceLabel(ref),
+      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'file' ? (ref.sourceVersion ?? '') : '',
+      at: Date.now(),
+      reason,
+      removed: []
+    }
+    rec.removed.push({ id: ref.id, label: shortLabel(ref), ...(ref.note ? { note: ref.note } : {}) })
+    by.set(id, rec)
+  }
+  return [...by.values()]
+}
+
+/** Write one packet and apply main's answer. A stale reference sends nothing: the message goes back to the queue
+ *  head, paused for review, and nothing behind it releases first. */
+async function deliver(
+  set: Setter,
+  handleId: string,
+  bubbleId: string,
+  p: { text: string; refs: DraftReference[]; attachments?: SendAttachment[]; now: boolean },
+  rollback: Partial<PerSessionState>
+): Promise<DispatchResult | null> {
+  let r: DispatchResult
+  try {
+    r = await window.clui.sendMessage(handleId, { text: p.text, refs: p.refs, attachments: p.attachments?.map((a) => a.wire) ?? [], now: p.now })
+  } catch {
+    set((s) => (s.sessions[handleId] ? patchSlice(s, handleId, { ...rollback, lastError: NOT_DELIVERED }) : {}))
+    return null
+  }
+  set((s) => {
+    const slice = s.sessions[handleId]
+    if (!slice) return {}
+    if (r.ok) return patchSlice(s, handleId, { messages: slice.messages.map((m) => (m.id === bubbleId ? { ...m, text: r.text } : m)) })
+    if (r.reason === 'invalid') return patchSlice(s, handleId, { ...rollback, lastError: NOT_BUILT })
+    if (r.reason !== 'stale') return {}
+    const bad = new Map(r.invalid.map((x) => [x.id, x.reason]))
+    const lost = p.refs.flatMap((d) => (bad.has(d.ref.id) ? [{ ref: d.ref, reason: bad.get(d.ref.id)! }] : []))
+    const held: QueuedMessage = {
+      id: `q-${crypto.randomUUID()}`,
+      text: p.text,
+      refs: p.refs.filter((d) => !bad.has(d.ref.id)),
+      ...(p.attachments?.length ? { attachments: p.attachments } : {}),
+      needsReview: invalidations(lost)
+    }
+    return patchSlice(s, handleId, {
+      ...rollback,
+      messages: slice.messages.filter((m) => m.id !== bubbleId),
+      queuedMessages: [held, ...slice.queuedMessages],
+      refAnnounce: toggled(`Paused. ${held.needsReview!.map(pausedText).join(' ')}`)
+    })
+  })
+  if (!r.ok && r.reason === 'stale') afterRefsChange(handleId)
+  return r
 }
 
 const SENT_NOW = 'Sent.'
 const CUT_FOR_MESSAGE = 'Claude stopped its current step to answer.'
 
-
 /** Send a message now, cutting the running turn's step. Its bubble goes in at once and `busy`
  *  stays as it is: the message's own result ends the work, not the cut turn's. */
-async function sendNowTurn(
-  set: (fn: (s: SessionStore) => Partial<SessionStore>) => void,
-  handleId: string,
-  text: string,
-  attachments?: SendAttachment[]
-): Promise<void> {
-  const userMsg = userBubble(text, attachments)
+async function sendNowTurn(set: Setter, handleId: string, text: string, attachments?: SendAttachment[], refs: DraftReference[] = EMPTY_REFS): Promise<void> {
+  const userMsg = userBubble(handleId, text, attachments, refs)
   set((s) => {
     const slice = s.sessions[handleId]
     if (!slice) return {}
     return patchSlice(s, handleId, { messages: [...slice.messages, userMsg], lastActivityMs: Date.now() })
   })
-  const wire = attachments && attachments.length ? attachments.map((a) => a.wire) : undefined
-  try {
-    const joined = await window.clui.sendNowMessage(handleId, text, wire)
-    if (joined) set((s) => (s.sessions[handleId] ? patchSlice(s, handleId, { statusAnnounce: toggled(SENT_NOW) }) : {}))
-    // The turn ended before the message reached the CLI, so it runs as a turn of its own.
-    else {
-      set((s) => {
-        const slice = s.sessions[handleId]
-        return slice && !slice.busy ? patchSlice(s, handleId, { busy: true, interrupting: false, turnStartMs: Date.now() }) : {}
-      })
-    }
-  } catch {
-    set((s) => (s.sessions[handleId] ? patchSlice(s, handleId, { lastError: 'Message not delivered. The session may have stopped. Resume it and try again.' }) : {}))
+  const r = await deliver(set, handleId, userMsg.id, { text, refs, attachments, now: true }, {})
+  if (!r?.ok) return
+  if (r.joined) set((s) => (s.sessions[handleId] ? patchSlice(s, handleId, { statusAnnounce: toggled(SENT_NOW) }) : {}))
+  // The turn ended before the message reached the CLI, so it runs as a turn of its own.
+  else {
+    set((s) => {
+      const slice = s.sessions[handleId]
+      return slice && !slice.busy ? patchSlice(s, handleId, { busy: true, interrupting: false, turnStartMs: Date.now() }) : {}
+    })
   }
+}
+
+let refSeq = 0
+const lastSync = new Map<string, { order: string; watches: string }>()
+const syncDue = new Map<string, boolean>()
+
+export function refsOf(slice: PerSessionState, target: RefTarget): DraftReference[] | null {
+  return target === null ? slice.contextRefs : (slice.queuedMessages.find((q) => q.id === target)?.refs ?? null)
+}
+
+function withRefs(slice: PerSessionState, target: RefTarget, refs: DraftReference[]): Partial<PerSessionState> {
+  return target === null ? { contextRefs: refs } : { queuedMessages: slice.queuedMessages.map((q) => (q.id === target ? { ...q, refs } : q)) }
+}
+
+/**
+ * Tells main which pins still back a reference and which the edit target outlines, and which files to watch.
+ * Coalesced to the end of the tick, so a draft that becomes a queued item in one step never drops its pins in
+ * between. `force` resends an unchanged order, to drop the outline of a pin the store refused.
+ */
+function afterRefsChange(handleId: string, force = false): void {
+  const due = syncDue.has(handleId)
+  syncDue.set(handleId, (syncDue.get(handleId) ?? false) || force)
+  if (!due) queueMicrotask(() => flushRefs(handleId))
+}
+
+function flushRefs(handleId: string): void {
+  const force = syncDue.get(handleId) ?? false
+  syncDue.delete(handleId)
+  let slice = useSession.getState().sessions[handleId]
+  if (!slice) return void lastSync.delete(handleId)
+  // A queued message under review that sent or was cancelled hands adds back to the draft.
+  if (slice.referenceEditTarget !== null && !refsOf(slice, slice.referenceEditTarget)) {
+    useSession.setState((s) => patchSlice(s, handleId, { referenceEditTarget: null }))
+    slice = useSession.getState().sessions[handleId]!
+  }
+  const all = [slice.contextRefs, ...slice.queuedMessages.map((q) => q.refs)].flat()
+  const target = refsOf(slice, slice.referenceEditTarget) ?? slice.contextRefs
+  const shown = target.flatMap((d, i): [number, number][] => (d.pinId === undefined ? [] : [[d.pinId, i + 1]]))
+  const order = { keep: [...new Set(all.flatMap((d) => (d.pinId === undefined ? [] : [d.pinId])))], shown, room: Math.max(0, MAX_REFS - target.length) }
+  const seen = new Set<string>()
+  const watches = all
+    .flatMap((d) => (d.ref.kind === 'file' && d.ref.lines ? [{ path: d.ref.path, version: d.ref.sourceVersion }] : []))
+    .filter((w) => !seen.has(`${w.path}\0${w.version}`) && !!seen.add(`${w.path}\0${w.version}`))
+    .slice(0, MAX_REFS)
+  const prev = lastSync.get(handleId)
+  const next = { order: JSON.stringify(order), watches: JSON.stringify(watches) }
+  lastSync.set(handleId, next)
+  if (force || prev?.order !== next.order) void window.clui.syncAnnotationOrder(handleId, order).catch(() => {})
+  if (prev?.watches !== next.watches) void window.clui.syncRefWatches(handleId, watches).catch(() => {})
+  const a = slice.annotate
+  if (a.note === CAP_NOTE && order.room > 0) useSession.setState((s) => patchSlice(s, handleId, { annotate: { ...a, note: null } }))
 }
 
 /** A result ends the user's turn when it isn't a background or peer turn's, or when one of
@@ -2249,7 +2397,8 @@ export const useSession = create<SessionStore>((set, get) => ({
   sendMessage: async (text, attachments, opts) => {
     const active = activeSlice(get())
     // A turn is valid with text OR at least one attachment (an attachments-only turn is fine).
-    if (!active || (!text.trim() && !(attachments && attachments.length))) return
+    const refs = opts?.refs ?? EMPTY_REFS
+    if (!active || (!text.trim() && !attachments?.length && !refs.length)) return
     // The process is gone; a send would silently no-op in main while the UI spun busy.
     // Tell the user to resume instead.
     if (active.exited) {
@@ -2263,7 +2412,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (anyTabIn(active.browser, 'stopped')) void window.clui.browserDrive(active.handleId, 'reset')
     if (active.paneAutoOpenSuppressed) set((s) => patchSlice(s, active.handleId, { paneAutoOpenSuppressed: false }))
     if (opts?.now && active.busy && !active.interrupting) {
-      await sendNowTurn(set, active.handleId, text, attachments)
+      await sendNowTurn(set, active.handleId, text, attachments, refs)
       return
     }
     // Composed while a turn is running (or interrupting, or with messages already queued) →
@@ -2272,23 +2421,25 @@ export const useSession = create<SessionStore>((set, get) => ({
     // `interrupting` or with a non-empty queue keeps strict FIFO: a post-Stop prompt must not
     // jump ahead of the interrupted turn's boundary or of earlier queued prompts.
     if (active.busy || active.interrupting || active.queuedMessages.length > 0) {
-      const qm: QueuedMessage = { id: `q-${Date.now()}`, text, attachments }
+      const qm: QueuedMessage = { id: `q-${crypto.randomUUID()}`, text, refs, attachments }
       set((s) =>
         patchSlice(s, active.handleId, {
           queuedMessages: [...(s.sessions[active.handleId]?.queuedMessages ?? []), qm]
         })
       )
+      afterRefsChange(active.handleId)
       return
     }
-    await dispatchTurn(set, active.handleId, text, attachments)
+    await dispatchTurn(set, active.handleId, text, attachments, refs)
   },
   sendQueuedNow: (id) => {
     const active = activeSlice(get())
     const q = active?.queuedMessages.find((m) => m.id === id)
-    if (!active || !q || !active.busy || active.interrupting) return
+    if (!active || !q || q.needsReview?.length || !active.busy || active.interrupting) return
     // Out of the queue before anything awaits, so a result landing now can't release it a second time.
     set((s) => patchSlice(s, active.handleId, { queuedMessages: active.queuedMessages.filter((m) => m.id !== id) }))
-    void sendNowTurn(set, active.handleId, q.text, q.attachments)
+    afterRefsChange(active.handleId)
+    void sendNowTurn(set, active.handleId, q.text, q.attachments, q.refs)
   },
   editQueuedMessage: (id, text) =>
     set((s) => {
@@ -2298,14 +2449,17 @@ export const useSession = create<SessionStore>((set, get) => ({
         queuedMessages: active.queuedMessages.map((q) => (q.id === id ? { ...q, text } : q))
       })
     }),
-  cancelQueuedMessage: (id) =>
-    set((s) => {
-      const active = activeSlice(s)
-      if (!active) return {}
-      return patchSlice(s, active.handleId, {
-        queuedMessages: active.queuedMessages.filter((q) => q.id !== id)
+  cancelQueuedMessage: (id) => {
+    const active = activeSlice(get())
+    if (!active) return
+    set((s) =>
+      patchSlice(s, active.handleId, {
+        queuedMessages: active.queuedMessages.filter((q) => q.id !== id),
+        ...(active.referenceEditTarget === id ? { referenceEditTarget: null } : {})
       })
-    }),
+    )
+    afterRefsChange(active.handleId)
+  },
   setDraftText: (handleId, text) => set((s) => patchSlice(s, handleId, { draftText: text })),
   addDraftAttachments: (handleId, atts) =>
     set((s) => {
@@ -2341,7 +2495,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     // so waiting for one would strand the composer. Clear locally and release the oldest queued
     // message (the FIFO boundary passed) so the session isn't bricked.
     if (active.model === null) {
-      const [next, ...rest] = active.queuedMessages
+      const [head, ...rest] = active.queuedMessages
+      const next = head && !head.needsReview?.length ? head : undefined
       set((s) =>
         patchSlice(s, active.handleId, {
           busy: false,
@@ -2354,7 +2509,10 @@ export const useSession = create<SessionStore>((set, get) => ({
         })
       )
       await window.clui.interrupt(active.handleId)
-      if (next) void dispatchTurn(set, active.handleId, next.text, next.attachments)
+      if (next) {
+        afterRefsChange(active.handleId)
+        void dispatchTurn(set, active.handleId, next.text, next.attachments, next.refs)
+      }
       return
     }
     // A running turn will emit a terminal `result`. Mark `interrupting` (distinct from idle)
@@ -2393,10 +2551,12 @@ export const useSession = create<SessionStore>((set, get) => ({
     const ok = await window.clui.stopTask(handleId, taskId)
     if (!ok) {
       set((s) => patchSlice(s, handleId, { busy: true, turnStartMs: Date.now() }))
-      await window.clui.sendMessage(
-        handleId,
-        `Stop the background task with id ${taskId} now using the TaskStop tool. Do not do anything else.`
-      )
+      await window.clui.sendMessage(handleId, {
+        text: `Stop the background task with id ${taskId} now using the TaskStop tool. Do not do anything else.`,
+        refs: [],
+        attachments: [],
+        now: false
+      })
     }
   },
 
@@ -3084,7 +3244,8 @@ export const useSession = create<SessionStore>((set, get) => ({
               // the OLDEST now (FIFO). Dequeue it here and dispatch it after this set commits
               // (dispatch is async + re-sets busy; can't run inside the reducer). Remaining
               // queued messages wait for their own boundary.
-              if (slice.queuedMessages.length > 0) {
+              // A paused head waits for its review, and everything behind it waits too.
+              if (slice.queuedMessages.length > 0 && !slice.queuedMessages[0].needsReview?.length) {
                 const [next, ...rest] = slice.queuedMessages
                 patch.queuedMessages = rest
                 release.queued = { handleId, msg: next }
@@ -3224,7 +3385,9 @@ export const useSession = create<SessionStore>((set, get) => ({
     // appends its bubble via dispatchTurn). Runs AFTER the reducer committed the dequeue,
     // so the queue and the new turn never race. Fire-and-forget (matches sendMessage).
     if (release.queued) {
-      void dispatchTurn(set, release.queued.handleId, release.queued.msg.text, release.queued.msg.attachments)
+      const { handleId: h, msg } = release.queued
+      afterRefsChange(h)
+      void dispatchTurn(set, h, msg.text, msg.attachments, msg.refs)
     }
     if (rescanSessions.needed) void get().refreshSessions(true)
     const limit = rateLimitSchedule.next
@@ -3687,33 +3850,50 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
 
   applyAnnotateEvent: (handleId, e) => {
-    set((s) => {
-      const a = s.sessions[handleId]?.annotate
-      if (!a) return {}
-      const put = (next: Partial<AnnotateDraft>, say: string): Partial<SessionStore> => ({
-        ...patchSlice(s, handleId, { annotate: { ...a, ...next } }),
-        browserAnnounce: toggled(say)
+    const a = get().sessions[handleId]?.annotate
+    if (!a) return
+    const put = (next: Partial<AnnotateDraft>, say: string): void =>
+      set((s) => {
+        const cur = s.sessions[handleId]?.annotate
+        return cur ? { ...patchSlice(s, handleId, { annotate: { ...cur, ...next } }), browserAnnounce: toggled(say) } : {}
       })
-      switch (e.type) {
-        case 'on':
-          return put({ tab: e.tab, note: null }, 'Annotate on.')
-        case 'off': {
-          const n = a.pins.length
-          const say =
-            e.why === 'driving' ? 'Annotate off, Claude is using this tab.' : n ? `Annotate off. ${n} element${n === 1 ? '' : 's'} in the composer.` : 'Annotate off.'
-          return put({ tab: null, note: null }, say)
-        }
-        case 'pinned': {
-          const { kind, name } = pinWords(e.pin.target)
-          const n = a.pins.length + 1
-          return put({ pins: [...a.pins, e.pin], note: null }, `Pinned ${n}: ${kind}${name ? ` ${clipName(name)}` : ''}.`)
-        }
-        case 'refused':
-          return put({ note: e.why === 'cap' ? null : REFUSED[e.why] }, REFUSED[e.why])
+    switch (e.type) {
+      case 'on':
+        return put({ tab: e.tab, note: null }, 'Annotate on.')
+      case 'off': {
+        const n = get().sessions[handleId]?.contextRefs.filter((d) => d.ref.kind === 'browser').length ?? 0
+        const say =
+          e.why === 'driving' ? 'Annotate off, Claude is using this tab.' : n ? `Annotate off. ${n} element${n === 1 ? '' : 's'} in the composer.` : 'Annotate off.'
+        return put({ tab: null, note: null }, say)
       }
-    })
+      case 'pinned': {
+        const r = get().addRef(handleId, { kind: 'browser', pin: e.pin }, { visual: e.crop ?? undefined, pinId: e.pinId })
+        if (r.status === 'added') {
+          const slice = get().sessions[handleId]
+          const n = (slice && refsOf(slice, slice.referenceEditTarget)?.findIndex((d) => d.ref.id === r.id)) ?? -1
+          const { kind, name } = pinWords(e.pin.target)
+          return put({ note: null }, `Pinned ${n + 1}: ${kind}${name ? ` ${clipName(name)}` : ''}.`)
+        }
+        // Main drew the outline before asking; the forced sync takes it down again.
+        afterRefsChange(handleId, true)
+        if (r.status === 'cap') return put({ note: CAP_NOTE }, CAP_NOTE)
+        if (r.status === 'duplicate') return put({ note: null }, 'Already attached.')
+        return put({ note: REFUSED.failed }, REFUSED.failed)
+      }
+      case 'refused':
+        put({ note: REFUSED[e.why] }, REFUSED[e.why])
+        break
+      case 'gone': {
+        const slice = get().sessions[handleId]
+        if (!slice) return
+        const all = [slice.contextRefs, ...slice.queuedMessages.map((q) => q.refs)].flat()
+        const ids = new Set(all.flatMap((d) => (d.ref.kind === 'browser' && d.ref.pin.source.tabId === e.tab ? [resourceOf(d.ref)] : [])))
+        for (const id of ids) get().invalidateSource(handleId, id, { reason: e.reason })
+        return
+      }
+    }
     // A refusal note gives way to the hint after a few seconds (the next pin clears it sooner): Chromium's
-    // inspect mode reports no hover, so moving on can't be seen.
+    // inspect mode reports no hover, so moving on can't be seen. The cap note stays until there's room.
     if (e.type === 'refused' && e.why !== 'cap') {
       const note = REFUSED[e.why]
       setTimeout(() => {
@@ -3743,19 +3923,183 @@ export const useSession = create<SessionStore>((set, get) => ({
     void window.clui.browserAnnotate(active.handleId, tab.id, active.annotate.tab !== tab.id)
   },
 
-  removeAnnotation: (id) => {
-    const active = activeSlice(get())
-    if (!active) return
-    set((s) => patchSlice(s, active.handleId, { annotate: { ...active.annotate, pins: active.annotate.pins.filter((p) => p.id !== id) } }))
-    void window.clui.browserAnnotateRemove(active.handleId, id)
+  addRef: (handleId, input, opts) => {
+    const slice = get().sessions[handleId]
+    if (!slice || !isRefInput(input)) return { status: 'invalid' }
+    const target = opts?.target === undefined ? slice.referenceEditTarget : opts.target
+    const refs = refsOf(slice, target)
+    if (!refs) return { status: 'invalid' }
+    const key = refKey(input as ContextReference)
+    const dup = refs.find((d) => refKey(d.ref) === key)
+    if (dup) return { status: 'duplicate', id: dup.ref.id, key }
+    if (refs.length >= MAX_REFS) return { status: 'cap' }
+    const id = `r${++refSeq}`
+    // Reselection clears the notice. A page's next document has a new docId, so a pick in the same tab counts.
+    const resource = resourceOf(input as ContextReference)
+    const same = (k: string): boolean => k === resource || (input.kind === 'browser' && k.startsWith(`browser:${input.pin.source.tabId}:`))
+    const hit = target === null ? Object.keys(slice.referenceNotices).filter(same) : []
+    // Reselecting after a change brings back the note the removed reference carried.
+    const note = input.note ?? hit.flatMap((k) => slice.referenceNotices[k].removed).find((r) => r.note)?.note
+    const ref = { ...input, id, ...(note === undefined ? {} : { note }) } as ContextReference
+    const d: DraftReference = { ref, ...(opts?.visual ? { visual: opts.visual } : {}), ...(opts?.pinId === undefined ? {} : { pinId: opts.pinId }) }
+    const notices = hit.length ? Object.fromEntries(Object.entries(slice.referenceNotices).filter(([k]) => !same(k))) : null
+    set((s) => patchSlice(s, handleId, { ...withRefs(slice, target, [...refs, d]), ...(notices ? { referenceNotices: notices } : {}) }))
+    afterRefsChange(handleId)
+    return { status: 'added', id }
   },
 
-  clearAnnotations: (handleId) => {
-    const a = get().sessions[handleId]?.annotate
-    if (!a?.pins.length) return
-    set((s) => patchSlice(s, handleId, { annotate: { ...a, pins: [], note: null } }))
-    void window.clui.browserAnnotateClear(handleId)
+  removeRef: (handleId, id, target) => {
+    const slice = get().sessions[handleId]
+    if (!slice) return
+    const t = target === undefined ? slice.referenceEditTarget : target
+    const refs = refsOf(slice, t)
+    if (!refs?.some((d) => d.ref.id === id)) return
+    set((s) => patchSlice(s, handleId, withRefs(slice, t, refs.filter((d) => d.ref.id !== id))))
+    afterRefsChange(handleId)
   },
+
+  moveRef: (handleId, id, delta, target) => {
+    const slice = get().sessions[handleId]
+    if (!slice) return
+    const t = target === undefined ? slice.referenceEditTarget : target
+    const refs = refsOf(slice, t)
+    const i = refs?.findIndex((d) => d.ref.id === id) ?? -1
+    const j = i + delta
+    if (!refs || i < 0 || j < 0 || j >= refs.length) return
+    const next = [...refs]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    set((s) => patchSlice(s, handleId, withRefs(slice, t, next)))
+    afterRefsChange(handleId)
+  },
+
+  clearRefs: (handleId, ids) => {
+    const slice = get().sessions[handleId]
+    if (!slice || !ids.length) return
+    const gone = new Set(ids)
+    const next = slice.contextRefs.filter((d) => !gone.has(d.ref.id))
+    if (next.length === slice.contextRefs.length) return
+    set((s) => patchSlice(s, handleId, { contextRefs: next.length ? next : EMPTY_REFS }))
+    afterRefsChange(handleId)
+  },
+
+  dismissReferenceNotice: (handleId, resourceId) => {
+    const slice = get().sessions[handleId]
+    if (!slice?.referenceNotices[resourceId]) return
+    const notices = Object.fromEntries(Object.entries(slice.referenceNotices).filter(([k]) => k !== resourceId))
+    set((s) => patchSlice(s, handleId, { referenceNotices: notices }))
+  },
+
+  invalidateSource: (handleId, resourceId, cause) => {
+    const slice = get().sessions[handleId]
+    if (!slice) return 0
+    const stale = (r: ContextReference): boolean => {
+      if (resourceOf(r) !== resourceId) return false
+      if (r.kind === 'browser') return true
+      if (r.kind === 'file' && r.lines) return cause.reason !== 'changed' || r.sourceVersion !== cause.version
+      // Whole files and folders point at current content, so only losing access removes them.
+      return cause.reason === 'denied' || cause.reason === 'session'
+    }
+    const lostDraft = slice.contextRefs.filter((d) => stale(d.ref))
+    let removed = lostDraft.length
+    const said: string[] = []
+    const queue = slice.queuedMessages.map((q) => {
+      const lost = q.refs.filter((d) => stale(d.ref))
+      if (!lost.length) return q
+      removed += lost.length
+      const recs = invalidations(lost.map((d) => ({ ref: d.ref, reason: cause.reason })))
+      said.push(`Paused. ${recs.map(pausedText).join(' ')}`)
+      return { ...q, refs: q.refs.filter((d) => !stale(d.ref)), needsReview: [...(q.needsReview ?? []), ...recs] }
+    })
+    if (!removed) return 0
+    const patch: Partial<PerSessionState> = { queuedMessages: queue }
+    if (lostDraft.length) {
+      const [rec] = invalidations(lostDraft.map((d) => ({ ref: d.ref, reason: cause.reason })))
+      const had = slice.referenceNotices[resourceId]
+      patch.contextRefs = slice.contextRefs.filter((d) => !stale(d.ref))
+      patch.referenceNotices = { ...slice.referenceNotices, [resourceId]: had ? { ...rec, removed: [...had.removed, ...rec.removed] } : rec }
+      said.unshift(removalSpoken(lostDraft.map((d) => d.ref), cause.reason))
+    }
+    // A selection that went into a message clears on any change; the File tab shows none.
+    const gone = new Set(
+      [lostDraft, ...slice.queuedMessages.map((q) => q.refs.filter((d) => stale(d.ref)))]
+        .flat()
+        .flatMap((d) => (d.ref.kind === 'file' && d.ref.lines ? [`${d.ref.path}\0${d.ref.lines.start}-${d.ref.lines.end}`] : []))
+    )
+    const tabs = slice.surfaces.tabs
+    const sel = (t: SurfaceTab): string | null => (t.kind === 'file' && t.selection?.lines ? `${t.key}\0${t.selection.lines.start}-${t.selection.lines.end}` : null)
+    const cleared = Object.values(tabs).filter((t) => gone.has(sel(t) ?? ''))
+    if (cleared.length) patch.surfaces = { ...slice.surfaces, tabs: { ...tabs, ...Object.fromEntries(cleared.map((t) => [t.id, { ...t, selection: undefined }])) } }
+    patch.refAnnounce = toggled(said.join(' '))
+    set((s) => patchSlice(s, handleId, patch))
+    afterRefsChange(handleId)
+    return removed
+  },
+
+  setReferenceEditTarget: (handleId, target) => {
+    const slice = get().sessions[handleId]
+    if (!slice || slice.referenceEditTarget === target || (target !== null && !refsOf(slice, target))) return
+    set((s) => patchSlice(s, handleId, { referenceEditTarget: target }))
+    afterRefsChange(handleId)
+  },
+
+  acceptReview: async (handleId, queueId) => {
+    const q = get().sessions[handleId]?.queuedMessages.find((m) => m.id === queueId)
+    if (!q) return false
+    let invalid: RefInvalid[]
+    try {
+      invalid = await window.clui.validateRefs(handleId, q.refs.map((d) => ({ ref: d.ref })))
+    } catch {
+      return false
+    }
+    const slice = get().sessions[handleId]
+    const item = slice?.queuedMessages.find((m) => m.id === queueId)
+    if (!slice || !item) return false
+    const bad = new Map(invalid.map((x) => [x.id, x.reason]))
+    const lost = item.refs.flatMap((d) => (bad.has(d.ref.id) ? [{ ref: d.ref, reason: bad.get(d.ref.id)! }] : []))
+    if (lost.length) {
+      const recs = invalidations(lost)
+      const next = { ...item, refs: item.refs.filter((d) => !bad.has(d.ref.id)), needsReview: [...(item.needsReview ?? []), ...recs] }
+      set((s) => patchSlice(s, handleId, { queuedMessages: slice.queuedMessages.map((m) => (m.id === queueId ? next : m)), refAnnounce: toggled(`Paused. ${recs.map(pausedText).join(' ')}`) }))
+      afterRefsChange(handleId)
+      return false
+    }
+    const { needsReview: _, ...ready } = item
+    const head = slice.queuedMessages[0]?.id === queueId
+    const release = head && !slice.busy && !slice.interrupting
+    set((s) =>
+      patchSlice(s, handleId, {
+        queuedMessages: release ? slice.queuedMessages.slice(1) : slice.queuedMessages.map((m) => (m.id === queueId ? ready : m)),
+        ...(slice.referenceEditTarget === queueId ? { referenceEditTarget: null } : {})
+      })
+    )
+    afterRefsChange(handleId)
+    if (release) void dispatchTurn(set, handleId, ready.text, ready.attachments, ready.refs)
+    return true
+  },
+
+  carryRefs: async (handleId, refs) => {
+    if (!refs.length) return
+    const paths = refs.filter((d) => d.ref.kind !== 'browser')
+    let invalid: RefInvalid[] = []
+    try {
+      if (paths.length) invalid = await window.clui.validateRefs(handleId, paths.map((d) => ({ ref: d.ref })))
+    } catch {
+      invalid = paths.map((d) => ({ id: d.ref.id, reason: 'denied' }))
+    }
+    const bad = new Map(invalid.map((x) => [x.id, x.reason]))
+    // A page pin belongs to the old session's browser, which closed with it.
+    const lost = refs.flatMap((d): { ref: ContextReference; reason: RefFailure | 'session' }[] =>
+      d.ref.kind === 'browser' ? [{ ref: d.ref, reason: 'session' }] : bad.has(d.ref.id) ? [{ ref: d.ref, reason: bad.get(d.ref.id)! }] : []
+    )
+    const kept = refs.filter((d) => d.ref.kind !== 'browser' && !bad.has(d.ref.id)).map(({ ref }) => ({ ref }))
+    const slice = get().sessions[handleId]
+    if (!slice) return
+    const notices = { ...slice.referenceNotices, ...Object.fromEntries(invalidations(lost).map((n) => [n.resourceId, n])) }
+    set((s) => patchSlice(s, handleId, { contextRefs: [...slice.contextRefs, ...kept].slice(0, MAX_REFS), ...(lost.length ? { referenceNotices: notices } : {}) }))
+    afterRefsChange(handleId)
+  },
+
+  announceRefs: (handleId, text) => set((s) => patchSlice(s, handleId, { refAnnounce: toggled(text) })),
 
   viewBrowserTab: (tab) => {
     const s = get()

@@ -1005,6 +1005,15 @@ body {
 @keyframes turn-flash-out {
   to { opacity: 0; }
 }
+/* The duplicate flash on a context chip: held for --dur-stage, faded over --dur-slow, unmounted by ContextChips. */
+.ref-flash {
+  animation: turn-flash-out var(--dur-slow) var(--ease-in) var(--dur-stage) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ref-flash {
+    animation: none;
+  }
+}
 
 /* The top slot's content fades in; the band itself never changes size. */
 @keyframes slot-in {

@@ -148,6 +148,10 @@ export class BrowserManager {
   private seq = 0
   /** Told when a tab can't be annotated any more: Claude starts driving it, or the user views another tab. */
   onLeave: ((handleId: string, tab: number, why: 'driving' | 'away') => void) | null = null
+  /** Told when a tab's document is gone: a cross-document load, close, suspend or renderer crash. */
+  onDocumentGone: ((handleId: string, tab: number, reason: 'navigated' | 'closed') => void) | null = null
+  /** A tab holding pins for a message isn't suspended, which would silently drop them. */
+  holdsPins: ((handleId: string, tab: number) => boolean) | null = null
 
   private readonly window: () => BrowserWindow | null
   private readonly background: () => string
@@ -274,15 +278,23 @@ export class BrowserManager {
     return view
   }
 
-  private busy(e: Entry, t: Tab): boolean {
-    return (e.shown && e.viewed === t.id) || t.parks > 0 || t.state.drive === 'driving' || t.state.drive === 'user'
+  private busy(handleId: string, e: Entry, t: Tab, pins = true): boolean {
+    return (
+      (e.shown && e.viewed === t.id) ||
+      t.parks > 0 ||
+      t.state.drive === 'driving' ||
+      t.state.drive === 'user' ||
+      (pins && !!this.holdsPins?.(handleId, t.id))
+    )
   }
 
   private enforceCap(): void {
     const live = [...this.entries].flatMap(([h, e]) => e.tabs.filter((t) => t.view).map((t) => ({ h, e, t })))
     if (live.length < MAX_LIVE) return
-    const victim = live.filter(({ e, t }) => !this.busy(e, t)).sort((a, b) => a.t.lastViewedMs - b.t.lastViewedMs)[0]
-    // With every other tab viewed, parked or driven, the cap is exceeded rather than closing one of them.
+    const oldest = (pins: boolean) => live.filter(({ h, e, t }) => !this.busy(h, e, t, pins)).sort((a, b) => a.t.lastViewedMs - b.t.lastViewedMs)[0]
+    // Pins only delay a suspend, or the renderer could hold every tab live. With every other tab viewed, parked
+    // or driven, the cap is exceeded rather than closing one of them.
+    const victim = oldest(true) ?? oldest(false)
     if (victim) void this.suspend(victim.h, victim.e, victim.t)
   }
 
@@ -291,12 +303,13 @@ export class BrowserManager {
     if (!view) return
     const still = await this.still(t)
     // The capture yields, and the tab may have been viewed, driven or closed meanwhile.
-    if (t.view !== view || this.busy(e, t)) return
+    if (t.view !== view || this.busy(handleId, e, t)) return
     this.detach(t)
     t.view = null
     t.cdp = null
     if (!view.webContents.isDestroyed()) view.webContents.close()
     this.patch(handleId, t, { suspended: true, loading: false, ...(still ? { still } : {}) })
+    this.onDocumentGone?.(handleId, t.id, 'closed')
   }
 
   private wire(handleId: string, e: Entry, t: Tab, wc: WebContents): void {
@@ -331,6 +344,7 @@ export class BrowserManager {
     }
     wc.on('did-navigate', (_ev, url) => {
       navigated(url)
+      if (mine()) this.onDocumentGone?.(handleId, t.id, 'navigated')
       if (mine() && t.state.loginWall) this.patch(handleId, t, { loginWall: null })
       // Cleared on commit, not on start, so a retry that fails again never shows the view in between.
       // An error page's commit doesn't raise did-navigate.
@@ -347,7 +361,11 @@ export class BrowserManager {
     })
     wc.on('dom-ready', () => void injectCursor(wc))
     wc.on('page-title-updated', (_ev, title) => mine() && this.patch(handleId, t, { title }))
-    wc.on('render-process-gone', () => mine() && this.setDrive(handleId, t, 'stopped'))
+    wc.on('render-process-gone', () => {
+      if (!mine()) return
+      this.setDrive(handleId, t, 'stopped')
+      this.onDocumentGone?.(handleId, t.id, 'closed')
+    })
     // CDP mouse and key events raise these the same as real input, so only input outside the
     // quiet window around our own dispatches counts as the user.
     wc.on('input-event', (_ev, input) => {
@@ -487,6 +505,7 @@ export class BrowserManager {
     }
     t.view = null
     t.cdp = null
+    this.onDocumentGone?.(handleId, t.id, 'closed')
   }
 
   // --- showing, bounds, stills ---
@@ -811,7 +830,7 @@ export class BrowserManager {
     if (t) this.setDrive(handleId, t, drive)
   }
 
-  /** For the test harness: suspends the tab unless it's viewed, parked or driven. */
+  /** For the test harness: suspends the tab unless it's viewed, parked, driven or holding pins. */
   suspendTab(handleId: string, tab: number): Promise<void> {
     const f = this.find(handleId, tab)
     return f ? this.suspend(handleId, f[0], f[1]) : Promise.resolve()

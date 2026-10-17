@@ -173,7 +173,8 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   const busyRef = useRef(busy)
   busyRef.current = busy
   const [slow, setSlow] = useState(false)
-  const [notice, setNotice] = useState(false)
+  /** `removed`: the selection was in a message too, and left it. */
+  const [notice, setNotice] = useState<'cleared' | 'removed' | null>(null)
   const [watchGen, setWatchGen] = useState(0)
   const [hl, setHl] = useState<{ revision: string; lines: string[] } | null>(null)
   const [marks, setMarks] = useState<ChangeMarks | null>(null)
@@ -206,9 +207,31 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   // A zero-width space toggles so an identical announcement still changes the live region.
   const say = (t: string): void => setSaid(`${t}${'\u200B'.repeat(++sayCount.current % 2)}`)
 
+  // Whether the selection, at this revision, is a reference in the draft or a queued message.
+  const attachKey = selection && doc.t === 'text' ? `${selection.start}-${selection.end}\0sha256:${doc.revision}` : null
+  const attached = useActive(
+    (s) =>
+      !!attachKey &&
+      !!s &&
+      [s.contextRefs, ...s.queuedMessages.map((q) => q.refs)].some((l) =>
+        l.some(({ ref: r }) => r.kind === 'file' && r.path === path && !!r.lines && `${r.lines.start}-${r.lines.end}\0${r.sourceVersion}` === attachKey)
+      )
+  )
+  const attachedRef = useRef(attached)
+  attachedRef.current = attached
+  const refsHere = useActive((s) => (s ? [s.contextRefs, ...s.queuedMessages.map((q) => q.refs)].flat().filter(({ ref: r }) => r.kind === 'file' && r.path === path && !!r.lines).length : 0))
+  // The store removes a stale reference and clears its selection in one step, so both vanishing together means
+  // the change reached the store before this tab's own re-read.
+  const prevHere = useRef({ selection, refsHere })
+  useEffect(() => {
+    const prev = prevHere.current
+    prevHere.current = { selection, refsHere }
+    if (prev.selection && !selection && refsHere < prev.refsHere) setNotice('removed')
+  }, [selection, refsHere])
+
   const setSelection = useCallback(
     (lines: Lines | null) => {
-      setNotice(false)
+      setNotice(null)
       setView(handleId, tabId, { selection: lines ? { lines } : undefined, highlight: undefined })
     },
     [handleId, tabId, setView]
@@ -231,14 +254,19 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     if (prev.t === 'text' && next.t === 'text') {
       keepLine.current = range.current.start > 0 ? topLine() : null
       const sel = selRef.current
-      if (sel) {
+      // A selection that is in a message clears on any change, with no remap.
+      if (sel && attachedRef.current) {
+        setView(handleId, tabId, { selection: undefined })
+        setNotice('removed')
+        say('The lines you selected changed on disk, so the selection was cleared and removed from the message.')
+      } else if (sel) {
         const map = survivors(prev.text, next.text)
         const start = map?.[sel.start - 1] ?? -1
         const whole = start >= 0 && Array.from({ length: sel.end - sel.start + 1 }, (_, i) => map![sel.start - 1 + i]).every((m, i) => m === start + i)
         if (whole) setView(handleId, tabId, { selection: { lines: { start: start + 1, end: start + 1 + sel.end - sel.start } } })
         else {
           setView(handleId, tabId, { selection: undefined })
-          setNotice(true)
+          setNotice('cleared')
           say("The lines you selected changed on disk, so the selection was cleared.")
         }
       }
@@ -689,8 +717,10 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
       case 'notice':
         return (
           <div className="flex h-8 items-center gap-2 px-3 text-meta text-dim">
-            The lines you selected changed on disk, so the selection was cleared.
-            <button type="button" className={TEXT_BTN} onClick={() => setNotice(false)}>
+            {notice === 'removed'
+              ? 'The lines you selected changed on disk, so the selection was cleared and removed from the message.'
+              : 'The lines you selected changed on disk, so the selection was cleared.'}
+            <button type="button" className={TEXT_BTN} onClick={() => setNotice(null)}>
               Dismiss
             </button>
           </div>

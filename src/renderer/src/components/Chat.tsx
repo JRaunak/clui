@@ -1,12 +1,16 @@
-import { messageGist, parseRefs } from '../../../shared/context'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { refLabel, type DraftReference } from '../../../shared/context'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type StateSnapshot, type VirtuosoHandle } from 'react-virtuoso'
 import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
+import { ContextChips } from './ContextChips'
+import { Button } from './Button'
+import { FileIcon } from './FileIcon'
+import { pausedText } from '../lib/refCopy'
 import { MessageView } from './MessageView'
 import { WorkingStatus } from './WorkingStatus'
 import { CompactSuggestion } from './CompactSuggestion'
 import { TaskPuck, useTaskUiActive } from './TaskPuck'
-import { IconArrowUp, IconChevron, IconClose, IconEdit, IconCheck, IconFile } from './Icon'
+import { IconArrowUp, IconChevron, IconClose, IconEdit, IconCheck, IconFile, IconImage, IconTarget, IconWarn } from './Icon'
 import { deriveModelInfo } from '../../../shared/settings'
 import { TURN_LINE_PX, currentTurnAt } from '../lib/instrument'
 import type { PermissionModeChoice } from '../../../shared/ipc'
@@ -496,8 +500,8 @@ function QueuedMessages(): JSX.Element | null {
         <span className="h-1.5 w-1.5 rounded-full bg-info" aria-hidden="true" />
         Queued · sends when the current turn finishes
       </div>
-      {queued.map((q) => (
-        <QueuedRow key={q.id} q={q} />
+      {queued.map((q, i) => (
+        <QueuedRow key={q.id} q={q} later={i < queued.length - 1} />
       ))}
     </div>
   )
@@ -505,26 +509,35 @@ function QueuedMessages(): JSX.Element | null {
 
 const ROW_ACTION = 'flex h-6 w-6 items-center justify-center rounded text-faint focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent'
 
-function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
+/** `later`: messages wait behind this one, which a paused row says. */
+function QueuedRow({ q, later }: { q: QueuedMessage; later: boolean }): JSX.Element {
   const edit = useSession((s) => s.editQueuedMessage)
   const cancel = useSession((s) => s.cancelQueuedMessage)
   const sendQueuedNow = useSession((s) => s.sendQueuedNow)
+  const setTarget = useSession((s) => s.setReferenceEditTarget)
+  const acceptReview = useSession((s) => s.acceptReview)
+  const handleId = useActive((s) => s?.handleId ?? null)
   const interrupting = useActive((s) => !!s?.interrupting)
   const rowRef = useRef<HTMLDivElement>(null)
-  const sendNowTitle = interrupting ? 'Stopping. It sends when the turn ends.' : 'Send now. Stops the current step, then Claude answers this  ⌘↵'
+  const pausedId = useId()
+  const review = q.needsReview ?? []
+  const paused = review.length > 0
+  const sendNowTitle = paused
+    ? 'Review this message before it sends'
+    : interrupting
+      ? 'Stopping. It sends when the turn ends.'
+      : 'Send now. Stops the current step, then Claude answers this  ⌘↵'
   // The row unmounts, so focus goes to the next row's Send now, or back to the composer.
   const sendNow = (): void => {
-    if (interrupting) return
+    if (interrupting || paused) return
     const next = rowRef.current?.nextElementSibling?.querySelector<HTMLElement>('[data-ui="queued-send-now"]')
     sendQueuedNow(q.id)
     requestAnimationFrame(() => (next ?? document.querySelector<HTMLElement>('[data-composer-input]'))?.focus())
   }
   const [editing, setEditing] = useState(false)
-  // The reference block isn't editable here: edits change the typed text, and the block rides along.
-  const { refs, rest: typed } = parseRefs(q.text)
-  const block = refs.length ? q.text.slice(0, typed ? q.text.lastIndexOf(typed) : undefined).trim() : ''
-  const [draft, setDraft] = useState(typed)
+  const [draft, setDraft] = useState(q.text)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const removed = review.reduce((n, r) => n + r.removed.length, 0)
 
   useEffect(() => {
     if (editing) {
@@ -536,20 +549,31 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
     }
   }, [editing])
 
+  // File and Tree adds land on the message while it's being edited; leaving hands them back to the draft.
+  const open = (): void => {
+    setDraft(q.text)
+    setEditing(true)
+    if (handleId) setTarget(handleId, q.id)
+  }
+  const close = (): void => {
+    setEditing(false)
+    if (handleId) setTarget(handleId, null)
+  }
   const commit = (): void => {
     const t = draft.trim()
-    if (t && t !== typed) edit(q.id, block ? `${block}\n\n${t}` : t)
-    setEditing(false)
+    if (t && t !== q.text) edit(q.id, t)
+    close()
+    if (paused && handleId) void acceptReview(handleId, q.id)
   }
 
-  if (editing) {
+  if (editing && handleId) {
     return (
-      <div ref={rowRef} className="rounded-lg border border-info/50 bg-user px-3 py-2" role="listitem">
-        {q.attachments && q.attachments.length > 0 && (
-          <div className="mb-1.5">
-            <QueuedAttachments atts={q.attachments} />
-          </div>
-        )}
+      <div ref={rowRef} className={`rounded-lg border bg-user px-3 py-2 ${paused ? 'border-warn/60' : 'border-info/50'}`} role="listitem">
+        <div className="mb-1.5 flex flex-col gap-1.5">
+          <ContextChips handleId={handleId} target={q.id} refs={q.refs} notices={review} dismissible={false} focusText={() => taRef.current?.focus()} />
+          {q.attachments && q.attachments.length > 0 && <QueuedAttachments atts={q.attachments} refs={[]} />}
+          {paused && <p className="text-meta text-dim">Select lines in a file and choose Add to queued message.</p>}
+        </div>
         <textarea
           ref={taRef}
           value={draft}
@@ -564,18 +588,18 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
               commit()
             } else if (e.key === 'Escape') {
               e.preventDefault()
-              setDraft(typed)
-              setEditing(false)
+              setDraft(q.text)
+              close()
             }
           }}
           rows={Math.min(6, Math.max(1, draft.split('\n').length))}
           className="w-full resize-none bg-transparent text-sm leading-relaxed text-content focus-visible:outline-none"
         />
         <div className="mt-1.5 flex items-center justify-end gap-1.5 text-meta text-faint">
-          <span className="mr-auto">{interrupting ? 'Enter to save · Esc to discard' : 'Enter to save · ⌘↵ to send now · Esc to discard'}</span>
+          <span className="mr-auto">{interrupting || paused ? 'Enter to save · Esc to discard' : 'Enter to save · ⌘↵ to send now · Esc to discard'}</span>
           <button
             className="rounded p-1 text-faint hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            onClick={() => { setDraft(typed); setEditing(false) }}
+            onClick={() => { setDraft(q.text); close() }}
             aria-label="Discard edit"
           >
             <IconClose className="h-3.5 w-3.5" />
@@ -594,18 +618,37 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
 
   return (
     <div
-      /* Dashed info-tinted border distinguishes a still-queued message (editable, not committed
-         history) from a sent user bubble, which is solid. */
+      /* Dashed distinguishes a still-queued message (editable, not committed history) from a sent user bubble,
+         which is solid. A paused one says so in words; the warn edge only repeats it. */
       ref={rowRef}
-      className="group flex max-w-[80%] items-start gap-2 self-start rounded-lg rounded-tl-sm border border-dashed border-info/40 bg-user px-3.5 py-2.5"
+      data-ui="queued-row"
+      className={`group flex max-w-[80%] items-start gap-2 self-start rounded-lg rounded-tl-sm border border-dashed bg-user px-3.5 py-2.5 ${paused ? 'border-warn/60' : 'border-info/40'}`}
       role="listitem"
+      aria-describedby={paused ? pausedId : undefined}
     >
       {/* Attachment-only queued turns have no text; render their thumbnails/chips so the row
           is identifiable and cancelable, not an empty bubble. */}
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        {q.attachments && q.attachments.length > 0 && <QueuedAttachments atts={q.attachments} />}
-        {q.text && (
-          <span className="whitespace-pre-wrap text-sm leading-relaxed text-content">{messageGist(q.text)}</span>
+        {paused && (
+          <p id={pausedId} data-ui="queued-paused" className="flex items-start gap-1.5 text-meta text-content">
+            <IconWarn className="mt-px h-3.5 w-3.5 shrink-0 text-warn" aria-hidden="true" />
+            <span>
+              Paused. {review.map(pausedText).join(' ')}
+              {later ? ' Messages after this one wait.' : ''}
+            </span>
+          </p>
+        )}
+        {(q.refs.length > 0 || !!q.attachments?.length) && <QueuedAttachments atts={q.attachments ?? []} refs={q.refs} />}
+        {q.text && <span className="whitespace-pre-wrap text-sm leading-relaxed text-content">{q.text}</span>}
+        {paused && handleId && (
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={open}>
+              Review
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => void acceptReview(handleId, q.id)}>
+              {removed > 1 ? 'Send without them' : 'Send without it'}
+            </Button>
+          </div>
         )}
       </div>
       {/* Shown at opacity-70 at rest, not hover-only: hover-only edit/cancel is undiscoverable,
@@ -615,21 +658,18 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
           data-ui="queued-send-now"
           className={`${ROW_ACTION} hover:text-content aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:text-faint`}
           onClick={sendNow}
-          aria-disabled={interrupting || undefined}
+          aria-disabled={interrupting || paused || undefined}
           aria-label="Send now"
           aria-keyshortcuts="Meta+Enter"
           title={sendNowTitle}
         >
           <IconArrowUp className="h-3.5 w-3.5" />
         </button>
-        <button
-          className={`${ROW_ACTION} hover:text-content`}
-          onClick={() => { setDraft(typed); setEditing(true) }}
-          aria-label="Edit queued message"
-          title="Edit before it sends"
-        >
-          <IconEdit className="h-3.5 w-3.5" />
-        </button>
+        {!paused && (
+          <button className={`${ROW_ACTION} hover:text-content`} onClick={open} aria-label="Edit queued message" title="Edit before it sends">
+            <IconEdit className="h-3.5 w-3.5" />
+          </button>
+        )}
         <button
           className={`${ROW_ACTION} hover:text-err`}
           onClick={() => cancel(q.id)}
@@ -643,11 +683,29 @@ function QueuedRow({ q }: { q: QueuedMessage }): JSX.Element {
   )
 }
 
-/** Thumbnails/chips for a queued message's attachments, sharing the wire payload's display
- *  metadata so a queued turn shows the same content it will send. */
-function QueuedAttachments({ atts }: { atts: SendAttachment[] }): JSX.Element {
+/** A queued message's context, compact: numbered reference pills in order, then its attachments' thumbnails
+ *  and file pills, from the same display metadata the bubble will show. */
+function QueuedAttachments({ atts, refs }: { atts: SendAttachment[]; refs: DraftReference[] }): JSX.Element {
   return (
     <div className="flex flex-wrap gap-1.5">
+      {refs.map((d, i) => (
+        <span
+          key={d.ref.id}
+          data-ui="queued-ref"
+          className="inline-flex h-6 max-w-60 items-center gap-1 rounded border border-border bg-bg-raised px-1.5 font-mono text-meta text-dim"
+          title={d.ref.kind === 'browser' ? refLabel(d.ref) : d.ref.path}
+        >
+          <span className="text-content">{i + 1}</span>
+          {d.ref.kind === 'browser' ? <IconTarget className="h-3 w-3 shrink-0" /> : <FileIcon name={d.ref.path} kind={d.ref.kind} className="h-3 w-3 shrink-0" />}
+          <span className="truncate">{refLabel(d.ref)}</span>
+          {d.visual && (
+            <>
+              <IconImage className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <span className="sr-only"> with picture</span>
+            </>
+          )}
+        </span>
+      ))}
       {atts.map((a, i) => {
         const d = a.display
         return d.kind === 'image' ? (

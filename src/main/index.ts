@@ -19,8 +19,7 @@ import {
   type MenuState,
   type PermissionModeChoice,
   type PermissionVerdict,
-  type StartSessionOptions,
-  type WireAttachment
+  type StartSessionOptions
 } from '../shared/ipc'
 import type { ElicitationResponse } from '../shared/events'
 import type { EffortChoice, ModelChoice } from '../shared/settings'
@@ -58,6 +57,9 @@ import { listModels } from './models/list'
 import { BrowserManager } from './browser/manager'
 import { BrowserMcpServer } from './browser/mcp'
 import { Annotator } from './browser/annotate'
+import { parseOutgoing, preparePacket, validateRefs, type PacketDeps } from './cli/packet'
+import { contextWatches } from './surfaces/context-watch'
+import { isRefInput, MAX_REFS, type DraftReference } from '../shared/context'
 import { WORLD } from './browser/cursor'
 import { approve as approveSite, listLocalNet, listSites, removeSite } from './browser/sites'
 import { listLogins, removeLogin, saveLogin, vaultAvailable } from './browser/vault'
@@ -324,11 +326,14 @@ function registerIpc(): void {
   const mcp = new BrowserMcpServer(browser)
   const annotator = new Annotator(browser, () => mainWindow)
   browser.onLeave = (handleId, tab, why) => annotator.leave(handleId, tab, why)
+  browser.onDocumentGone = (handleId, tab, reason) => annotator.gone(handleId, tab, reason)
+  browser.holdsPins = (handleId, tab) => annotator.holds(handleId, tab)
   browserManager = browser
   const disposeBrowser = (handleId: string): void => {
     annotator.dispose(handleId)
     browser.dispose(handleId)
     mcp.revoke(handleId)
+    refWatches.dispose(handleId)
     files.dispose(handleId)
     forgetSession(handleId)
     for (const [id, owner] of watchOwners) if (owner === handleId) watchOwners.delete(id)
@@ -366,10 +371,18 @@ function registerIpc(): void {
           wc?.sendInputEvent({ type: 'keyUp', keyCode: key })
         },
         annotated: (handleId: string, tab: number) => annotator.count(handleId, tab),
+        annotationOrder: (handleId: string, tab: number) => annotator.order(handleId, tab),
         suspend: (handleId: string, tab: number) => browser.suspendTab(handleId, tab),
         tabs: (handleId: string) =>
           browser.tabsOf(handleId)?.tabs.map(({ id, url, title, drive, suspended, attached, parked }) => ({ id, url, title, drive, suspended, attached, parked })) ?? null,
         lastToolTab: (handleId: string) => browser.tabsOf(handleId)?.lastUsed ?? null
+      },
+      __cluiSessions: {
+        // The real send's own preparation, with a fresh uuid, and never written: the exact outgoing envelope at zero tokens.
+        prepare: (handleId: string, raw: unknown) => {
+          const packet = parseOutgoing(raw)
+          return packet ? preparePacket(packetDeps, handleId, packet, randomUUID()) : { ok: false, reason: 'invalid' }
+        }
       }
     })
   }
@@ -411,6 +424,31 @@ function registerIpc(): void {
     }
   }
   diffs = diffSnapshots(join(app.getPath('userData'), 'diff-snapshots'), diffSource, (h, p) => files.registerDerived(h, 'editor', p))
+  const packetDeps: PacketDeps = {
+    cwd: (h) => manager.cwd(h),
+    readRevision: async (h, p) => {
+      const r = await files.resolveAllowed(h, p, { consumer: 'file', operation: 'read-file' })
+      const t = r.ok ? await readText(r) : r
+      if (!t.ok) return t
+      if (t.binary || t.unsupportedEncoding) return { ok: false, reason: 'changed' }
+      // Counted as the File surface counts them: a final newline ends the last line rather than starting one.
+      const n = t.text.split('\n').length
+      return { ok: true, version: `sha256:${t.revision}`, lineCount: n > 1 && t.text.endsWith('\n') ? n - 1 : n }
+    },
+    authorize: async (h, p, kind) => {
+      const r = await files.resolveAllowed(h, p, kind === 'file' ? { consumer: 'file', operation: 'read-file' } : { consumer: 'tree', operation: 'list-directory' })
+      return r.ok ? 'ok' : r.reason === 'missing' ? 'missing' : 'denied'
+    },
+    docOf: (h, tab) => annotator.docOf(h, tab),
+    secrets: (h, tab) => browser.page(h, tab)?.cdp.secrets ?? new Set()
+  }
+  const refWatches = contextWatches({
+    resolve: (h, p) => files.resolveAllowed(h, p, { consumer: 'file', operation: 'watch-file' }),
+    watch: (r, onChange, pool) => files.watch(r, onChange, pool),
+    unwatch: (id) => files.unwatch(id),
+    readRevision: packetDeps.readRevision,
+    push: (e) => push(IpcChannels.refSourceChanged, e)
+  })
 
   // Reject IPC that doesn't come from the top frame of a real app window: an injected
   // sub-frame or webview must not reach the privileged bridge. Defense in depth
@@ -502,16 +540,37 @@ function registerIpc(): void {
     return { handleId, browser: withBrowser, surfaces }
   })
 
-  handle(
-    IpcChannels.sendMessage,
-    async (_e, handleId: string, text: string, attachments?: WireAttachment[]) => {
-      manager.send(handleId, text, attachments)
-    }
-  )
+  handle(IpcChannels.sendMessage, async (_e, handleId: unknown, raw: unknown) => {
+    if (typeof handleId !== 'string') throw new Error('sendMessage: invalid handle')
+    const packet = parseOutgoing(raw)
+    if (!packet) return { ok: false, reason: 'invalid' }
+    return manager.send(handleId, packet.now, (uuid) => preparePacket(packetDeps, handleId, packet, uuid))
+  })
 
-  handle(IpcChannels.sendNowMessage, async (_e, handleId: string, text: string, attachments?: WireAttachment[]) =>
-    manager.sendNow(handleId, text, attachments)
-  )
+  handle(IpcChannels.validateRefs, async (_e, handleId: unknown, refs: unknown) => {
+    const valid = (d: unknown): d is DraftReference =>
+      !!d && typeof d === 'object' && isRefInput((d as DraftReference).ref) && typeof (d as DraftReference).ref.id === 'string'
+    if (typeof handleId !== 'string' || !Array.isArray(refs) || refs.length > MAX_REFS || !refs.every(valid)) throw new Error('validateRefs: invalid refs')
+    return validateRefs(packetDeps, handleId, refs)
+  })
+
+  handle(IpcChannels.syncAnnotationOrder, async (_e, handleId: unknown, o: unknown) => {
+    const int = (v: unknown, lo: number, hi: number): boolean => Number.isSafeInteger(v) && (v as number) >= lo && (v as number) <= hi
+    const { keep, shown, room } = (o ?? {}) as Record<string, unknown>
+    if (typeof handleId !== 'string' || !Array.isArray(keep) || keep.length > 1000 || !keep.every((v) => Number.isSafeInteger(v))) return
+    if (!Array.isArray(shown) || shown.length > MAX_REFS || !int(room, 0, MAX_REFS)) return
+    if (!shown.every((p) => Array.isArray(p) && p.length === 2 && keep.includes(p[0]) && int(p[1], 1, MAX_REFS))) return
+    await annotator.sync(handleId, { keep, shown, room: room as number })
+  })
+
+  handle(IpcChannels.syncRefWatches, async (_e, handleId: unknown, entries: unknown) => {
+    const ok = (x: unknown): boolean => {
+      const { path, version } = (x ?? {}) as Record<string, unknown>
+      return typeof path === 'string' && isAbsolute(path) && path.length <= 4096 && !path.includes('\0') && typeof version === 'string' && /^sha256:[0-9a-f]{32}$/.test(version)
+    }
+    if (typeof handleId !== 'string' || manager.cwd(handleId) === null || !Array.isArray(entries) || entries.length > MAX_REFS || !entries.every(ok)) return
+    refWatches.sync(handleId, entries)
+  })
 
   handle(IpcChannels.interrupt, async (_e, handleId: string) => {
     manager.interrupt(handleId)
@@ -585,8 +644,6 @@ function registerIpc(): void {
   handle(IpcChannels.browserAnnotate, (_e, handleId: string, tab: number, on: boolean) =>
     on === true ? annotator.start(handleId, tab) : annotator.stop(handleId, 'user')
   )
-  handle(IpcChannels.browserAnnotateRemove, (_e, handleId: string, id: number) => annotator.remove(handleId, id))
-  handle(IpcChannels.browserAnnotateClear, (_e, handleId: string) => annotator.clear(handleId))
   handle(IpcChannels.browserSiteVerdict, (_e, handleId: string, requestId: string, allow: boolean) =>
     browser.siteVerdict(handleId, requestId, allow)
   )

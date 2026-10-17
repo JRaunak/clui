@@ -6,7 +6,7 @@ import { openEditor } from '../components/surfaces/FileSurface'
 import { revealInTree } from '../components/surfaces/TreeSurface'
 import { lineReaches, workspaceOf, type FileRef, type Workspace } from './fileLinks'
 import { requestSurfaceFocus } from './surfaceFocus'
-import { viaOf } from './motion'
+import { viaOf, type Via } from './motion'
 import { urlSpans } from './urlSpans'
 
 /** Neutral, not accent: accent text fails body contrast on the light card, and accent is kept scarce. */
@@ -140,8 +140,12 @@ export function fileLinkTitle(rel: string, at: Pick<FileRef, 'line' | 'endLine'>
  *  is the macOS context-menu gesture, so only ⌘ inverts. */
 export function openFileLink(handleId: string, path: string, at: Pick<FileRef, 'line' | 'endLine'>, dir: boolean, e: MouseEvent): void {
   e.preventDefault()
-  const via = viaOf(e)
   if ((useLinkTarget.getState().file === 'clui') === e.metaKey) return void openEditor(handleId, path, dir ? undefined : at.line)
+  openFileAt(handleId, path, at, dir, viaOf(e))
+}
+
+/** A file in the File surface, or a folder revealed in the tree. */
+export function openFileAt(handleId: string, path: string, at: Pick<FileRef, 'line' | 'endLine'>, dir: boolean, via: Via): void {
   const st = useSession.getState()
   if (dir) {
     const cwd = st.sessions[handleId]?.cwd ?? path

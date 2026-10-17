@@ -19,6 +19,7 @@ const respond = (c: any, subtype: string, sub: 'success' | 'error', payload?: ob
   c.stdout.emit('data', JSON.stringify({ type: 'control_response', response: { subtype: sub, request_id: id, response: payload } }) + '\n')
 }
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+const prep = (text: string) => async (_uuid: string) => ({ ok: true as const, content: text, text })
 const mk = (opts: Record<string, unknown> = {}): ClaudeSession =>
   new ClaudeSession({ cliPath: 'claude', cwd: '/tmp', gated: true, model: 'orig', ...opts } as any)
 
@@ -28,10 +29,14 @@ reset()
   const s = mk()
   s.start()
   const c = spawns()[0]
-  s.send('hi')
+  const sent = s.send(false, prep('hi'))
+  await tick()
   ok(!W(c).some((o: any) => o.type === 'user'), 'transport: user msg queued before init ACK')
   ackInit(c)
-  ok(W(c).some((o: any) => o.type === 'user'), 'transport: queued msg flushed on ACK')
+  const r: any = await sent
+  const env = W(c).find((o: any) => o.type === 'user')
+  ok(!!env, 'transport: queued msg flushed on ACK')
+  ok(r.ok && r.packetId === env?.uuid && r.text === 'hi' && r.joined === false, 'transport: the reply names the envelope uuid')
 }
 
 // reconnect write-safety + fork one-shot
@@ -47,7 +52,8 @@ reset()
   await tick()
   respond(c1, 'apply_flag_settings', 'error')
   await tick()
-  s.send('during-reconnect')
+  const during = s.send(false, prep('during-reconnect'))
+  await tick()
   ok(!W(c1).some((o: any) => o.type === 'user'), 'transport: send during reconnect not written to ended stdin')
   c1.emit('close', 0)
   await tick()
@@ -55,6 +61,7 @@ reset()
   ok(!c2.spawnargs.includes('--fork-session'), 'transport: reconnect does not re-fork')
   ok(c2.spawnargs[c2.spawnargs.indexOf('--resume') + 1] === 'FORKED', 'transport: reconnect resumes the live id')
   ackInit(c2)
+  await during
   ok(W(c2).some((o: any) => o.type === 'user' && o.message.content === 'during-reconnect'), 'transport: queued send flushed to new child')
 }
 
@@ -134,4 +141,84 @@ reset()
   const i = a.indexOf('--mcp-config')
   ok(i >= 0 && a[i + 2] === '/tmp/stub.json' && a.indexOf('--mcp-config', i + 1) === -1, 'transport: both MCP configs in one --mcp-config')
   s.stop()
+}
+
+// One outbox: a slow first prepare can't let the second message overtake it.
+reset()
+{
+  const s = mk()
+  s.start()
+  const c = spawns()[0]
+  ackInit(c)
+  let release!: () => void
+  const slow = s.send(false, async () => {
+    await new Promise<void>((r) => (release = r))
+    return { ok: true, content: 'first', text: 'first' }
+  })
+  const fast = s.send(false, prep('second'))
+  await tick()
+  ok(!W(c).some((o: any) => o.type === 'user'), 'transport: the second message waits for the first prepare')
+  release()
+  await Promise.all([slow, fast])
+  ok(W(c).filter((o: any) => o.type === 'user').map((o: any) => o.message.content).join() === 'first,second', 'transport: messages write in send order')
+}
+
+// A Stop before the init ACK cancels what hasn't been written.
+reset()
+{
+  const s = mk()
+  s.start()
+  const c = spawns()[0]
+  const sent = s.send(false, prep('stopped'))
+  s.interrupt()
+  ackInit(c)
+  const r: any = await sent
+  ok(r.ok === false && r.reason === 'cancelled' && !W(c).some((o: any) => o.type === 'user'), 'transport: interrupt before init ACK cancels the send')
+}
+
+// A reconnect during prepare re-prepares against the new child, and the uuid is the packetId in the text.
+reset()
+{
+  const s = mk({ resumeSessionId: 'ORIG' })
+  s.start()
+  const c1 = spawns()[0]
+  ackInit(c1)
+  c1.stdout.emit('data', JSON.stringify({ type: 'system', subtype: 'init', session_id: 'S', cwd: '/tmp', tools: [], model: 'orig' }) + '\n')
+  const uuids: string[] = []
+  let first = true
+  let release!: () => void
+  const sent = s.send(false, async (uuid) => {
+    uuids.push(uuid)
+    if (first) {
+      first = false
+      await new Promise<void>((r) => (release = r))
+    }
+    return { ok: true, content: `id ${uuid}`, text: `id ${uuid}` }
+  })
+  await tick()
+  s.setEffort('max')
+  await tick()
+  respond(c1, 'apply_flag_settings', 'error')
+  await tick()
+  release()
+  await tick()
+  c1.emit('close', 0)
+  await tick()
+  const c2 = spawns()[1]
+  ackInit(c2)
+  const r: any = await sent
+  const env = W(c2).find((o: any) => o.type === 'user')
+  ok(uuids.length === 2 && !W(c1).some((o: any) => o.type === 'user'), 'transport: a reconnect during prepare prepares again and skips the old child')
+  ok(env && env.uuid === r.packetId && env.message.content === `id ${env.uuid}`, 'transport: the envelope uuid is the packetId in its text')
+}
+
+// Send now joins an open turn and arms the cut; with no turn open it starts one.
+reset()
+{
+  const s = mk()
+  s.start()
+  const c = spawns()[0]
+  ackInit(c)
+  const r: any = await s.send(true, prep('now'))
+  ok(r.ok && r.joined === false, 'transport: send now with no open turn starts one')
 }

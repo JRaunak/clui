@@ -593,7 +593,7 @@ async function parseTranscriptFile(
                 const [, name, body] = fileMatch
                 ;(msg.attachments ??= []).push({
                   kind: 'text',
-                  name: name || 'file.txt',
+                  name: name.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&') || 'file.txt',
                   bytes: body.length,
                   lines: body.split('\n').length,
                   blockIndex

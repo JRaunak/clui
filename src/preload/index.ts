@@ -12,7 +12,7 @@ import {
   type StartSessionOptions,
   type TaggedEvent,
   type MenuAction,
-  type WireAttachment
+  type RefSourceChanged
 } from '../shared/ipc'
 import type { CluiSettings, EffortChoice, ModelChoice, SettingsKey } from '../shared/settings'
 import type { BrowserEvent } from '../shared/browser'
@@ -31,10 +31,15 @@ const api: CluiApi = {
   getOsTheme: () => ipcRenderer.invoke(IpcChannels.getOsTheme),
   startSession: (opts: StartSessionOptions) =>
     ipcRenderer.invoke(IpcChannels.startSession, opts),
-  sendMessage: (handleId: string, text: string, attachments?: WireAttachment[]) =>
-    ipcRenderer.invoke(IpcChannels.sendMessage, handleId, text, attachments),
-  sendNowMessage: (handleId: string, text: string, attachments?: WireAttachment[]) =>
-    ipcRenderer.invoke(IpcChannels.sendNowMessage, handleId, text, attachments),
+  sendMessage: (handleId, packet) => ipcRenderer.invoke(IpcChannels.sendMessage, handleId, packet),
+  validateRefs: (handleId, refs) => ipcRenderer.invoke(IpcChannels.validateRefs, handleId, refs),
+  syncAnnotationOrder: (handleId, order) => ipcRenderer.invoke(IpcChannels.syncAnnotationOrder, handleId, order),
+  syncRefWatches: (handleId, entries) => ipcRenderer.invoke(IpcChannels.syncRefWatches, handleId, entries),
+  onRefSourceChanged: (cb) => {
+    const listener = (_e: unknown, ev: RefSourceChanged): void => cb(ev)
+    ipcRenderer.on(IpcChannels.refSourceChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.refSourceChanged, listener)
+  },
   interrupt: (handleId: string) => ipcRenderer.invoke(IpcChannels.interrupt, handleId),
   stopTask: (handleId: string, taskId: string) =>
     ipcRenderer.invoke(IpcChannels.stopTask, handleId, taskId),
@@ -157,8 +162,6 @@ const api: CluiApi = {
   browserNav: (handleId, tab, action) => ipcRenderer.invoke(IpcChannels.browserNav, handleId, tab, action),
   browserDrive: (handleId, action, tab) => ipcRenderer.invoke(IpcChannels.browserDrive, handleId, action, tab),
   browserAnnotate: (handleId, tab, on) => ipcRenderer.invoke(IpcChannels.browserAnnotate, handleId, tab, on),
-  browserAnnotateRemove: (handleId, id) => ipcRenderer.invoke(IpcChannels.browserAnnotateRemove, handleId, id),
-  browserAnnotateClear: (handleId) => ipcRenderer.invoke(IpcChannels.browserAnnotateClear, handleId),
   onAnnotateEvent: (cb) => {
     const listener = (_e: unknown, handleId: string, ev: AnnotateEvent): void => cb(handleId, ev)
     ipcRenderer.on(IpcChannels.annotateEvent, listener)

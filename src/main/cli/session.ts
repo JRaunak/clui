@@ -17,19 +17,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { DomainEvent, ElicitationResponse } from '../../shared/events'
-import type { ModeChangeResult, WireAttachment } from '../../shared/ipc'
+import type { DispatchResult, ModeChangeResult } from '../../shared/ipc'
 import { NdjsonParser } from './ndjson'
 import { EventMapper } from './event-mapper'
 import { stripRuntimeMarkers } from './shell-env'
 import { readCostBaseline } from '../sessions/transcript'
 import { recordTurnUsage } from '../sessions/usage'
 
-/** A queued/outgoing user turn: text plus any inlined attachment content blocks. */
-interface UserTurn {
-  text: string
-  attachments?: WireAttachment[]
-  sendNow?: boolean
-}
+type Prepared = { ok: true; content: string | unknown[]; text: string } | Extract<DispatchResult, { ok: false }>
+
+const GONE = 'This session is no longer running.'
 
 export interface ClaudeSessionOptions {
   cliPath: string
@@ -144,8 +141,11 @@ export class ClaudeSession extends EventEmitter {
    *  send in that window is queued (not written to an ended stream). */
   private reconnecting = false
   private respawned = false
-  /** User messages queued until the handshake completes (gated mode only). */
-  private pendingSends: UserTurn[] = []
+  /** User messages go through one chain, so a slow validation can't reorder them. */
+  private outbox: Promise<unknown> = Promise.resolve()
+  /** Bumped by a Stop: a message sent before it and not yet written is cancelled. */
+  private cancelEpoch = 0
+  private writers: { resolve: () => void; reject: (e: Error) => void }[] = []
   /** True while the effort-fallback respawn is in progress (suppresses exit event). */
   private respawning = false
   /** Holds the browser tools' MCP config for the spawn that hasn't reported init yet. */
@@ -293,6 +293,7 @@ export class ClaudeSession extends EventEmitter {
       })
       if (!this.closed) {
         this.closed = true
+        this.failWriters()
         this.emitEvent({ type: 'process-exit', code: null })
         this.emit('exit', null)
       }
@@ -322,6 +323,7 @@ export class ClaudeSession extends EventEmitter {
     // emitted asynchronously; without a listener Node throws them as uncaught. Swallow
     // them here; the 'close'/'error' handlers own teardown.
     child.stdin.on('error', () => {})
+    if (!this.opts.gated) this.releaseWriters()
 
     // Gated mode: the CLI emits NOTHING (not even the init event) until the
     // client sends the `initialize` control_request. Send it immediately on
@@ -400,6 +402,7 @@ export class ClaudeSession extends EventEmitter {
   private teardown(code: number | null): void {
     if (this.closed) return
     this.closed = true
+    this.failWriters()
     if (this.initTimer) {
       clearTimeout(this.initTimer)
       this.initTimer = null
@@ -527,9 +530,7 @@ export class ClaudeSession extends EventEmitter {
         this.respawned = false
         this.emitEvent({ type: 'reconnected' })
       }
-      const queued = this.pendingSends
-      this.pendingSends = []
-      for (const turn of queued) this.writeUserMessage(turn)
+      this.releaseWriters()
       return
     }
 
@@ -592,37 +593,67 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
-  /**
-   * Send a user message into the session, optionally with inlined images. In gated
-   * mode, messages sent before the initialize handshake completes, or while a reconnect
-   * is in flight, are queued and flushed on the (new) ACK, never written to an un-acked
-   * or just-ended stdin.
-   */
-  send(text: string, attachments?: WireAttachment[]): void {
-    const turn: UserTurn = { text, attachments }
-    if (this.opts.gated && (!this.initAcked || this.reconnecting)) {
-      this.pendingSends.push(turn)
-      return
-    }
-    this.writeUserMessage(turn)
+  private writable(): boolean {
+    return !!this.child?.stdin.writable && (!this.opts.gated || (this.initAcked && !this.reconnecting))
+  }
+
+  /** Gated mode writes nothing before the init ACK or during a reconnect, never to an ended stdin. */
+  private whenWritable(): Promise<void> {
+    if (this.closed) return Promise.reject(new Error(GONE))
+    if (this.writable()) return Promise.resolve()
+    return new Promise((resolve, reject) => this.writers.push({ resolve, reject }))
+  }
+
+  private releaseWriters(): void {
+    const w = this.writers
+    this.writers = []
+    for (const x of w) x.resolve()
+  }
+
+  private failWriters(): void {
+    const w = this.writers
+    this.writers = []
+    for (const x of w) x.reject(new Error(GONE))
   }
 
   /**
-   * The terminal's Send now: write the message, then an interrupt naming it, so the CLI stops the
-   * running step and answers the message as a turn of its own. Returns false when no turn of
-   * Clui's was open, so the message just starts a turn.
+   * Send one user message. `prepare` validates and serializes it under the envelope's uuid, so the
+   * packetId in the text and the uuid the CLI echoes are one value. `now` sends into the running turn: the
+   * message is written, then an interrupt naming it, so the CLI stops the running step and answers it as a
+   * turn of its own; `joined` is false when no turn was open, so it started one.
    */
-  sendNow(text: string, attachments?: WireAttachment[]): boolean {
-    const open = this.mapper.hasOpenTurn() && this.initAcked && !this.reconnecting
-    if (!open) {
-      this.send(text, attachments)
-      return false
+  send(now: boolean, prepare: (uuid: string) => Promise<Prepared>): Promise<DispatchResult> {
+    const epoch = this.cancelEpoch
+    const run = this.outbox.then(() => this.deliver(epoch, now, prepare))
+    this.outbox = run.catch(() => {})
+    return run
+  }
+
+  private async deliver(epoch: number, now: boolean, prepare: (uuid: string) => Promise<Prepared>): Promise<DispatchResult> {
+    for (;;) {
+      await this.whenWritable()
+      if (this.cancelEpoch !== epoch) return { ok: false, reason: 'cancelled' }
+      const uuid = randomUUID()
+      const r = await prepare(uuid)
+      if (!r.ok) return r
+      if (this.cancelEpoch !== epoch) return { ok: false, reason: 'cancelled' }
+      if (this.closed) throw new Error(GONE)
+      // A reconnect started during prepare: validate again against the new child.
+      if (!this.writable()) continue
+      return { ok: true, packetId: uuid, text: r.text, joined: this.writeUser(uuid, r.content, now) }
     }
-    const uuid = this.writeUserMessage({ text, attachments, sendNow: true })
+  }
+
+  // The CLI names the uuids each result answered, which is how a turn's end is found when the message joined a
+  // background turn or was sent mid-turn.
+  private writeUser(uuid: string, content: string | unknown[], now: boolean): boolean {
+    const open = now && this.mapper.hasOpenTurn()
+    this.mapper.trackSent(uuid, open)
+    this.writeLine({ type: 'user', message: { role: 'user', content }, uuid })
     // The CLI only cuts a turn for a message already in its queue, so the interrupt waits for the
     // message's `queued` frame, with a timer in case that frame never comes.
-    this.pendingCuts.set(uuid, setTimeout(() => this.cutFor(uuid), 1000))
-    return true
+    if (open) this.pendingCuts.set(uuid, setTimeout(() => this.cutFor(uuid), 1000))
+    return open
   }
 
   /**
@@ -640,41 +671,6 @@ export class ClaudeSession extends EventEmitter {
       request_id: `now-${randomUUID()}`,
       request: { subtype: 'interrupt', send_now: true, message_uuid: uuid }
     })
-  }
-
-  /**
-   * Write a user turn to the CLI stdin as NDJSON. With no attachments, `content` stays
-   * a plain string. With attachments, `content` becomes an
-   * Anthropic content-block array (attachment blocks first, then the text block),
-   * which the CLI accepts inline in duplex stream-json (all three kinds verified live
-   * on 2.1.209). The text block is omitted when empty (an attachments-only turn is
-   * valid). A dropped text FILE rides as a `text` block wrapped in a `<file name>`
-   * delimiter so the model knows what it is (mechanically identical to a paste, no
-   * Read tool, so it works regardless of the workspace-cwd boundary).
-   */
-  private writeUserMessage(turn: UserTurn): string {
-    const { text, attachments } = turn
-    // The CLI names the uuids each result answered, which is how a turn's end is found when the
-    // message joined a background turn or was sent mid-turn.
-    const uuid = randomUUID()
-    this.mapper.trackSent(uuid, !!turn.sendNow)
-    if (!attachments || attachments.length === 0) {
-      this.writeLine({ type: 'user', message: { role: 'user', content: text }, uuid })
-      return uuid
-    }
-    const content: unknown[] = attachments.map((a) => {
-      switch (a.kind) {
-        case 'image':
-          return { type: 'image', source: { type: 'base64', media_type: a.mediaType, data: a.data } }
-        case 'document':
-          return { type: 'document', source: { type: 'base64', media_type: a.mediaType, data: a.data } }
-        case 'text':
-          return { type: 'text', text: `<file name="${a.name}">\n${a.text}\n</file>` }
-      }
-    })
-    if (text) content.push({ type: 'text', text })
-    this.writeLine({ type: 'user', message: { role: 'user', content }, uuid })
-    return uuid
   }
 
   /**
@@ -786,9 +782,9 @@ export class ClaudeSession extends EventEmitter {
 
   /** Interrupt the current turn via the control protocol. */
   interrupt(): void {
-    // A Stop cancels anything not yet delivered, so a later init/reconnect flush can't
-    // send a turn the user already stopped.
-    this.pendingSends = []
+    // A Stop cancels anything not yet delivered, so a later init/reconnect can't send a turn the user
+    // already stopped.
+    this.cancelEpoch++
     // Nothing was written to the CLI yet (still initializing / reconnecting): no running
     // turn to interrupt, and the control channel isn't ready.
     if (!this.initAcked) return
@@ -872,6 +868,7 @@ export class ClaudeSession extends EventEmitter {
     }
     if (!this.child) return
     this.closed = true
+    this.failWriters()
     try {
       this.child.stdin.end()
     } catch {

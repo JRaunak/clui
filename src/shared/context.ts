@@ -264,7 +264,8 @@ function record(s: SentReference): string {
 /** The message text Claude reads: the `<clui-context>` block, then what the user typed. Throws on input the
  *  dispatch bounds make unreachable rather than truncating JSON. */
 export function serializeContext(refs: SentReference[], typed: string, opts: { packetId: string | null }): string {
-  if (!refs.length) return typed
+  // Typed text that opens like a block would read back as one, so its first bracket is escaped.
+  if (!refs.length) return typed.replace(/^(\s*)<(?=clui-context[\s>])/i, '$1&lt;')
   if (refs.length > MAX_REFS) throw new Error(`more than ${MAX_REFS} references`)
   if (opts.packetId !== null && !new RegExp(`^${UUID}$`).test(opts.packetId)) throw new Error('packetId is not a uuid')
   const id = opts.packetId === null ? '' : ` packetId="${attr(opts.packetId)}"`
@@ -350,4 +351,30 @@ export function messageGist(text: string): string {
 export function messageProse(text: string): string {
   const { refs, rest } = parseRefs(text)
   return [...refs.map((r) => `[reference: ${parsedLabel(r)}]`), rest].filter(Boolean).join('\n')
+}
+
+export const CAP_NOTE = `${MAX_REFS} references max. Remove one to add another.`
+
+/** The content array main sends: ref visuals in chip order, then the user's attachments, then the text. The
+ *  optimistic bubble and main's packet both number from this, so they agree without a round trip. */
+export function packetLayout(refs: readonly DraftReference[]): { visualIndex: Map<string, number>; attachmentBase: number } {
+  const visualIndex = new Map<string, number>()
+  for (const d of refs) if (d.visual) visualIndex.set(d.ref.id, visualIndex.size)
+  return { visualIndex, attachmentBase: visualIndex.size }
+}
+
+function relativeTo(cwd: string | null, p: string): string {
+  if (!cwd) return p
+  const base = cwd.endsWith('/') ? cwd : `${cwd}/`
+  return p.startsWith(base) ? p.slice(base.length) : p
+}
+
+/** The records for a draft's refs: paths inside `cwd` made relative, crops numbered by `packetLayout`. */
+export function sentRefs(refs: readonly DraftReference[], cwd: string | null): SentReference[] {
+  const { visualIndex } = packetLayout(refs)
+  return refs.map(({ ref }) => {
+    const r = ref.kind === 'file' || ref.kind === 'folder' ? { ...ref, path: relativeTo(cwd, ref.path) } : ref
+    const vi = visualIndex.get(ref.id)
+    return vi === undefined ? { version: 1, ref: r } : { version: 1, ref: r, visualAttachmentIndex: vi }
+  })
 }

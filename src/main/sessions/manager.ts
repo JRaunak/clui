@@ -5,7 +5,7 @@
  */
 import { ClaudeSession, type ClaudeSessionOptions } from '../cli/session'
 import type { DomainEvent, ElicitationResponse } from '../../shared/events'
-import type { ModeChangeResult, PermissionVerdict, WireAttachment } from '../../shared/ipc'
+import type { DispatchResult, ModeChangeResult, PermissionVerdict } from '../../shared/ipc'
 import type { FileChangeSummary } from '../../shared/changes'
 import { ChangeLedger, type PublishFn, type SegmentView } from '../surfaces/ledger'
 import { readTasks } from './tasks'
@@ -121,18 +121,12 @@ export class SessionManager {
     )
   }
 
-  send(handleId: string, text: string, attachments?: WireAttachment[]): void {
+  send(handleId: string, now: boolean, prepare: Parameters<ClaudeSession['send']>[1]): Promise<DispatchResult> {
     const s = this.sessions.get(handleId)
     // Throw (rather than silently no-op) so a send to a stopped/evicted session rejects
     // through IPC and the renderer can roll back its optimistic busy state.
     if (!s) throw new Error('This session is no longer running.')
-    s.send(text, attachments)
-  }
-
-  sendNow(handleId: string, text: string, attachments?: WireAttachment[]): boolean {
-    const s = this.sessions.get(handleId)
-    if (!s) throw new Error('This session is no longer running.')
-    return s.sendNow(text, attachments)
+    return s.send(now, prepare)
   }
 
   interrupt(handleId: string): void {

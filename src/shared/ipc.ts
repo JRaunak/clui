@@ -16,6 +16,7 @@ import type {
 import type { ConfigBundle } from './config'
 import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, LocalNetSite, PaneBounds, SavedLoginInfo } from './browser'
 import type { AnnotateEvent } from './annotate'
+import type { DraftReference, RefInvalid, SourceVersion } from './context'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff } from './changes'
 import type { ContextMenuItem, FileChangedEvent, FileStat, Refusal, TextRead, TreeListing } from './files'
 import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
@@ -104,6 +105,20 @@ export type WireAttachment =
   | { kind: 'document'; mediaType: string; data: string }
   | { kind: 'text'; name: string; text: string }
 
+export interface OutgoingPacket { text: string; refs: DraftReference[]; attachments: WireAttachment[]; now: boolean }
+
+export type DispatchResult =
+  | { ok: true; packetId: string; text: string; joined: boolean }
+  | { ok: false; reason: 'stale'; invalid: RefInvalid[] }
+  /** Malformed; nothing sent. */
+  | { ok: false; reason: 'invalid' }
+  /** A Stop arrived before it was written. */
+  | { ok: false; reason: 'cancelled' }
+
+export interface AnnotationOrder { keep: number[]; shown: [pinId: number, n: number][]; room: number }
+export interface RefWatchEntry { path: string; version: SourceVersion }
+export interface RefSourceChanged { handleId: string; path: string; reason: 'changed' | 'missing' | 'denied'; version?: SourceVersion }
+
 /** A user's answer to a permission request. */
 export type PermissionVerdict =
   | { requestId: string; behavior: 'allow'; updatedInput: unknown }
@@ -156,14 +171,16 @@ export interface CluiApi {
   isMac: boolean
   /** Start a session; returns a local handle. */
   startSession: (opts: StartSessionOptions) => Promise<StartSessionResult>
-  /**
-   * Send a user message into a running session. `attachments` inlines
-   * image/document/text content blocks alongside the text; omit for a plain
-   * text turn.
-   */
-  sendMessage: (handleId: string, text: string, attachments?: WireAttachment[]) => Promise<void>
-  /** Send a message into the running turn; false means no turn was open, so it started one. */
-  sendNowMessage: (handleId: string, text: string, attachments?: WireAttachment[]) => Promise<boolean>
+  /** Validate, serialize and write one user message. Main re-checks every reference first; a stale one sends
+   *  nothing. `now` sends into the running turn. */
+  sendMessage: (handleId: string, packet: OutgoingPacket) => Promise<DispatchResult>
+  /** The dispatch checks alone, for a queued message's review. */
+  validateRefs: (handleId: string, refs: DraftReference[]) => Promise<RefInvalid[]>
+  /** Which pins main keeps and which it outlines, numbered by their chip position. */
+  syncAnnotationOrder: (handleId: string, order: AnnotationOrder) => Promise<void>
+  /** The selection references' files to watch, declaratively. */
+  syncRefWatches: (handleId: string, entries: RefWatchEntry[]) => Promise<void>
+  onRefSourceChanged: (cb: (e: RefSourceChanged) => void) => () => void
   /** Interrupt the current turn. */
   interrupt: (handleId: string) => Promise<void>
   /** Kill a background task directly (control protocol); false means the caller should
@@ -350,8 +367,6 @@ export interface CluiApi {
   browserDrive: (handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset', tab?: number) => Promise<void>
   /** Starts or ends annotate in `tab`; main answers with annotate events. */
   browserAnnotate: (handleId: string, tab: number, on: boolean) => Promise<void>
-  browserAnnotateRemove: (handleId: string, id: number) => Promise<void>
-  browserAnnotateClear: (handleId: string) => Promise<void>
   onAnnotateEvent: (cb: (handleId: string, e: AnnotateEvent) => void) => () => void
   browserSiteVerdict: (handleId: string, requestId: string, allow: boolean) => Promise<void>
   /** choose: `loginId`; save: the user's fields (the password crosses IPC only here); decline: neither. */
@@ -412,7 +427,10 @@ export const IpcChannels = {
   getFullscreen: 'clui:getFullscreen',
   startSession: 'clui:startSession',
   sendMessage: 'clui:sendMessage',
-  sendNowMessage: 'clui:sendNowMessage',
+  validateRefs: 'clui:validateRefs',
+  syncAnnotationOrder: 'clui:syncAnnotationOrder',
+  syncRefWatches: 'clui:syncRefWatches',
+  refSourceChanged: 'clui:refSourceChanged',
   interrupt: 'clui:interrupt',
   stopTask: 'clui:stopTask',
   backgroundTask: 'clui:backgroundTask',
@@ -497,8 +515,6 @@ export const IpcChannels = {
   browserNav: 'clui:browserNav',
   browserDrive: 'clui:browserDrive',
   browserAnnotate: 'clui:browserAnnotate',
-  browserAnnotateRemove: 'clui:browserAnnotateRemove',
-  browserAnnotateClear: 'clui:browserAnnotateClear',
   annotateEvent: 'clui:annotateEvent',
   browserSiteVerdict: 'clui:browserSiteVerdict',
   browserLoginVerdict: 'clui:browserLoginVerdict',
