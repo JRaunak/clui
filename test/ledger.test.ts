@@ -189,6 +189,14 @@ const live = (stream: string): Promise<unknown> => ledgerWith(lines(stream), 'li
   ok(!!nb && nb.segments === 1 && nb.approximate && nb.added === 2 && nb.removed === 2, 'ledger: S0-6 notebook edits count cell lines, approximate')
 }
 {
+  // A 2.1.300+ transcript ends a turn with api-request-blob copies of its tool blocks.
+  const recs = lines('s0-6.session.jsonl') as { type: string; message: { content: unknown } }[]
+  const blocks = (type: string) => recs.filter((r) => r.type === type).flatMap((r) => r.message.content as unknown[])
+  const blob = (role: string) => JSON.stringify({ type: 'api-request-blob', sessionId: 's06b', hash: role, message: { role, content: blocks(role) } })
+  writeFileSync(join(project, 's06b.jsonl'), readFileSync(fixture('s0-6.session.jsonl'), 'utf8') + blob('assistant') + '\n' + blob('user') + '\n')
+  equal(JSON.stringify(await replayed('s06b')), JSON.stringify(await live('s0-6.stream.jsonl')), 'ledger: api-request-blob records are ignored on replay')
+}
+{
   // The parent transcript carries only the Agent call; the edits live in the agent's own transcript.
   writeFileSync(join(project, 's07.jsonl'), '{}\n')
   mkdirSync(join(project, 's07', 'subagents'), { recursive: true })

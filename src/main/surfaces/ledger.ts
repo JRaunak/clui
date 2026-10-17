@@ -530,8 +530,12 @@ async function readArrivals(file: string): Promise<Arrival[]> {
       } catch {
         continue
       }
-      const content = obj(rec?.message)?.content
-      if (!rec || !Array.isArray(content)) continue
+      // api-request-blob records (2.1.300+) repeat a turn's tool blocks with no timestamp or
+      // toolUseResult. Their zero stamp sorts them first, so they would claim the ids and the
+      // real records would be dropped as repeats.
+      if (rec?.type !== 'user' && rec?.type !== 'assistant') continue
+      const content = obj(rec.message)?.content
+      if (!Array.isArray(content)) continue
       const where = { origin: str(rec.sessionId) ?? '', sourceId: str(rec.agentId) ?? 'main', at: Date.parse(str(rec.timestamp) ?? '') || 0 }
       correlate(pending, content, rec.toolUseResult, where, (a) => out.push(a))
     }

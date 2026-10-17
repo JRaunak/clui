@@ -103,7 +103,8 @@ async function scanSession(filePath: string): Promise<ScanResult> {
   try {
     for await (const line of rl) {
       const trimmed = line.trim()
-      if (!trimmed) continue
+      // api-request* records hold whole request bodies (tens of KB) and nothing here reads them.
+      if (!trimmed || trimmed.startsWith('{"type":"api-request')) continue
       let o: Record<string, unknown>
       try {
         const parsed = JSON.parse(trimmed)

@@ -412,6 +412,13 @@ export async function readTranscriptAtPath(file: string): Promise<TranscriptResu
   return parseTranscriptFile(file, SAFETY_CAP)
 }
 
+function forkDirective(blocks: ContentBlock[]): string | null {
+  const text = blocks.find((b) => b?.type === 'text' && b.text?.startsWith('<fork-boilerplate>'))?.text
+  if (!text) return null
+  const end = text.indexOf('</fork-boilerplate>')
+  return end < 0 ? null : text.slice(end + '</fork-boilerplate>'.length).trim().replace(/^Your directive:\s*/, '')
+}
+
 async function parseTranscriptFile(
   file: string,
   cap: number,
@@ -443,7 +450,8 @@ async function parseTranscriptFile(
   try {
     for await (const line of rl) {
       const trimmed = line.trim()
-      if (!trimmed) continue
+      // api-request* records hold whole request bodies (tens of KB) and nothing here reads them.
+      if (!trimmed || trimmed.startsWith('{"type":"api-request')) continue
       let entry: RawEntry
       try {
         const parsed = JSON.parse(trimmed)
@@ -530,12 +538,21 @@ async function parseTranscriptFile(
       }
 
       const content = entry.message?.content
-      const blocks: ContentBlock[] =
+      let blocks: ContentBlock[] =
         typeof content === 'string'
           ? [{ type: 'text', text: content }]
           : Array.isArray(content)
             ? (content as ContentBlock[])
             : []
+      // A fork's transcript opens with a copy of the parent's Agent call, answered by a placeholder
+      // result plus the CLI's fork instructions. Only the directive after them is the fork's prompt.
+      const directive = opts.includeSidechain && role === 'user' ? forkDirective(blocks) : null
+      if (directive !== null) {
+        messages.length = 0
+        toolCallsById.clear()
+        lastByMessageId.clear()
+        blocks = [{ type: 'text', text: directive }]
+      }
 
       // A user entry that is ONLY tool_results carries no visible user text: we
       // attach those results to prior tool calls and don't emit a user bubble.

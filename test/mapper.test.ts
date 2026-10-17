@@ -310,6 +310,31 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(messages.length === 2, 'resume: the peer message still renders', `${messages.length}`)
 }
 
+// A fork's transcript opens with the parent's Agent call and the CLI's fork instructions; the pane shows the directive.
+{
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { readAgentTranscriptByToolUseId } = await import('../src/main/sessions/transcript.ts')
+  const home = mkdtempSync(join(tmpdir(), 'clui-fork-'))
+  const dir = join(home, 'projects', 'p', 's', 'subagents')
+  mkdirSync(dir, { recursive: true })
+  const rec = (o: object): string => JSON.stringify({ isSidechain: true, sessionId: 's', agentId: 'f1', ...o })
+  writeFileSync(join(dir, 'agent-f1.meta.json'), JSON.stringify({ agentType: 'fork', isFork: true, toolUseId: 'tu-fork' }))
+  writeFileSync(join(dir, 'agent-f1.jsonl'), [
+    JSON.stringify({ type: 'fork-context-ref', agentId: 'f1', parentSessionId: 's' }),
+    rec({ type: 'assistant', uuid: 'a0', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tu-fork', name: 'Agent', input: { prompt: 'Tidy it' } }] } }),
+    rec({ type: 'user', uuid: 'u0', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu-fork', content: 'placeholder' }, { type: 'text', text: '<fork-boilerplate>\nYou are a worker fork.\n</fork-boilerplate>\n\nYour directive: Tidy it' }] } }),
+    rec({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } })
+  ].join('\n') + '\n')
+  const prev = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = home
+  const { messages } = await readAgentTranscriptByToolUseId('tu-fork')
+  if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR
+  else process.env.CLAUDE_CONFIG_DIR = prev
+  ok(messages.length === 2 && messages[0].role === 'user' && messages[0].text === 'Tidy it' && messages[1].text === 'Done.', 'resume: a fork transcript shows its directive, not the inherited call', JSON.stringify(messages.map((m) => m.text)))
+}
+
 // Plugin UI messages: sanitized in main, deduped by uuid, routed by subtype.
 {
   const m = new EventMapper()
