@@ -22,23 +22,33 @@ import { activeSlice, anyTabIn, browserTabOf, useSession } from '../store'
 import { closeTab } from '../components/surfaces/SurfaceTabs'
 import { OPEN_FILE_EVENT, type PaletteMode } from '../components/CommandPalette'
 import { FILE_FIND_EVENT } from '../components/surfaces/FileSurface'
+import { TRANSCRIPT_FIND_EVENT } from '../components/FindBar'
+
+/** Focus is in the Surfaces pane: its DOM, or a native page in it, which only main can report. */
+function inPane(page: boolean): boolean {
+  const st = useSession.getState()
+  return !!activeSlice(st)?.paneOpen && !st.viewingSubagent && (page || !!document.activeElement?.closest('[data-ui="pane-secondary"]'))
+}
 
 /**
- * Find belongs to a File tab while focus is in the pane showing it; elsewhere it's the transcript's.
+ * Find, Find Next and Find Previous go to one target. A File tab owns them while focus is in the pane
+ * showing it. Anywhere else, a native page included, they search the conversation, matching the menu's labels.
  * Only one find is open at a time, so ⌘G never steps two.
  */
-function fileFind(what: 'open' | 'next' | 'prev'): boolean {
+function routeFind(what: 'open' | 'next' | 'prev', page: boolean): void {
   const store = useSession.getState()
   const slice = activeSlice(store)
   const id = slice?.surfaces.active
-  const mine = !!slice?.paneOpen && !store.viewingSubagent && !!id && slice.surfaces.tabs[id]?.kind === 'file' && !!document.activeElement?.closest('[data-ui="pane-secondary"]')
-  if (!mine) {
-    window.dispatchEvent(new CustomEvent(FILE_FIND_EVENT, { detail: 'close' }))
-    return false
+  if (inPane(page) && !!id && slice?.surfaces.tabs[id]?.kind === 'file') {
+    if (store.findOpen) store.setFindOpen(false)
+    window.dispatchEvent(new CustomEvent(FILE_FIND_EVENT, { detail: what }))
+    return
   }
-  if (store.findOpen) store.setFindOpen(false)
-  window.dispatchEvent(new CustomEvent(FILE_FIND_EVENT, { detail: what }))
-  return true
+  window.dispatchEvent(new CustomEvent(FILE_FIND_EVENT, { detail: 'close' }))
+  if (!store.activeHandleId) return
+  // Find Next with the bar closed reopens it rather than stepping a query nobody can see.
+  if (what === 'open' || !store.findOpen) store.setFindOpen(true)
+  else window.dispatchEvent(new CustomEvent(TRANSCRIPT_FIND_EVENT, { detail: what }))
 }
 
 /**
@@ -69,8 +79,14 @@ export function useKeyboardShortcuts(opts: {
       if (activeSlice(useSession.getState())?.cwd) onOpenPalette('file')
     }
     window.addEventListener(OPEN_FILE_EVENT, openFile)
+    // A hidden page can't keep focus, so a menu key pressed in it hands focus to the composer.
+    const leavePage = (page: boolean): void => {
+      const after = activeSlice(useSession.getState())
+      if (page && (!after?.paneOpen || browserTabOf(after.surfaces.active) === null))
+        document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
+    }
     // 1. Native-menu actions (⌘N / ⌘W / ⌘,).
-    const off = window.clui.onMenuAction((action) => {
+    const off = window.clui.onMenuAction((action, page) => {
       const store = useSession.getState()
       switch (action) {
         case 'new-session':
@@ -87,14 +103,11 @@ export function useKeyboardShortcuts(opts: {
           onNewSessionInDir()
           break
         case 'close-session': {
-          // In the tab strip or the page itself, ⌘W means the tab. A focused native page leaves the
-          // renderer's document without focus.
-          const slice = activeSlice(store)
-          const inTabs = !!document.activeElement?.closest('[data-ui="surface-tabs"]')
-          const onBrowser = !!slice?.paneOpen && !store.viewingSubagent && browserTabOf(slice.surfaces.active) !== null
-          const inPage = !document.hasFocus() && onBrowser
-          if (slice?.surfaces.active && (inTabs || inPage)) closeTab(slice.surfaces.active, true)
-          else if (store.activeHandleId) void store.closeSession(store.activeHandleId)
+          // In the pane ⌘W closes tabs and stops at the picker; mashing it must never end the conversation.
+          const active = activeSlice(store)?.surfaces.active
+          if (inPane(page)) {
+            if (active) closeTab(active, true)
+          } else if (store.activeHandleId) void store.closeSession(store.activeHandleId)
           break
         }
         case 'open-settings':
@@ -112,16 +125,11 @@ export function useKeyboardShortcuts(opts: {
         // Find/search route straight to store flags (no App callback needed).
         // ⌘F only means something with a session open; ⌘⇧F is always available.
         case 'find-in-conversation':
-          if (fileFind('open')) break
-          if (store.activeHandleId) store.setFindOpen(true)
+          routeFind('open', page)
           break
         case 'find-next':
         case 'find-prev':
-          if (fileFind(action === 'find-next' ? 'next' : 'prev')) break
-          // Fallback path when focus isn't in the find input (the input handles
-          // Enter/⇧Enter locally). Re-open the bar if closed; the FindBar component
-          // reads these via its own menu subscription for match nav.
-          if (store.activeHandleId) store.setFindOpen(true)
+          routeFind(action === 'find-next' ? 'next' : 'prev', page)
           break
         case 'search-global':
           store.setGlobalSearchOpen(true)
@@ -135,18 +143,18 @@ export function useKeyboardShortcuts(opts: {
         case 'pane-external':
           document.querySelector<HTMLElement>('[data-ui="pane-external"]')?.click()
           break
-        case 'browser-toggle': {
-          // A menu accelerator is a keyboard path, so the pane changes without a transition. With
-          // focus in the native page the renderer's document doesn't have it, and a hidden page
-          // can't keep it, so it goes to the composer.
+        // Menu accelerators are a keyboard path, so the pane changes without a transition.
+        case 'browser-toggle':
           if (!activeSlice(store)?.browser) break
-          const fromPage = !document.hasFocus()
           store.toggleBrowser()
-          const after = activeSlice(useSession.getState())
-          if (fromPage && (!after?.paneOpen || browserTabOf(after.surfaces.active) === null))
-            document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
+          leavePage(page)
           break
-        }
+        // ⌥⌘0 is a click on the pane toggle: the same target, picker and subagent rules.
+        case 'pane-toggle':
+          if (!activeSlice(store)?.cwd) break
+          store.togglePane()
+          leavePage(page)
+          break
         case 'browser-annotate':
           if (activeSlice(store)?.paneOpen && !store.viewingSubagent && browserTabOf(activeSlice(store)?.surfaces.active) !== null) store.toggleAnnotate()
           break

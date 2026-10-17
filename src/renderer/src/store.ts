@@ -29,6 +29,7 @@ import type { Via } from './lib/motion'
 import type { ChangeGitStatus, FileChangeSummary, GitPathStatus } from '../../shared/changes'
 import { SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
 import { turnEndLine } from './lib/turnEnd'
+import { suffixes } from './lib/tree'
 
 export type SettingsSection = 'general' | 'sessions' | 'browser'
 
@@ -1588,10 +1589,27 @@ let announceSeq = 0
 /** The toggling zero-width space makes a repeated announcement a text change, which is what gets read. */
 const toggled = (text: string): string => `${text}${'\u200b'.repeat(++announceSeq % 2)}`
 const BROWSER_OPENED = 'Claude opened the browser'
-const openedCopy = (s: PerSessionState): string => {
-  const tab = s.surfaces.active ? s.surfaces.tabs[s.surfaces.active] : undefined
-  return tab ? `Claude opened ${tab.title}` : BROWSER_OPENED
+
+/** What a screen reader hears when Claude puts tab `id` on screen; `opened` when the pane or the tab is new. */
+function shownCopy(s: PerSessionState, id: string | null, opened: boolean): string {
+  const tab = id ? s.surfaces.tabs[id] : undefined
+  if (!tab) return BROWSER_OPENED
+  const verb = opened ? 'Claude opened' : 'Claude is showing'
+  const at = tab.location
+  if (tab.kind === 'diff') return `${verb} its changes${at?.file ? ` to ${basename(at.file)}` : ''}`
+  if (tab.kind === 'tree') {
+    const rel = at?.file?.startsWith(`${s.cwd}/`) ? at.file.slice(s.cwd.length + 1) : at?.file && basename(at.file)
+    return `${verb} ${rel ? `${rel} in ` : ''}the file tree`
+  }
+  const files = s.surfaces.order.flatMap((x) => (s.surfaces.tabs[x]?.kind === 'file' ? [s.surfaces.tabs[x].key] : []))
+  const dir = suffixes(files).get(tab.key)
+  const name = dir ? `${basename(tab.key)} in ${dir}` : basename(tab.key)
+  if (at?.line && at.endLine && at.endLine > at.line) return `${verb} lines ${at.line} to ${at.endLine} of ${name}`
+  return `${verb} ${name}${at?.line ? ` at line ${at.line}` : ''}`
 }
+
+/** Says `text` only while the document is visible. */
+const said = (text: string): { statusAnnounce?: string } => (typeof document !== 'undefined' && document.hidden ? {} : { statusAnnounce: toggled(text) })
 
 /** The Stage already shows a Surfaces pane, so the next session's pane reuses it without remounting. */
 const surfacePaneShown = (s: SessionStore): boolean => !s.viewingSubagent && !!(s.activeHandleId && s.sessions[s.activeHandleId]?.paneOpen)
@@ -1614,7 +1632,7 @@ function arriveWithPane(
   return {
     sessions: {
       ...sessions,
-      [handleId]: { ...cur, paneOpen: true, surfacePaneFull: false, paneAutoOpen: false, statusAnnounce: toggled(openedCopy(cur)) }
+      [handleId]: { ...cur, paneOpen: true, surfacePaneFull: false, paneAutoOpen: false, ...said(shownCopy(cur, cur.surfaces.active, true)) }
     },
     ...quiet
   }
@@ -3464,7 +3482,6 @@ export const useSession = create<SessionStore>((set, get) => ({
       return show('collapsed')
     }
     const target = paneTarget(active)
-    if (!target && active.browser) return void st.revealBrowser(null, apply)
     if (target) st.activateSurface(active.handleId, target)
     // A narrow Stage renders half as full, and keeps the user's choice for when it grows back.
     show(active.surfacePaneFull ? 'full' : 'half')
@@ -3511,7 +3528,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     }
     if (s.viewingSubagent || !s.stageWide) return false
     const shown = activation(slice, id, Date.now())
-    set({ ...patchSlice(s, handleId, { ...shown, paneAutoOpen: false, statusAnnounce: toggled(openedCopy({ ...slice, ...shown })) }), paneOpenedQuietly: true })
+    set({ ...patchSlice(s, handleId, { ...shown, paneAutoOpen: false, ...said(shownCopy({ ...slice, ...shown }, id, true)) }), paneOpenedQuietly: true })
     view()
     return true
   },
@@ -3556,7 +3573,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     const placed: PerSessionState = { ...cur, surfaces: { ...set0, order, tabs: { ...set0.tabs, [id]: { ...base, ...dest } } } }
     const activeNow = activation(placed, id, now)
     if (showing || (!viewed && cur.paneOpen)) {
-      set(patchSlice(s, handleId, activeNow))
+      const moved = showing && actor === 'claude' && (set0.active !== id || !!spec.location)
+      set(patchSlice(s, handleId, { ...activeNow, ...(moved ? said(shownCopy({ ...placed, ...activeNow }, id, !existing)) : {}) }))
     } else if (actor === 'user') {
       // An explicit user open outranks the subagent takeover.
       set({ ...patchSlice(s, handleId, { ...activeNow, paneOpen: true }), ...(viewed ? { viewingSubagent: null, subagentTrail: [], currentTurn: null } : {}) })
@@ -3565,7 +3583,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     } else if (!viewed) {
       set(patchSlice(s, handleId, { ...activeNow, paneAutoOpen: true }))
     } else {
-      set({ ...patchSlice(s, handleId, { ...activeNow, paneOpen: true, statusAnnounce: toggled(`Claude opened ${spec.title}`) }), paneOpenedQuietly: true })
+      set({ ...patchSlice(s, handleId, { ...activeNow, paneOpen: true, ...said(shownCopy({ ...placed, ...activeNow }, id, true)) }), paneOpenedQuietly: true })
     }
     return id
   },

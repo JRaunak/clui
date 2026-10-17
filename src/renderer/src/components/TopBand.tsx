@@ -165,7 +165,6 @@ export function TopSlot({
 function PaneToggle(): JSX.Element {
   const open = useSession((s) => !s.viewingSubagent && selectPaneOpen(activeSlice(s)))
   const driving = useActive((s) => anyTabIn(s?.browser, 'driving'))
-  const hasBrowser = useActive((s) => !!s?.browser)
   const kind = useActive((s) => (s ? surfaceKindOf(s.surfaces, paneTarget(s)) : null))
   const title = useActive((s) => {
     const id = s && paneTarget(s)
@@ -173,23 +172,23 @@ function PaneToggle(): JSX.Element {
   })
   const togglePane = useSession((s) => s.togglePane)
   const verb = open ? 'Hide' : 'Show'
-  const { Glyph, name, tip } =
+  // With no target a click shows the picker, so the glyph stays the generic pane one even when the session has a browser.
+  const { Glyph, name, what } =
     kind === 'diff'
-      ? { Glyph: IconDiff, name: 'Claude changes', tip: `${verb} Claude changes` }
+      ? { Glyph: IconDiff, name: 'Claude changes', what: 'Claude changes' }
       : kind === 'file'
-        ? { Glyph: IconFile, name: `File, ${title}`, tip: `${verb} ${title}` }
+        ? { Glyph: IconFile, name: `File, ${title}`, what: title }
         : kind === 'tree'
-          ? { Glyph: IconFolder, name: 'File tree', tip: `${verb} file tree` }
-          : // Showing the picker, or nothing to show and no browser to make one in.
-            (open && !kind) || !hasBrowser
-            ? { Glyph: IconPaneRight, name: 'Pane', tip: `${verb} pane` }
-            : { Glyph: IconAgentBrowser, name: driving && !open ? 'Browser, Claude is driving' : 'Browser', tip: `${verb} browser ⇧⌘B` }
+          ? { Glyph: IconFolder, name: 'File tree', what: 'file tree' }
+          : kind === 'browser'
+            ? { Glyph: IconAgentBrowser, name: driving && !open ? 'Browser, Claude is driving' : 'Browser', what: 'browser' }
+            : { Glyph: IconPaneRight, name: 'Pane', what: 'pane' }
   return (
     <button
       type="button"
-      title={tip}
+      title={`${verb} ${what} ⌥⌘0`}
       data-ui="pane-toggle"
-      data-kind={kind ?? (Glyph === IconPaneRight ? 'pane' : 'browser')}
+      data-kind={kind ?? 'pane'}
       aria-label={name}
       aria-expanded={open}
       aria-controls={open ? 'surface-pane-region' : undefined}

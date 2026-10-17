@@ -45,6 +45,24 @@ export const nameOf = (rel: string): string => rel.slice(rel.lastIndexOf('/') + 
 export const join = (dir: string, name: string): string => (dir ? `${dir}/${name}` : name)
 export const tilde = (p: string, home: string): string => (home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p)
 
+/** The fewest trailing directory names that tell apart file tabs sharing a basename. */
+export function suffixes(paths: string[]): Map<string, string> {
+  const out = new Map<string, string>()
+  const groups = Map.groupBy(paths, nameOf)
+  for (const group of groups.values()) {
+    if (group.length < 2) continue
+    const dirs = group.map((p) => parentOf(p).split('/').filter(Boolean))
+    for (const [i, p] of group.entries()) {
+      const mine = dirs[i]
+      let k = 1
+      const tail = (d: string[], n: number): string => d.slice(-n).join('/')
+      while (k < mine.length && dirs.some((d, j) => j !== i && tail(d, k) === tail(mine, k))) k++
+      out.set(p, tail(mine, k))
+    }
+  }
+  return out
+}
+
 /** The folders that hold `rel`, outermost first, without the root. */
 export function ancestorsOf(rel: string): string[] {
   const out: string[] = []

@@ -4,8 +4,8 @@
  * Owns the CLI subprocesses (via SessionManager), the native window, and the IPC
  * handlers that back the preload `window.clui` API. The renderer is pure UI.
  */
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Menu, shell, systemPreferences } from 'electron'
-import type { MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Menu, shell, systemPreferences, webContents } from 'electron'
+import type { MenuItemConstructorOptions, WebContents } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { basename, dirname, isAbsolute } from 'node:path'
@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto'
 import {
   IpcChannels,
   type EffortCaps,
+  type MenuAction,
   type MenuState,
   type PermissionModeChoice,
   type PermissionVerdict,
@@ -102,6 +103,21 @@ function resolveTheme(): 'dark' | 'light' {
   return pref
 }
 
+/** The native page holding keyboard focus. Focus in it leaves the renderer's document, so the
+ *  renderer can't tell a focused page from a window in the background. */
+let focusedPage: WebContents | null = null
+const isPage = (wc: WebContents | null): boolean => !!wc && !BrowserWindow.getAllWindows().some((w) => w.webContents === wc)
+app.on('web-contents-created', (_e, wc) => {
+  const mark = (on: boolean): void => {
+    if (!isPage(wc) || (on ? focusedPage === wc : focusedPage !== wc)) return
+    focusedPage = on ? wc : null
+    buildMenu()
+  }
+  wc.on('focus', () => mark(true))
+  wc.on('blur', () => mark(false))
+  wc.once('destroyed', () => mark(false))
+})
+
 /**
  * Build + install the application menu. ⌘N / ⌘W / ⌘, are defined HERE (not as
  * renderer key listeners) because macOS routes those through the app menu first:
@@ -111,21 +127,30 @@ function resolveTheme(): 'dark' | 'light' {
  * and standard window commands keep working in text fields (a custom menu that
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
-let menuState: MenuState = { browser: 'none', pane: 'none', canPane: false, external: { kind: 'none', enabled: false } }
+const TAKES_TYPING = new Set<MenuAction>(['find-in-conversation', 'find-next', 'find-prev', 'open-file', 'open-palette', 'open-command-palette', 'search-global'])
+let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false } }
 const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = { file: 'Open in Editor', diff: 'Open Diff in Editor', browser: 'Open in Default Browser', tree: 'Open Folder in Editor', none: 'Open Externally' }
 
 function buildMenu(): void {
-  const send = (action: string): void => {
+  const send = (action: MenuAction): void => {
     const win = BrowserWindow.getFocusedWindow() ?? mainWindow
     try {
       if (!win || win.isDestroyed()) return
       const wc = win.webContents
-      if (!wc.isDestroyed()) wc.send(IpcChannels.menuAction, action)
+      if (wc.isDestroyed()) return
+      const page = !!focusedPage || isPage(webContents.getFocusedWebContents())
+      // A DOM focus() can't pull keyboard focus out of a native page, so an action that opens a
+      // renderer input takes it back here first.
+      if (focusedPage && TAKES_TYPING.has(action)) wc.focus()
+      wc.send(IpcChannels.menuAction, action, page)
     } catch {
       /* window torn down; drop */
     }
   }
   const isMac = process.platform === 'darwin'
+  const close = focusedPage ? 'tab' : menuState.close
+  // With Close Tab disabled on the picker, ⌘W must not fall through to the window's own Close.
+  const closeWindow: MenuItemConstructorOptions = { role: 'close', accelerator: 'Shift+CmdOrCtrl+W' }
 
   const template: MenuItemConstructorOptions[] = [
     ...(isMac
@@ -156,9 +181,16 @@ function buildMenu(): void {
         { label: 'New Session in a Directory…', accelerator: 'CmdOrCtrl+Shift+N', click: () => send('new-named-session') },
         { label: 'Quick Switcher…', accelerator: 'CmdOrCtrl+K', click: () => send('open-palette') },
         { label: 'Command Palette…', accelerator: 'CmdOrCtrl+Shift+K', click: () => send('open-command-palette') },
-        { label: 'Close Session', accelerator: 'CmdOrCtrl+W', click: () => send('close-session') },
+        { label: close === 'session' ? 'Close Session' : 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: close !== 'none', click: () => send('close-session') },
+        { type: 'separator' },
+        // Native accelerators, not DOM keys, so they still fire while focus sits inside a native view.
         { label: 'Open File…', accelerator: 'CmdOrCtrl+P', enabled: menuState.canPane, click: () => send('open-file') },
-        // A native accelerator, not a DOM key, so it still fires while focus sits inside a native view.
+        {
+          label: menuState.surface === 'none' ? 'Show Pane' : 'Hide Pane',
+          accelerator: 'Alt+CmdOrCtrl+0',
+          enabled: menuState.canPane,
+          click: () => send('pane-toggle')
+        },
         {
           label: menuState.pane === 'full' ? 'Split Pane' : 'Expand Pane',
           accelerator: 'Alt+CmdOrCtrl+B',
@@ -177,11 +209,12 @@ function buildMenu(): void {
           enabled: menuState.external.enabled,
           click: () => send('pane-external')
         },
+        { type: 'separator' },
         { label: 'Stop Browser Agent', accelerator: 'CmdOrCtrl+.', click: () => send('browser-stop') },
         { label: 'Annotate', accelerator: 'CmdOrCtrl+Shift+A', click: () => send('browser-annotate') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
         { type: 'separator' },
-        ...(isMac ? ([{ role: 'close' }] as MenuItemConstructorOptions[]) : ([{ role: 'quit' }] as MenuItemConstructorOptions[]))
+        isMac ? closeWindow : { role: 'quit' }
       ]
     },
     // Role-based Edit menu, preserving ⌘C/⌘V/⌘X/⌘A/⌘Z in inputs + the textarea.
@@ -209,7 +242,7 @@ function buildMenu(): void {
         { role: 'zoom' },
         ...(isMac
           ? ([{ type: 'separator' }, { role: 'front' }] as MenuItemConstructorOptions[])
-          : ([{ role: 'close' }] as MenuItemConstructorOptions[]))
+          : [closeWindow])
       ]
     }
   ]
@@ -527,13 +560,7 @@ function registerIpc(): void {
 
   ipcMain.on(IpcChannels.menuState, (e, next: MenuState) => {
     if (!fromTrustedFrame(e)) return
-    const same =
-      next.browser === menuState.browser &&
-      next.pane === menuState.pane &&
-      next.canPane === menuState.canPane &&
-      next.external.kind === menuState.external.kind &&
-      next.external.enabled === menuState.external.enabled
-    if (same) return
+    if (JSON.stringify(next) === JSON.stringify(menuState)) return
     menuState = next
     buildMenu()
   })

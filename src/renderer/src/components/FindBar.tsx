@@ -32,6 +32,8 @@ function messageText(m: {
   return parts.join('\n')
 }
 
+export const TRANSCRIPT_FIND_EVENT = 'clui:transcript-find'
+
 export function FindBar(): JSX.Element | null {
   const open = useSession((s) => s.findOpen)
   const setFindActiveId = useSession((s) => s.setFindActiveId)
@@ -106,14 +108,12 @@ export function FindBar(): JSX.Element | null {
   const next = useCallback(() => goTo(current + 1), [goTo, current])
   const prev = useCallback(() => goTo(current - 1), [goTo, current])
 
-  // ⌘G / ⌘⇧G menu fallbacks (when focus left the input). Only while open.
+  // ⌘G / ⇧⌘G, sent only while the transcript is find's target.
   useEffect(() => {
     if (!open) return
-    const off = window.clui.onMenuAction((a) => {
-      if (a === 'find-next') next()
-      else if (a === 'find-prev') prev()
-    })
-    return off
+    const onStep = (e: Event): void => ((e as CustomEvent<'next' | 'prev'>).detail === 'prev' ? prev() : next())
+    window.addEventListener(TRANSCRIPT_FIND_EVENT, onStep)
+    return () => window.removeEventListener(TRANSCRIPT_FIND_EVENT, onStep)
   }, [open, next, prev])
 
   if (!open) return null

@@ -4,7 +4,7 @@ import { blockedOf, recheck, useBlockedVersion, type Blocked } from '../../lib/b
 import { siteKeyOf, type TabState } from '../../../../shared/browser'
 import type { SurfaceKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
-import { tilde } from '../../lib/tree'
+import { suffixes, tilde } from '../../lib/tree'
 import { FileIcon } from '../FileIcon'
 import { Menu } from '../Menu'
 import { usePaneEntries } from './PanePicker'
@@ -74,27 +74,8 @@ const GLYPH: Partial<Record<SurfaceKind, (p: { className?: string }) => JSX.Elem
   tree: IconFolder
 }
 
-const base = (p: string): string => p.slice(p.lastIndexOf('/') + 1) || p
 const dirOf = (p: string): string => p.slice(0, Math.max(0, p.lastIndexOf('/')))
 const relTo = (cwd: string | null, p: string): string => (cwd && p.startsWith(`${cwd}/`) ? p.slice(cwd.length + 1) : p)
-
-/** The fewest trailing directory names that tell apart file tabs sharing a basename. */
-function suffixes(paths: string[]): Map<string, string> {
-  const out = new Map<string, string>()
-  const groups = Map.groupBy(paths, base)
-  for (const group of groups.values()) {
-    if (group.length < 2) continue
-    const dirs = group.map((p) => dirOf(p).split('/').filter(Boolean))
-    for (const [i, p] of group.entries()) {
-      const mine = dirs[i]
-      let k = 1
-      const tail = (d: string[], n: number): string => d.slice(-n).join('/')
-      while (k < mine.length && dirs.some((d, j) => j !== i && tail(d, k) === tail(mine, k))) k++
-      out.set(p, tail(mine, k))
-    }
-  }
-  return out
-}
 
 /**
  * The pane's tabs, in the header row, for every kind. Arrows only move focus: viewing a suspended

@@ -10,7 +10,7 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import { browserTabOf, useActive, useSession, viewedTabOf, EMPTY_PENDING, selectPaneOpen } from '../store'
+import { browserTabOf, surfaceKindOf, useActive, useSession, viewedTabOf, EMPTY_PENDING, selectPaneOpen } from '../store'
 import { Chat } from './Chat'
 import { Composer } from './Composer'
 import { ChangedFiles } from './ChangedFiles'
@@ -127,6 +127,7 @@ export function Stage({
   }, [kind])
   const hasBrowser = useActive((s) => !!s?.browser)
   const browserActive = useActive((s) => browserTabOf(s?.surfaces.active) !== null)
+  const activeKind = useActive((s) => (s ? surfaceKindOf(s.surfaces, s.surfaces.active) : null))
   const onBrowser = kind === 'surfaces' && browserActive
   const onDiff = useActive((s) => kind === 'surfaces' && s?.surfaces.active === 'diff')
   const onTree = useActive((s) => kind === 'surfaces' && s?.surfaces.active === 'tree')
@@ -140,7 +141,9 @@ export function Stage({
     window.clui.menuState({
       browser: !hasBrowser ? 'none' : onBrowser ? 'shown' : 'hidden',
       pane: !kind || !wide ? 'none' : state === 'full' ? 'full' : 'split',
+      surface: kind === 'surfaces' ? (activeKind ?? 'picker') : 'none',
       canPane: !!cwd,
+      close: kind !== 'surfaces' || !focusInSecondary ? 'session' : activeKind ? 'tab' : 'none',
       external: onBrowser
         ? { kind: 'browser', enabled: !externalBlocked }
         : onDiff
@@ -151,7 +154,7 @@ export function Stage({
               ? { kind: 'tree', enabled: true }
               : { kind: 'none', enabled: false }
     })
-  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileGone, kind, wide, state, externalBlocked, cwd])
+  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileGone, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary])
 
   const pane = useMemo<PaneApi>(
     () => ({

@@ -46,7 +46,7 @@ function openSingleton(spec: SurfaceSpec & { kind: 'tree' | 'diff' }): void {
   if (shown) document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-pane-title]')?.focus()
 }
 
-function run(key: PaneItemKey, cwd: string): void {
+export function runPaneItem(key: PaneItemKey, cwd: string): void {
   switch (key) {
     case 'open-file':
       return openFilePalette()
@@ -65,7 +65,7 @@ export function usePaneEntries(): PaneEntry[] {
   const changes = useActive((s) => s?.changes.length ?? 0)
   const browser = useActive((s) => !!s?.browser)
   return useMemo(
-    () => (cwd ? paneItems({ cwd, home: window.clui.homeDir, changes, browser }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => run(it.key, cwd) })) : []),
+    () => (cwd ? paneItems({ cwd, home: window.clui.homeDir, changes, browser }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) })) : []),
     [cwd, changes, browser]
   )
 }

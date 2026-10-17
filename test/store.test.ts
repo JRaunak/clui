@@ -387,6 +387,26 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   st().openSurface('h2', FILE, 'focus', 'claude', 'claude')
   ok(st().sessions.h2.surfaces.active === id && !st().sessions.h2.paneOpen && st().sessions.h2.paneAutoOpen, 'intent: a background session opens on its next visit')
 
+  // The announcement says what became visible, by kind, and only when it did.
+  const heard = (): string => cur().statusAnnounce.replace(/\u200b/g, '')
+  fresh()
+  st().openSurface('h1', DIFF, 'focus', 'claude', 'claude')
+  ok(heard() === 'Claude opened its changes', 'announce: a diff opening the pane says "its changes"')
+  fresh({ paneOpen: true })
+  openDiff()
+  st().openSurface('h1', { ...FILE, location: { line: 40, endLine: 52 } }, 'focus', 'claude', 'claude')
+  ok(heard() === 'Claude opened lines 40 to 52 of a.ts', 'announce: a new tab in a visible pane is opened, with its range')
+  st().openSurface('h1', DIFF, 'focus', 'claude', 'claude')
+  ok(heard() === 'Claude is showing its changes', 'announce: an existing tab made active is showing')
+  st().openSurface('h1', { kind: 'file', key: '/tmp/w/main/a.ts', title: 'a.ts', location: { line: 142 } }, 'focus', 'claude', 'claude')
+  ok(heard() === 'Claude opened a.ts in main at line 142', 'announce: a shared basename adds its distinguishing folder')
+  st().openSurface('h1', { kind: 'tree', key: '', title: 'w', location: { file: '/tmp/w/src/main' } }, 'focus', 'claude', 'claude')
+  ok(heard() === 'Claude opened src/main in the file tree', 'announce: a tree location reads cwd-relative')
+  const before = cur().statusAnnounce
+  st().openSurface('h1', DIFF, 'prepare', 'claude', 'claude')
+  st().openSurface('h1', FILE, 'focus', 'user', 'user')
+  ok(cur().statusAnnounce === before, 'announce: prepare and user opens say nothing')
+
   // open · any · open → active; open · closed → a user open opens the pane, Claude's follows the auto-open conditions.
   fresh({ paneOpen: true })
   openDiff()
@@ -484,7 +504,11 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   fresh({ browser: browserOf([]) })
   calls.length = 0
   st().togglePane()
-  ok(calls.some((c) => c.name === 'browserNewTab'), 'picker: with a browser and no tab, the toggle makes one')
+  ok(cur().paneOpen && sur().active === null && !calls.some((c) => c.name === 'browserNewTab'), 'picker: with a browser and no tab, the toggle shows the picker too')
+  fresh({ paneOpen: true })
+  useSession.setState({ viewingSubagent: 't1', subagentTrail: ['t1'] })
+  st().togglePane()
+  ok(cur().paneOpen && st().viewingSubagent === null, 'picker: over the subagent view the toggle shows the pane instead of hiding it')
 }
 
 const res = (over: Record<string, unknown> = {}): any => ({ type: 'result', sessionId: 's', isError: false, result: null, ...over })

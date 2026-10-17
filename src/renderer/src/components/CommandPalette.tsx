@@ -12,16 +12,18 @@
  * Esc closes (via the shared escape-stack so a palette over a modal closes the palette first).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSession, activeSlice, useActive, EMPTY_CHANGES, EMPTY_SURFACES } from '../store'
+import { useSession, activeSlice, selectPaneOpen, useActive, EMPTY_CHANGES, EMPTY_SURFACES } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { applyTheme } from '../lib/theme'
 import { fuzzyMatch, highlightRuns, rankPaths, splitLine } from '../lib/fuzzy'
 import { requestSurfaceFocus } from '../lib/surfaceFocus'
 import { viaOf, type Via } from '../lib/motion'
-import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage } from './Icon'
+import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage, IconFolder, IconDiff, IconAgentBrowser, IconPaneRight } from './Icon'
 import { FileIcon } from './FileIcon'
 import { cleanError, openEditor } from './surfaces/FileSurface'
 import { tilde } from '../lib/tree'
+import { fileCount } from '../lib/paneItems'
+import { runPaneItem } from './surfaces/PanePicker'
 import { WORKSPACE_FILE_CAP } from '../../../shared/files'
 import type { ProjectGroup } from '../../../shared/sessions'
 
@@ -49,6 +51,7 @@ interface PaletteItem {
   label: string
   /** Secondary line (workspace name, or command hint). */
   hint?: string
+  icon?: (p: { className?: string }) => JSX.Element
   /** Recency for ordering (ms). Higher = more recent. */
   recency: number
   live?: boolean
@@ -218,10 +221,31 @@ export function CommandPalette({
 
     // Commands (always available; the only items in command mode)
     const activeId = store.activeHandleId
+    const slice = activeSlice(store)
+    const paneCommands = (cwd: string): PaletteItem[] => {
+      const n = slice?.changes.length ?? 0
+      const shown = !store.viewingSubagent && selectPaneOpen(slice)
+      const item = (key: string, label: string, hint: string, icon: PaletteItem['icon'], run: () => void): PaletteItem => ({ key: `cmd:${key}`, kind: 'command', label, hint, icon, recency: 0, run })
+      return [
+        {
+          ...item('open-file', 'Open file…', '⌘P', IconSearch, () => {
+            setFileScope(true)
+            setQuery('')
+            setSel(0)
+          }),
+          stay: true
+        },
+        item('tree', 'Show file tree', cwd.slice(cwd.lastIndexOf('/') + 1) || cwd, IconFolder, () => runPaneItem('tree', cwd)),
+        ...(n > 0 ? [item('changes', 'Show Claude changes', fileCount(n), IconDiff, () => runPaneItem('changes', cwd))] : []),
+        ...(slice?.browser ? [item('browser', 'Show browser', '⇧⌘B', IconAgentBrowser, () => void store.revealBrowser(null))] : []),
+        item('pane', shown ? 'Hide pane' : 'Show pane', '⌥⌘0', IconPaneRight, () => store.togglePane())
+      ]
+    }
     const commands: PaletteItem[] = [
       {
         key: 'cmd:new',
         kind: 'command',
+        icon: IconPlus,
         label: 'New session',
         hint: '⌘N',
         recency: 0,
@@ -230,14 +254,16 @@ export function CommandPalette({
       {
         key: 'cmd:new-in-dir',
         kind: 'command',
+        icon: IconPlus,
         label: 'New session in a directory…',
-        hint: '⌘⇧N',
+        hint: '⇧⌘N',
         recency: 0,
         run: onNewSessionInDir
       },
       {
         key: 'cmd:settings',
         kind: 'command',
+        icon: IconSettings,
         label: 'Open Settings',
         hint: '⌘,',
         recency: 0,
@@ -246,6 +272,7 @@ export function CommandPalette({
       {
         key: 'cmd:customizations',
         kind: 'command',
+        icon: IconSliders,
         label: 'Open Configuration',
         hint: 'Agents · Skills · Hooks · MCP (read-only audit)',
         recency: 0,
@@ -272,23 +299,7 @@ export function CommandPalette({
         recency: 0,
         run: onToggleSidebar
       },
-      ...(activeSlice(store)?.cwd
-        ? [
-            {
-              key: 'cmd:open-file',
-              kind: 'command' as const,
-              label: 'Open file…',
-              hint: '⌘P',
-              recency: 0,
-              stay: true,
-              run: () => {
-                setFileScope(true)
-                setQuery('')
-                setSel(0)
-              }
-            }
-          ]
-        : []),
+      ...(slice?.cwd ? paneCommands(slice.cwd) : []),
       ...(activeId
         ? [
             {
@@ -316,6 +327,7 @@ export function CommandPalette({
             {
               key: 'cmd:close',
               kind: 'command' as const,
+              icon: IconClose,
               label: 'Close active session',
               hint: '⌘W',
               recency: 0,
@@ -538,7 +550,7 @@ function Row({
       {/* Neutral, monochrome leading glyph: anchors the row + aligns with command icons;
           identical for live/dormant (it does not encode state). */}
       <span className="shrink-0 text-dim">
-        {isSession ? <IconMessage className="h-3.5 w-3.5" /> : <CommandIcon label={item.label} />}
+        {isSession ? <IconMessage className="h-3.5 w-3.5" /> : item.icon ? <item.icon className="h-3.5 w-3.5" /> : <Dot />}
       </span>
       <span className={`min-w-0 flex-1 truncate text-sm ${dim ? 'text-dim' : 'text-content'}`}>
         {runs.map((r, i) =>
@@ -570,12 +582,7 @@ function Row({
   )
 }
 
-function CommandIcon({ label }: { label: string }): JSX.Element {
-  if (label.startsWith('New')) return <IconPlus className="h-3.5 w-3.5" />
-  if (label.startsWith('Open Settings')) return <IconSettings className="h-3.5 w-3.5" />
-  if (label.startsWith('Open Customizations')) return <IconSliders className="h-3.5 w-3.5" />
-  if (label.startsWith('Close')) return <IconClose className="h-3.5 w-3.5" />
-  if (label === 'Open file…') return <IconSearch className="h-3.5 w-3.5" />
+function Dot(): JSX.Element {
   return (
     <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden="true">
       <span className="h-1.5 w-1.5 rounded-full bg-faint" />

@@ -12,13 +12,15 @@ export interface PaneItem {
   keys?: string
 }
 
+export const fileCount = (n: number): string => `${n} ${n === 1 ? 'file' : 'files'}`
+
 /**
  * What the empty pane and the "+" menu offer, in one fixed order. The conditional items come last, so a session
  * gaining its first change never moves the rows above it.
  */
 export function paneItems({ cwd, home, changes, browser }: { cwd: string; home: string; changes: number; browser: boolean }): PaneItem[] {
   const name = cwd.slice(cwd.lastIndexOf('/') + 1) || cwd
-  const files = `${changes} ${changes === 1 ? 'file' : 'files'}`
+  const files = fileCount(changes)
   const items: PaneItem[] = [
     { key: 'open-file', label: 'Open file…', meta: '⌘P', keys: 'Meta+P' },
     { key: 'tree', label: 'File tree', meta: name, mono: true, description: `Folder ${tilde(cwd, home)}` }

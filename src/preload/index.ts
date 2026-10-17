@@ -132,8 +132,8 @@ const api: CluiApi = {
     ipcRenderer.on(IpcChannels.changesEvent, listener)
     return () => ipcRenderer.removeListener(IpcChannels.changesEvent, listener)
   },
-  onMenuAction: (cb: (action: MenuAction) => void) => {
-    const listener = (_e: unknown, action: MenuAction): void => cb(action)
+  onMenuAction: (cb: (action: MenuAction, page: boolean) => void) => {
+    const listener = (_e: unknown, action: MenuAction, page?: boolean): void => cb(action, !!page)
     ipcRenderer.on(IpcChannels.menuAction, listener)
     return () => ipcRenderer.removeListener(IpcChannels.menuAction, listener)
   },

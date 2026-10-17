@@ -18,7 +18,7 @@ import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, L
 import type { AnnotateEvent } from './annotate'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff } from './changes'
 import type { ContextMenuItem, FileChangedEvent, FileStat, Refusal, TextRead, TreeListing } from './files'
-import type { SurfacesRestore, SurfacesSave } from './surfaces'
+import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
 import type {
   CluiSettings,
   EffortChoice,
@@ -318,10 +318,11 @@ export interface CluiApi {
   onChangesEvent: (cb: (evt: ChangesEvent) => void) => () => void
   /**
    * Subscribe to application-menu actions (⌘N/⌘W/⌘, are driven by a native menu
-   * in main so they compose with the OS shortcut layer, then pushed here).
+   * in main so they compose with the OS shortcut layer, then pushed here). `page` is whether
+   * a native page (the browser pane's view) had focus when the item fired; only main can tell.
    * Returns an unsubscribe fn.
    */
-  onMenuAction: (cb: (action: MenuAction) => void) => () => void
+  onMenuAction: (cb: (action: MenuAction, page: boolean) => void) => () => void
   /** Subscribe to fullscreen enter/leave. Returns an unsubscribe fn. */
   onFullscreenChanged: (cb: (isFullscreen: boolean) => void) => () => void
   /** macOS "Reduce transparency", read from nativeTheme so the solid fallback doesn't rely on Chromium's media query. */
@@ -394,6 +395,7 @@ export type MenuAction =
   | 'find-prev'
   | 'search-global'
   | 'toggle-pane-size'
+  | 'pane-toggle'
   | 'browser-stop'
   | 'browser-annotate'
   | 'browser-toggle'
@@ -513,8 +515,12 @@ export const IpcChannels = {
 export interface MenuState {
   browser: 'none' | 'shown' | 'hidden'
   pane: 'none' | 'split' | 'full'
+  /** The pane's active kind while it shows, 'picker' with no tab active. */
+  surface: SurfaceKind | 'picker' | 'none'
   /** The active session has a cwd, so it has files to open and a pane to show them in. */
   canPane: boolean
+  /** What ⌘W closes, as far as the renderer's focus tells. Main overrides it while a native page has focus. */
+  close: 'session' | 'tab' | 'none'
   /** The active surface's Open externally target, and whether it can open now. */
   external: { kind: 'file' | 'diff' | 'browser' | 'tree' | 'none'; enabled: boolean }
 }
