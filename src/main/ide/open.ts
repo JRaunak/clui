@@ -7,6 +7,7 @@
  * module just launches the editor for a path.
  */
 import { execFile } from 'node:child_process'
+import { homedir } from 'node:os'
 import { promisify } from 'node:util'
 
 const execFileP = promisify(execFile)
@@ -29,13 +30,20 @@ export async function openDiff(
   await runEditor(editorCmd, ['--diff', left, right])
 }
 
+/** Split the editor setting into words, honouring quotes, so `open -a "Visual Studio Code"` works. */
+export function editorArgv(cmd: string): string[] {
+  const words = [...cmd.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((m) => m[1] ?? m[2] ?? m[3])
+  return words.map((w) => (w.startsWith('~/') ? homedir() + w.slice(1) : w))
+}
+
 async function runEditor(editorCmd: string, args: string[]): Promise<void> {
   const shell = process.env.SHELL || '/bin/zsh'
-  // Build a login-shell command so PATH is complete; quote args safely.
-  const quoted = args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' ')
-  const command = `${editorCmd} ${quoted}`
+  const argv = editorArgv(editorCmd)
+  if (!argv.length) throw new Error('No editor command is set.')
+  // The login shell supplies the user's PATH; the setting reaches it as arguments, never as script
+  // text, so a renderer-writable value can't inject shell syntax.
   try {
-    await execFileP(shell, ['-lic', command], { timeout: 8000 })
+    await execFileP(shell, ['-lic', '"$@"', 'clui-editor', ...argv, ...args], { timeout: 8000 })
   } catch (err) {
     throw new Error(
       `Failed to launch editor "${editorCmd}". Is it on your PATH? (${(err as Error).message})`

