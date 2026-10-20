@@ -13,6 +13,7 @@ import { ancestorsOf, changeIndex, flatten, nameOf, parentOf, sortEntries, survi
 import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { reducedMotion, viaOf, type Via } from '../../lib/motion'
 import { closeTab } from './SurfaceTabs'
+import { addFromSurface } from '../ContextChips'
 
 const TAB = 'tree'
 const SKELETON_MS = 400
@@ -343,6 +344,8 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
     const target = changedUnder(r)
     const items: ContextMenuItem[] = [
       ...(r.dir ? [] : [{ type: 'normal' as const, id: 'open', label: 'Open', enabled: true }]),
+      { type: 'normal', id: 'add', label: 'Add to Message', enabled: true },
+      { type: 'separator' },
       { type: 'normal', id: 'editor', label: 'Open in Editor', enabled: true },
       { type: 'normal', id: 'finder', label: 'Reveal in Finder', enabled: true },
       { type: 'separator' },
@@ -358,6 +361,7 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
         () => useSession.setState({ notice: { message: "Couldn't copy the path. Try again.", tone: 'error' } })
       )
     if (id === 'open') openFile(r.rel, at ? 'keyboard' : 'pointer')
+    else if (id === 'add') addFromSurface(handleId, r.dir ? { kind: 'folder', path: abs(r.rel) } : { kind: 'file', path: abs(r.rel) }, say)
     else if (id === 'editor') void openEditor(handleId, abs(r.rel))
     else if (id === 'finder') void reveal(r.rel)
     else if (id === 'copy') copy(abs(r.rel))

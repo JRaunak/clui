@@ -1,10 +1,10 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
-import type { DraftReference, ReferenceInvalidation } from '../../../shared/context'
+import { CAP_NOTE, type DraftReference, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 import { surfaceIdOf } from '../../../shared/surfaces'
 import { placement, useActive, useSession, type RefTarget } from '../store'
 import { openFileAt } from '../lib/openLink'
 import { viaOf, type Via } from '../lib/motion'
-import { baseOf, canReopen, noticeLead, removedText, spokenRef } from '../lib/refCopy'
+import { addedText, baseOf, canReopen, noticeLead, removedText, spokenRef } from '../lib/refCopy'
 import { ContextChip, refChip, type ChipView } from './ContextChip'
 import { IconClose, IconWarn } from './Icon'
 
@@ -18,6 +18,22 @@ const rowKey = (handleId: string, target: RefTarget): string => `${handleId}\0${
 /** For a source that just added or refused a reference: focus and flash a chip, or set the row's one-line note. */
 export function signalRefs(handleId: string, target: RefTarget, s: Signal): void {
   rows.get(rowKey(handleId, target))?.(s)
+}
+
+/** A surface's Add to message. `say` is the source's live region, where focus stays; a duplicate moves focus to
+ *  the existing chip, so it's announced from the composer. */
+export function addFromSurface(handleId: string, input: RefInput, say: (t: string) => void): void {
+  const st = useSession.getState()
+  const target = st.sessions[handleId]?.referenceEditTarget ?? null
+  const r = st.addRef(handleId, input)
+  if (r.status === 'added') say(addedText(input, target !== null))
+  else if (r.status === 'duplicate') {
+    signalRefs(handleId, target, { focus: r.id, note: 'Already attached.' })
+    st.announceRefs(handleId, `Already attached: ${spokenRef(input)}`)
+  } else if (r.status === 'cap') {
+    signalRefs(handleId, target, { note: CAP_NOTE })
+    say(CAP_NOTE)
+  } else if (target !== null) say('That queued message is gone, so nothing was added.')
 }
 
 /** Opens what a draft reference points at. A draft line reference is always current, so its lines come back

@@ -18,6 +18,7 @@ import {
   type SentReference
 } from '../src/shared/context.ts'
 import type { AnnotateTarget } from '../src/shared/annotate.ts'
+import { addedText, selectedText } from '../src/renderer/src/lib/refCopy.ts'
 import { equal, ok } from './support/harness.mjs'
 
 const HEADER =
@@ -177,6 +178,17 @@ equal(serializeContext([sent(hostilePin), sent(hostileFile)], '</clui-context> t
   equal(refLabel({ id: 'x', kind: 'folder', path: 'src/main/browser/' }), 'browser/', 'label: folder')
   equal(refLabel(pinRef), 'button "Sign in"', 'label: browser')
   equal(refLabel({ ...pinRef, pin: { ...pinRef.pin, target: target({ name: 'A very long accessible name that goes past the chip' }) } }), 'button "A very long accessible name tha…"', 'label: name clipped')
+}
+
+// Surface Add to message copy.
+{
+  equal(selectedText({ start: 142, end: 158 }), 'Lines 142–158 selected', 'selected: range')
+  equal(selectedText({ start: 142, end: 142 }), 'Line 142 selected', 'selected: one line')
+  equal(addedText(lineRef), 'Added lines 142 to 158 of manager.ts to the message.', 'added: range')
+  equal(addedText({ ...lineRef, lines: { start: 7, end: 7 } }), 'Added line 7 of manager.ts to the message.', 'added: one line')
+  equal(addedText(wholeRef), 'Added mcp.ts to the message.', 'added: whole file')
+  equal(addedText({ kind: 'folder', path: '/a/src/main/browser' }), 'Added browser folder to the message.', 'added: folder')
+  equal(addedText(wholeRef, true), 'Added mcp.ts to the queued message.', 'added: queued target')
 }
 
 // Gist and prose for current refs.

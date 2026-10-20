@@ -1,5 +1,5 @@
 import { clipName, hostOf, pinWords } from '../../../shared/annotate'
-import { refLabel, type ContextReference, type LineRange, type ReferenceInvalidation } from '../../../shared/context'
+import { refLabel, type ContextReference, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 
 type Reason = ReferenceInvalidation['reason']
 
@@ -18,7 +18,7 @@ export function resourceLabel(r: ContextReference): string {
 }
 
 /** `manager.ts, lines 142 to 158`, `browser folder`, `button Sign in`. */
-export function spokenRef(r: ContextReference): string {
+export function spokenRef(r: RefInput): string {
   switch (r.kind) {
     case 'file':
       return r.lines ? `${baseOf(r.path)}, ${spokenRange(r.lines)}` : baseOf(r.path)
@@ -34,6 +34,15 @@ export function spokenRef(r: ContextReference): string {
 }
 
 const capital = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** `Lines 142–158 selected`. */
+export const selectedText = ({ start, end }: LineRange): string => `${end > start ? `Lines ${start}–${end}` : `Line ${start}`} selected`
+
+/** `Added lines 142 to 158 of manager.ts to the message.` */
+export function addedText(r: RefInput, queued = false): string {
+  const what = r.kind === 'file' && r.lines ? `${spokenRange(r.lines)} of ${baseOf(r.path)}` : spokenRef(r)
+  return `Added ${what} to the ${queued ? 'queued ' : ''}message.`
+}
 
 /** Only a source that is still there can be opened to pick again. */
 export const canReopen = (reason: Reason): boolean => reason === 'changed' || reason === 'out-of-range' || reason === 'navigated'

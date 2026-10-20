@@ -1,7 +1,8 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { diffLines } from 'diff'
-import { restoredTab, useActive, useSession } from '../../store'
+import { refsOf, restoredTab, useActive, useSession } from '../../store'
+import type { DraftReference } from '../../../../shared/context'
 import type { ChangeMarks } from '../../../../shared/changes'
 import type { SurfaceLocation } from '../../../../shared/surfaces'
 import type { Refusal } from '../../../../shared/files'
@@ -18,6 +19,9 @@ import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { reducedMotion, viaOf, type Via } from '../../lib/motion'
 import { noteRead } from '../../lib/blockedFiles'
 import { closeTab } from './SurfaceTabs'
+import { SelectionBar } from './SelectionBar'
+import { addFromSurface } from '../ContextChips'
+import { selectedText } from '../../lib/refCopy'
 
 const SKELETON_MS = 400
 const TEXT_MAX_MB = 5
@@ -209,16 +213,20 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
 
   // Whether the selection, at this revision, is a reference in the draft or a queued message.
   const attachKey = selection && doc.t === 'text' ? `${selection.start}-${selection.end}\0sha256:${doc.revision}` : null
-  const attached = useActive(
-    (s) =>
-      !!attachKey &&
-      !!s &&
-      [s.contextRefs, ...s.queuedMessages.map((q) => q.refs)].some((l) =>
-        l.some(({ ref: r }) => r.kind === 'file' && r.path === path && !!r.lines && `${r.lines.start}-${r.lines.end}\0${r.sourceVersion}` === attachKey)
-      )
-  )
+  const isThis = ({ ref: r }: DraftReference): boolean =>
+    !!attachKey && r.kind === 'file' && r.path === path && !!r.lines && `${r.lines.start}-${r.lines.end}\0${r.sourceVersion}` === attachKey
+  const attached = useActive((s) => !!s && [s.contextRefs, ...s.queuedMessages.map((q) => q.refs)].some((l) => l.some(isThis)))
+  // The bar speaks for where an add lands, which may be one queued message while another holds the selection.
+  const inTarget = useActive((s) => !!s && !!refsOf(s, s.referenceEditTarget)?.some(isThis))
   const attachedRef = useRef(attached)
   attachedRef.current = attached
+  const selSay = useRef<ReturnType<typeof setTimeout>>()
+  const addSelection = (): void => {
+    if (!selection || doc.t !== 'text') return
+    // An add right after selecting must not be talked over by the trailing selection announcement.
+    clearTimeout(selSay.current)
+    addFromSurface(handleId, { kind: 'file', path, lines: selection, sourceVersion: `sha256:${doc.revision}` }, say)
+  }
   const refsHere = useActive((s) => (s ? [s.contextRefs, ...s.queuedMessages.map((q) => q.refs)].flat().filter(({ ref: r }) => r.kind === 'file' && r.path === path && !!r.lines).length : 0))
   // The store removes a stale reference and clears its selection in one step, so both vanishing together means
   // the change reached the store before this tab's own re-read.
@@ -418,6 +426,13 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   }, [doc, count, valid, notice, highlight])
 
   itemsRef.current = items
+
+  // The bar takes its height from the scroller, which can hide the line just selected.
+  const barShown = doc.t === 'text' && !!selection
+  useLayoutEffect(() => {
+    if (barShown && selection) bodyEl.current?.querySelector(`[data-line="${selection.end}"]`)?.scrollIntoView({ block: 'nearest' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [barShown])
   const toLine = (n: number, align: 'center' | 'start'): void => {
     const index = lineIndex[Math.max(1, Math.min(count, n))]
     virtuoso.current?.scrollToIndex({ index, align })
@@ -481,7 +496,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   useEffect(() => {
     if (!selection && !hadSelection.current) return
     hadSelection.current = !!selection
-    const t = setTimeout(() => say(selection ? `${selection.start === selection.end ? 'Line' : 'Lines'} ${rangeText(selection, ' to ').replace(/^lines? /, '')} selected` : 'Selection cleared'), ANNOUNCE_MS)
+    const t = (selSay.current = setTimeout(() => say(selection ? `${selection.start === selection.end ? 'Line' : 'Lines'} ${rangeText(selection, ' to ').replace(/^lines? /, '')} selected` : 'Selection cleared'), ANNOUNCE_MS))
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selKey])
@@ -516,6 +531,10 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
 
   const onRegionKey = (e: KeyboardEvent): void => {
     if (e.target !== e.currentTarget) return
+    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && selection) {
+      e.preventDefault()
+      return addSelection()
+    }
     if (e.key === 'Escape') {
       if (!selection && !highlight) return
       e.preventDefault()
@@ -907,6 +926,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
       >
         {content}
       </div>
+      {barShown && selection && <SelectionBar label={selectedText(selection)} attached={inTarget} onAdd={addSelection} />}
       <span className="sr-only" aria-live="polite">
         {said}
       </span>
