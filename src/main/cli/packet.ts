@@ -86,6 +86,19 @@ export function readFailure(reason: Refusal['reason']): 'missing' | 'denied' | '
   return reason === 'missing' ? 'missing' : reason === 'denied' || reason === 'permission' ? 'denied' : 'changed'
 }
 
+/** One drop's worth; a longer list is refused whole. */
+export const CLASSIFY_MAX = 256
+
+/** The reference kind each dropped path would pass dispatch as, so a chip made from a drop is never refused at send. */
+export async function classifyRefPaths(deps: Pick<PacketDeps, 'authorize'>, handleId: unknown, paths: unknown): Promise<('file' | 'folder' | null)[]> {
+  if (typeof handleId !== 'string' || !Array.isArray(paths) || paths.length > CLASSIFY_MAX || !paths.every((p) => typeof p === 'string')) return []
+  return Promise.all(
+    paths.map(async (p: string) =>
+      (await deps.authorize(handleId, p, 'file')) === 'ok' ? 'file' : (await deps.authorize(handleId, p, 'folder')) === 'ok' ? 'folder' : null
+    )
+  )
+}
+
 /** Every ref that no longer points at what the user picked. Each file or tab is read once. */
 export async function validateRefs(deps: PacketDeps, handleId: string, refs: readonly Pick<DraftReference, 'ref'>[]): Promise<RefInvalid[]> {
   const memo = new Map<string, Promise<unknown>>()

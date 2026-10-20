@@ -1,3 +1,4 @@
+import type { SourceVersion } from './context'
 export type SurfaceKind = 'browser' | 'tree' | 'file' | 'diff' | 'image' | 'doc' | 'sheet' | 'artifact'
 export type OpenedBy = 'user' | 'claude' | 'link' | 'change'
 export type ViewMode = 'auto' | 'preview' | 'source'
@@ -17,6 +18,8 @@ export interface SurfaceLocation {
 }
 export interface SurfaceSelection {
   lines?: { start: number; end: number }
+  /** A File tab's revision the lines were selected against, so a reader that isn't the mounted tab can build the line reference. */
+  sourceVersion?: SourceVersion
   change?: { segmentId: string; revision: string; hunkId: string; side: 'diff' | 'before' | 'after' }
   range?: string
   region?: Region

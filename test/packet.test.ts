@@ -1,6 +1,6 @@
 // Boundary: main's packet checks. A reference that no longer points at what the user picked sends nothing; a
 // packet that isn't exactly the shape is refused whole; the text Claude reads is built from the checked refs.
-import { parseOutgoing, preparePacket, validateRefs, type PacketDeps } from '../src/main/cli/packet.ts'
+import { CLASSIFY_MAX, classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from '../src/main/cli/packet.ts'
 import { parseRefs } from '../src/shared/context.ts'
 import { ok } from './support/harness.mjs'
 
@@ -103,4 +103,18 @@ ok((await reasons([pin()], deps({ docOf: async () => null }))) === 'r3:closed', 
   ok(!parseOutgoing(pkt({ refs: [whole('x1')] })), 'parse: an id not shaped r<n>')
   ok(!parseOutgoing(pkt({ attachments: [{ kind: 'image', mediaType: 'image/svg+xml', data: 'QQ==' }] })), 'parse: an unknown attachment media type')
   ok(!parseOutgoing(pkt({ now: 'yes' })), 'parse: now must be a boolean')
+}
+
+// A drop becomes a chip only where dispatch would let it through.
+{
+  const kinds: Record<string, 'file' | 'folder'> = { '/w/a.ts': 'file', '/w/src': 'folder' }
+  const asked: string[] = []
+  const d = { authorize: async (_h: string, p: string, kind: 'file' | 'folder') => (asked.push(`${kind}:${p}`), kinds[p] === kind ? 'ok' as const : kinds[p] ? 'denied' as const : 'missing' as const) }
+  const got = await classifyRefPaths(d, 'h', ['/w/a.ts', '/w/src', '/elsewhere/b.ts'])
+  ok(got.join() === 'file,folder,', 'classify: a file, a folder, and a path dispatch would refuse')
+  ok(asked.includes('folder:/w/src') && !asked.includes('folder:/w/a.ts'), 'classify: a folder is asked as a folder only after the file check fails')
+  ok((await classifyRefPaths(d, 'h', 'not a list')).length === 0, 'classify: a non-array is refused')
+  ok((await classifyRefPaths(d, 'h', ['/w/a.ts', 3])).length === 0, 'classify: a non-string path refuses the list')
+  ok((await classifyRefPaths(d, 7, ['/w/a.ts'])).length === 0, 'classify: a non-string handle is refused')
+  ok((await classifyRefPaths(d, 'h', Array.from({ length: CLASSIFY_MAX + 1 }, () => '/w/a.ts'))).length === 0, 'classify: an oversized list is refused whole')
 }

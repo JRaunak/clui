@@ -1,5 +1,6 @@
 import { clipName, hostOf, pinWords } from '../../../shared/annotate'
-import { refLabel, type ContextReference, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
+import { MAX_REFS, refLabel, type ContextReference, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
+import { WORKSPACE_FILE_CAP } from '../../../shared/files'
 
 type Reason = ReferenceInvalidation['reason']
 
@@ -42,6 +43,35 @@ export const selectedText = ({ start, end }: LineRange): string => `${end > star
 export function addedText(r: RefInput, queued = false): string {
   const what = r.kind === 'file' && r.lines ? `${spokenRange(r.lines)} of ${baseOf(r.path)}` : spokenRef(r)
   return `Added ${what} to the ${queued ? 'queued ' : ''}message.`
+}
+
+export const couldNotAdd = (r: RefInput): string => `Couldn't add ${spokenRef(r)}.`
+
+const count = new Intl.NumberFormat('en-US')
+
+/** The `@` menu's footer when main stopped listing at the cap. */
+export const truncatedText = `Only the first ${count.format(WORKSPACE_FILE_CAP)} files are searched. Add others from the file tree.`
+
+export const showingText = (shown: number, total: number): string => `Showing ${shown} of ${count.format(total)} files. Keep typing to narrow them.`
+
+export const noMatchText = (q: string): string => `No files match “${q}”.`
+
+/** The row note when a drop ran into the cap: the rest are skipped, never sent as text instead. */
+export const skippedNote = (n: number): string => `${MAX_REFS} references max. ${n} ${n === 1 ? 'file was' : 'files were'} not added.`
+
+/** One drop's announcement: `Added 3 references to the message. 1 was already attached.` */
+export function dropText(added: readonly RefInput[], mentions: { inside: number; outside: number }, dupes: readonly RefInput[], skipped: number): string {
+  const { inside, outside } = mentions
+  if (dupes.length === 1 && !added.length && !inside && !outside && !skipped) return `Already attached: ${spokenRef(dupes[0])}`
+  return [
+    added.length === 1 ? addedText(added[0]) : added.length ? `Added ${added.length} references to the message.` : '',
+    outside === 1 ? '1 file outside this folder was added as an @ mention.' : outside ? `${outside} files outside this folder were added as @ mentions.` : '',
+    inside === 1 ? '1 file was added as an @ mention.' : inside ? `${inside} files were added as @ mentions.` : '',
+    dupes.length ? `${dupes.length} ${dupes.length === 1 ? 'was' : 'were'} already attached.` : '',
+    skipped ? skippedNote(skipped) : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
 }
 
 /** Only a source that is still there can be opened to pick again. */

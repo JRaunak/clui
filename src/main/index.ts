@@ -57,7 +57,7 @@ import { listModels } from './models/list'
 import { BrowserManager } from './browser/manager'
 import { BrowserMcpServer } from './browser/mcp'
 import { Annotator } from './browser/annotate'
-import { parseOutgoing, preparePacket, validateRefs, type PacketDeps } from './cli/packet'
+import { classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from './cli/packet'
 import { contextWatches } from './surfaces/context-watch'
 import { isRefInput, MAX_REFS, type DraftReference } from '../shared/context'
 import { WORLD } from './browser/cursor'
@@ -925,6 +925,8 @@ function registerIpc(): void {
     if (!root || !(await stat(root).catch(() => null))?.isDirectory()) throw new Error('The folder no longer exists.')
     return listWorkspaceFiles(root)
   })
+
+  handle(IpcChannels.classifyRefPaths, (_e, handleId: unknown, paths: unknown) => classifyRefPaths(packetDeps, handleId, paths))
 
   handle(IpcChannels.editLine, async (_e, handleId: string, path: string, editId: string) => {
     if (typeof handleId !== 'string' || typeof path !== 'string' || typeof editId !== 'string') return null

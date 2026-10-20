@@ -11,7 +11,7 @@ import {
 } from 'react'
 import { chipMode, effectiveMode, useActive, useSession, EMPTY_ATTACHMENTS, EMPTY_NOTICES, EMPTY_REFS, type SendAttachment } from '../store'
 import { attachmentChip } from './ContextChip'
-import { ContextChips, signalRefs } from './ContextChips'
+import { addToDraft, ContextChips, signalRefs } from './ContextChips'
 import { useComposerAutocomplete } from './ComposerAutocomplete'
 import { ModelEffortPicker } from './ModelEffortPicker'
 import { UltracodeToggle } from './UltracodeToggle'
@@ -35,6 +35,8 @@ import {
   IconTarget
 } from './Icon'
 import { processDroppedFiles, toWireAttachment, type ProcessedAttachment } from '../lib/images'
+import { routeDrop } from '../lib/composerRefs'
+import { dropText, skippedNote } from '../lib/refCopy'
 import {
   PERMISSION_MODES,
   PERMISSION_MODE_LABELS,
@@ -82,6 +84,8 @@ export function Composer(): JSX.Element {
   const turnStartMs = useActive((s) => s?.turnStartMs ?? null)
   const hasSession = useActive((s) => !!s)
   const cwd = useActive((s) => s?.cwd ?? null)
+  // Main gives a folder at or above home no workspace scope, so a drop there can only become @ text.
+  const scoped = !!cwd && !`${window.clui.homeDir}/`.startsWith(cwd.endsWith('/') ? cwd : `${cwd}/`)
   // Editable only before the first turn: after a message is sent, the CLI has fixed the
   // transcript's folder-slug at process-create, so changing the dir would be a lie (that's a
   // fork/new session, out of scope). A directoryless session runs in the chat dir.
@@ -119,10 +123,8 @@ export function Composer(): JSX.Element {
 
   // Drop/paste/pick routing:
   //  - Images inline as thumbnails (the model can't @-read pixels; it needs the block).
-  //  - Every other file becomes an @path token in the composer (relative if under the workspace
-  //    cwd, else absolute). The CLI expands @ and the model Reads it on demand. This is token-cheap
-  //    (a pointer, not the re-billed contents), handles files we can't inline, reflects live edits,
-  //    and works in- or out-of-cwd.
+  //  - A pathful file or folder main would let a message point at becomes a reference chip. Any other path stays
+  //    an @path token at the caret (relative under cwd, else absolute), which the CLI resolves itself.
   //  - A file with no resolvable path (a pasted screenshot Blob) can't be referenced by path, so
   //    fall back to inlining its bytes so paste still works.
   const addFiles = async (files: File[]): Promise<void> => {
@@ -130,30 +132,44 @@ export function Composer(): JSX.Element {
     // Bind to the handle the drop started on, so a conversion that finishes after the user
     // switched sessions lands in this session's draft, not whichever is active then.
     const h = handleId
-    const inlineFallback: File[] = []
-    const tokens: string[] = []
+    const inline: File[] = []
+    const paths: string[] = []
     for (const file of files) {
-      if (file.type.startsWith('image/')) {
-        inlineFallback.push(file)
-        continue
-      }
-      const abs = window.clui.getPathForFile(file)
-      if (abs) tokens.push('@' + toWorkspaceRef(abs, cwd))
-      else inlineFallback.push(file)
+      const abs = file.type.startsWith('image/') ? '' : window.clui.getPathForFile(file)
+      if (abs) paths.push(abs)
+      else inline.push(file)
     }
-    if (tokens.length) insertAtCaret(tokens.join(' ') + ' ')
-    if (inlineFallback.length) {
-      const { attachments: added, errors } = await processDroppedFiles(inlineFallback)
-      if (added.length) addDraftAttachments(h, added)
-      if (errors.length) setNotice(errors.join(' '))
-    }
+    const [kinds, processed] = await Promise.all([
+      paths.length ? window.clui.classifyRefPaths(h, paths).catch(() => []) : [],
+      inline.length ? processDroppedFiles(inline) : null
+    ])
+    const slice = useSession.getState().sessions[h]
+    if (!slice) return
+    const { refs: inputs, mentions, outside } = routeDrop(paths, kinds, slice.cwd)
+    const results = addToDraft(h, inputs, skippedNote)
+    if (mentions.length) insertText(h, mentions.join(' ') + ' ')
+    const said = dropText(
+      inputs.filter((_, i) => results[i].status === 'added'),
+      { inside: mentions.length - outside, outside },
+      inputs.filter((_, i) => results[i].status === 'duplicate'),
+      results.filter((r) => r.status === 'cap').length
+    )
+    if (said) useSession.getState().announceRefs(h, said)
+    if (processed?.attachments.length) addDraftAttachments(h, processed.attachments)
+    if (processed?.errors.length) setNotice(processed.errors.join(' '))
   }
 
-  // Splice text at the caret (reused for the @path tokens), then restore the caret.
-  const insertAtCaret = (insert: string): void => {
-    const at = Math.min(caret, text.length)
-    const next = text.slice(0, at) + insert + text.slice(at)
-    applyPick(next, at + insert.length)
+  // After an await: reads the draft now, so typing during the IPC isn't overwritten. Splices at the textarea's
+  // caret while `h` is still the active session, else appends to its draft.
+  const insertText = (h: string, insert: string): void => {
+    const st = useSession.getState()
+    const cur = st.sessions[h]?.draftText ?? ''
+    const ta = textareaRef.current
+    if (h !== st.activeHandleId || !ta) return setDraftText(h, cur + (cur && !/\s$/.test(cur) ? ' ' : '') + insert)
+    const at = Math.min(ta.selectionStart ?? cur.length, cur.length)
+    setDraftText(h, cur.slice(0, at) + insert + cur.slice(at))
+    setCaret(at + insert.length)
+    requestAnimationFrame(() => ta.setSelectionRange(at + insert.length, at + insert.length))
   }
 
   const removeAttachment = (id: string): void => {
@@ -354,10 +370,13 @@ export function Composer(): JSX.Element {
           <GateHost />
           {/* Drag-to-attach overlay: accent is legit here (a live, transient state cue). */}
           {dragOver && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg-elev/85">
-              <div className="flex items-center gap-2 text-sm font-medium text-accent">
-                <IconPlus className="h-5 w-5" />
-                Drop to attach · images inline, other files as @references
+            <div data-ui="drop-overlay" className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg-elev/85">
+              <div className="flex flex-col items-center gap-1">
+                <div className="flex items-center gap-2 text-sm font-medium text-accent">
+                  <IconPlus className="h-5 w-5" />
+                  Drop to add to the message
+                </div>
+                {scoped && <div className="text-meta text-dim">Images go as pictures. Files and folders go as references Claude opens itself.</div>}
               </div>
             </div>
           )}
@@ -388,6 +407,7 @@ export function Composer(): JSX.Element {
               aria-expanded={ac.open}
               aria-controls={ac.listboxId}
               aria-activedescendant={ac.activeId}
+              aria-describedby={ac.describedBy}
               value={text}
               onChange={(e) => {
                 if (handleId) {
@@ -589,17 +609,6 @@ function DirectoryChip({
       }
     />
   )
-}
-
-/** The @-reference for a dropped file: workspace-relative when under cwd (matches the
- *  @-picker), else absolute. Pure string math. No node `path` in the renderer. */
-function toWorkspaceRef(abs: string, cwd: string | null): string {
-  if (cwd) {
-    const base = cwd.endsWith('/') ? cwd : cwd + '/'
-    if (abs === cwd) return abs
-    if (abs.startsWith(base)) return abs.slice(base.length)
-  }
-  return abs
 }
 
 // Per-mode glyph so the mode is legible by shape, not color alone 

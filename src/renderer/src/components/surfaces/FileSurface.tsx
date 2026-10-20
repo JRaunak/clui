@@ -174,6 +174,8 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   docRef.current = doc
   const selRef = useRef(selection)
   selRef.current = selection
+  const selVersion = useRef(tab?.selection?.sourceVersion)
+  selVersion.current = tab?.selection?.sourceVersion
   const busyRef = useRef(busy)
   busyRef.current = busy
   const [slow, setSlow] = useState(false)
@@ -240,7 +242,8 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   const setSelection = useCallback(
     (lines: Lines | null) => {
       setNotice(null)
-      setView(handleId, tabId, { selection: lines ? { lines } : undefined, highlight: undefined })
+      const d = docRef.current
+      setView(handleId, tabId, { selection: lines && d.t === 'text' ? { lines, sourceVersion: `sha256:${d.revision}` } : undefined, highlight: undefined })
     },
     [handleId, tabId, setView]
   )
@@ -271,13 +274,18 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
         const map = survivors(prev.text, next.text)
         const start = map?.[sel.start - 1] ?? -1
         const whole = start >= 0 && Array.from({ length: sel.end - sel.start + 1 }, (_, i) => map![sel.start - 1 + i]).every((m, i) => m === start + i)
-        if (whole) setView(handleId, tabId, { selection: { lines: { start: start + 1, end: start + 1 + sel.end - sel.start } } })
+        if (whole) setView(handleId, tabId, { selection: { lines: { start: start + 1, end: start + 1 + sel.end - sel.start }, sourceVersion: `sha256:${next.revision}` } })
         else {
           setView(handleId, tabId, { selection: undefined })
           setNotice('cleared')
           say("The lines you selected changed on disk, so the selection was cleared.")
         }
       }
+    } else if (next.t === 'text' && selRef.current && selVersion.current && selVersion.current !== `sha256:${next.revision}`) {
+      // A remounted tab has no earlier text to remap from; its selection was made against the revision it stored.
+      setView(handleId, tabId, { selection: undefined })
+      setNotice('cleared')
+      say('The lines you selected changed on disk, so the selection was cleared.')
     }
     setDoc(next)
   }, [handleId, path, tabId, setView])

@@ -163,7 +163,7 @@ export function isDraftVisual(x: unknown): x is DraftVisual {
 export const isSelection = (r: ContextReference): boolean => r.kind === 'file' && !!r.lines
 
 /** Semantic dedupe key: ignores `id` and `note`. */
-export function refKey(r: ContextReference): string {
+export function refKey(r: RefInput): string {
   switch (r.kind) {
     case 'file':
       return ['file', r.path, r.lines ? `${r.lines.start}-${r.lines.end}` : '', r.sourceVersion ?? ''].join('\0')
@@ -194,7 +194,7 @@ const baseName = (p: string): string => p.replace(/\/+$/, '').split('/').pop() |
 const pinText = (kind: string, name: string): string => (name ? `${kind} "${clipName(name)}"` : kind)
 
 /** `manager.ts · L142–158`, `manager.ts`, `browser/`, `button "Sign in"`. The one place this copy lives. */
-export function refLabel(r: ContextReference): string {
+export function refLabel(r: RefInput): string {
   switch (r.kind) {
     case 'file': {
       if (!r.lines) return baseName(r.path)

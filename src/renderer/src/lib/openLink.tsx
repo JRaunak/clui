@@ -61,21 +61,24 @@ export function linkHandlers(href: string): { onClick: (e: MouseEvent) => void; 
   }
 }
 
+/** A session's listed files; `truncated` when main stopped at the cap. */
+export type Listed = Workspace & { truncated: boolean }
+
 /** Each session's workspace file list as sets, so a path in the transcript is one lookup. Loaded on first use. */
-const useWorkspaces = create<{ sets: Record<string, Workspace> }>(() => ({ sets: {} }))
+const useWorkspaces = create<{ sets: Record<string, Listed> }>(() => ({ sets: {} }))
 const listing = new Set<string>()
 
 function loadWorkspace(handleId: string, again = false): void {
   if (listing.has(handleId) || (!again && useWorkspaces.getState().sets[handleId])) return
   listing.add(handleId)
-  const put = (ws: Workspace): void => {
+  const put = (ws: Listed): void => {
     listing.delete(handleId)
     if (useSession.getState().sessions[handleId]) useWorkspaces.setState((m) => ({ sets: { ...m.sets, [handleId]: ws } }))
   }
   // A folder that can't be listed links nothing, and isn't asked again on every render.
   window.clui.listWorkspaceFiles(handleId).then(
-    (r) => put(workspaceOf(r.files)),
-    () => put(workspaceOf([]))
+    (r) => put({ ...workspaceOf(r.files), truncated: r.truncated }),
+    () => put({ ...workspaceOf([]), truncated: false })
   )
 }
 
@@ -117,6 +120,15 @@ export function useLinkRoot(on: boolean): LinkRoot | null {
     if (handleId) loadWorkspace(handleId)
   }, [handleId])
   return useMemo(() => (handleId ? { handleId, cwd, ws } : null), [handleId, cwd, ws])
+}
+
+/** The session's listing for the `@` menu, loaded once it's wanted and refreshed as file links are. */
+export function useWorkspaceListing(handleId: string | null, on: boolean): Listed | null {
+  const ws = useWorkspaces((m) => (handleId ? m.sets[handleId] : undefined)) ?? null
+  useEffect(() => {
+    if (on && handleId) loadWorkspace(handleId)
+  }, [on, handleId])
+  return ws
 }
 
 const linesOf = (at: Pick<FileRef, 'line' | 'endLine'>): string =>

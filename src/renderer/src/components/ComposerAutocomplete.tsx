@@ -1,20 +1,26 @@
 /**
  * Autocomplete popover for the composer: a `/` command menu (skills + headless-safe
- * built-ins) and an `@` file picker (git-aware, fuzzy). Surfacing affordances only;
- * the CLI already honors typed `/cmd` and `@path`, and this adds the menu.
+ * built-ins) and an `@` menu of agents, open File tabs and workspace files (git-aware, fuzzy).
  *
  * Design: the Composer owns the textarea; this hook-driven component reads the
  * current `text` + `caret`, detects the active trigger token, and returns an API
  * the composer uses to (a) know if the menu is open (to delegate ↑/↓/Enter/Tab/Esc)
- * and (b) render the popover. Picking replaces the trigger token inline at the caret.
+ * and (b) render the popover. A command, skill or agent pick replaces the trigger token
+ * inline; a file pick adds a reference chip and removes the token.
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { useActive, EMPTY_SLASH_COMMANDS } from '../store'
+import { CAP_NOTE, refKey, refLabel, type RefInput } from '../../../shared/context'
+import { useActive, useSession, EMPTY_REFS, EMPTY_SLASH_COMMANDS } from '../store'
 import { fuzzyMatch, highlightRuns, rankPaths } from '../lib/fuzzy'
 import { resolveSlashCommands } from '../lib/slashCommands'
+import { paneRows, removeToken } from '../lib/composerRefs'
+import { useWorkspaceListing } from '../lib/openLink'
+import { addedText, couldNotAdd, noMatchText, showingText, spokenRef, truncatedText } from '../lib/refCopy'
+import { addToDraft } from './ContextChips'
 import { IconSearch } from './Icon'
 
 interface Item {
+  key: string
   /** Text inserted (without the trigger char), e.g. "compact" or "src/App.tsx". */
   value: string
   label: string
@@ -24,7 +30,26 @@ interface Item {
   /** Full literal replacement (incl. trigger char), overriding the default
    *  `trigger.char + value`. Agents need the quoted `@"name (agent)"` form. */
   insert?: string
+  /** The reference a pick adds in place of text. */
+  input?: RefInput
+  aria?: string
 }
+
+interface Row {
+  it: Item
+  matches: number[]
+}
+
+interface Group {
+  label: string
+  rows: Row[]
+}
+
+const RESULT_CAP = 50
+const PANE_CAP = 8
+const NO_MENU: { groups: Group[]; shown: number; total: number } = { groups: [], shown: 0, total: 0 }
+/** Session and cwd pairs whose truncated listing was already announced. */
+const toldTruncated = new Set<string>()
 
 /** The active trigger token at the caret, or null if none. */
 interface Trigger {
@@ -68,7 +93,11 @@ export interface AutocompleteApi {
   listboxId: string
   /** Id of the active option, for the textarea's `aria-activedescendant`; undefined when closed. */
   activeId: string | undefined
+  /** The textarea's `aria-describedby` while the footer shows: the no-match line first when there is one. */
+  describedBy: string | undefined
 }
+
+const lift = (it: Item): number => (it.kind === 'file' ? 0 : 10000)
 
 export function useComposerAutocomplete(
   text: string,
@@ -77,20 +106,21 @@ export function useComposerAutocomplete(
 ): AutocompleteApi {
   const cwd = useActive((s) => s?.cwd ?? null)
   const handleId = useActive((s) => s?.handleId ?? null)
-  const [files, setFiles] = useState<string[]>([])
+  const refs = useActive((s) => s?.contextRefs ?? EMPTY_REFS)
+  const tabs = useActive((s) => s?.surfaces.tabs ?? null)
   const [sel, setSel] = useState(0)
-  const loadedForCwd = useRef<string | null>(null)
+  const [dismissed, setDismissed] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const listboxId = useId()
+  const footerId = useId()
+  const emptyId = useId()
 
   const trigger = detectTrigger(text, caret)
+  const q = trigger?.query ?? ''
 
-  // Lazy-load the workspace file list the first time an `@` trigger opens (per cwd).
-  useEffect(() => {
-    if (trigger?.char !== '@' || !cwd || !handleId || loadedForCwd.current === cwd) return
-    loadedForCwd.current = cwd
-    void window.clui.listWorkspaceFiles(handleId).then((r) => setFiles(r.files)).catch(() => setFiles([]))
-  }, [trigger?.char, cwd, handleId])
+  const listing = useWorkspaceListing(handleId, trigger?.char === '@')
+  const truncated = !!listing?.truncated
+  const files = useMemo(() => (listing ? [...listing.files] : []), [listing])
 
   // Build candidate items for the active trigger.
   const skills = useActiveSkills(trigger?.char === '/')
@@ -99,68 +129,108 @@ export function useComposerAutocomplete(
   // headless-safe allowlist + hydrated with real descriptions/arg-hints.
   const liveCommands = useActive((s) => s?.slashCommands ?? EMPTY_SLASH_COMMANDS)
   const commands = useMemo(() => resolveSlashCommands(liveCommands), [liveCommands])
-  const candidates = useMemo<Item[]>(() => {
-    if (!trigger) return []
-    if (trigger.char === '/') {
-      return [
-        ...commands.map((c) => ({
-          value: c.name,
-          label: `/${c.name}`,
-          hint: c.description,
-          args: c.argumentHint,
-          kind: 'command' as const
-        })),
-        ...skills.map((s) => ({
-          value: s.name,
-          label: `/${s.name}`,
-          hint: s.description,
-          kind: 'skill' as const
-        }))
-      ]
-    }
-    // Agents first (delegate the turn), then files. Empty query keeps this order
-    // since the fuzzy sort is skipped, so agents sit above files naturally.
-    return [
-      ...agents.map((a) => ({
-        value: a.name,
-        label: a.name,
-        hint: a.description,
-        kind: 'agent' as const,
-        insert: `@"${a.name} (agent)"`
-      })),
-      ...files.map((f) => ({ value: f, label: f, kind: 'file' as const }))
-    ]
-  }, [trigger?.char, skills, agents, files, commands])
+  const attached = useMemo(() => new Set(refs.map((d) => refKey(d.ref))), [refs])
+
+  const commandItems = useMemo<Item[]>(
+    () => [
+      ...commands.map((c) => ({ key: `command:${c.name}`, value: c.name, label: `/${c.name}`, hint: c.description, args: c.argumentHint, kind: 'command' as const })),
+      ...skills.map((s) => ({ key: `skill:${s.name}`, value: s.name, label: `/${s.name}`, hint: s.description, kind: 'skill' as const }))
+    ],
+    [commands, skills]
+  )
+  // Agents first (delegate the turn), then files. Empty query keeps this order
+  // since the fuzzy sort is skipped, so agents sit above files naturally.
+  const atItems = useMemo<Item[]>(
+    () => [
+      ...agents.map((a) => ({ key: `agent:${a.name}`, value: a.name, label: a.name, hint: a.description, kind: 'agent' as const, insert: `@"${a.name} (agent)"` })),
+      ...files.map((f): Item => {
+        const input: RefInput | undefined = cwd ? { kind: 'file', path: `${cwd}/${f}` } : undefined
+        return { key: `file:${f}`, value: f, label: f, kind: 'file', input, ...(input && attached.has(refKey(input)) ? { hint: 'In message' } : {}) }
+      })
+    ],
+    [agents, files, cwd, attached]
+  )
 
   // Fuzzy-filter + rank by the trigger's query. An agent, skill or command that matches by name sits above
-  // every file. Commands render as "/usage" but match on "usage", so their highlight is recomputed on the label.
-  const results = useMemo(() => {
-    if (!trigger) return []
-    const q = trigger.query
-    const ranked = rankPaths(q, candidates, (it) => it.value, (it) => (it.kind === 'file' ? 0 : 10000))
-    return ranked.slice(0, 50).map(({ item: it, matches }) => ({
-      it,
-      matches: it.label === it.value ? matches : fuzzyMatch(q, it.label).matches
-    }))
-  }, [candidates, trigger?.query])
+  // every file. Commands and Open in pane rows render a label that isn't their match key, so their highlight is
+  // recomputed on the label.
+  const menu = useMemo(() => {
+    if (!trigger) return NO_MENU
+    const rowOf = ({ item: it, matches }: { item: Item; matches: number[] }): Row => ({ it, matches: it.label === it.value ? matches : fuzzyMatch(q, it.label).matches })
+    if (trigger.char === '/') {
+      const rows = rankPaths(q, commandItems, (it) => it.value, lift).slice(0, RESULT_CAP).map(rowOf)
+      return rows.length ? { groups: [{ label: 'Commands & skills', rows }], shown: 0, total: 0 } : NO_MENU
+    }
+    const inDraft = (r: RefInput): boolean => attached.has(refKey(r))
+    const pane = rankPaths(q, paneRows(Object.values(tabs ?? {}), cwd, window.clui.homeDir, inDraft), (r) => r.rel).slice(0, PANE_CAP)
+    const taken = new Set(pane.flatMap(({ item: { input } }) => (input.kind === 'file' && !input.lines ? [input.path] : [])))
+    const paneItems = pane.map(({ item: r }): Row => {
+      const label = refLabel(r.input)
+      return { it: { key: r.key, value: r.rel, label, hint: r.hint, kind: 'file', input: r.input, aria: r.aria }, matches: fuzzyMatch(q, label).matches }
+    })
+    const ranked = rankPaths(q, taken.size ? atItems.filter((it) => !it.input || it.input.kind !== 'file' || !taken.has(it.input.path)) : atItems, (it) => it.value, lift)
+    const rest = ranked.slice(0, RESULT_CAP - paneItems.length).map(rowOf)
+    const groups = [
+      ...(paneItems.length ? [{ label: 'Open in pane', rows: paneItems }] : []),
+      ...(rest.length ? [{ label: 'Agents & files', rows: rest }] : [])
+    ]
+    return {
+      groups,
+      shown: rest.filter((r) => r.it.kind === 'file').length,
+      total: q.trim() ? ranked.filter((r) => r.item.kind === 'file').length : 0
+    }
+  }, [trigger?.char, q, commandItems, atItems, tabs, cwd, attached])
+  const flat = useMemo(() => menu.groups.flatMap((g) => g.rows), [menu])
 
-  const open = trigger !== null && results.length > 0
+  const open = trigger !== null && flat.length > 0
+  // A truncated listing explains a query that matches nothing; a complete one just closes.
+  const empty = trigger?.char === '@' && !open && truncated
+  const visible = (open || empty) && !dismissed
+  const menuOpen = open && !dismissed
+  const footer = useMemo(
+    () => (trigger?.char === '@' ? [truncated ? truncatedText : '', menu.total > menu.shown ? showingText(menu.shown, menu.total) : ''].filter(Boolean) : []),
+    [trigger?.char, truncated, menu]
+  )
 
   useEffect(() => {
-    setSel((s) => (results.length ? Math.min(s, results.length - 1) : 0))
-  }, [results.length])
+    setSel((s) => (flat.length ? Math.min(s, flat.length - 1) : 0))
+  }, [flat.length])
   // Reset selection to the top whenever the query changes.
   useEffect(() => setSel(0), [trigger?.query, trigger?.char])
   // Keep the selected row in view as the user arrows through a long list.
   useEffect(() => {
     listRef.current?.querySelector(`[data-idx="${sel}"]`)?.scrollIntoView({ block: 'nearest' })
   }, [sel])
+  // Esc dismissal: hide until the query changes again.
+  useEffect(() => setDismissed(false), [trigger?.query, trigger?.char, trigger?.start])
+
+  useEffect(() => {
+    if (!visible || !truncated || trigger?.char !== '@' || !handleId) return
+    const key = `${handleId}\0${cwd}`
+    if (toldTruncated.has(key)) return
+    toldTruncated.add(key)
+    useSession.getState().announceRefs(handleId, truncatedText)
+  }, [visible, truncated, trigger?.char, handleId, cwd])
 
   const pick = useCallback(
     (i: number) => {
       if (!trigger) return
-      const chosen = results[i]?.it
+      const chosen = flat[i]?.it
       if (!chosen) return
+      const input = chosen.input
+      if (input && handleId) {
+        const say = (t: string): void => useSession.getState().announceRefs(handleId, t)
+        const [r] = addToDraft(handleId, [input], () => CAP_NOTE)
+        if (r.status === 'added' || r.status === 'duplicate') {
+          say(r.status === 'added' ? addedText(input) : `Already attached: ${spokenRef(input)}`)
+          const next = removeToken(text, trigger.start, caret)
+          return apply(next.text, next.caret)
+        }
+        // Nothing was added, so what the user typed stays; the menu goes so Enter can't re-pick into the refusal.
+        say(r.status === 'cap' ? CAP_NOTE : couldNotAdd(input))
+        setDismissed(true)
+        return apply(text, caret)
+      }
       // Agents carry a full quoted `insert` (`@"name (agent)"`); everything else is
       // just the trigger char + value. Trailing space so you keep typing.
       const insert = `${chosen.insert ?? trigger.char + chosen.value} `
@@ -168,38 +238,37 @@ export function useComposerAutocomplete(
       const nextText = text.slice(0, trigger.start) + insert + text.slice(caret)
       apply(nextText, trigger.start + insert.length)
     },
-    [trigger, results, text, caret, apply]
+    [trigger, flat, text, caret, apply, handleId]
   )
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent): boolean => {
-      if (!open) return false
+      if (!menuOpen) {
+        if (!visible || e.key !== 'Escape') return false
+        e.preventDefault()
+        setDismissed(true)
+        return true
+      }
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setSel((s) => (s + 1) % results.length)
+        setSel((s) => (s + 1) % flat.length)
         return true
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault()
-        setSel((s) => (s - 1 + results.length) % results.length)
+        setSel((s) => (s - 1 + flat.length) % flat.length)
         return true
       }
-      // Tab ALWAYS completes to the selected item. Enter completes too, EXCEPT
-      // when the user has already typed a value that exactly matches an item (e.g.
-      // the full `/context`): then Enter should SEND, not re-pick (re-picking would
-      // insert a trailing space / the wrong fuzzy row and the command never sends).
       if (e.key === 'Tab') {
         e.preventDefault()
         pick(sel)
         return true
       }
       if (e.key === 'Enter') {
-        const q = (trigger?.query ?? '').trim()
-        // Agents are EXCLUDED from the send-as-typed shortcut: a bare `@fiber` does
-        // NOT delegate (only the quoted `@"fiber (agent)"` does), so Enter must always
-        // run pick() to insert the quoted form, never send the raw typed name.
-        const exact = results.some((r) => r.it.kind !== 'agent' && r.it.value.toLowerCase() === q.toLowerCase())
-        if (exact) return false // let the composer send the typed command as-is
+        // A fully typed `/command` sends as typed; re-picking would only add a trailing space. On `@`, Enter
+        // always picks: an exact path is the file the menu would attach, and Esc then Enter sends the raw text.
+        const typed = q.trim().toLowerCase()
+        if (trigger?.char === '/' && flat.some((r) => r.it.value.toLowerCase() === typed)) return false
         e.preventDefault()
         pick(sel)
         return true
@@ -212,13 +281,8 @@ export function useComposerAutocomplete(
       }
       return false
     },
-    [open, results, sel, pick, trigger?.query]
+    [menuOpen, visible, flat, sel, pick, q, trigger?.char]
   )
-
-  // Esc dismissal: hide until the query changes again.
-  const [dismissed, setDismissed] = useState(false)
-  useEffect(() => setDismissed(false), [trigger?.query, trigger?.char, trigger?.start])
-  const visible = open && !dismissed
 
   // Shown the moment it mounts; it has no enter animation because it appears as you type.
   const popRef = useCallback((el: HTMLDivElement | null) => {
@@ -226,10 +290,12 @@ export function useComposerAutocomplete(
   }, [])
   const render = useCallback((): JSX.Element | null => {
     if (!visible) return null
+    let idx = 0
     return (
       <div
         ref={popRef}
         popover="manual"
+        data-ui="composer-menu"
         className="pop-base glass-thick flex flex-col rounded-lg"
         style={
           {
@@ -240,61 +306,85 @@ export function useComposerAutocomplete(
           } as React.CSSProperties
         }
       >
-        <div id={listboxId} ref={listRef} className="max-h-72 overflow-y-auto py-1" role="listbox">
-          <div className="flex items-center gap-2 px-3 py-1.5 text-meta text-dim">
-            {trigger?.char === '@' && <IconSearch className="h-3 w-3" />}
-            {trigger?.char === '/' ? 'Commands & skills' : 'Agents & files'}
-          </div>
-          {results.map((r, i) => {
-            const runs = highlightRuns(r.it.label, r.matches)
-            return (
-              <button
-                key={r.it.kind + ':' + r.it.value}
-                id={`${listboxId}-opt-${i}`}
-                data-idx={i}
-                role="option"
-                aria-selected={i === sel}
-                onMouseMove={() => setSel(i)}
-                onClick={() => pick(i)}
-                className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left ${i === sel ? 'bg-[var(--glass-row-hover)]' : ''}`}
-              >
-                <span className="max-w-[45%] shrink-0 truncate font-mono text-xs text-content">
-                  {runs.map((run, j) =>
-                    run.match ? (
-                      <span key={j} className="font-semibold text-content underline decoration-dim underline-offset-2">
-                        {run.text}
+        {open ? (
+          <div id={listboxId} ref={listRef} className="max-h-72 overflow-y-auto py-1" role="listbox">
+            {menu.groups.map((g, gi) => (
+              <div key={g.label} role="group" aria-labelledby={`${listboxId}-g${gi}`}>
+                <div
+                  id={`${listboxId}-g${gi}`}
+                  role="presentation"
+                  className={gi === 0 ? 'flex items-center gap-2 px-3 py-1.5 text-meta text-dim' : 'px-3 pb-1.5 pt-3 text-meta text-dim'}
+                >
+                  {gi === 0 && trigger?.char === '@' && <IconSearch className="h-3 w-3" />}
+                  {g.label}
+                </div>
+                {g.rows.map((r) => {
+                  const i = idx++
+                  const runs = highlightRuns(r.it.label, r.matches)
+                  return (
+                    <button
+                      key={r.it.key}
+                      id={`${listboxId}-opt-${i}`}
+                      data-idx={i}
+                      role="option"
+                      aria-selected={i === sel}
+                      aria-label={r.it.aria}
+                      onMouseMove={() => setSel(i)}
+                      onClick={() => pick(i)}
+                      className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left ${i === sel ? 'bg-[var(--glass-row-hover)]' : ''}`}
+                    >
+                      <span className="max-w-[45%] shrink-0 truncate font-mono text-xs text-content">
+                        {runs.map((run, j) =>
+                          run.match ? (
+                            <span key={j} className="font-semibold text-content underline decoration-dim underline-offset-2">
+                              {run.text}
+                            </span>
+                          ) : (
+                            <span key={j}>{run.text}</span>
+                          )
+                        )}
                       </span>
-                    ) : (
-                      <span key={j}>{run.text}</span>
-                    )
-                  )}
-                </span>
-                {r.it.args && (
-                  <span className="max-w-[30%] shrink-0 truncate font-mono text-meta text-dim" title={r.it.args}>
-                    {r.it.args}
-                  </span>
-                )}
-                {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
-                  <span className="shrink-0 rounded bg-[var(--glass-row-hover)] px-1.5 py-0.5 text-badge text-dim">
-                    {r.it.kind}
-                  </span>
-                )}
-                {r.it.hint && (
-                  <span className="min-w-0 flex-1 truncate text-meta text-dim" title={r.it.hint}>
-                    {r.it.hint}
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </div>
+                      {r.it.args && (
+                        <span className="max-w-[30%] shrink-0 truncate font-mono text-meta text-dim" title={r.it.args}>
+                          {r.it.args}
+                        </span>
+                      )}
+                      {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
+                        <span className="shrink-0 rounded bg-[var(--glass-row-hover)] px-1.5 py-0.5 text-badge text-dim">
+                          {r.it.kind}
+                        </span>
+                      )}
+                      {r.it.hint && (
+                        <span className="min-w-0 flex-1 truncate text-meta text-dim" title={r.it.hint}>
+                          {r.it.hint}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p id={emptyId} data-ui="composer-menu-empty" className="px-3 py-2 text-sm text-dim">
+            {noMatchText(q)}
+          </p>
+        )}
+        {footer.length > 0 && (
+          <div id={footerId} data-ui="composer-menu-footer" className="border-t border-[var(--glass-edge)] px-3 py-1.5 text-meta text-dim">
+            {footer.map((t) => (
+              <p key={t}>{t}</p>
+            ))}
+          </div>
+        )}
       </div>
     )
-  }, [visible, results, sel, trigger?.char, pick, listboxId])
+  }, [visible, open, menu, sel, trigger?.char, q, pick, listboxId, footerId, emptyId, footer])
 
-  const activeId = visible ? `${listboxId}-opt-${sel}` : undefined
+  const activeId = menuOpen ? `${listboxId}-opt-${sel}` : undefined
+  const describedBy = visible && footer.length ? (open ? footerId : `${emptyId} ${footerId}`) : undefined
 
-  return { open: visible, render, onKeyDown, listboxId, activeId }
+  return { open: menuOpen, render, onKeyDown, listboxId, activeId, describedBy }
 }
 
 /** Load the workspace's skills (once per cwd) for the `/` menu. */

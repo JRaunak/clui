@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { CAP_NOTE, type DraftReference, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 import { surfaceIdOf } from '../../../shared/surfaces'
-import { placement, useActive, useSession, type RefTarget } from '../store'
+import { placement, useActive, useSession, type AddRefResult, type RefTarget } from '../store'
 import { openFileAt } from '../lib/openLink'
 import { viaOf, type Via } from '../lib/motion'
 import { addedText, baseOf, canReopen, noticeLead, removedText, spokenRef } from '../lib/refCopy'
@@ -11,7 +11,8 @@ import { IconClose, IconWarn } from './Icon'
 /** Held for --dur-stage, faded over --dur-slow. */
 const FLASH_MS = 720
 
-type Signal = { focus?: string; note?: string | null }
+/** `flash` shows a chip without taking focus, for a source where focus stays in the textarea. */
+type Signal = { focus?: string; flash?: string; note?: string | null }
 const rows = new Map<string, (s: Signal) => void>()
 const rowKey = (handleId: string, target: RefTarget): string => `${handleId}\0${target ?? ''}`
 
@@ -36,6 +37,21 @@ export function addFromSurface(handleId: string, input: RefInput, say: (t: strin
   } else if (target !== null) say('That queued message is gone, so nothing was added.')
 }
 
+/** Adds to the live draft from a source whose focus is in the textarea (`@` pick, drop), so nothing takes focus:
+ *  the first duplicate flashes its chip. The caller announces, from the results. */
+export function addToDraft(handleId: string, inputs: readonly RefInput[], capNote: (skipped: number) => string): AddRefResult[] {
+  const st = useSession.getState()
+  const results = inputs.map((input) => st.addRef(handleId, input, { target: null }))
+  const dup = results.find((r) => r.status === 'duplicate')
+  const skipped = results.filter((r) => r.status === 'cap').length
+  if (!dup && !skipped) return results
+  const s: Signal = { ...(dup ? { flash: dup.id } : {}), note: skipped ? capNote(skipped) : 'Already attached.' }
+  // The row drops its note when its chips change, which an add here is about to do, so a mixed result signals after it.
+  if (results.some((r) => r.status === 'added')) requestAnimationFrame(() => signalRefs(handleId, null, s))
+  else signalRefs(handleId, null, s)
+  return results
+}
+
 /** Opens what a draft reference points at. A draft line reference is always current, so its lines come back
  *  selected. */
 export function openRef(handleId: string, d: DraftReference, via: Via): void {
@@ -44,7 +60,7 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
   switch (r.kind) {
     case 'file':
       openFileAt(handleId, r.path, { line: r.lines?.start }, false, via)
-      if (r.lines) st.setSurfaceView(handleId, surfaceIdOf({ kind: 'file', key: r.path }), { selection: { lines: r.lines } })
+      if (r.lines) st.setSurfaceView(handleId, surfaceIdOf({ kind: 'file', key: r.path }), { selection: { lines: r.lines, sourceVersion: r.sourceVersion } })
       return
     case 'folder':
       return openFileAt(handleId, r.path, {}, true, via)
@@ -118,6 +134,10 @@ export function ContextChips({
     const key = rowKey(handleId, target)
     rows.set(key, (s) => {
       if (s.note !== undefined) setNote(s.note)
+      if (s.flash) {
+        chips.current.get(s.flash)?.scrollIntoView({ block: 'nearest' })
+        setFlash(s.flash)
+      }
       if (!s.focus) return
       focusKey(s.focus)
       setFlash(s.focus)

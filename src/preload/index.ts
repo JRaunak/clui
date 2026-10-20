@@ -90,6 +90,7 @@ const api: CluiApi = {
   editLine: (handleId: string, path: string, editId: string) => ipcRenderer.invoke(IpcChannels.editLine, handleId, path, editId),
   getChangeGitStatus: (handleId: string) => ipcRenderer.invoke(IpcChannels.getChangeGitStatus, handleId),
   listWorkspaceFiles: (handleId: string) => ipcRenderer.invoke(IpcChannels.listWorkspaceFiles, handleId),
+  classifyRefPaths: (handleId: string, paths: string[]) => ipcRenderer.invoke(IpcChannels.classifyRefPaths, handleId, paths),
   openDiff: (handleId: string, left: string, right: string) =>
     ipcRenderer.invoke(IpcChannels.openDiff, handleId, left, right),
   getDiff: (handleId, req) => ipcRenderer.invoke(IpcChannels.getDiff, handleId, req),

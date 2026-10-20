@@ -264,6 +264,8 @@ export interface CluiApi {
   /** List files under the session's workspace (git-aware; relative paths, capped) for the
    *  composer's @-file picker. Empty on error. */
   listWorkspaceFiles: (handleId: string) => Promise<{ files: string[]; truncated: boolean }>
+  /** Per absolute path, the reference kind a sent message would be allowed to point at, or null. */
+  classifyRefPaths: (handleId: string, paths: string[]) => Promise<('file' | 'folder' | null)[]>
   /** Open a diff of two files the session may see, in the configured editor. */
   openDiff: (handleId: string, left: string, right: string) => Promise<void>
   /** One changed file's Claude changes as hunks, from the session's ledger. Null when the session or path isn't held. */
@@ -466,6 +468,7 @@ export const IpcChannels = {
   editLine: 'clui:editLine',
   getChangeGitStatus: 'clui:getChangeGitStatus',
   listWorkspaceFiles: 'clui:listWorkspaceFiles',
+  classifyRefPaths: 'clui:classifyRefPaths',
   openDiff: 'clui:openDiff',
   getDiff: 'clui:getDiff',
   openChangeDiff: 'clui:openChangeDiff',
