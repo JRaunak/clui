@@ -1,22 +1,24 @@
 import type { KeyboardEvent, MouseEvent, Ref } from 'react'
 import { hostOf, pinWords, clipName } from '../../../shared/annotate'
-import { refLabel, type ContextReference } from '../../../shared/context'
+import { changeTail, refLabel, type ContextReference } from '../../../shared/context'
 import type { ProcessedAttachment } from '../lib/images'
 import type { ShownAttachment } from '../store'
-import { baseOf, rangeText, spokenRef } from '../lib/refCopy'
+import { baseOf, CHANGE_UNAVAILABLE, rangeText, spokenRef } from '../lib/refCopy'
 import { FileIcon } from './FileIcon'
-import { IconClose, IconFile, IconTarget } from './Icon'
+import { IconClose, IconDiff, IconFile, IconTarget } from './Icon'
 
 /** What one chip shows and says. References carry a number; attachments don't. */
 export interface ChipView {
   key: string
   n?: number
-  glyph: 'file' | 'folder' | 'target' | 'attachment'
+  glyph: 'file' | 'folder' | 'target' | 'change' | 'attachment'
   thumb?: string
   line1: string
   line2: string
   /** Data that goes to the model with the reference, shown after line2 and never truncated. */
   disclose?: string
+  /** Main says Claude can't read this change any more; said after line2, never truncated. */
+  unavailable?: boolean
   title: string
   label: string
   /** For the remove button and announcements. */
@@ -68,12 +70,27 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
     }
     case 'change': {
       const rel = relTo(cwd, ref.path)
-      return { key, n, glyph: 'file', line1: refLabel(ref), line2: parentOf(rel), title: rel, label: `Reference ${n}: ${spokenRef(ref)}`, spoken: spokenRef(ref) }
+      const dir = parentOf(rel)
+      const tail = changeTail(ref.side, ref.old, ref.new)
+      const where = dir === './' ? '' : `, in ${dir.slice(0, -1)}`
+      return {
+        key,
+        n,
+        glyph: 'change',
+        line1: baseOf(ref.path),
+        line2: `${dupe ? `${baseOf(dir.slice(0, -1) || './')}/ · ` : ''}${tail}`,
+        title: `Claude's change to ${rel} · ${tail}`,
+        label: `Reference ${n}: ${spokenRef(ref)}${where}`,
+        spoken: spokenRef(ref)
+      }
     }
     default:
       return ref satisfies never
   }
 }
+
+/** A sent change chip main says Claude can no longer read. */
+export const unavailableChip = (v: ChipView): ChipView => ({ ...v, unavailable: true, title: `${v.title}\n${CHANGE_UNAVAILABLE}`, label: `${v.label}, Claude can no longer read it` })
 
 /** The chip for a pin read back from a legacy `<clui-annotations>` block: display only. */
 export function legacyChip(key: string, n: number, kind: string, name: string, host: string, thumb: string | undefined): ChipView {
@@ -140,6 +157,8 @@ export function ContextChip({
               <FileIcon name={view.line1} kind={glyph} className="h-5 w-5" />
             ) : glyph === 'target' ? (
               <IconTarget className="h-5 w-5" />
+            ) : glyph === 'change' ? (
+              <IconDiff className="h-5 w-5" />
             ) : (
               <IconFile className="h-5 w-5" />
             )}
@@ -157,6 +176,7 @@ export function ContextChip({
         <span className="flex min-w-0 max-w-40 font-mono text-meta text-faint">
           <span className="truncate">{view.line2}</span>
           {view.disclose && <span className="shrink-0 whitespace-pre">{`${view.line2 ? ' · ' : ''}${view.disclose}`}</span>}
+          {view.unavailable && <span className="shrink-0 whitespace-pre">{' · unavailable'}</span>}
         </span>
       </span>
     </>

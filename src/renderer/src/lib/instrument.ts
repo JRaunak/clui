@@ -1,6 +1,7 @@
-import { messageGist } from '../../../shared/context'
+import { CHANGE_READ_TOOL, changeLabel, messageGist, parseRefs, type ContextReference } from '../../../shared/context'
 import type { ChatMessage, PerSessionState, ToolCall } from '../store'
 import { isBackgroundedTool } from './lumen'
+import { READ_CHANGE, spokenChange } from './refCopy'
 
 export { isBackgroundedTool }
 
@@ -111,6 +112,35 @@ export function currentTurnAt(messages: ChatMessage[], startIndex: number): Curr
 const BROWSER_PREFIX = 'mcp__clui-browser__'
 export function isBrowserTool(name: string): boolean {
   return name.startsWith(BROWSER_PREFIX)
+}
+
+export const isChangeRead = (name: string): boolean => name === CHANGE_READ_TOOL
+
+/** What a row, a group and the status line call a tool. A history read is never a bare `Read`, so a group of both
+ *  doesn't fold into one name. */
+export function toolLabel(name: string): string {
+  return name === 'Task' || name === 'Agent' ? 'Agent' : isBrowserTool(name) ? 'Browser' : isChangeRead(name) ? READ_CHANGE : name
+}
+
+type ChangeRef = Extract<ContextReference, { kind: 'change' }>
+const sentChanges = new WeakMap<ChatMessage, Map<string, ChangeRef>>()
+
+/** The change a change_read call names, from this session's user messages, as `{ label, spoken }`; null for one
+ *  compacted away or never sent. */
+export function changeReadOf(messages: readonly ChatMessage[], input: unknown): { label: string; spoken: string } | null {
+  const ref = input && typeof input === 'object' ? (input as Record<string, unknown>).ref : undefined
+  if (typeof ref !== 'string') return null
+  for (const m of messages) {
+    if (m.role !== 'user') continue
+    let sent = sentChanges.get(m)
+    if (!sent) {
+      sent = new Map(parseRefs(m.text).refs.flatMap((r): [string, ChangeRef][] => (r.kind === 'current' && r.value.ref.kind === 'change' ? [[r.value.ref.changeRef, r.value.ref]] : [])))
+      sentChanges.set(m, sent)
+    }
+    const c = sent.get(ref)
+    if (c) return { label: changeLabel(c.path, c.side, c.old, c.new), spoken: spokenChange(c) }
+  }
+  return null
 }
 /** "navigate github.com/org/repo", "click 12", "autofill login", for the row's primary arg. `tab` names
  *  the tab it ran in, for a session that has had more than one. */

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type MouseEvent } from 'react'
 import { diffLines } from 'diff'
 import { escapeHtml } from '../../lib/highlightLines'
 import { highlightNow, langForPath } from '../../lib/highlight'
@@ -12,7 +12,9 @@ const LONG_LINE = 2000
 /** The Gate highlights synchronously so it paints complete before the user decides; past this many lines it stays plain rather than block. */
 const GATE_SYNC_LINES = 200
 const GATE_ROWS = 40
-const NUM = 'box-content w-(--num-ch) shrink-0 select-none px-1.5 text-right tabular-nums text-faint'
+const NUM = 'box-content w-(--num-ch) shrink-0 select-none px-1.5 text-right tabular-nums'
+/** The Claude changes surface's selection mark on rows and hunk headers, contiguous so a range reads as one bar. */
+export const SELECTED_MARK = 'before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-content'
 const SIGN_TONE: Record<LineKind, string> = { ' ': 'text-dim', '+': 'text-diff-add-sign', '-': 'text-diff-del-sign' }
 const signCell = (kind: LineKind): string => `w-5 shrink-0 select-none text-center ${SIGN_TONE[kind]}`
 
@@ -30,13 +32,36 @@ export function Code({ kind, text, html }: { kind: LineKind; text: string; html?
   )
 }
 
-/** One numbered row of a Claude changes diff, tinted across the gutter too. */
-export function DiffLine({ kind, oldNo, newNo, text, html }: { kind: LineKind; oldNo?: number; newNo?: number; text: string; html?: string | null }): JSX.Element {
+/** One numbered row of a Claude changes diff, tinted across the gutter too. Its three gutter cells select it;
+ *  `row` names it for a drag across code. A selected row keeps its tint: a fill would hide what it removed or added. */
+export function DiffLine({
+  kind,
+  oldNo,
+  newNo,
+  text,
+  html,
+  selected = false,
+  onGutter,
+  row
+}: {
+  kind: LineKind
+  oldNo?: number
+  newNo?: number
+  text: string
+  html?: string | null
+  selected?: boolean
+  onGutter?: (shift: boolean) => void
+  row?: { hunk: string; j: number }
+}): JSX.Element {
+  const gutter = onGutter
+    ? { onClick: (e: MouseEvent) => onGutter(e.shiftKey), onMouseDown: (e: MouseEvent) => e.shiftKey && e.preventDefault() }
+    : {}
+  const num = `${NUM} cursor-default ${selected ? 'text-content' : 'text-faint'}`
   return (
-    <div className={`flex min-h-5 font-mono text-code ${TINT[kind]}`}>
-      <span aria-hidden="true" className={NUM}>{oldNo}</span>
-      <span aria-hidden="true" className={NUM}>{newNo}</span>
-      <span aria-hidden="true" className={signCell(kind)}>{SIGN[kind]}</span>
+    <div data-row-hunk={row?.hunk} data-row={row?.j} className={`relative flex min-h-5 font-mono text-code ${TINT[kind]} ${selected ? SELECTED_MARK : ''}`}>
+      <span aria-hidden="true" className={num} {...gutter}>{oldNo}</span>
+      <span aria-hidden="true" className={num} {...gutter}>{newNo}</span>
+      <span aria-hidden="true" className={`${signCell(kind)} cursor-default`} {...gutter}>{SIGN[kind]}</span>
       <Code kind={kind} text={text} html={html} />
     </div>
   )

@@ -71,3 +71,19 @@ equal(urls('tail https://example.com/very/lo', true), '', 'links: a URL cut by t
 
 // A Skill row names the skill it ran.
 equal(summarizeInput({ skill: 'create-cso-pr', args: '--help' }), 'create-cso-pr', 'summarizeInput: Skill shows the skill name')
+
+// change_read: named as a history read, never a bare Read, and summarized by the change its user message sent.
+{
+  const { toolLabel, changeReadOf } = await import('../src/renderer/src/lib/instrument.ts')
+  const { sessionStatusOf } = await import('../src/renderer/src/lib/sessionStatus.ts')
+  const { serializeContext } = await import('../src/shared/context.ts')
+  const REF = `chg_${'3'.repeat(32)}`
+  const sent = serializeContext([{ version: 1, ref: { id: 'r1', kind: 'change', changeRef: REF, path: 'src/mcp.ts', side: 'before', old: { start: 3, end: 3 } } }], 'why?', { packetId: null })
+  const messages = [msg('u1', 'user', sent), msg('a1', 'assistant', '', { tools: [{ id: 't1', name: 'mcp__clui-surface__change_read', input: { ref: REF } }] })]
+  equal(toolLabel('mcp__clui-surface__change_read'), 'Read change', 'change_read: its row name')
+  equal(toolLabel('Agent') + toolLabel('mcp__clui-browser__click') + toolLabel('Read'), 'AgentBrowserRead', 'toolLabel: the other names are unchanged')
+  equal(JSON.stringify(changeReadOf(messages as never, { ref: REF })), JSON.stringify({ label: 'mcp.ts · before L3', spoken: 'mcp.ts change, before side, line 3' }), 'change_read: summary from the sent ref')
+  equal(changeReadOf(messages as never, { ref: `chg_${'4'.repeat(32)}` }), null, 'change_read: a ref never sent has no summary')
+  const st = sessionStatusOf({ pendingPermissions: [], lastError: null, busy: true, compacting: false, thinkingTokens: null, messages } as never)
+  equal(`${st.lead} ${st.rest}`, 'Read change mcp.ts · before L3', 'change_read: status line')
+}

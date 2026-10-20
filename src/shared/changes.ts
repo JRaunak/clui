@@ -21,7 +21,7 @@ export interface HunkRows { start: number; end: number }
 
 export type ChangeSelection =
   | { ok: true; text: string; old?: LineRange; new?: LineRange; lines: number; bytes: number }
-  | { ok: false; reason: 'empty' | 'too-large'; lines: number; bytes: number }
+  | { ok: false; reason: 'empty' | 'too-large'; lines: number; bytes: number; old?: LineRange; new?: LineRange }
 
 const utf8 = new TextEncoder()
 
@@ -52,8 +52,9 @@ export function changeSelection(h: PatchHunk, side: ChangeSide, rows?: HunkRows)
   const lines = out.length
   const bytes = utf8.encode(text).length
   if (!(side === 'before' ? old : side === 'after' ? neu : old ?? neu)) return { ok: false, reason: 'empty', lines, bytes }
-  if (lines > CHANGE_LINES_MAX || bytes > CHANGE_BYTES_MAX) return { ok: false, reason: 'too-large', lines, bytes }
-  return { ok: true, text, ...(old ? { old } : {}), ...(neu ? { new: neu } : {}), lines, bytes }
+  const range = { ...(old ? { old } : {}), ...(neu ? { new: neu } : {}) }
+  if (lines > CHANGE_LINES_MAX || bytes > CHANGE_BYTES_MAX) return { ok: false, reason: 'too-large', lines, bytes, ...range }
+  return { ok: true, text, ...range, lines, bytes }
 }
 
 /**

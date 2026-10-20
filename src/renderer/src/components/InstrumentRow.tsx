@@ -11,11 +11,14 @@ import {
   STATE_TEXT,
   browserLabel,
   browserResultCopy,
+  changeReadOf,
   isBackgroundedTool,
   isBrowserTool,
+  isChangeRead,
   needsYouToolIdOf,
   rowState,
   summarizeInput,
+  toolLabel,
   TURN_LINE_PX,
   worstState,
   type RowState
@@ -134,7 +137,14 @@ export function InstrumentRow({
   // Once the session has had a second tab every browser row names its tab, earlier rows included.
   const tabNo = useActive((s) => (browser && s?.browser?.multi ? (s.browser.toolTabs[tool.id] ?? 0) : 0))
   const tabGone = useActive((s) => !!tabNo && !s?.browser?.tabs.some((t) => t.id === tabNo))
-  const summary = browser ? browserLabel(tool.name, tool.input, tabNo) : summarizeInput(tool.input)
+  // A change read is labelled by the change it names, which only the user message that sent it knows.
+  const history = isChangeRead(tool.name)
+  const [change = '', changeSpoken = ''] = useActive((s) => {
+    const c = history && s ? changeReadOf(s.messages, tool.input) : null
+    return c ? `${c.label}\0${c.spoken}` : ''
+  }).split('\0')
+  const summary = browser ? browserLabel(tool.name, tool.input, tabNo) : history ? change : summarizeInput(tool.input)
+  const spokenSummary = changeSpoken || summary
   const counted = browser && !tool.isError ? browserResultCopy(tool.result) : null
   // The header already shows the summary, so Input starts collapsed when there is one.
   const [inputOpen, setInputOpen] = useState(() => !summary)
@@ -173,7 +183,7 @@ export function InstrumentRow({
   const isSubagent = tool.name === 'Task' || tool.name === 'Agent'
   const subType = subagentType(tool.input)
   const effort = subagentEffort(tool.input)
-  const name = isSubagent ? 'Agent' : browser ? 'Browser' : tool.name
+  const name = toolLabel(tool.name)
   const hasBrowser = useActive((s) => !!s?.browser)
   const revealBrowser = useSession((s) => s.revealBrowser)
   // Only a foreground Bash is worth moving; other tools finish too fast to bother.
@@ -233,7 +243,7 @@ export function InstrumentRow({
               className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
               aria-expanded={open}
               aria-controls={bodyId}
-              aria-label={`${name}${summary ? ` ${summary}` : ''}${counted ? `, ${counted.copy}` : ''}, ${STATE_TEXT[state]}`}
+              aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}${counted ? `, ${counted.copy}` : ''}, ${STATE_TEXT[state]}`}
               title={summary || undefined}
               onClick={toggleBody}
             />
@@ -455,7 +465,7 @@ export function AggregateRow({
         ? { text: 'launching…', cls: 'text-info' }
         : null
   const names = [
-    ...new Set(tools.map((t) => (t.name === 'Task' || t.name === 'Agent' ? 'Agent' : isBrowserTool(t.name) ? 'Browser' : t.name)))
+    ...new Set(tools.map((t) => toolLabel(t.name)))
   ].join(', ')
   // Collapsed, only what still matters shows: failures pinned first, then anything unresolved.
   const visible =

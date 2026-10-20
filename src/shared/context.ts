@@ -222,11 +222,19 @@ const baseName = (p: string): string => p.replace(/\/+$/, '').split('/').pop() |
 const pinText = (kind: string, name: string): string => (name ? `${kind} "${clipName(name)}"` : kind)
 const lineText = ({ start, end }: LineRange): string => `L${start}${end > start ? `–${end}` : ''}`
 
-/** `mcp.ts · change L40–52`, `mcp.ts · before L40–45`. Also labels a selection that isn't minted yet. */
+/** What follows the basename in a change's label, numbered in that change: `before L40–45`, `diff L40–45 → L41–53`,
+ *  `diff L40–45, removed`. A diff slice with lines on one side only is all removed or all added rows. */
+export function changeTail(side: ChangeSide, old?: LineRange, neu?: LineRange): string {
+  const at = (r?: LineRange): string => (r ? ` ${lineText(r)}` : '')
+  if (side === 'before') return `before${at(old)}`
+  if (side === 'after') return `after${at(neu)}`
+  if (old && neu) return `diff ${lineText(old)} → ${lineText(neu)}`
+  return old ? `diff ${lineText(old)}, removed` : `diff${at(neu)}, added`
+}
+
+/** `mcp.ts · before L40–45`. Also labels a selection that isn't minted yet. */
 export function changeLabel(path: string, side: ChangeSide, old?: LineRange, neu?: LineRange): string {
-  const range = (side === 'before' ? old : neu) ?? old
-  const word = side === 'diff' ? 'change' : side
-  return `${baseName(path)} · ${word}${range ? ` ${lineText(range)}` : ''}`
+  return `${baseName(path)} · ${changeTail(side, old, neu)}`
 }
 
 /** `manager.ts · L142–158`, `manager.ts`, `browser/`, `button "Sign in"`. The one place this copy lives. */

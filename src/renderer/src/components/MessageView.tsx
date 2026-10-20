@@ -14,10 +14,11 @@ import {
   type WokenTask
 } from '../store'
 import { FileLinkContext, Markdown, StreamingContext } from './Markdown'
-import { ContextChip, legacyChip, refChip } from './ContextChip'
+import { ContextChip, legacyChip, refChip, unavailableChip } from './ContextChip'
+import { openRef } from './ContextChips'
 import { Button } from './Button'
 import { parseRefs, type ContextReference } from '../../../shared/context'
-import { baseOf } from '../lib/refCopy'
+import { baseOf, spokenRef } from '../lib/refCopy'
 import { viaOf } from '../lib/motion'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
 import { IconArrowUp, IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShieldOff, IconStop, IconWarn } from './Icon'
@@ -97,7 +98,8 @@ function renderUserText(text: string): (string | JSX.Element)[] {
   return out
 }
 
-export function MessageView({ message, hideThinking = false }: { message: ChatMessage; hideThinking?: boolean }): JSX.Element {
+/** `rebuilt`: read back from the transcript rather than sent in this renderer's lifetime. */
+export function MessageView({ message, hideThinking = false, rebuilt = false }: { message: ChatMessage; hideThinking?: boolean; rebuilt?: boolean }): JSX.Element {
   const live = useActive((s) => !!s?.busy && s.messages[s.messages.length - 1]?.id === message.id)
   const linkRoot = useLinkRoot(message.role === 'assistant' && !live)
   if (message.role === 'peer' && message.peer) return <PeerMessageView message={message} peer={message.peer} />
@@ -150,7 +152,7 @@ export function MessageView({ message, hideThinking = false }: { message: ChatMe
                 </div>
               )}
               {isUser ? (
-                <UserContent message={message} />
+                <UserContent message={message} rebuilt={rebuilt} />
               ) : (
                 <SpineItems entries={entries} />
               )}
@@ -772,16 +774,37 @@ function ThinkingBlock({ text }: { text: string }): JSX.Element {
 
 /** A sent message's reference block shows as chips; the block itself went to Claude only. A current reference
  *  claims its crop by content-array index. A legacy block can only pair by order: its crops travel first among
- *  the images, in pin order. A file or folder chip opens it; a page chip stays inert, since its document is gone. */
-function UserContent({ message }: { message: ChatMessage }): JSX.Element {
+ *  the images, in pin order. A file or folder chip opens it; a page chip stays inert, since its document is gone.
+ *  A change chip opens its file's Claude changes while the session still has them. */
+function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: boolean }): JSX.Element {
   const handleId = useActive((s) => s?.handleId ?? null)
   const cwd = useActive((s) => s?.cwd ?? null)
+  const changes = useActive((s) => s?.changes)
+  const changeRead = useActive((s) => s?.changeRead ?? null)
   const { refs, rest: text } = parseRefs(message.text)
+  const changeKey = refs.flatMap((r) => (r.kind === 'current' && r.value.ref.kind === 'change' ? [r.value.ref.changeRef] : [])).join(',')
+  // Only main knows whether a grant survived; a bubble sent in this renderer is never asked, since its grant
+  // activates on write, after the bubble is already on screen.
+  const [readable, setReadable] = useState<Map<string, boolean> | null>(null)
+  useEffect(() => {
+    if (!rebuilt || !handleId || !changeKey || changeRead === false) return
+    let live = true
+    const list = changeKey.split(',')
+    window.clui
+      .changeRefStatus(handleId, list)
+      .then((ok) => live && setReadable(ok.length === list.length ? new Map(list.map((r, i) => [r, ok[i]])) : null))
+      .catch(() => live && setReadable(null))
+    return () => {
+      live = false
+    }
+  }, [rebuilt, handleId, changeKey, changeRead])
+  const unavailable = (ref: ContextReference | null): boolean => ref?.kind === 'change' && (changeRead === false || readable?.get(ref.changeRef) === false)
   const all = message.attachments ?? []
   const images = all.filter((a): a is Extract<MessageAttachment, { kind: 'image' }> => a.kind === 'image')
   const legacyThumbs = images.slice(0, refs.filter((r) => r.kind === 'legacy' && r.value.crop).length)
   const names = new Map<string, number>()
-  for (const r of refs) if (r.kind === 'current' && r.value.ref.kind === 'file') names.set(baseOf(r.value.ref.path), (names.get(baseOf(r.value.ref.path)) ?? 0) + 1)
+  const named = (ref: ContextReference): ref is Extract<ContextReference, { kind: 'file' | 'change' }> => ref.kind === 'file' || ref.kind === 'change'
+  for (const r of refs) if (r.kind === 'current' && named(r.value.ref)) names.set(baseOf(r.value.ref.path), (names.get(baseOf(r.value.ref.path)) ?? 0) + 1)
   let next = 0
   const chips = refs.map((r) => {
     if (r.kind === 'legacy') {
@@ -790,13 +813,21 @@ function UserContent({ message }: { message: ChatMessage }): JSX.Element {
     }
     const { ref, visualAttachmentIndex: vi } = r.value
     const thumb = vi === undefined ? undefined : images.find((a) => a.blockIndex === vi)
-    const dupe = ref.kind === 'file' && (names.get(baseOf(ref.path)) ?? 0) > 1
-    return { view: refChip(ref, r.n, cwd, thumb?.previewUrl, dupe), thumb, ref }
+    const dupe = named(ref) && (names.get(baseOf(ref.path)) ?? 0) > 1
+    const view = refChip(ref, r.n, cwd, thumb?.previewUrl, dupe)
+    return { view: unavailable(ref) ? unavailableChip(view) : view, thumb, ref }
   })
   // The sent revision may be stale, so a file opens scrolled to the range with nothing selected.
   const opener = (ref: ContextReference | null): { label: string; open: (e: { detail: number }) => void } | undefined => {
     if (!handleId || !ref || ref.kind === 'browser') return undefined
     const abs = ref.path.startsWith('/') || !cwd ? ref.path : `${cwd.replace(/\/+$/, '')}/${ref.path}`
+    if (ref.kind === 'change') {
+      if (!changes?.some((c) => c.path === abs)) return undefined
+      return {
+        label: `Open ${spokenRef(ref)}, in Claude changes${unavailable(ref) ? ', Claude can no longer read it' : ''}`,
+        open: (e) => openRef(handleId, { ref: { ...ref, path: abs } }, viaOf(e))
+      }
+    }
     const line = ref.kind === 'file' ? ref.lines?.start : undefined
     const name = baseOf(ref.path)
     return {

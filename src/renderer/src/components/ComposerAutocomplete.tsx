@@ -9,14 +9,16 @@
  * inline; a file pick adds a reference chip and removes the token.
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { CAP_NOTE, refKey, refLabel, type RefInput } from '../../../shared/context'
-import { useActive, useSession, EMPTY_REFS, EMPTY_SLASH_COMMANDS } from '../store'
+import { CAP_NOTE, refKey, type RefInput } from '../../../shared/context'
+import type { ChangeRefRequest } from '../../../shared/ipc'
+import { denyChangeRead, useActive, useSession, EMPTY_REFS, EMPTY_SLASH_COMMANDS } from '../store'
 import { fuzzyMatch, highlightRuns, rankPaths } from '../lib/fuzzy'
 import { resolveSlashCommands } from '../lib/slashCommands'
 import { paneRows, removeToken } from '../lib/composerRefs'
 import { useWorkspaceListing } from '../lib/openLink'
-import { addedText, couldNotAdd, noMatchText, showingText, spokenRef, truncatedText } from '../lib/refCopy'
-import { addToDraft } from './ContextChips'
+import { mintedRef, recordMint } from '../lib/changeRefs'
+import { addedText, baseOf, BUDGET_NOTE, CHANGE_DENIED, changeRefusedText, couldNotAdd, noMatchText, showingText, spokenRef, tooLargeText, truncatedText } from '../lib/refCopy'
+import { addToDraft, signalRefs } from './ContextChips'
 import { IconSearch } from './Icon'
 
 interface Item {
@@ -32,6 +34,8 @@ interface Item {
   insert?: string
   /** The reference a pick adds in place of text. */
   input?: RefInput
+  /** A Diff selection a pick mints, then adds. */
+  mint?: ChangeRefRequest
   aria?: string
 }
 
@@ -108,6 +112,7 @@ export function useComposerAutocomplete(
   const handleId = useActive((s) => s?.handleId ?? null)
   const refs = useActive((s) => s?.contextRefs ?? EMPTY_REFS)
   const tabs = useActive((s) => s?.surfaces.tabs ?? null)
+  const changeRead = useActive((s) => s?.changeRead ?? null)
   const [sel, setSel] = useState(0)
   const [dismissed, setDismissed] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
@@ -162,12 +167,16 @@ export function useComposerAutocomplete(
       return rows.length ? { groups: [{ label: 'Commands & skills', rows }], shown: 0, total: 0 } : NO_MENU
     }
     const inDraft = (r: RefInput): boolean => attached.has(refKey(r))
-    const pane = rankPaths(q, paneRows(Object.values(tabs ?? {}), cwd, window.clui.homeDir, inDraft), (r) => r.rel).slice(0, PANE_CAP)
-    const taken = new Set(pane.flatMap(({ item: { input } }) => (input.kind === 'file' && !input.lines ? [input.path] : [])))
-    const paneItems = pane.map(({ item: r }): Row => {
-      const label = refLabel(r.input)
-      return { it: { key: r.key, value: r.rel, label, hint: r.hint, kind: 'file', input: r.input, aria: r.aria }, matches: fuzzyMatch(q, label).matches }
-    })
+    const minted = (req: ChangeRefRequest): boolean => {
+      const ref = handleId ? mintedRef(handleId, req) : null
+      return !!ref && refs.some((d) => d.ref.kind === 'change' && d.ref.changeRef === ref)
+    }
+    const pane = rankPaths(q, paneRows(Object.values(tabs ?? {}), cwd, window.clui.homeDir, { inDraft, minted, changeRead }), (r) => r.rel).slice(0, PANE_CAP)
+    const taken = new Set(pane.flatMap(({ item: { input } }) => (input?.kind === 'file' && !input.lines ? [input.path] : [])))
+    const paneItems = pane.map(({ item: r }): Row => ({
+      it: { key: r.key, value: r.rel, label: r.label, hint: r.hint, kind: 'file', ...(r.input ? { input: r.input } : { mint: r.mint }), aria: r.aria },
+      matches: fuzzyMatch(q, r.label).matches
+    }))
     const ranked = rankPaths(q, taken.size ? atItems.filter((it) => !it.input || it.input.kind !== 'file' || !taken.has(it.input.path)) : atItems, (it) => it.value, lift)
     const rest = ranked.slice(0, RESULT_CAP - paneItems.length).map(rowOf)
     const groups = [
@@ -179,7 +188,7 @@ export function useComposerAutocomplete(
       shown: rest.filter((r) => r.it.kind === 'file').length,
       total: q.trim() ? ranked.filter((r) => r.item.kind === 'file').length : 0
     }
-  }, [trigger?.char, q, commandItems, atItems, tabs, cwd, attached])
+  }, [trigger?.char, q, commandItems, atItems, tabs, cwd, attached, refs, changeRead, handleId])
   const flat = useMemo(() => menu.groups.flatMap((g) => g.rows), [menu])
 
   const open = trigger !== null && flat.length > 0
@@ -217,6 +226,7 @@ export function useComposerAutocomplete(
       if (!trigger) return
       const chosen = flat[i]?.it
       if (!chosen) return
+      if (chosen.mint && handleId) return pickChange(handleId, chosen.mint, trigger.start, `@${trigger.query}`)
       const input = chosen.input
       if (input && handleId) {
         const say = (t: string): void => useSession.getState().announceRefs(handleId, t)
@@ -238,8 +248,44 @@ export function useComposerAutocomplete(
       const nextText = text.slice(0, trigger.start) + insert + text.slice(caret)
       apply(nextText, trigger.start + insert.length)
     },
-    [trigger, flat, text, caret, apply, handleId]
+    [trigger, flat, text, caret, apply, handleId, changeRead]
   )
+
+  // Mint is a round trip, so the draft is read again after it: typing in the meantime is kept, and the token goes
+  // only if it is still there.
+  const pickChange = (h: string, req: ChangeRefRequest, start: number, token: string): void => {
+    const say = (t: string): void => useSession.getState().announceRefs(h, t)
+    const refuse = (spoken: string, note?: string): void => {
+      say(spoken)
+      if (note) signalRefs(h, null, { note })
+      setDismissed(true)
+    }
+    if (changeRead === false) return refuse(changeRefusedText('denied'), CHANGE_DENIED)
+    void (async () => {
+      let r
+      try {
+        r = await window.clui.createChangeRef(h, req)
+      } catch {
+        return refuse(`Couldn't add the change to ${baseOf(req.path)}.`)
+      }
+      if (!r.ok) {
+        const size = { lines: r.lines ?? 0, bytes: r.bytes ?? 0 }
+        if (r.reason === 'denied') denyChangeRead(h)
+        return refuse(changeRefusedText(r.reason, size), r.reason === 'denied' ? CHANGE_DENIED : r.reason === 'too-large' ? tooLargeText(size.lines, size.bytes) : undefined)
+      }
+      recordMint(h, r.ref.changeRef, req)
+      const [a] = addToDraft(h, [r.ref], () => CAP_NOTE, r.bytes)
+      if (a.status !== 'added' && a.status !== 'duplicate') return refuse(a.status === 'cap' ? CAP_NOTE : a.status === 'budget' ? BUDGET_NOTE : couldNotAdd(r.ref))
+      say(a.status === 'added' ? addedText(r.ref) : `Already attached: ${spokenRef(r.ref)}`)
+      const cur = useSession.getState().sessions[h]?.draftText ?? ''
+      const end = start + token.length
+      if (cur.slice(start, end) !== token || !/^(\s|$)/.test(cur.slice(end))) return
+      const next = removeToken(cur, start, end)
+      const ta = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement : null
+      const now = ta?.selectionStart ?? end
+      apply(next.text, now > end ? now - (cur.length - next.text.length) : next.caret)
+    })()
+  }
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent): boolean => {

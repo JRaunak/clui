@@ -1,6 +1,6 @@
 // Boundary: main's packet checks. A reference that no longer points at what the user picked sends nothing; a
 // packet that isn't exactly the shape is refused whole; the text Claude reads is built from the checked refs.
-import { CLASSIFY_MAX, classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from '../src/main/cli/packet.ts'
+import { CLASSIFY_MAX, changeRefStatus, classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from '../src/main/cli/packet.ts'
 import { parseRefs } from '../src/shared/context.ts'
 import { equal, ok } from './support/harness.mjs'
 
@@ -120,6 +120,17 @@ ok((await reasons([pin()], deps({ docOf: async () => null }))) === 'r3:closed', 
   ok((await classifyRefPaths(d, 'h', ['/w/a.ts', 3])).length === 0, 'classify: a non-string path refuses the list')
   ok((await classifyRefPaths(d, 7, ['/w/a.ts'])).length === 0, 'classify: a non-string handle is refused')
   ok((await classifyRefPaths(d, 'h', Array.from({ length: CLASSIFY_MAX + 1 }, () => '/w/a.ts'))).length === 0, 'classify: an oversized list is refused whole')
+}
+
+// The bubble's status query answers through the dispatch check, per ref, and refuses anything not a short list.
+{
+  const A = `chg_${'a'.repeat(32)}`
+  const B = `chg_${'b'.repeat(32)}`
+  const d = { change: (_h: string, ref: string) => (ref === A ? ('ok' as const) : ('missing' as const)) }
+  ok(changeRefStatus(d, 'h', [A, B, 'chg_nope', 7]).join() === 'true,false,false,false', 'status: a live grant, an unknown ref and malformed ones')
+  ok(changeRefStatus({ change: () => 'denied' }, 'h', [A]).join() === 'false', 'status: a session without change_read reads nothing')
+  ok(changeRefStatus(d, 'h', 'not a list').length === 0 && changeRefStatus(d, 7, [A]).length === 0, 'status: a non-array or a non-string handle is refused')
+  ok(changeRefStatus(d, 'h', Array.from({ length: 21 }, () => A)).length === 0, 'status: more than a message can hold is refused whole')
 }
 
 // Change refs: a dispatch check like any other ref, and the only grant is made once the packet is written.

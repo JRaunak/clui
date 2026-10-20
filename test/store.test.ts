@@ -1,6 +1,6 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { useSession, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
+import { CHANGE_REFS, useSession, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -84,6 +84,7 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   annotate: { tab: null, note: null },
   contextRefs: [],
   referenceNotices: {},
+  changeRead: null,
   referenceEditTarget: null,
   refAnnounce: '',
   surfaces: { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} },
@@ -764,6 +765,34 @@ const q = (id: string, text: string): any => ({ id, text, refs: [] })
   ok(st().addRef('h1', chg(5), { bytes: 1 }).status === 'budget' && cur().contextRefs.length === 4, 'refs: one byte more is refused as budget')
   ok(st().addRef('h1', lines()).status === 'added', 'refs: a file ref still attaches past it')
   ok(cur().contextRefs[0].bytes === 32 * 1024 && cur().contextRefs[4].bytes === undefined, 'refs: the size rides only on change refs')
+
+  // Change refs leave as a set: one notice per reason however many files they came from, announced once.
+  reset({ busy: false })
+  st().addRef('h1', chg(1), { bytes: 10 })
+  st().addRef('h1', { ...chg(2), path: '/tmp/w/b.ts', side: 'before', old: { start: 40, end: 45 }, new: undefined }, { bytes: 10 })
+  st().addRef('h1', lines())
+  useSession.setState((s: any) => ({ sessions: { h1: { ...s.sessions.h1, queuedMessages: [{ id: 'q1', text: 'later', refs: [{ ref: { ...chg(3), id: 'r90' }, bytes: 5 }] }] } } }))
+  ok(st().invalidateSource('h1', `change:${chg(1).changeRef}`, { reason: 'denied' }) === 0, 'change: one ref is never invalidated alone')
+  equal(st().invalidateSource('h1', CHANGE_REFS, { reason: 'changed' }), 0, 'change: a file change never touches them')
+  equal(st().invalidateSource('h1', CHANGE_REFS, { reason: 'denied' }), 3, 'change: losing change_read removes every change ref, draft and queue')
+  ok(cur().contextRefs.length === 1 && cur().contextRefs[0].ref.kind === 'file', 'change: other refs stay')
+  equal(Object.keys(cur().referenceNotices).join(), 'change:denied', 'change: one notice, keyed by reason')
+  equal(cur().referenceNotices['change:denied'].removed.map((r: any) => r.label).join('|'), 'a.ts · diff L1, added|b.ts · before L40–45', 'change: it lists both files')
+  ok(cur().refAnnounce.startsWith("Claude can't read changes in this session. 2 changes were removed from the message."), 'change: announced once for the draft')
+  ok(cur().queuedMessages[0].refs.length === 0 && cur().queuedMessages[0].needsReview?.[0].resourceId === 'change:denied', 'change: the queued message pauses under the same key')
+
+  // A draft carried to another session leaves its change refs behind: their grants stayed with the old one.
+  reset({ busy: false })
+  const asked: unknown[] = []
+  replies.validateRefs = (_h: unknown, refs: unknown) => (asked.push(refs), [])
+  await st().carryRefs('h1', [{ ref: { ...chg(4), id: 'r91' }, bytes: 5 }, { ref: { ...lines(), id: 'r92' } }])
+  ok(cur().contextRefs.length === 1 && cur().contextRefs[0].ref.kind === 'file', 'carry: the file ref moves, the change ref does not')
+  ok(!JSON.stringify(asked).includes('chg_'), 'carry: a change ref is never asked of the new session')
+  equal(cur().referenceNotices['change:session']?.removed[0].label, 'a.ts · diff L1, added', 'carry: it becomes a session notice')
+  delete replies.validateRefs
+  // The carried file's watch would otherwise count as already synced below.
+  st().removeRef('h1', cur().contextRefs[0].ref.id)
+  await tick()
 
   reset({ busy: false })
   st().addRef('h1', pin('#a'), { pinId: 7 })

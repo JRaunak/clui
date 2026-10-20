@@ -4,6 +4,7 @@
  */
 import type { AnnotateTarget } from '../../shared/annotate'
 import {
+  CHANGE_REF,
   isDraftVisual,
   isRefInput,
   MAX_REFS,
@@ -106,6 +107,13 @@ export async function classifyRefPaths(deps: Pick<PacketDeps, 'authorize'>, hand
       (await deps.authorize(handleId, p, 'file')) === 'ok' ? 'file' : (await deps.authorize(handleId, p, 'folder')) === 'ok' ? 'folder' : null
     )
   )
+}
+
+/** Per change ref, whether this handle can still read it. A malformed ref is false; a malformed list gets []. The reply
+ *  carries no text, path or locator. */
+export function changeRefStatus(deps: Pick<PacketDeps, 'change'>, handleId: unknown, refs: unknown): boolean[] {
+  if (typeof handleId !== 'string' || !Array.isArray(refs) || refs.length > MAX_REFS) return []
+  return refs.map((r: unknown) => typeof r === 'string' && CHANGE_REF.test(r) && deps.change(handleId, r) === 'ok')
 }
 
 /** Every ref that no longer points at what the user picked. Each file or tab is read once. */

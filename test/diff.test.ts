@@ -212,7 +212,7 @@ const source = (l: ChangeLedger, disk: string | null = null): DiffSource => ({
   ok([{ start: 0, end: 1 }, { start: 4, end: 6 }, { start: 3, end: 2 }, { start: 1.5, end: 2 }].every((r) => JSON.parse(sel('diff', r)).reason === 'empty'), 'select: rows outside the hunk or reversed are empty')
   const tall = (n: number): PatchHunk => ({ oldStart: 1, oldLines: 0, newStart: 1, newLines: n, lines: Array.from({ length: n }, () => '+x') })
   ok(changeSelection(tall(400), 'after').ok, 'select: 400 lines fit')
-  equal(JSON.stringify(changeSelection(tall(401), 'after')), JSON.stringify({ ok: false, reason: 'too-large', lines: 401, bytes: 801 }), 'select: 401 lines are too large, measured')
+  equal(JSON.stringify(changeSelection(tall(401), 'after')), JSON.stringify({ ok: false, reason: 'too-large', lines: 401, bytes: 801, new: { start: 1, end: 401 } }), 'select: 401 lines are too large, measured, and still numbered')
   const wide = (s: string): PatchHunk => ({ oldStart: 1, oldLines: 0, newStart: 1, newLines: 1, lines: [`+${s}`] })
   ok(changeSelection(wide('€'.repeat(10922) + 'aa'), 'after').ok, 'select: 32,768 UTF-8 bytes fit')
   const over = changeSelection(wide('€'.repeat(10923)), 'after')

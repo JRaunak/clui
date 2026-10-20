@@ -1,4 +1,4 @@
-import { refLabel, type DraftReference } from '../../../shared/context'
+import { changeTail, refLabel, relativeTo, type DraftReference } from '../../../shared/context'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type StateSnapshot, type VirtuosoHandle } from 'react-virtuoso'
 import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
@@ -10,7 +10,7 @@ import { MessageView } from './MessageView'
 import { WorkingStatus } from './WorkingStatus'
 import { CompactSuggestion } from './CompactSuggestion'
 import { TaskPuck, useTaskUiActive } from './TaskPuck'
-import { IconArrowUp, IconChevron, IconClose, IconEdit, IconCheck, IconFile, IconImage, IconTarget, IconWarn } from './Icon'
+import { IconArrowUp, IconChevron, IconClose, IconDiff, IconEdit, IconCheck, IconFile, IconImage, IconTarget, IconWarn } from './Icon'
 import { deriveModelInfo } from '../../../shared/settings'
 import { TURN_LINE_PX, currentTurnAt } from '../lib/instrument'
 import type { PermissionModeChoice } from '../../../shared/ipc'
@@ -390,7 +390,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
                   className="turn-flash pointer-events-none absolute -left-6 -right-3 -inset-y-2 -z-10 rounded-lg"
                 />
               )}
-              <MessageView message={m} hideThinking={thinkingLive && index === messages.length - 1} />
+              <MessageView message={m} hideThinking={thinkingLive && index === messages.length - 1} rebuilt={resumed && index < historyCount} />
             </div>
           </div>
         )}
@@ -686,18 +686,25 @@ function QueuedRow({ q, later }: { q: QueuedMessage; later: boolean }): JSX.Elem
 /** A queued message's context, compact: numbered reference pills in order, then its attachments' thumbnails
  *  and file pills, from the same display metadata the bubble will show. */
 function QueuedAttachments({ atts, refs }: { atts: SendAttachment[]; refs: DraftReference[] }): JSX.Element {
+  const cwd = useActive((s) => s?.cwd ?? null)
   return (
     <div className="flex flex-wrap gap-1.5">
-      {refs.map((d, i) => (
+      {refs.map(({ ref: r, ...d }, i) => (
         <span
-          key={d.ref.id}
+          key={r.id}
           data-ui="queued-ref"
           className="inline-flex h-6 max-w-60 items-center gap-1 rounded border border-border bg-bg-raised px-1.5 font-mono text-meta text-dim"
-          title={d.ref.kind === 'browser' ? refLabel(d.ref) : d.ref.path}
+          title={r.kind === 'browser' ? refLabel(r) : r.kind === 'change' ? `Claude's change to ${relativeTo(cwd, r.path)} · ${changeTail(r.side, r.old, r.new)}` : r.path}
         >
           <span className="text-content">{i + 1}</span>
-          {d.ref.kind === 'browser' ? <IconTarget className="h-3 w-3 shrink-0" /> : <FileIcon name={d.ref.path} kind={d.ref.kind === 'folder' ? 'folder' : 'file'} className="h-3 w-3 shrink-0" />}
-          <span className="truncate">{refLabel(d.ref)}</span>
+          {r.kind === 'browser' ? (
+            <IconTarget className="h-3 w-3 shrink-0" />
+          ) : r.kind === 'change' ? (
+            <IconDiff className="h-3 w-3 shrink-0" />
+          ) : (
+            <FileIcon name={r.path} kind={r.kind} className="h-3 w-3 shrink-0" />
+          )}
+          <span className="truncate">{refLabel(r)}</span>
           {d.visual && (
             <>
               <IconImage className="h-3 w-3 shrink-0" aria-hidden="true" />

@@ -12,6 +12,7 @@ import {
   parseRefs,
   refKey,
   refLabel,
+  changeTail,
   resourceOf,
   sentRefs,
   serializeContext,
@@ -339,8 +340,9 @@ Why did this line change?`
   ok(!serializeContext(sentRefs([{ ref: abs, bytes: 12 }], '/w'), '', { packetId: null }).includes('bytes'), 'change: nor the wire')
   ok(isRefInput({ kind: 'change', changeRef: CHG, path: '/w/a.ts', side: 'after', new: { start: 1, end: 2 } }), 'change: a valid input')
   ok(!isRefInput({ kind: 'change', changeRef: CHG, path: 'a.ts', side: 'after', new: { start: 1, end: 2 } }), 'change: an input path must be absolute')
-  equal(refLabel(chg({ path: '/w/mcp.ts', side: 'diff', old: { start: 40, end: 45 }, new: { start: 40, end: 52 } })), 'mcp.ts · change L40–52', 'change: diff label ranges over new')
+  equal(refLabel(chg({ path: '/w/mcp.ts', side: 'diff', old: { start: 40, end: 45 }, new: { start: 41, end: 53 } })), 'mcp.ts · diff L40–45 → L41–53', 'change: a diff names both numberings')
   equal(refLabel(chg({ path: '/w/mcp.ts', old: { start: 40, end: 45 }, new: { start: 41, end: 53 } })), 'mcp.ts · before L40–45', 'change: before label ranges over old')
   equal(refLabel(chg({ path: '/w/mcp.ts', side: 'after', old: undefined, new: { start: 41, end: 41 } })), 'mcp.ts · after L41', 'change: after label ranges over new')
-  equal(refLabel(chg({ path: '/w/mcp.ts', side: 'diff' })), 'mcp.ts · change L3', 'change: a removal-only diff falls back to old')
+  equal(refLabel(chg({ path: '/w/mcp.ts', side: 'diff' })), 'mcp.ts · diff L3, removed', 'change: an old-only diff is all removed rows')
+  equal(changeTail('diff', undefined, { start: 41, end: 53 }), 'diff L41–53, added', 'change: a new-only diff is all added rows')
 }

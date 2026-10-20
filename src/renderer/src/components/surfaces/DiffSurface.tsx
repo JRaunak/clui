@@ -1,14 +1,30 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { useActive, useSession, EMPTY_CHANGES, type PerSessionState } from '../../store'
-import type { DiffHunk, FileChangeSummary, FileDiff } from '../../../../shared/changes'
+import { denyChangeRead, refsOf, useActive, useSession, EMPTY_CHANGES, type PerSessionState } from '../../store'
+import { changeSelection, type DiffHunk, type FileChangeSummary, type FileDiff, type HunkRows } from '../../../../shared/changes'
+import type { ChangeSide } from '../../../../shared/context'
+import type { ChangeRefResult } from '../../../../shared/ipc'
 import { describe, Figure, figureWidth, MINUS, toWorkspaceRelative } from '../ChangedFiles'
 import { Button } from '../Button'
-import { DiffLine, type LineKind } from './HunkView'
+import { addFromSurface } from '../ContextChips'
+import { DiffLine, SELECTED_MARK, type LineKind } from './HunkView'
+import { ANNOUNCE_MS, SelectionBar } from './SelectionBar'
 import type { PaneExternal } from './PaneHeader'
 import { highlightTexts, langForPath } from '../../lib/highlight'
 import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { viaOf, type Via } from '../../lib/motion'
+import { changeBlocked, diffSelection, mintedRef, recordMint, requestOf, rowCount, sideEmpty, type DiffSelection } from '../../lib/changeRefs'
+import {
+  CHANGE_CLEARED,
+  CHANGE_DENIED,
+  CHANGE_REGION_HINT,
+  changeRefusedText,
+  changeSelectedSpoken,
+  changeSelectedText,
+  emptySideTitle,
+  SIDE_TITLE,
+  tooLargeText
+} from '../../lib/refCopy'
 
 const TAB = 'diff'
 const SKELETON_MS = 400
@@ -16,6 +32,10 @@ const TYPEAHEAD_MS = 500
 const SKELETON = [62, 48, 71, 35, 80, 54, 66, 40]
 const TEXT_BTN = 'ml-auto h-6 shrink-0 rounded px-2 font-sans text-meta font-normal text-dim hover:bg-control-hover hover:text-content'
 const DISABLED = 'aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent aria-disabled:hover:text-dim'
+/** A mint's round trip is local; past this the Add button says it's working. */
+const BUSY_MS = 400
+const SIDES: ChangeSide[] = ['diff', 'before', 'after']
+const SIDE_NAME: Record<ChangeSide, string> = { diff: 'Diff', before: 'Before', after: 'After' }
 const SHELL_NOTE = "Changes made by shell commands aren't tracked."
 const NONE_COPY =
   "Claude changed this file, but the session record doesn't include all of its changes. This happens with some subagent edits and with large files in resumed sessions."
@@ -54,19 +74,39 @@ type Item =
   | { t: 'heading'; key: string; text: string; first: boolean; segment?: { id: string; index: number; total: number } }
   | { t: 'separator'; key: string }
   | { t: 'hunk'; key: string; hunk: DiffHunk }
-  | { t: 'line'; key: string; kind: LineKind; oldNo?: number; newNo?: number; text: string; hunk: string; side: 0 | 1; at: number }
+  /** `j`: the row's index in its hunk's `lines`, the coordinate a change selection's rows use. */
+  | { t: 'line'; key: string; kind: LineKind; oldNo?: number; newNo?: number; text: string; hunk: string; j: number; side: 0 | 1; at: number }
   | { t: 'zero' | 'none' | 'truncated'; key: string }
+
+interface HunkAt {
+  hunk: DiffHunk
+  /** Item index per line of `hunk.lines`; -1 for a `\ No newline` row, which isn't rendered. */
+  rows: number[]
+}
 
 interface Built {
   items: Item[]
   maxLine: number
   /** Per hunk, its before-side run and after-side run, highlighted as whole texts. */
   runs: { id: string; old: string; new: string }[]
+  hunks: Map<string, HunkAt>
+}
+
+/** The `j`s of a hunk's rendered rows. */
+const shownRows = (at: HunkAt): number[] => at.rows.flatMap((x, j) => (x < 0 ? [] : [j]))
+const rowsBetween = (a: number, b: number): HunkRows => ({ start: Math.min(a, b) + 1, end: Math.max(a, b) + 1 })
+
+/** The selected rows as `j`s, a whole hunk as its first and last rendered row. */
+function spanOf(s: DiffSelection, at: HunkAt): [number, number] {
+  if (s.rows) return [s.rows.start - 1, s.rows.end - 1]
+  const js = shownRows(at)
+  return [js[0], js[js.length - 1]]
 }
 
 function build(diff: FileDiff): Built {
   const items: Item[] = []
   const runs: Built['runs'] = []
+  const hunks: Built['hunks'] = new Map()
   let maxLine = 0
   const segs = diff.segments
   // Patch-only history numbers its edits across the file and has no segment headings; otherwise
@@ -93,6 +133,8 @@ function build(diff: FileDiff): Built {
       if (edits > 1) items.push({ t: 'heading', key: `edit:${seg.id}:${j}`, text: `Edit ${n} of ${edits}`, first: allPatch && n === 1 })
       for (const h of group) {
         items.push({ t: 'hunk', key: `h:${h.id}`, hunk: h })
+        const at: HunkAt = { hunk: h, rows: [] }
+        hunks.set(h.id, at)
         maxLine = Math.max(maxLine, h.oldStart + h.oldLines - 1, h.newStart + h.newLines - 1)
         const old: string[] = []
         const neu: string[] = []
@@ -102,14 +144,15 @@ function build(diff: FileDiff): Built {
           const kind = l[0]
           const text = l.slice(1)
           const key = `l:${h.id}:${j}`
+          at.rows.push(kind === '-' || kind === '+' || kind === ' ' ? items.length : -1)
           if (kind === '-') {
-            items.push({ t: 'line', key, kind, oldNo: o++, text, hunk: h.id, side: 0, at: old.length })
+            items.push({ t: 'line', key, kind, oldNo: o++, text, hunk: h.id, j, side: 0, at: old.length })
             old.push(text)
           } else if (kind === '+') {
-            items.push({ t: 'line', key, kind, newNo: n++, text, hunk: h.id, side: 1, at: neu.length })
+            items.push({ t: 'line', key, kind, newNo: n++, text, hunk: h.id, j, side: 1, at: neu.length })
             neu.push(text)
           } else if (kind === ' ') {
-            items.push({ t: 'line', key, kind, oldNo: o++, newNo: n++, text, hunk: h.id, side: 1, at: neu.length })
+            items.push({ t: 'line', key, kind, oldNo: o++, newNo: n++, text, hunk: h.id, j, side: 1, at: neu.length })
             old.push(text)
             neu.push(text)
           }
@@ -119,7 +162,7 @@ function build(diff: FileDiff): Built {
     })
   })
   if (diff.truncated) items.push({ t: 'truncated', key: 'truncated' })
-  return { items, maxLine, runs }
+  return { items, maxLine, runs, hunks }
 }
 
 const span = (start: number, count: number): string =>
@@ -198,10 +241,32 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
   const lastIndex = useRef(0)
   const path = selected?.path ?? null
   const multi = changes.length > 1
+  const sel = useActive((s) => s?.surfaces.tabs[TAB]?.selection?.change ?? null)
+  const selRef = useRef(sel)
+  selRef.current = sel
+  const changeRead = useActive((s) => s?.changeRead ?? null)
+  const anchor = useRef<{ hunk: string; j: number } | null>(null)
+  const activeRow = useRef<number | null>(null)
+  const lastVisible = useRef(0)
+  /** The side the last range change had to leave, for its announcement. */
+  const fellFrom = useRef<ChangeSide | undefined>()
+  /** The next clear was already explained, so "Selection cleared" doesn't follow it. */
+  const quiet = useRef(false)
+  const sideEls = useRef<(HTMLButtonElement | null)[]>([])
+  const hintId = useId()
+  const [busy, setBusy] = useState(false)
+  /** Main's too-large answer for a selection the preview thought fit, keyed to that selection and side. */
+  const [refused, setRefused] = useState<{ key: string; lines: number; bytes: number } | null>(null)
+  const [said, setSaid] = useState('')
+  const sayCount = useRef(0)
+  // A zero-width space toggles so an identical announcement still changes the live region.
+  const say = (t: string): void => setSaid(`${t}${'\u200B'.repeat(++sayCount.current % 2)}`)
+  const selSay = useRef<ReturnType<typeof setTimeout>>()
+  const setChange = (change: DiffSelection | undefined): void => setView(handleId, TAB, { selection: change ? { change } : undefined })
 
   const select = (p: string, focus: boolean): void => {
     focusOption.current = focus && p !== path
-    setView(handleId, TAB, { location: { file: p } })
+    setView(handleId, TAB, { location: { file: p }, ...(p !== path ? { selection: undefined } : {}) })
   }
 
   // A file that leaves the ledger hands selection to its neighbour, not to the top of the list.
@@ -296,13 +361,63 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
     hunkFocus.current = null
     // The list renders the scrolled-to row a few frames later, on a first mount later still.
     let tries = 30
+    // A chip that brought its selection back hands focus to the region, so Enter and Escape work at once.
+    const restored = selRef.current?.hunkId === id
     const focus = (): void => {
-      const el = document.querySelector<HTMLElement>(`[data-ui="diff-body"] [data-hunk="${CSS.escape(id)}"]`)
+      const el = restored ? bodyEl.current : document.querySelector<HTMLElement>(`[data-ui="diff-body"] [data-hunk="${CSS.escape(id)}"]`)
       if (el) el.focus()
       else if (tries-- > 0) requestAnimationFrame(focus)
     }
     requestAnimationFrame(focus)
   }, [location, built])
+
+  // A refetch keeps a selection whose hunk is still there, byte for byte; anything else clears, never remaps.
+  const seen = useRef<{ path: string; ids: Set<string> } | null>(null)
+  const settled = !!built && !!shown && loaded?.key === fetchKey
+  useEffect(() => {
+    if (!settled || !built || !shown) return
+    const had = seen.current
+    seen.current = { path: shown.path, ids: new Set(built.hunks.keys()) }
+    const s = selRef.current
+    if (!s) return
+    if (s.path === shown.path && built.hunks.get(s.hunkId)?.hunk.revision === s.revision) return
+    quiet.current = true
+    setChange(undefined)
+    if (s.path === shown.path && had?.path === s.path && had.ids.has(s.hunkId)) say(CHANGE_CLEARED)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settled, built, shown, sel?.path, sel?.hunkId])
+
+  // The selection's announcement trails the keys that make it; a side picked in the bar announces itself.
+  const selKey = sel ? `${sel.hunkId}:${sel.rows ? `${sel.rows.start}-${sel.rows.end}` : ''}` : ''
+  const hadSel = useRef(false)
+  useEffect(() => {
+    if (!sel && !hadSel.current) return
+    hadSel.current = !!sel
+    const wasQuiet = quiet.current
+    quiet.current = false
+    if (!sel && wasQuiet) return
+    const at = sel && built?.hunks.get(sel.hunkId)
+    if (sel && !at) return
+    const text = sel && at ? changeSelectedSpoken(rowCount(at.hunk, sel.rows), !sel.rows, sel.side, fellFrom.current) : 'Selection cleared'
+    const t = (selSay.current = setTimeout(() => say(text), ANNOUNCE_MS))
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selKey])
+
+  // The bar takes its height from the scroller, which can hide the last row just selected.
+  const selAt = sel ? built?.hunks.get(sel.hunkId) : undefined
+  const barShown = !!sel && !!selAt
+  useLayoutEffect(() => {
+    if (!sel || !selAt) return
+    const end = spanOf(sel, selAt)[1]
+    bodyEl.current?.querySelector(`[data-row-hunk="${CSS.escape(sel.hunkId)}"][data-row="${end}"]`)?.scrollIntoView({ block: 'nearest' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [barShown])
+  // The bar speaks for where an add lands, so In message reads the edit target's refs.
+  const inTarget = useActive((s) => {
+    const ref = sel && mintedRef(handleId, requestOf(sel))
+    return !!s && !!ref && !!refsOf(s, s.referenceEditTarget)?.some((d) => d.ref.kind === 'change' && d.ref.changeRef === ref)
+  })
 
   const rel = (p: string): string => toWorkspaceRelative(cwd, p)
   const columns = {
@@ -345,11 +460,11 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
     )
   }
 
-  const sel = selected as FileChangeSummary
+  const picked = selected as FileChangeSummary
   const pending = loaded?.key !== fetchKey
   const skeleton = pending && slow
   // The header and actions describe the diff on screen, which lags the selection until its fetch lands.
-  const c = (!skeleton && loaded && changes.find((x) => x.path === loaded.path)) || sel
+  const c = (!skeleton && loaded && changes.find((x) => x.path === loaded.path)) || picked
   const name = baseOf(c.path)
   const relPath = rel(c.path)
   const dir = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : ''
@@ -369,6 +484,158 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
     const at = h.current
     const location = at ? { line: at.start, ...(at.end > at.start ? { endLine: at.end } : {}) } : undefined
     openSurface(handleId, { kind: 'file', key: c.path, title: name, ...(location ? { location } : {}) }, 'focus', 'user', 'user')
+  }
+
+  const hunkAt = (id: string): HunkAt | undefined => built?.hunks.get(id)
+  const selSpan = sel && selAt ? spanOf(sel, selAt) : null
+  const choose = (h: DiffHunk, rows: HunkRows | undefined, want: ChangeSide = selRef.current?.side ?? 'diff'): void => {
+    if (!shown) return
+    const r = diffSelection(shown.path, h, want, rows)
+    fellFrom.current = r.fellFrom
+    setChange(r.sel)
+  }
+  const clear = (): void => {
+    anchor.current = null
+    setChange(undefined)
+  }
+  // A selection that arrived from elsewhere (a chip) anchors at its first row.
+  const anchorIn = (id: string): { hunk: string; j: number } | null => {
+    if (anchor.current?.hunk === id) return anchor.current
+    const at = hunkAt(id)
+    return sel?.hunkId === id && at ? { hunk: id, j: spanOf(sel, at)[0] } : null
+  }
+
+  const clickRow = (id: string, j: number, shift: boolean): void => {
+    const at = hunkAt(id)
+    if (!at) return
+    const from = shift ? anchorIn(id) : null
+    if (from) {
+      anchor.current = from
+      activeRow.current = j
+      return choose(at.hunk, rowsBetween(from.j, j))
+    }
+    if (selSpan && sel?.hunkId === id && selSpan[0] === j && selSpan[1] === j) return clear()
+    anchor.current = { hunk: id, j }
+    activeRow.current = j
+    choose(at.hunk, rowsBetween(j, j))
+  }
+
+  const toggleHunk = (h: DiffHunk): void => {
+    const at = hunkAt(h.id)
+    if (!at) return
+    if (sel?.hunkId === h.id && !sel.rows) return clear()
+    const js = shownRows(at)
+    anchor.current = { hunk: h.id, j: js[0] }
+    activeRow.current = js[js.length - 1]
+    choose(h, undefined)
+    bodyEl.current?.focus()
+  }
+
+  // Dragging across code keeps the native selection for copying; within one hunk its rows become the selection.
+  const onMouseUp = (): void => {
+    const s = window.getSelection()
+    if (!s || s.isCollapsed) return
+    const rowOf = (node: Node | null): { hunk: string; j: number } | null => {
+      const el = node instanceof Element ? node : node?.parentElement
+      const row = el?.closest<HTMLElement>('[data-row-hunk]')
+      return row?.dataset.rowHunk && bodyEl.current?.contains(row) ? { hunk: row.dataset.rowHunk, j: Number(row.dataset.row) } : null
+    }
+    const a = rowOf(s.anchorNode)
+    const b = rowOf(s.focusNode)
+    const at = a && b && a.hunk === b.hunk ? hunkAt(a.hunk) : undefined
+    if (!a || !b || !at) return
+    anchor.current = a
+    activeRow.current = b.j
+    choose(at.hunk, rowsBetween(a.j, b.j))
+  }
+
+  const preview = sel && selAt ? changeSelection(selAt.hunk, sel.side, sel.rows) : null
+  const refusedKey = sel ? `${selKey}\0${sel.side}` : ''
+  const mainSize = refused?.key === refusedKey ? refused : null
+  const blocked = preview ? (changeBlocked(changeRead, preview) ?? (mainSize ? tooLargeText(mainSize.lines, mainSize.bytes) : undefined)) : undefined
+  const blockedSpoken = (): string =>
+    blocked === CHANGE_DENIED ? changeRefusedText('denied') : changeRefusedText('too-large', mainSize ?? { lines: preview?.lines ?? 0, bytes: preview?.bytes ?? 0 })
+
+  const addChange = async (): Promise<void> => {
+    if (!sel || !selAt) return
+    // An add right after selecting must not be talked over by the trailing selection announcement.
+    clearTimeout(selSay.current)
+    if (blocked) return say(blockedSpoken())
+    const req = requestOf(sel)
+    const slow = setTimeout(() => setBusy(true), BUSY_MS)
+    let r: ChangeRefResult
+    try {
+      r = await window.clui.createChangeRef(handleId, req)
+    } catch {
+      return say(`Couldn't add the change to ${baseOf(sel.path)}.`)
+    } finally {
+      clearTimeout(slow)
+      setBusy(false)
+    }
+    if (r.ok) {
+      recordMint(handleId, r.ref.changeRef, req)
+      return addFromSurface(handleId, r.ref, say, r.bytes)
+    }
+    const size = { lines: r.lines ?? 0, bytes: r.bytes ?? 0 }
+    if (r.reason === 'changed') {
+      quiet.current = true
+      clear()
+    } else if (r.reason === 'denied') denyChangeRead(handleId)
+    else if (r.reason === 'too-large') setRefused({ key: refusedKey, ...size })
+    say(changeRefusedText(r.reason, size))
+  }
+
+  const onRegionKey = (e: KeyboardEvent): void => {
+    if (e.target !== e.currentTarget || !built) return
+    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      if (!sel) return
+      e.preventDefault()
+      return void addChange()
+    }
+    if (e.key === 'Escape') {
+      if (!sel) return
+      e.preventDefault()
+      return clear()
+    }
+    if (!e.shiftKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return
+    e.preventDefault()
+    if (!sel || !selAt) {
+      const first = built.items.slice(firstVisible.current).find((it) => it.t === 'hunk' || it.t === 'line')
+      const at = first?.t === 'hunk' ? hunkAt(first.hunk.id) : first?.t === 'line' ? hunkAt(first.hunk) : undefined
+      if (!at) return
+      const j = shownRows(at)[0]
+      anchor.current = { hunk: at.hunk.id, j }
+      activeRow.current = j
+      return choose(at.hunk, rowsBetween(j, j))
+    }
+    const [lo, hi] = spanOf(sel, selAt)
+    if (anchor.current?.hunk !== sel.hunkId) {
+      anchor.current = { hunk: sel.hunkId, j: lo }
+      activeRow.current = hi
+    }
+    const js = shownRows(selAt)
+    const i = js.indexOf(activeRow.current ?? hi)
+    const to = js[Math.max(0, Math.min(js.length - 1, i + (e.key === 'ArrowUp' ? -1 : 1)))]
+    activeRow.current = to
+    choose(selAt.hunk, rowsBetween(anchor.current.j, to))
+    const index = selAt.rows[to]
+    if (index < firstVisible.current || index > lastVisible.current) virtuoso.current?.scrollToIndex({ index, align: 'center' })
+  }
+
+  const empty = (side: ChangeSide): boolean => !!sel && !!selAt && side !== 'diff' && sideEmpty(selAt.hunk, side, sel.rows)
+  const pickSide = (side: ChangeSide): void => {
+    if (sel && selAt && !empty(side)) choose(selAt.hunk, sel.rows, side)
+  }
+  const onSideKey = (e: KeyboardEvent): void => {
+    if (!sel) return
+    const open = SIDES.filter((x) => !empty(x))
+    const step: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }
+    const k = open.indexOf(sel.side)
+    const to = e.key in step ? open[(k + step[e.key] + open.length) % open.length] : e.key === 'Home' ? open[0] : e.key === 'End' ? open[open.length - 1] : undefined
+    if (!to) return
+    e.preventDefault()
+    pickSide(to)
+    sideEls.current[SIDES.indexOf(to)]?.focus()
   }
 
   const renderItem = (item: Item): JSX.Element => {
@@ -397,11 +664,21 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
         const h = item.hunk
         const at = h.current
         const label = !at ? `Open ${name}. These lines have changed since.` : at.start === at.end ? `Show line ${at.start} in ${name}` : `Show lines ${at.start} to ${at.end} in ${name}`
-        const said = `${span(h.oldStart, h.oldLines)} before, ${span(h.newStart, h.newLines)} after`
+        const extent = `${span(h.oldStart, h.oldLines)} before, ${span(h.newStart, h.newLines)} after`
+        const whole = sel?.hunkId === h.id && !sel.rows
         return (
-          <div className="flex h-7 items-center gap-2 bg-tool pl-3 pr-1 font-mono text-meta text-dim">
-            <span aria-hidden="true">{`@@ ${h.oldStart},${h.oldLines} → ${h.newStart},${h.newLines}`}</span>
-            <span className="sr-only">{said.charAt(0).toUpperCase() + said.slice(1)}</span>
+          <div className={`relative flex h-7 items-center gap-2 bg-tool pl-3 pr-1 font-mono text-meta text-dim ${whole ? SELECTED_MARK : ''}`}>
+            <button
+              type="button"
+              data-ui="diff-hunk-select"
+              aria-pressed={whole}
+              aria-label={`Select hunk: ${extent}`}
+              title="Select this hunk"
+              onClick={() => toggleHunk(h)}
+              className="-ml-1.5 h-6 rounded px-1.5 font-mono text-meta text-dim hover:bg-control-hover hover:text-content aria-pressed:text-content"
+            >
+              {`@@ ${h.oldStart},${h.oldLines} → ${h.newStart},${h.newLines}`}
+            </button>
             <button
               type="button"
               data-hunk={h.id}
@@ -418,7 +695,19 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
       }
       case 'line': {
         const run = hl?.for === built ? hl.runs.get(item.hunk) : undefined
-        return <DiffLine kind={item.kind} oldNo={item.oldNo} newNo={item.newNo} text={item.text} html={run?.[item.side]?.[item.at]} />
+        const on = !!selSpan && sel?.hunkId === item.hunk && item.j >= selSpan[0] && item.j <= selSpan[1]
+        return (
+          <DiffLine
+            kind={item.kind}
+            oldNo={item.oldNo}
+            newNo={item.newNo}
+            text={item.text}
+            html={run?.[item.side]?.[item.at]}
+            selected={on}
+            onGutter={(shift) => clickRow(item.hunk, item.j, shift)}
+            row={{ hunk: item.hunk, j: item.j }}
+          />
+        )
       }
       case 'zero':
         return <p className="px-3 py-3 text-meta text-dim">{"Claude's edits to this file cancel out. There is no net change."}</p>
@@ -450,7 +739,7 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
         ))}
       </div>
     )
-  } else if (loaded && !loaded.diff && !loaded.error && loaded.path === sel.path) {
+  } else if (loaded && !loaded.diff && !loaded.error && loaded.path === picked.path) {
     content = <NonePanel missing={c.missingOnDisk} path={c.path} handleId={handleId} />
   } else if (built && scroller) {
     content = (
@@ -459,7 +748,10 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
         customScrollParent={scroller}
         data={built.items}
         computeItemKey={(_i, it) => it.key}
-        rangeChanged={(r) => void (firstVisible.current = r.startIndex)}
+        rangeChanged={(r) => {
+          firstVisible.current = r.startIndex
+          lastVisible.current = r.endIndex
+        }}
         itemContent={(_i, it) => renderItem(it)}
       />
     )
@@ -470,8 +762,11 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
       ref={bodyRef}
       role="region"
       aria-label={bodyLabel}
+      aria-describedby={hintId}
       aria-busy={pending || undefined}
       tabIndex={0}
+      onKeyDown={onRegionKey}
+      onMouseUp={onMouseUp}
       data-ui="diff-body"
       data-beside-header=""
       {...(multi ? {} : { 'data-pane-title': '' })}
@@ -504,7 +799,7 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
               className="max-h-[144px] overflow-y-auto px-1 pb-2 @min-[760px]/diff:max-h-none @min-[760px]/diff:min-h-0 @min-[760px]/diff:flex-1"
             >
               {changes.map((x, i) => {
-                const on = x.path === sel.path
+                const on = x.path === picked.path
                 const r = rel(x.path)
                 const cut = r.lastIndexOf('/')
                 const word = stateWord(x)
@@ -547,6 +842,46 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
             ))}
           </div>
           {body}
+          <span id={hintId} hidden>
+            {CHANGE_REGION_HINT}
+          </span>
+          {sel && selAt && (
+            <SelectionBar
+              label={changeSelectedText(rowCount(selAt.hunk, sel.rows), !sel.rows)}
+              attached={inTarget}
+              onAdd={() => void addChange()}
+              blocked={blocked}
+              onBlocked={() => say(blockedSpoken())}
+              busy={busy}
+            >
+              <div role="radiogroup" aria-label="Side to add" data-ui="change-side" className="flex h-7 shrink-0 items-center rounded-md border border-control-edge bg-control p-0.5">
+                {SIDES.map((x, i) => {
+                  const off = empty(x)
+                  const on = sel.side === x
+                  return (
+                    <button
+                      key={x}
+                      ref={(el) => void (sideEls.current[i] = el)}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      aria-disabled={off || undefined}
+                      tabIndex={on ? 0 : -1}
+                      title={off ? emptySideTitle(x) : SIDE_TITLE[x]}
+                      onClick={() => pickSide(x)}
+                      onKeyDown={onSideKey}
+                      className="relative h-6 rounded px-2 text-meta text-dim pointer-fine:hover:text-content aria-checked:bg-bg-raised aria-checked:font-medium aria-checked:text-content aria-checked:after:absolute aria-checked:after:inset-x-1.5 aria-checked:after:bottom-0.5 aria-checked:after:h-0.5 aria-checked:after:rounded-full aria-checked:after:bg-content aria-disabled:text-faint aria-disabled:pointer-fine:hover:text-faint"
+                    >
+                      {SIDE_NAME[x]}
+                    </button>
+                  )
+                })}
+              </div>
+            </SelectionBar>
+          )}
+          <span className="sr-only" aria-live="polite" data-ui="diff-live">
+            {said}
+          </span>
         </div>
       </div>
     </div>

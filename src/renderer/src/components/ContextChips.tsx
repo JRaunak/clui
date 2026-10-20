@@ -4,7 +4,9 @@ import { surfaceIdOf } from '../../../shared/surfaces'
 import { placement, useActive, useSession, type AddRefResult, type RefTarget } from '../store'
 import { openFileAt } from '../lib/openLink'
 import { viaOf, type Via } from '../lib/motion'
-import { addedText, baseOf, canReopen, couldNotAdd, noticeLead, removedText, spokenRef } from '../lib/refCopy'
+import { addedText, baseOf, BUDGET_NOTE, canReopen, noticeLead, removedText, spokenRef } from '../lib/refCopy'
+import { mintedRequest } from '../lib/changeRefs'
+import { requestSurfaceFocus } from '../lib/surfaceFocus'
 import { ContextChip, refChip, type ChipView } from './ContextChip'
 import { IconClose, IconWarn } from './Icon'
 
@@ -22,11 +24,11 @@ export function signalRefs(handleId: string, target: RefTarget, s: Signal): void
 }
 
 /** A surface's Add to message. `say` is the source's live region, where focus stays; a duplicate moves focus to
- *  the existing chip, so it's announced from the composer. */
-export function addFromSurface(handleId: string, input: RefInput, say: (t: string) => void): void {
+ *  the existing chip, so it's announced from the composer. `bytes` is a change ref's mint size. */
+export function addFromSurface(handleId: string, input: RefInput, say: (t: string) => void, bytes?: number): void {
   const st = useSession.getState()
   const target = st.sessions[handleId]?.referenceEditTarget ?? null
-  const r = st.addRef(handleId, input)
+  const r = st.addRef(handleId, input, bytes === undefined ? undefined : { bytes })
   if (r.status === 'added') say(addedText(input, target !== null))
   else if (r.status === 'duplicate') {
     signalRefs(handleId, target, { focus: r.id, note: 'Already attached.' })
@@ -34,19 +36,23 @@ export function addFromSurface(handleId: string, input: RefInput, say: (t: strin
   } else if (r.status === 'cap') {
     signalRefs(handleId, target, { note: CAP_NOTE })
     say(CAP_NOTE)
-  } else if (r.status === 'budget') say(couldNotAdd(input))
-  else if (target !== null) say('That queued message is gone, so nothing was added.')
+  } else if (r.status === 'budget') {
+    signalRefs(handleId, target, { note: BUDGET_NOTE })
+    say(BUDGET_NOTE)
+  } else if (target !== null) say('That queued message is gone, so nothing was added.')
 }
 
 /** Adds to the live draft from a source whose focus is in the textarea (`@` pick, drop), so nothing takes focus:
- *  the first duplicate flashes its chip. The caller announces, from the results. */
-export function addToDraft(handleId: string, inputs: readonly RefInput[], capNote: (skipped: number) => string): AddRefResult[] {
+ *  the first duplicate flashes its chip. The caller announces, from the results. `bytes` is the mint size of the
+ *  one change ref an `@` pick adds. */
+export function addToDraft(handleId: string, inputs: readonly RefInput[], capNote: (skipped: number) => string, bytes?: number): AddRefResult[] {
   const st = useSession.getState()
-  const results = inputs.map((input) => st.addRef(handleId, input, { target: null }))
+  const results = inputs.map((input) => st.addRef(handleId, input, { target: null, ...(bytes === undefined ? {} : { bytes }) }))
   const dup = results.find((r) => r.status === 'duplicate')
   const skipped = results.filter((r) => r.status === 'cap').length
-  if (!dup && !skipped) return results
-  const s: Signal = { ...(dup ? { flash: dup.id } : {}), note: skipped ? capNote(skipped) : 'Already attached.' }
+  const budget = results.some((r) => r.status === 'budget')
+  if (!dup && !skipped && !budget) return results
+  const s: Signal = { ...(dup ? { flash: dup.id } : {}), note: skipped ? capNote(skipped) : budget ? BUDGET_NOTE : 'Already attached.' }
   // The row drops its note when its chips change, which an add here is about to do, so a mixed result signals after it.
   if (results.some((r) => r.status === 'added')) requestAnimationFrame(() => signalRefs(handleId, null, s))
   else signalRefs(handleId, null, s)
@@ -54,7 +60,7 @@ export function addToDraft(handleId: string, inputs: readonly RefInput[], capNot
 }
 
 /** Opens what a draft reference points at. A draft line reference is always current, so its lines come back
- *  selected. */
+ *  selected; a change this renderer minted comes back selected at its hunk. */
 export function openRef(handleId: string, d: DraftReference, via: Via): void {
   const st = useSession.getState()
   const r = d.ref
@@ -68,9 +74,13 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
     case 'browser':
       if (handleId === st.activeHandleId && !st.sessions[handleId]?.paneOpen) st.setPane('half')
       return st.activateSurface(handleId, placement(r.pin.source.tabId))
-    case 'change':
-      st.openSurface(handleId, { kind: 'diff', key: '', title: 'Claude changes', location: { file: r.path } }, 'focus', 'user', 'user')
+    case 'change': {
+      const req = mintedRequest(handleId, r.changeRef)
+      requestSurfaceFocus('diff', via)
+      st.openSurface(handleId, { kind: 'diff', key: '', title: 'Claude changes', location: { file: r.path, ...(req ? { hunk: req.hunkId } : {}) } }, 'focus', 'user', 'user')
+      if (req) st.setSurfaceView(handleId, 'diff', { selection: { change: { ...req, ...(r.old ? { old: r.old } : {}), ...(r.new ? { new: r.new } : {}), fits: true } } })
       return
+    }
     default:
       return r satisfies never
   }
@@ -103,6 +113,7 @@ export function ContextChips({
   focusText: () => void
 }): JSX.Element | null {
   const cwd = useActive((s) => s?.cwd ?? null)
+  const changes = useActive((s) => s?.changes)
   const removeRef = useSession((s) => s.removeRef)
   const moveRef = useSession((s) => s.moveRef)
   const announce = useSession((s) => s.announceRefs)
@@ -115,11 +126,13 @@ export function ContextChips({
   const attHint = useId()
 
   const names = new Map<string, number>()
-  for (const d of refs) if (d.ref.kind === 'file') names.set(baseOf(d.ref.path), (names.get(baseOf(d.ref.path)) ?? 0) + 1)
+  for (const d of refs) if (d.ref.kind === 'file' || d.ref.kind === 'change') names.set(baseOf(d.ref.path), (names.get(baseOf(d.ref.path)) ?? 0) + 1)
   const views = refs.map((d, i) => {
     const thumb = d.visual ? `data:image/jpeg;base64,${d.visual.data}` : undefined
-    return refChip(d.ref, i + 1, cwd, thumb, d.ref.kind === 'file' && (names.get(baseOf(d.ref.path)) ?? 0) > 1)
+    return refChip(d.ref, i + 1, cwd, thumb, (d.ref.kind === 'file' || d.ref.kind === 'change') && (names.get(baseOf(d.ref.path)) ?? 0) > 1)
   })
+  // A change to a file no longer in the session's changes has nothing to show: the Diff tab would show another file.
+  const openable = ({ ref: r }: DraftReference): boolean => r.kind !== 'change' || !!changes?.some((c) => c.path === r.path)
   const keys = [...views.map((v) => v.key), ...attachments.map((a) => a.view.key)]
   const current = active && keys.includes(active) ? active : keys[0]
   const signature = keys.join('\0')
@@ -201,7 +214,7 @@ export function ContextChips({
         e.preventDefault()
         return remove(v.key, v.spoken)
       case 'Enter':
-        if (!d) return
+        if (!d || !openable(d)) return
         e.preventDefault()
         return openRef(handleId, d, 'keyboard')
       case 'Escape':
@@ -257,7 +270,7 @@ export function ContextChips({
               view={v}
               describedBy={refHint}
               onKeyDown={(e) => onKey(e, v, refs[i])}
-              onOpen={(e) => openRef(handleId, refs[i], viaOf(e))}
+              onOpen={openable(refs[i]) ? (e) => openRef(handleId, refs[i], viaOf(e)) : undefined}
               onRemove={() => {
                 removeRef(handleId, v.key, target)
                 announce(handleId, `Removed ${v.spoken}`)

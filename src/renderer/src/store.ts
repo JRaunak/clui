@@ -27,6 +27,7 @@ import type { ProcessedAttachment } from './lib/images'
 import { pinWords, clipName, type AnnotateEvent } from '../../shared/annotate'
 import {
   CAP_NOTE,
+  CHANGE_READ_TOOL,
   isRefInput,
   MAX_REFS,
   messageGist,
@@ -266,6 +267,8 @@ export interface QueuedMessage {
 
 /** Where a reference action lands: null is the draft, else a queued message's id. */
 export type RefTarget = string | null
+/** `invalidateSource`'s resource for every change ref at once: they lose access together, never per file. */
+export const CHANGE_REFS = 'change:*'
 /** `budget`: the change refs' text would pass CHANGE_TEXT_BUDGET for the message. */
 export type AddRefResult = { status: 'added'; id: string } | { status: 'duplicate'; id: string; key: string } | { status: 'cap' } | { status: 'budget' } | { status: 'invalid' }
 
@@ -439,8 +442,11 @@ export interface PerSessionState {
   annotate: AnnotateDraft
   /** References for the next message, in chip order. */
   contextRefs: DraftReference[]
-  /** Why references left the draft, by resource, until reselected or dismissed. */
+  /** Why references left the draft, by resource (change refs by reason, `change:<reason>`), until reselected or
+   *  dismissed. */
   referenceNotices: Record<string, ReferenceInvalidation>
+  /** Whether this session's CLI has the change_read tool, from its init; null before the first one. */
+  changeRead: boolean | null
   /** Where File, Tree and page adds land: null is the draft, else a queued message under review. */
   referenceEditTarget: RefTarget
   /** The composer's polite announcement for its chips row and notices. */
@@ -1285,10 +1291,27 @@ function watchSurfaces(): void {
   })
 }
 
+/** A session that can't read changes drops the change refs it holds, however `changeRead` got there. */
+function watchChangeRead(): void {
+  useSession.subscribe((s, prev) => {
+    if (s.sessions === prev.sessions) return
+    for (const [handleId, slice] of Object.entries(s.sessions)) {
+      if (slice.changeRead !== false || prev.sessions[handleId]?.changeRead === false) continue
+      queueMicrotask(() => useSession.getState().invalidateSource(handleId, CHANGE_REFS, { reason: 'denied' }))
+    }
+  })
+}
+
+/** A mint answered `denied` before the session's init said so. */
+export function denyChangeRead(handleId: string): void {
+  useSession.setState((s) => (s.sessions[handleId]?.changeRead === false ? {} : patchSlice(s, handleId, { changeRead: false })))
+}
+
 function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void): void {
   if (subscribed) return
   subscribed = true
   watchSurfaces()
+  watchChangeRead()
   window.clui.onSessionEvent(({ handleId, event }) => {
     applyEvent(handleId, event)
     // A turn can delete a changed file without a tool result naming it (Bash rm), so its
@@ -1544,6 +1567,7 @@ async function beginSession(
     annotate: IDLE_ANNOTATE,
     contextRefs: EMPTY_REFS,
     referenceNotices: EMPTY_NOTICES,
+    changeRead: null,
     referenceEditTarget: null,
     refAnnounce: ''
   })
@@ -1776,10 +1800,12 @@ function userBubble(handleId: string, text: string, attachments: SendAttachment[
 function invalidations(lost: readonly { ref: ContextReference; reason: RefFailure | 'session' }[]): ReferenceInvalidation[] {
   const by = new Map<string, ReferenceInvalidation>()
   for (const { ref, reason } of lost) {
-    const id = resourceOf(ref)
+    const change = ref.kind === 'change'
+    // Change refs lose access as a set, so one notice per reason covers every file's.
+    const id = change ? `change:${reason}` : resourceOf(ref)
     const rec = by.get(id) ?? {
       resourceId: id,
-      label: resourceLabel(ref),
+      label: change ? 'changes' : resourceLabel(ref),
       oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'file' ? (ref.sourceVersion ?? '') : '',
       at: Date.now(),
       reason,
@@ -2733,6 +2759,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.sessionId = e.sessionId
           patch.model = e.model
           patch.permissionMode = e.permissionMode
+          patch.changeRead = e.tools.includes(CHANGE_READ_TOOL)
           // Reconcile the PICKER (modelChoice) to the model the CLI actually reports.
           // On resume, the CLI keeps the model the session last used (a mid-session
           // set_model survives --resume), but beginSession seeded modelChoice from the
@@ -4005,6 +4032,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     const slice = get().sessions[handleId]
     if (!slice) return 0
     const stale = (r: ContextReference): boolean => {
+      if (r.kind === 'change') return resourceId === CHANGE_REFS && (cause.reason === 'denied' || cause.reason === 'session')
       if (resourceOf(r) !== resourceId) return false
       if (r.kind === 'browser') return true
       if (r.kind === 'file' && r.lines) return cause.reason !== 'changed' || r.sourceVersion !== cause.version
@@ -4026,9 +4054,9 @@ export const useSession = create<SessionStore>((set, get) => ({
     const patch: Partial<PerSessionState> = { queuedMessages: queue }
     if (lostDraft.length) {
       const [rec] = invalidations(lostDraft.map((d) => ({ ref: d.ref, reason: cause.reason })))
-      const had = slice.referenceNotices[resourceId]
+      const had = slice.referenceNotices[rec.resourceId]
       patch.contextRefs = slice.contextRefs.filter((d) => !stale(d.ref))
-      patch.referenceNotices = { ...slice.referenceNotices, [resourceId]: had ? { ...rec, removed: [...had.removed, ...rec.removed] } : rec }
+      patch.referenceNotices = { ...slice.referenceNotices, [rec.resourceId]: had ? { ...rec, removed: [...had.removed, ...rec.removed] } : rec }
       said.unshift(removalSpoken(lostDraft.map((d) => d.ref), cause.reason))
     }
     // A selection that went into a message clears on any change; the File tab shows none.
@@ -4091,7 +4119,9 @@ export const useSession = create<SessionStore>((set, get) => ({
 
   carryRefs: async (handleId, refs) => {
     if (!refs.length) return
-    const paths = refs.filter((d) => d.ref.kind !== 'browser')
+    // A page pin belongs to the old session's browser and a change ref to its grants; both stayed with it.
+    const moves = (d: DraftReference): boolean => d.ref.kind !== 'browser' && d.ref.kind !== 'change'
+    const paths = refs.filter(moves)
     let invalid: RefInvalid[] = []
     try {
       if (paths.length) invalid = await window.clui.validateRefs(handleId, paths.map((d) => ({ ref: d.ref })))
@@ -4099,11 +4129,10 @@ export const useSession = create<SessionStore>((set, get) => ({
       invalid = paths.map((d) => ({ id: d.ref.id, reason: 'denied' }))
     }
     const bad = new Map(invalid.map((x) => [x.id, x.reason]))
-    // A page pin belongs to the old session's browser, which closed with it.
     const lost = refs.flatMap((d): { ref: ContextReference; reason: RefFailure | 'session' }[] =>
-      d.ref.kind === 'browser' ? [{ ref: d.ref, reason: 'session' }] : bad.has(d.ref.id) ? [{ ref: d.ref, reason: bad.get(d.ref.id)! }] : []
+      !moves(d) ? [{ ref: d.ref, reason: 'session' }] : bad.has(d.ref.id) ? [{ ref: d.ref, reason: bad.get(d.ref.id)! }] : []
     )
-    const kept = refs.filter((d) => d.ref.kind !== 'browser' && !bad.has(d.ref.id)).map(({ ref }) => ({ ref }))
+    const kept = refs.filter((d) => moves(d) && !bad.has(d.ref.id)).map(({ ref }) => ({ ref }))
     const slice = get().sessions[handleId]
     if (!slice) return
     const notices = { ...slice.referenceNotices, ...Object.fromEntries(invalidations(lost).map((n) => [n.resourceId, n])) }

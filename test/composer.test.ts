@@ -29,7 +29,7 @@ const rows = paneRows(
   ],
   '/w',
   '/home/me',
-  (r) => r.kind === 'file' && r.path === '/w/README.md'
+  { inDraft: (r) => r.kind === 'file' && r.path === '/w/README.md', minted: () => false, changeRead: null }
 )
 equal(rows.map((r) => r.key).join(), 'file:file:/w/README.md,sel:file:/w/src/main/manager.ts,file:file:/w/src/main/manager.ts,file:file:/w/src/old.ts,file:file:/home/me/notes.md', 'pane: newest first, selection before its file, no Diff or past-revision tab')
 const [readme, sel, whole, old, outside] = rows
@@ -42,6 +42,27 @@ equal(readme.aria, 'README.md, open in pane, in message', 'pane: a top-level fil
 ok(!rows.some((r) => r.key === 'sel:file:/w/src/old.ts') && old.hint === 'src/', 'pane: a selection without its revision has no row')
 equal(outside.rel, '~/notes.md', 'pane: outside the folder ranks on the ~ path')
 equal(outside.hint, '~/', 'pane: outside the folder shows the ~ parent')
+
+// The Diff tab offers only its selected change, ranked with the File tabs, and says why a pick would be refused.
+{
+  const H = 'a'.repeat(32)
+  const change = { path: '/w/src/mcp.ts', segmentId: H, revision: H, hunkId: H, side: 'before', rows: { start: 2, end: 3 }, old: { start: 40, end: 45 }, fits: true }
+  const diff = (over: Record<string, unknown> = {}): any => ({ id: 'diff', kind: 'diff', key: '', title: 'Claude changes', openedBy: 'user', openedAt: 0, lastViewedAt: 5, selection: { change: { ...change, ...over } } })
+  const st = { inDraft: () => false, minted: () => false, changeRead: null }
+  const all = paneRows([tab('/w/src/mcp.ts', 6), diff()], '/w', '/home/me', st)
+  equal(all.map((r) => r.key).join(), 'file:file:/w/src/mcp.ts,change:diff', 'pane: the Diff row joins the File tabs by last view and leaves the file row')
+  const [, row] = all
+  ok(!row.input && row.mint?.hunkId === H && row.mint.side === 'before' && row.mint.rows?.end === 3 && !('fits' in row.mint), 'pane: the Diff row mints the selection as main takes it')
+  equal(row.label, 'mcp.ts · before L40–45', 'pane: the label carries the side and range')
+  equal(row.hint, 'Selected change · src/', 'pane: Diff hint')
+  equal(row.aria, 'mcp.ts change, before side, lines 40 to 45, selected, in src', 'pane: Diff name')
+  const one = (o: Record<string, unknown>, s = st): any => paneRows([diff(o)], '/w', '/home/me', s)[0]
+  equal(one({ fits: false }).hint, 'Too large to add', 'pane: too large')
+  equal(one({}, { ...st, minted: () => true }).aria, 'mcp.ts change, before side, lines 40 to 45, selected, in src, in message', 'pane: attached')
+  const denied = one({ fits: false }, { ...st, changeRead: false })
+  ok(denied.hint === "Claude can't read changes here" && denied.aria.endsWith(", Claude can't read changes here"), 'pane: no change_read wins over size')
+  equal(paneRows([{ ...diff(), selection: undefined }], '/w', '/home/me', st).length, 0, 'pane: a Diff tab without a selection has no row')
+}
 
 const drop = routeDrop(['/w/a.ts', '/w/src', '/elsewhere/b.ts', '/w/denied.ts'], ['file', 'folder', null], '/w')
 ok(drop.refs.length === 2 && drop.refs[0].kind === 'file' && drop.refs[1].kind === 'folder', 'drop: authorized paths become chips in order')

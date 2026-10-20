@@ -1,7 +1,7 @@
 import type { PerSessionState } from '../store'
 import { isBackgroundedTool } from './lumen'
 import { highlightOf } from './toolHighlight'
-import { isBrowserTool } from './instrument'
+import { changeReadOf, isChangeRead, toolLabel } from './instrument'
 
 export type SessionStatusKind = 'needs' | 'failed' | 'working' | 'idle'
 
@@ -44,7 +44,7 @@ export function sessionStatusOf(s: StatusSlice): SessionStatus {
       last?.role === 'assistant'
         ? [...last.tools].reverse().find((t) => t.result === undefined && !isBackgroundedTool(t))
         : undefined
-    if (tool) return { kind: 'working', lead: toolLabel(tool.name), rest: argOf(tool.input), count: 0 }
+    if (tool) return { kind: 'working', lead: toolLabel(tool.name), rest: isChangeRead(tool.name) ? (changeReadOf(s.messages, tool.input)?.label ?? null) : argOf(tool.input), count: 0 }
     return { kind: 'working', lead: s.thinkingTokens !== null ? 'Thinking' : 'Responding', rest: null, count: 0 }
   }
   return { kind: 'idle', lead: 'Idle', rest: null, count: 0 }
@@ -60,10 +60,6 @@ export function statusKey(s: StatusSlice): string {
 export function statusText(st: SessionStatus): string {
   if (st.kind === 'needs') return st.rest ? `Needs you: ${st.rest}` : 'Needs you'
   return st.rest ? `${st.lead} ${st.rest}` : st.lead
-}
-
-function toolLabel(name: string): string {
-  return name === 'Task' || name === 'Agent' ? 'Agent' : isBrowserTool(name) ? 'Browser' : name
 }
 
 function argOf(input: unknown): string | null {

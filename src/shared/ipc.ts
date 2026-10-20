@@ -279,6 +279,8 @@ export interface CluiApi {
   /** Snapshots one hunk slice of Claude's change history as a draft change reference. It grants nothing until a
    *  message carrying it is written. */
   createChangeRef: (handleId: string, req: ChangeRefRequest) => Promise<ChangeRefResult>
+  /** Per sent change ref (at most 20), whether Claude can still read it in this session. */
+  changeRefStatus: (handleId: string, refs: string[]) => Promise<boolean[]>
   /** Open a diff of two files the session may see, in the configured editor. */
   openDiff: (handleId: string, left: string, right: string) => Promise<void>
   /** One changed file's Claude changes as hunks, from the session's ledger. Null when the session or path isn't held. */
@@ -483,6 +485,7 @@ export const IpcChannels = {
   listWorkspaceFiles: 'clui:listWorkspaceFiles',
   classifyRefPaths: 'clui:classifyRefPaths',
   createChangeRef: 'clui:createChangeRef',
+  changeRefStatus: 'clui:changeRefStatus',
   openDiff: 'clui:openDiff',
   getDiff: 'clui:getDiff',
   openChangeDiff: 'clui:openChangeDiff',

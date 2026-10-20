@@ -61,7 +61,7 @@ import { BrowserManager } from './browser/manager'
 import { BrowserMcpServer } from './browser/mcp'
 import { mcpListener } from './lib/mcp-route'
 import { Annotator } from './browser/annotate'
-import { classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from './cli/packet'
+import { changeRefStatus, classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from './cli/packet'
 import { contextWatches } from './surfaces/context-watch'
 import { CHANGE_READ_TOOL, isRefInput, MAX_REFS, relativeTo, type DraftReference } from '../shared/context'
 import { WORLD } from './browser/cursor'
@@ -981,6 +981,7 @@ function registerIpc(): void {
 
   handle(IpcChannels.classifyRefPaths, (_e, handleId: unknown, paths: unknown) => classifyRefPaths(packetDeps, handleId, paths))
   handle(IpcChannels.createChangeRef, (_e, handleId: unknown, req: unknown) => createChangeRef(handleId, req))
+  handle(IpcChannels.changeRefStatus, (_e, handleId: unknown, refs: unknown) => changeRefStatus(packetDeps, handleId, refs))
 
   handle(IpcChannels.editLine, async (_e, handleId: string, path: string, editId: string) => {
     if (typeof handleId !== 'string' || typeof path !== 'string' || typeof editId !== 'string') return null

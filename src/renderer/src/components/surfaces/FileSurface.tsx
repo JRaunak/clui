@@ -19,7 +19,7 @@ import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { reducedMotion, viaOf, type Via } from '../../lib/motion'
 import { noteRead } from '../../lib/blockedFiles'
 import { closeTab } from './SurfaceTabs'
-import { SelectionBar } from './SelectionBar'
+import { ANNOUNCE_MS, SelectionBar } from './SelectionBar'
 import { addFromSurface } from '../ContextChips'
 import { selectedText } from '../../lib/refCopy'
 
@@ -29,7 +29,6 @@ const FLASH_MS = 720
 /** During Claude's turn a file can change many times a second; it re-reads at most this often. */
 const TURN_RELOAD_MS = 300
 const MISSING_POLL_MS = 2000
-const ANNOUNCE_MS = 300
 const FIND_MAX = 10_000
 const REMAP_MS = 50
 /** The window's unload never unmounts the open file, so its top line saves once a scroll settles. */

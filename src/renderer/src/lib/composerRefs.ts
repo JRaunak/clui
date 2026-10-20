@@ -1,6 +1,8 @@
-import type { RefInput } from '../../../shared/context'
+import { changeLabel, refLabel, type RefInput } from '../../../shared/context'
+import type { ChangeRefRequest } from '../../../shared/ipc'
 import type { SurfaceTab } from '../../../shared/surfaces'
-import { spokenRef } from './refCopy'
+import { requestOf } from './changeRefs'
+import { CHANGE_DENIED_HERE, spokenChange, spokenRef } from './refCopy'
 import { tilde } from './tree'
 
 /**
@@ -25,27 +27,54 @@ const dirOf = (rel: string): string => {
   return i < 0 ? './' : rel.slice(0, i + 1)
 }
 
-export interface PaneRow {
+/** A file row adds `input`; the Diff row carries the selection to mint first, since a change ref only exists once
+ *  main snapshots it. */
+export type PaneRow = ({ input: RefInput; mint?: undefined } | { mint: ChangeRefRequest; input?: undefined }) & {
   key: string
-  input: RefInput
+  label: string
   /** What a query ranks on: the file's path, relative to the session folder or `~`-shortened outside it. */
   rel: string
   hint: string
   aria: string
 }
 
-/** The `@` menu's Open in pane rows: per File tab, newest first, its selection when its revision is known, then the
- *  whole file. A tab presenting a past revision of its file is left out. */
-export function paneRows(tabs: readonly SurfaceTab[], cwd: string | null, home: string, inDraft: (r: RefInput) => boolean): PaneRow[] {
+export interface PaneState {
+  inDraft: (r: RefInput) => boolean
+  /** Whether the draft already holds the ref this selection minted. */
+  minted: (req: ChangeRefRequest) => boolean
+  changeRead: boolean | null
+}
+
+/** The `@` menu's Open in pane rows, newest tab first: per File tab its selection when its revision is known, then
+ *  the whole file; the Diff tab only its selected change, never a whole file. A tab presenting a past revision of
+ *  its file is left out. */
+export function paneRows(tabs: readonly SurfaceTab[], cwd: string | null, home: string, st: PaneState): PaneRow[] {
   const out: PaneRow[] = []
-  const open = tabs.filter((t) => t.kind === 'file' && !t.provenance?.creatingEditId).sort((a, b) => b.lastViewedAt - a.lastViewedAt)
+  const open = tabs
+    .filter((t) => (t.kind === 'file' && !t.provenance?.creatingEditId) || (t.kind === 'diff' && !!t.selection?.change))
+    .sort((a, b) => b.lastViewedAt - a.lastViewedAt)
   for (const t of open) {
-    const rel = cwd && t.key.startsWith(`${cwd}/`) ? t.key.slice(cwd.length + 1) : tilde(t.key, home)
+    const change = t.kind === 'diff' ? t.selection?.change : undefined
+    const path = change?.path ?? t.key
+    const rel = cwd && path.startsWith(`${cwd}/`) ? path.slice(cwd.length + 1) : tilde(path, home)
     const dir = dirOf(rel)
     const where = dir === './' ? '' : `, in ${dir.slice(0, -1)}`
+    if (change) {
+      const mint = requestOf(change)
+      const [hint, said] =
+        st.changeRead === false
+          ? [CHANGE_DENIED_HERE, `, ${CHANGE_DENIED_HERE}`]
+          : !change.fits
+            ? ['Too large to add', ', too large to add']
+            : st.minted(mint)
+              ? ['In message', ', in message']
+              : [`Selected change · ${dir}`, '']
+      out.push({ key: `change:${t.id}`, mint, label: changeLabel(path, change.side, change.old, change.new), rel, hint, aria: `${spokenChange(change)}, selected${where}${said}` })
+      continue
+    }
     const row = (key: string, input: RefInput, hint: string, spoken: string): PaneRow => {
-      const attached = inDraft(input)
-      return { key, input, rel, hint: attached ? 'In message' : hint, aria: `${spoken}${where}${attached ? ', in message' : ''}` }
+      const attached = st.inDraft(input)
+      return { key, input, label: refLabel(input), rel, hint: attached ? 'In message' : hint, aria: `${spoken}${where}${attached ? ', in message' : ''}` }
     }
     const { lines, sourceVersion } = t.selection ?? {}
     if (lines && sourceVersion) {
