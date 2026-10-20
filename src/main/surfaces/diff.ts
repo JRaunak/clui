@@ -8,7 +8,9 @@ import { rmSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { diffLines, structuredPatch, type ChangeObject, type StructuredPatch } from 'diff'
-import type { ChangeMarks, DiffHunk, DiffRequest, DiffSegment, FileDiff, PatchHunk } from '../../shared/changes'
+import { changeSelection, type ChangeMarks, type ChangeSelection, type DiffHunk, type DiffRequest, type DiffSegment, type FileDiff, type PatchHunk } from '../../shared/changes'
+import type { ChangeSide } from '../../shared/context'
+import type { ChangeRefRequest } from '../../shared/ipc'
 import { survivingLines } from '../../shared/lines'
 import { lineCount, type SegmentView } from './ledger'
 
@@ -50,13 +52,22 @@ async function hunksBetween(a: string, b: string): Promise<PatchHunk[] | null> {
   return slow?.hunks ?? null
 }
 
+/** A segment's hunk groups: its full diff when both texts are held and the diff finishes, else its edits' own
+ *  hunks when every edit has them, else none. Diff display and mint both read this, so their hunk ids agree. */
+function hunksOf(seg: SegmentView, full: PatchHunk[] | null): PatchHunk[][] {
+  if (full) return [full]
+  return seg.patches.every(Boolean) ? (seg.patches as PatchHunk[][]) : []
+}
+
+const fullOf = (s: SegmentView): Promise<PatchHunk[] | null> => (s.before !== undefined && s.after !== undefined ? hunksBetween(s.before, s.after) : Promise.resolve(null))
+
 /** The file's segments oldest first. A segment whose full diff times out falls back to its edits' own hunks. */
 export async function getDiff(src: DiffSource, handleId: string, req: DiffRequest): Promise<FileDiff | null> {
   const segs = await src.segments(handleId, req.path)
   if (!segs) return null
   const last = segs.at(-1)?.after
   const current = last === undefined ? null : await src.current(handleId, req.path)
-  const fulls = await Promise.all(segs.map((s) => (s.before !== undefined && s.after !== undefined ? hunksBetween(s.before, s.after) : null)))
+  const fulls = await Promise.all(segs.map(fullOf))
   const where = current ? await project(segs, current.text, async (k) => fulls[k]) : null
   let lines = LINES_MAX
   let left = CHARS_MAX
@@ -83,15 +94,47 @@ export async function getDiff(src: DiffSource, handleId: string, req: DiffReques
     if (truncated) break
     const full = fulls[i]
     // Some edits' hunks missing would show part of the segment as if it were all of it.
-    const patches = seg.patches.every(Boolean) ? (seg.patches as PatchHunk[][]) : []
-    const mode = full ? 'full' : patches.length ? 'patch' : 'none'
-    const groups = full ? [take(seg, full, true)] : patches.map((p) => take(seg, p, false)).filter((g) => g.length)
+    const hunks = hunksOf(seg, full)
+    const mode = full ? 'full' : hunks.length ? 'patch' : 'none'
+    const groups = full ? [take(seg, full, true)] : hunks.map((p) => take(seg, p, false)).filter((g) => g.length)
     // The cap cut this segment off whole: the list ends before it, at the truncated row.
     if (truncated && !groups.some((g) => g.length)) break
     const snapshot = seg.before !== undefined && seg.after !== undefined
     segments.push({ id: seg.id, revision: seg.revision, mode, groups, outsideBefore: i > 0 && seg.provenBreak, snapshot })
   }
   return { path: req.path, segments, changedSince: current !== null && current.text !== last, truncated }
+}
+
+const HEX32 = /^[0-9a-f]{32}$/
+const SIDES = new Set<unknown>(['diff', 'before', 'after'])
+const row = (v: unknown, lo: number): v is number => Number.isSafeInteger(v) && (v as number) >= lo && (v as number) <= 100_000
+
+export function parseChangeRefRequest(req: unknown): ChangeRefRequest | null {
+  const r = req && typeof req === 'object' ? (req as Record<string, unknown>) : null
+  if (!r || typeof r.path !== 'string' || !r.path.startsWith('/') || r.path.length > 4096 || r.path.includes('\0')) return null
+  const ids = [r.segmentId, r.revision, r.hunkId]
+  if (!ids.every((v) => typeof v === 'string' && HEX32.test(v)) || !SIDES.has(r.side)) return null
+  const out: ChangeRefRequest = { path: r.path, segmentId: r.segmentId as string, revision: r.revision as string, hunkId: r.hunkId as string, side: r.side as ChangeSide }
+  if (r.rows === undefined) return out
+  const rows = r.rows && typeof r.rows === 'object' ? (r.rows as Record<string, unknown>) : null
+  if (!rows || !row(rows.start, 1) || !row(rows.end, rows.start as number)) return null
+  return { ...out, rows: { start: rows.start, end: rows.end } }
+}
+
+/** One hunk slice for mint, from ledger memory only: never the current file, Git or the disk. */
+export async function selectChange(
+  src: Pick<DiffSource, 'segments'>,
+  handleId: string,
+  req: ChangeRefRequest
+): Promise<{ ok: true; sel: Extract<ChangeSelection, { ok: true }> } | { ok: false; reason: 'changed' | 'empty' | 'too-large'; lines?: number; bytes?: number }> {
+  const seg = (await src.segments(handleId, req.path))?.find((s) => s.id === req.segmentId)
+  if (!seg || seg.revision !== req.revision) return { ok: false, reason: 'changed' }
+  const h = hunksOf(seg, await fullOf(seg))
+    .flat()
+    .find((x) => hunkId(seg.revision, x) === req.hunkId)
+  if (!h) return { ok: false, reason: 'changed' }
+  const sel = changeSelection(h, req.side, req.rows)
+  return sel.ok ? { ok: true, sel } : { ok: false, reason: sel.reason, lines: sel.lines, bytes: sel.bytes }
 }
 
 const hunkId = (revision: string, h: PatchHunk): string => hash(revision, `${h.oldStart},${h.oldLines},${h.newStart},${h.newLines}`, h.lines.join('\n'))

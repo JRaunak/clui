@@ -66,6 +66,10 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
         spoken: spokenRef(ref)
       }
     }
+    case 'change': {
+      const rel = relTo(cwd, ref.path)
+      return { key, n, glyph: 'file', line1: refLabel(ref), line2: parentOf(rel), title: rel, label: `Reference ${n}: ${spokenRef(ref)}`, spoken: spokenRef(ref) }
+    }
     default:
       return ref satisfies never
   }

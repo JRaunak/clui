@@ -16,8 +16,8 @@ import type {
 import type { ConfigBundle } from './config'
 import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, LocalNetSite, PaneBounds, SavedLoginInfo } from './browser'
 import type { AnnotateEvent } from './annotate'
-import type { DraftReference, RefInvalid, SourceVersion } from './context'
-import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff } from './changes'
+import type { ChangeSide, DraftReference, RefInput, RefInvalid, SourceVersion } from './context'
+import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff, HunkRows } from './changes'
 import type { ContextMenuItem, FileChangedEvent, FileStat, Refusal, TextRead, TreeListing } from './files'
 import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
 import type {
@@ -114,6 +114,16 @@ export type DispatchResult =
   | { ok: false; reason: 'invalid' }
   /** A Stop arrived before it was written. */
   | { ok: false; reason: 'cancelled' }
+
+export interface ChangeRefRequest { path: string; segmentId: string; revision: string; hunkId: string; side: ChangeSide; rows?: HunkRows }
+/**
+ * `changed`: the segment, revision or hunk isn't in the ledger now. `denied`: this session's CLI lacks the
+ * change_read tool. `unavailable`: no live session for the handle. `bytes` on success is what change_read returns,
+ * for the per-message cap.
+ */
+export type ChangeRefResult =
+  | { ok: true; ref: Extract<RefInput, { kind: 'change' }>; bytes: number }
+  | { ok: false; reason: 'changed' | 'empty' | 'too-large' | 'denied' | 'unavailable'; lines?: number; bytes?: number }
 
 export interface AnnotationOrder { keep: number[]; shown: [pinId: number, n: number][]; room: number }
 export interface RefWatchEntry { path: string; version: SourceVersion }
@@ -266,6 +276,9 @@ export interface CluiApi {
   listWorkspaceFiles: (handleId: string) => Promise<{ files: string[]; truncated: boolean }>
   /** Per absolute path, the reference kind a sent message would be allowed to point at, or null. */
   classifyRefPaths: (handleId: string, paths: string[]) => Promise<('file' | 'folder' | null)[]>
+  /** Snapshots one hunk slice of Claude's change history as a draft change reference. It grants nothing until a
+   *  message carrying it is written. */
+  createChangeRef: (handleId: string, req: ChangeRefRequest) => Promise<ChangeRefResult>
   /** Open a diff of two files the session may see, in the configured editor. */
   openDiff: (handleId: string, left: string, right: string) => Promise<void>
   /** One changed file's Claude changes as hunks, from the session's ledger. Null when the session or path isn't held. */
@@ -469,6 +482,7 @@ export const IpcChannels = {
   getChangeGitStatus: 'clui:getChangeGitStatus',
   listWorkspaceFiles: 'clui:listWorkspaceFiles',
   classifyRefPaths: 'clui:classifyRefPaths',
+  createChangeRef: 'clui:createChangeRef',
   openDiff: 'clui:openDiff',
   getDiff: 'clui:getDiff',
   openChangeDiff: 'clui:openChangeDiff',

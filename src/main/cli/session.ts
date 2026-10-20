@@ -24,7 +24,8 @@ import { stripRuntimeMarkers } from './shell-env'
 import { readCostBaseline } from '../sessions/transcript'
 import { recordTurnUsage } from '../sessions/usage'
 
-type Prepared = { ok: true; content: string | unknown[]; text: string } | Extract<DispatchResult, { ok: false }>
+/** `onWritten` runs right after this exact envelope is written, never for a preparation that isn't. */
+type Prepared = { ok: true; content: string | unknown[]; text: string; onWritten?: () => void } | Extract<DispatchResult, { ok: false }>
 
 const GONE = 'This session is no longer running.'
 
@@ -65,9 +66,9 @@ export interface ClaudeSessionOptions {
   fork?: boolean
   /** Session title → `-n` (see buildArgs). */
   name?: string
-  /** In-app browser MCP config JSON (from BrowserMcpServer), or undefined when the browser is off. */
-  browserMcp?: string
-  /** An MCP config file passed as-is next to the browser's (the elicitation probe's stub server). */
+  /** Clui's own MCP servers: the config JSON (tokens inside, so it goes to a 0600 file) and the exact allow rules. */
+  cluiMcp?: { config: string; allow: string[] }
+  /** An MCP config file passed as-is next to Clui's (the elicitation probe's stub server). */
   mcpConfigPath?: string
   /** Extra env for the child (merged over process.env). */
   env?: Record<string, string>
@@ -221,11 +222,11 @@ export class ClaudeSession extends EventEmitter {
       // following flag (--resume) or the end of the bare args terminates the list.
       args.push('--disallowedTools', ...EPHEMERAL_DISALLOWED_TOOLS)
     }
-    const mcp = this.opts.browserMcp ? [this.writeMcpConfig(this.opts.browserMcp)] : []
+    const mcp = this.opts.cluiMcp ? [this.writeMcpConfig(this.opts.cluiMcp.config)] : []
     if (this.opts.mcpConfigPath) mcp.push(this.opts.mcpConfigPath)
     // Both flags are variadic; the --resume that follows (or the end of args) closes each list.
     if (mcp.length) args.push('--mcp-config', ...mcp)
-    if (this.opts.browserMcp) args.push('--allowedTools', 'mcp__clui-browser')
+    if (this.opts.cluiMcp?.allow.length) args.push('--allowedTools', ...this.opts.cluiMcp.allow)
     if (this.opts.resumeSessionId) {
       args.push('--resume', this.opts.resumeSessionId)
       // Fork branches the resumed session to a new id (original untouched). Only
@@ -640,7 +641,9 @@ export class ClaudeSession extends EventEmitter {
       if (this.closed) throw new Error(GONE)
       // A reconnect started during prepare: validate again against the new child.
       if (!this.writable()) continue
-      return { ok: true, packetId: uuid, text: r.text, joined: this.writeUser(uuid, r.content, now) }
+      const joined = this.writeUser(uuid, r.content, now)
+      r.onWritten?.()
+      return { ok: true, packetId: uuid, text: r.text, joined }
     }
   }
 

@@ -4,7 +4,7 @@ import { surfaceIdOf } from '../../../shared/surfaces'
 import { placement, useActive, useSession, type AddRefResult, type RefTarget } from '../store'
 import { openFileAt } from '../lib/openLink'
 import { viaOf, type Via } from '../lib/motion'
-import { addedText, baseOf, canReopen, noticeLead, removedText, spokenRef } from '../lib/refCopy'
+import { addedText, baseOf, canReopen, couldNotAdd, noticeLead, removedText, spokenRef } from '../lib/refCopy'
 import { ContextChip, refChip, type ChipView } from './ContextChip'
 import { IconClose, IconWarn } from './Icon'
 
@@ -34,7 +34,8 @@ export function addFromSurface(handleId: string, input: RefInput, say: (t: strin
   } else if (r.status === 'cap') {
     signalRefs(handleId, target, { note: CAP_NOTE })
     say(CAP_NOTE)
-  } else if (target !== null) say('That queued message is gone, so nothing was added.')
+  } else if (r.status === 'budget') say(couldNotAdd(input))
+  else if (target !== null) say('That queued message is gone, so nothing was added.')
 }
 
 /** Adds to the live draft from a source whose focus is in the textarea (`@` pick, drop), so nothing takes focus:
@@ -67,6 +68,9 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
     case 'browser':
       if (handleId === st.activeHandleId && !st.sessions[handleId]?.paneOpen) st.setPane('half')
       return st.activateSurface(handleId, placement(r.pin.source.tabId))
+    case 'change':
+      st.openSurface(handleId, { kind: 'diff', key: '', title: 'Claude changes', location: { file: r.path } }, 'focus', 'user', 'user')
+      return
     default:
       return r satisfies never
   }

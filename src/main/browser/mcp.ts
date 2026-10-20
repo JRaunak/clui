@@ -346,8 +346,9 @@ export class BrowserMcpServer {
     return this.route.endpoint(handleId)
   }
 
-  async configFor(handleId: string): Promise<string> {
-    return JSON.stringify({ mcpServers: { 'clui-browser': await this.route.entry(handleId) } })
+  /** The session's `--mcp-config` server entry. */
+  entry(handleId: string): ReturnType<McpRoute['entry']> {
+    return this.route.entry(handleId)
   }
 
   /** Which bundles this session's CLI sees and may call. Set before the CLI lists its tools, which it does once. */

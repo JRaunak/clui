@@ -756,6 +756,15 @@ const q = (id: string, text: string): any => ({ id, text, refs: [] })
   for (let i = 3; i <= 21; i++) st().addRef('h1', lines(i, i))
   ok(cur().contextRefs.length === 20 && st().addRef('h1', lines(40, 40)).status === 'cap', 'refs: 20 per target, the 21st refused')
 
+  // Change text per message is capped at attach, so Claude can always read all of it in one window.
+  reset({ busy: false })
+  const chg = (n: number): any => ({ kind: 'change', changeRef: `chg_${n.toString(16).padStart(32, '0')}`, path: '/tmp/w/a.ts', side: 'diff', new: { start: 1, end: 1 } })
+  ok(st().addRef('h1', chg(1)).status === 'invalid', 'refs: a change ref without its mint size is refused')
+  ok([1, 2, 3, 4].every((n) => st().addRef('h1', chg(n), { bytes: 32 * 1024 }).status === 'added'), 'refs: 128 KiB of change text attaches')
+  ok(st().addRef('h1', chg(5), { bytes: 1 }).status === 'budget' && cur().contextRefs.length === 4, 'refs: one byte more is refused as budget')
+  ok(st().addRef('h1', lines()).status === 'added', 'refs: a file ref still attaches past it')
+  ok(cur().contextRefs[0].bytes === 32 * 1024 && cur().contextRefs[4].bytes === undefined, 'refs: the size rides only on change refs')
+
   reset({ busy: false })
   st().addRef('h1', pin('#a'), { pinId: 7 })
   st().addRef('h1', lines())

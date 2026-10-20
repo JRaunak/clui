@@ -19,6 +19,7 @@ import {
   type MenuState,
   type PermissionModeChoice,
   type PermissionVerdict,
+  type ChangeRefResult,
   type StartSessionOptions
 } from '../shared/ipc'
 import type { ElicitationResponse } from '../shared/events'
@@ -45,7 +46,9 @@ import { listTree, treeTarget } from './surfaces/tree'
 import { bindSession, deleteSurfaces, flushSurfaces, forgetSession, loadSurfaces, saveSession, trackSession } from './surfaces/persist'
 import type { SurfacesRestore } from '../shared/surfaces'
 import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
-import { changeMarks, diffSnapshots, editLine, getDiff, parseDiffRequest, type DiffSource } from './surfaces/diff'
+import { changeMarks, diffSnapshots, editLine, getDiff, parseChangeRefRequest, parseDiffRequest, selectChange, type DiffSource } from './surfaces/diff'
+import { ChangeRefs } from './surfaces/change-refs'
+import { surfaceServer } from './surfaces/mcp-surface'
 import {
   getResolvedSettings,
   getSettings,
@@ -60,7 +63,7 @@ import { mcpListener } from './lib/mcp-route'
 import { Annotator } from './browser/annotate'
 import { classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from './cli/packet'
 import { contextWatches } from './surfaces/context-watch'
-import { isRefInput, MAX_REFS, type DraftReference } from '../shared/context'
+import { CHANGE_READ_TOOL, isRefInput, MAX_REFS, relativeTo, type DraftReference } from '../shared/context'
 import { WORLD } from './browser/cursor'
 import { approve as approveSite, listLocalNet, listSites, removeSite } from './browser/sites'
 import { listLogins, removeLogin, saveLogin, vaultAvailable } from './browser/vault'
@@ -324,7 +327,11 @@ function createWindow(): void {
 
 function registerIpc(): void {
   const browser = new BrowserManager(() => mainWindow, () => THEME_BG[resolveTheme()])
-  const mcp = new BrowserMcpServer(browser, mcpListener())
+  const listener = mcpListener()
+  const mcp = new BrowserMcpServer(browser, listener)
+  const changeRefs = new ChangeRefs()
+  const surface = surfaceServer(changeRefs)
+  const surfaceRoute = listener.route('mcp-surface', surface)
   const annotator = new Annotator(browser, () => mainWindow)
   browser.onLeave = (handleId, tab, why) => annotator.leave(handleId, tab, why)
   browser.onDocumentGone = (handleId, tab, reason) => annotator.gone(handleId, tab, reason)
@@ -334,6 +341,9 @@ function registerIpc(): void {
     annotator.dispose(handleId)
     browser.dispose(handleId)
     mcp.revoke(handleId)
+    surfaceRoute.revoke(handleId)
+    surface.revoke(handleId)
+    changeRefs.dispose(handleId)
     refWatches.dispose(handleId)
     files.dispose(handleId)
     forgetSession(handleId)
@@ -378,6 +388,17 @@ function registerIpc(): void {
           browser.tabsOf(handleId)?.tabs.map(({ id, url, title, drive, suspended, attached, parked }) => ({ id, url, title, drive, suspended, attached, parked })) ?? null,
         lastToolTab: (handleId: string) => browser.tabsOf(handleId)?.lastUsed ?? null
       },
+      __cluiSurface: {
+        callTool: (handleId: string, name: string, args: Record<string, unknown> = {}) => surface.call(handleId, name, args),
+        // The nth hunk (0-based, oldest segment first) of the file's diff as the Diff surface lists it, minted
+        // through clui:createChangeRef's own path.
+        mint: async (handleId: string, path: string, o: { hunk?: number; side?: 'diff' | 'before' | 'after'; rows?: { start: number; end: number } } = {}) => {
+          const h = (await getDiff(diffSource, handleId, { path }))?.segments.flatMap((s) => s.groups.flat())[o.hunk ?? 0]
+          if (!h) return null
+          return createChangeRef(handleId, { path, segmentId: h.segmentId, revision: h.revision, hunkId: h.id, side: o.side ?? 'diff', ...(o.rows ? { rows: o.rows } : {}) })
+        },
+        available: (handleId: string) => changeRefs.available(handleId)
+      },
       __cluiSessions: {
         // The real send's own preparation, with a fresh uuid, and never written: the exact outgoing envelope at zero tokens.
         prepare: (handleId: string, raw: unknown) => {
@@ -403,7 +424,13 @@ function registerIpc(): void {
   const manager = new SessionManager(
     (handleId, event) => {
       browser.onSessionEvent(handleId, event)
-      if (event.type === 'session-init' && event.sessionId) bindSession(handleId, event.sessionId)
+      if (event.type === 'session-init') {
+        if (event.sessionId) {
+          bindSession(handleId, event.sessionId)
+          changeRefs.bind(handleId, event.sessionId)
+        }
+        changeRefs.setAvailable(handleId, event.tools.includes(CHANGE_READ_TOOL))
+      }
       if (event.type === 'process-exit') disposeBrowser(handleId)
       push(IpcChannels.sessionEvent, { handleId, event })
     },
@@ -441,7 +468,27 @@ function registerIpc(): void {
       return r.ok ? 'ok' : r.reason === 'missing' ? 'missing' : 'denied'
     },
     docOf: (h, tab) => annotator.docOf(h, tab),
-    secrets: (h, tab) => browser.page(h, tab)?.cdp.secrets ?? new Set()
+    secrets: (h, tab) => browser.page(h, tab)?.cdp.secrets ?? new Set(),
+    change: (h, ref) => changeRefs.check(h, ref),
+    changeOf: (h, ref) => changeRefs.locator(h, ref),
+    activate: (h, packetId, refs) => changeRefs.activate(h, packetId, refs)
+  }
+  // Mint reads ledger memory for the handle's own session only; access comes later, from dispatch.
+  async function createChangeRef(handleId: unknown, raw: unknown): Promise<ChangeRefResult> {
+    const cwd = typeof handleId === 'string' ? manager.cwd(handleId) : null
+    if (typeof handleId !== 'string' || cwd === null) return { ok: false, reason: 'unavailable' }
+    const h = handleId
+    const req = parseChangeRefRequest(raw)
+    if (!req) throw new Error('createChangeRef: invalid request')
+    if (changeRefs.available(h) === false) return { ok: false, reason: 'denied' }
+    const r = await selectChange(diffSource, h, req)
+    if (!r.ok) return r
+    const { text, old, new: neu, bytes } = r.sel
+    const range = { ...(old ? { old } : {}), ...(neu ? { new: neu } : {}) }
+    const { path, segmentId, revision, hunkId, side, rows } = req
+    const changeRef = changeRefs.mint(h, { path, label: relativeTo(cwd, path), segmentId, revision, hunkId, side, ...(rows ? { rows } : {}), ...range, text, bytes })
+    if (!changeRef) return { ok: false, reason: 'unavailable' }
+    return { ok: true, ref: { kind: 'change', changeRef, path, side, ...range }, bytes }
   }
   const refWatches = contextWatches({
     resolve: (h, p) => files.resolveAllowed(h, p, { consumer: 'file', operation: 'watch-file' }),
@@ -510,6 +557,9 @@ function registerIpc(): void {
     // The token in the config is bound to the handle, so the handle exists before the process does.
     const handleId = randomUUID()
     const withBrowser = settings.browserEnabled && !opts.ephemeral
+    const servers = { 'clui-surface': await surfaceRoute.entry(handleId), ...(withBrowser ? { 'clui-browser': await mcp.entry(handleId) } : {}) }
+    // Tool-level for the surface, so a later surface tool never rides this rule.
+    const allow = [CHANGE_READ_TOOL, ...(withBrowser ? ['mcp__clui-browser'] : [])]
     const restore: SurfacesRestore = opts.resumeSessionId && !opts.ephemeral ? await loadSurfaces(opts.resumeSessionId) : { status: 'none' }
     const saved = restore.status === 'ok' ? restore.entry : null
     if (withBrowser) mcp.setBundles(handleId, { visual: settings.browserVisual, interact: settings.browserInteract, debug: settings.browserDebug })
@@ -532,9 +582,10 @@ function registerIpc(): void {
       // Per-session override wins over the global default; 'inherit' → no flag
       // (honor ~/.claude/settings.json). Never writes any settings file.
       permissionMode: modeToFlag(opts.permissionMode ?? settings.permissionMode),
-      browserMcp: withBrowser ? await mcp.configFor(handleId) : undefined,
+      cluiMcp: { config: JSON.stringify({ mcpServers: servers }), allow },
       mcpConfigPath: process.env.CLUI_TEST_MCP_CONFIG
     })
+    changeRefs.track(handleId, { quick: !!opts.ephemeral, sessionId: opts.fork ? null : (opts.resumeSessionId ?? null), ...(opts.fork && opts.resumeSessionId ? { forkOf: opts.resumeSessionId } : {}) })
     trackSession(handleId, { quick: !!opts.ephemeral, sessionId: opts.fork ? null : (opts.resumeSessionId ?? null), seed: opts.fork ? saved : null })
     if (withBrowser) browser.enable(handleId, saved?.browserTabs)
     const surfaces: SurfacesRestore = saved ? { status: 'ok', entry: { ...saved, browserTabs: withBrowser ? browser.records(handleId) : null } } : restore
@@ -772,6 +823,7 @@ function registerIpc(): void {
     }
   )
   handle(IpcChannels.deleteSessionModel, async (_e, sessionId: string) => {
+    if (typeof sessionId === 'string') changeRefs.deleteSession(sessionId)
     await Promise.all([deleteSessionModel(sessionId), deleteSessionUsage(sessionId), deleteSurfaces(sessionId)])
   })
 
@@ -928,6 +980,7 @@ function registerIpc(): void {
   })
 
   handle(IpcChannels.classifyRefPaths, (_e, handleId: unknown, paths: unknown) => classifyRefPaths(packetDeps, handleId, paths))
+  handle(IpcChannels.createChangeRef, (_e, handleId: unknown, req: unknown) => createChangeRef(handleId, req))
 
   handle(IpcChannels.editLine, async (_e, handleId: string, path: string, editId: string) => {
     if (typeof handleId !== 'string' || typeof path !== 'string' || typeof editId !== 'string') return null

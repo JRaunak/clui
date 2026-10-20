@@ -1,3 +1,5 @@
+import type { ChangeSide, LineRange } from './context'
+
 /** One hunk of a tool result's `structuredPatch`, as the CLI sends it. */
 export interface PatchHunk {
   oldStart: number
@@ -5,6 +7,53 @@ export interface PatchHunk {
   newStart: number
   newLines: number
   lines: string[]
+}
+
+export const CHANGE_LINES_MAX = 400
+/** UTF-8 bytes of the text `change_read` would return. */
+export const CHANGE_BYTES_MAX = 32 * 1024
+/** Change text one message may carry, and what `change_read` returns per handle in a rolling minute: equal, so
+ *  Claude can always read everything that was sent. */
+export const CHANGE_TEXT_BUDGET = 128 * 1024
+
+/** 1-based indices into `PatchHunk.lines`, inclusive. */
+export interface HunkRows { start: number; end: number }
+
+export type ChangeSelection =
+  | { ok: true; text: string; old?: LineRange; new?: LineRange; lines: number; bytes: number }
+  | { ok: false; reason: 'empty' | 'too-large'; lines: number; bytes: number }
+
+const utf8 = new TextEncoder()
+
+/** The text one side of a hunk slice reads as, numbered as `DiffSurface` numbers its rows. `rows` absent = the whole
+ *  hunk. `diff` keeps every row verbatim, `\ No newline` rows included; `before`/`after` drop them. */
+export function changeSelection(h: PatchHunk, side: ChangeSide, rows?: HunkRows): ChangeSelection {
+  const { start, end } = rows ?? { start: 1, end: h.lines.length }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || start > end || end > h.lines.length) return { ok: false, reason: 'empty', lines: 0, bytes: 0 }
+  const out: string[] = []
+  let old: LineRange | undefined
+  let neu: LineRange | undefined
+  let o = h.oldStart
+  let n = h.newStart
+  h.lines.forEach((l, i) => {
+    const c = l[0]
+    const before = c === ' ' || c === '-'
+    const after = c === ' ' || c === '+'
+    if (i + 1 >= start && i + 1 <= end) {
+      if (before) old = { start: old?.start ?? o, end: o }
+      if (after) neu = { start: neu?.start ?? n, end: n }
+      if (side === 'diff') out.push(l)
+      else if (side === 'before' ? before : after) out.push(l.slice(1))
+    }
+    if (before) o++
+    if (after) n++
+  })
+  const text = out.join('\n')
+  const lines = out.length
+  const bytes = utf8.encode(text).length
+  if (!(side === 'before' ? old : side === 'after' ? neu : old ?? neu)) return { ok: false, reason: 'empty', lines, bytes }
+  if (lines > CHANGE_LINES_MAX || bytes > CHANGE_BYTES_MAX) return { ok: false, reason: 'too-large', lines, bytes }
+  return { ok: true, text, ...(old ? { old } : {}), ...(neu ? { new: neu } : {}), lines, bytes }
 }
 
 /**

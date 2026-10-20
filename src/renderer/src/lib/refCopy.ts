@@ -29,6 +29,8 @@ export function spokenRef(r: RefInput): string {
       const { kind, name } = pinWords(r.pin.target)
       return name ? `${kind} ${clipName(name)}` : kind
     }
+    case 'change':
+      return refLabel(r)
     default:
       return r satisfies never
   }

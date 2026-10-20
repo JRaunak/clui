@@ -10,12 +10,15 @@ import {
   refKey,
   sentRefs,
   serializeContext,
+  type ChangeSide,
   type ContextReference,
   type DraftReference,
+  type LineRange,
   type RefFailure,
   type RefInvalid,
   type SourceVersion
 } from '../../shared/context'
+import { CHANGE_TEXT_BUDGET } from '../../shared/changes'
 import type { Refusal } from '../../shared/files'
 import type { DispatchResult, OutgoingPacket, WireAttachment } from '../../shared/ipc'
 import { scrub } from '../browser/cdp'
@@ -28,6 +31,12 @@ export interface PacketDeps {
   /** The tab's current top-frame loaderId; null when the tab or its page is gone. */
   docOf(handleId: string, tab: number): Promise<string | null>
   secrets(handleId: string, tab: number): Set<string>
+  /** A change ref passes only as this handle's draft or a grant its session owns. */
+  change(handleId: string, ref: string): 'ok' | 'missing' | 'denied'
+  /** Main's own record of what the ref selects, or null when it resolves to nothing. */
+  changeOf(handleId: string, ref: string): { path: string; side: ChangeSide; old?: LineRange; new?: LineRange; bytes: number } | null
+  /** The only way a change grant is made: called once the packet carrying `refs` is written. */
+  activate(handleId: string, packetId: string, refs: readonly string[]): void
 }
 
 const ATTACH_MAX = 20
@@ -124,6 +133,10 @@ export async function validateRefs(deps: PacketDeps, handleId: string, refs: rea
         const doc = await once(`b\0${tabId}`, () => deps.docOf(handleId, tabId))
         return doc === null ? 'closed' : doc !== docId ? 'navigated' : null
       }
+      case 'change': {
+        const r = deps.change(handleId, ref.changeRef)
+        return r === 'ok' ? null : r
+      }
       default:
         return ref satisfies never
     }
@@ -161,10 +174,18 @@ export async function preparePacket(
   handleId: string,
   p: OutgoingPacket,
   uuid: string
-): Promise<{ ok: true; content: string | unknown[]; text: string } | Extract<DispatchResult, { ok: false }>> {
+): Promise<{ ok: true; content: string | unknown[]; text: string; onWritten?: () => void } | Extract<DispatchResult, { ok: false }>> {
   const invalid = await validateRefs(deps, handleId, p.refs)
   if (invalid.length) return { ok: false, reason: 'stale', invalid }
+  const changes = p.refs.flatMap((d) => (d.ref.kind === 'change' ? [d.ref.changeRef] : []))
+  // The renderer caps this at attach; a packet past it is a renderer bug, never sent.
+  if (changes.reduce((n, ref) => n + (deps.changeOf(handleId, ref)?.bytes ?? 0), 0) > CHANGE_TEXT_BUDGET) return { ok: false, reason: 'invalid' }
   const refs = p.refs.map((d): DraftReference => {
+    // The model reads the path and lines from main's record, never the renderer's copy of them.
+    if (d.ref.kind === 'change') {
+      const c = deps.changeOf(handleId, d.ref.changeRef)
+      return c ? { ...d, ref: { id: d.ref.id, kind: 'change', changeRef: d.ref.changeRef, path: c.path, side: c.side, ...(c.old ? { old: c.old } : {}), ...(c.new ? { new: c.new } : {}), ...(d.ref.note === undefined ? {} : { note: d.ref.note }) } } : d
+    }
     if (d.ref.kind !== 'browser') return d
     const { pin } = d.ref
     return { ...d, ref: { ...d.ref, pin: { ...pin, target: rescrubbed(pin.target, deps.secrets(handleId, pin.source.tabId)) } } }
@@ -175,9 +196,10 @@ export async function preparePacket(
   } catch {
     return { ok: false, reason: 'invalid' }
   }
+  const onWritten = changes.length ? { onWritten: () => deps.activate(handleId, uuid, changes) } : {}
   const visuals = refs.flatMap((d) => (d.visual ? [block({ kind: 'image', mediaType: d.visual.mimeType, data: d.visual.data })] : []))
   const content = [...visuals, ...p.attachments.map(block)]
-  if (!content.length) return { ok: true, content: text, text }
+  if (!content.length) return { ok: true, content: text, text, ...onWritten }
   if (text) content.push({ type: 'text', text })
-  return { ok: true, content, text }
+  return { ok: true, content, text, ...onWritten }
 }

@@ -696,7 +696,7 @@ function QueuedAttachments({ atts, refs }: { atts: SendAttachment[]; refs: Draft
           title={d.ref.kind === 'browser' ? refLabel(d.ref) : d.ref.path}
         >
           <span className="text-content">{i + 1}</span>
-          {d.ref.kind === 'browser' ? <IconTarget className="h-3 w-3 shrink-0" /> : <FileIcon name={d.ref.path} kind={d.ref.kind} className="h-3 w-3 shrink-0" />}
+          {d.ref.kind === 'browser' ? <IconTarget className="h-3 w-3 shrink-0" /> : <FileIcon name={d.ref.path} kind={d.ref.kind === 'folder' ? 'folder' : 'file'} className="h-3 w-3 shrink-0" />}
           <span className="truncate">{refLabel(d.ref)}</span>
           {d.visual && (
             <>

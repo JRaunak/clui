@@ -1,4 +1,5 @@
-import type { SourceVersion } from './context'
+import type { HunkRows } from './changes'
+import type { ChangeSide, LineRange, SourceVersion } from './context'
 export type SurfaceKind = 'browser' | 'tree' | 'file' | 'diff' | 'image' | 'doc' | 'sheet' | 'artifact'
 export type OpenedBy = 'user' | 'claude' | 'link' | 'change'
 export type ViewMode = 'auto' | 'preview' | 'source'
@@ -20,7 +21,20 @@ export interface SurfaceSelection {
   lines?: { start: number; end: number }
   /** A File tab's revision the lines were selected against, so a reader that isn't the mounted tab can build the line reference. */
   sourceVersion?: SourceVersion
-  change?: { segmentId: string; revision: string; hunkId: string; side: 'diff' | 'before' | 'after' }
+  change?: {
+    /** Absolute: the Diff tab's key is '', so the selection carries its file. */
+    path: string
+    segmentId: string
+    revision: string
+    hunkId: string
+    side: ChangeSide
+    /** Absent = the whole hunk. */
+    rows?: HunkRows
+    old?: LineRange
+    new?: LineRange
+    /** `changeSelection(...).ok` on the hunk the surface rendered; a preview, main decides at mint. */
+    fits: boolean
+  }
   range?: string
   region?: Region
   point?: { x: number; y: number }

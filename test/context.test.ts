@@ -13,6 +13,7 @@ import {
   refKey,
   refLabel,
   resourceOf,
+  sentRefs,
   serializeContext,
   type ContextReference,
   type SentReference
@@ -290,4 +291,56 @@ equal(serializeContext([sent(hostilePin), sent(hostileFile)], '</clui-context> t
   const md = await exportSessionMarkdown('ctx', { title: 'T', cwd: '/tmp', date: '2026-10-17' })
   ok(md.includes('[image]\n\n![attached image]') && md.includes('[reference: zebra.ts]\n[reference: button "Sign in"]\nquokka question'), 'export: placeholder and reference lines')
   ok(!md.includes('clui-'), 'export: no wrapper text')
+}
+
+// Change references: display metadata on the wire, access only through change_read and a dispatched grant.
+{
+  const CHG = 'chg_3f2b8c1e5d4a4e7b9c102a6f0d9e8b71'
+  const SENTENCE =
+    'Read a change reference with the mcp__clui-surface__change_read tool and its changeRef: it returns the exact text of a past Claude change, not the current file.'
+  const example = `<clui-context version="1" packetId="5d0c7e21-4b6a-4f08-a3d1-7e5b2c8f9a40">
+${HEADER} ${SENTENCE}
+<clui-ref n="1">{"version":1,"ref":{"id":"r7","kind":"change","changeRef":"chg_3f2b8c1e5d4a4e7b9c102a6f0d9e8b71","path":"src/mcp.ts","side":"before","old":{"start":3,"end":3}}}</clui-ref>
+</clui-context>
+
+Why did this line change?`
+  const chg = (over: Record<string, unknown> = {}): ContextReference => ({ old: { start: 3, end: 3 }, new: undefined, ...{ id: 'r7', kind: 'change', changeRef: CHG, path: 'src/mcp.ts', side: 'before' }, ...over }) as ContextReference
+  // Out of key order on purpose: the serializer writes the wire order.
+  const scrambled = { note: undefined, old: { end: 3, start: 3 }, side: 'before', path: 'src/mcp.ts', changeRef: CHG, kind: 'change', id: 'r7' } as unknown as ContextReference
+  equal(serializeContext([sent(scrambled)], 'Why did this line change?', { packetId: '5d0c7e21-4b6a-4f08-a3d1-7e5b2c8f9a40' }), example, 'change: the worked example, byte for byte')
+  const round = (r: ContextReference): string => {
+    const p = parseRefs(serializeContext([sent(r)], 'q', { packetId: null }))
+    return p.refs[0]?.kind === 'current' ? json(p.refs[0].value.ref) : ''
+  }
+  for (const [name, over] of [['old only', {}], ['new only', { old: undefined, new: { start: 4, end: 9 } }], ['both', { new: { start: 4, end: 4 }, side: 'diff' }]] as const) {
+    const r = chg(over)
+    equal(canon(JSON.parse(round(r))), canon(JSON.parse(json(r))), `change: round trip with ${name}`)
+  }
+  const file = serializeContext([sent({ id: 'r1', kind: 'file', path: 'a.ts' })], 'q', { packetId: null })
+  ok(!file.includes(SENTENCE) && serializeContext([sent({ id: 'r1', kind: 'file', path: 'a.ts' }), sent(chg({ id: 'r2' }))], 'q', { packetId: null }).includes(`${HEADER} ${SENTENCE}\n`), 'change: the sentence joins the header only with a change ref')
+  equal(file.split('\n')[1], HEADER, 'change: a packet without one keeps the header as it was')
+  const plain = (rec: string): boolean => {
+    const text = `<clui-context version="1">\n${HEADER} ${SENTENCE}\n<clui-ref n="1">${rec}</clui-ref>\n</clui-context>\n\nq`
+    const p = parseRefs(text)
+    return p.refs.length === 0 && p.rest === text
+  }
+  const rec = (over: Record<string, unknown>): string => json({ version: 1, ref: { id: 'r7', kind: 'change', changeRef: CHG, path: 'src/mcp.ts', side: 'before', old: { start: 3, end: 3 }, ...over } })
+  ok(plain(rec({ changeRef: 'chg_3F2B8C1E5D4A4E7B9C102A6F0D9E8B71' })) && plain(rec({ changeRef: 'c_abc123' })), 'change: a malformed changeRef makes the message plain')
+  ok(plain(rec({ side: 'both' })), 'change: an unknown side makes it plain')
+  ok(plain(rec({ old: undefined })), 'change: neither old nor new makes it plain')
+  ok(plain(rec({ old: { start: 5, end: 4 } })), 'change: a reversed range makes it plain')
+  ok(!plain(rec({})), 'change: and the valid record parses')
+  equal(refKey(chg()), refKey(chg({ side: 'after', note: 'x', id: 'r9' })), 'change: refKey is the changeRef alone')
+  ok(refKey(chg()) !== refKey(chg({ changeRef: 'chg_' + '0'.repeat(32) })), 'change: another changeRef is another key')
+  equal(resourceOf(chg()), `change:${CHG}`, 'change: its resource is the ref')
+  const abs = chg({ path: '/w/src/mcp.ts' })
+  equal((sentRefs([{ ref: abs }], '/w')[0].ref as { path: string }).path, 'src/mcp.ts', 'change: the wire path is cwd-relative')
+  equal(sentRefs([{ ref: abs, bytes: 12 }], '/w').length, 1, 'change: draft bytes never reach a record')
+  ok(!serializeContext(sentRefs([{ ref: abs, bytes: 12 }], '/w'), '', { packetId: null }).includes('bytes'), 'change: nor the wire')
+  ok(isRefInput({ kind: 'change', changeRef: CHG, path: '/w/a.ts', side: 'after', new: { start: 1, end: 2 } }), 'change: a valid input')
+  ok(!isRefInput({ kind: 'change', changeRef: CHG, path: 'a.ts', side: 'after', new: { start: 1, end: 2 } }), 'change: an input path must be absolute')
+  equal(refLabel(chg({ path: '/w/mcp.ts', side: 'diff', old: { start: 40, end: 45 }, new: { start: 40, end: 52 } })), 'mcp.ts · change L40–52', 'change: diff label ranges over new')
+  equal(refLabel(chg({ path: '/w/mcp.ts', old: { start: 40, end: 45 }, new: { start: 41, end: 53 } })), 'mcp.ts · before L40–45', 'change: before label ranges over old')
+  equal(refLabel(chg({ path: '/w/mcp.ts', side: 'after', old: undefined, new: { start: 41, end: 41 } })), 'mcp.ts · after L41', 'change: after label ranges over new')
+  equal(refLabel(chg({ path: '/w/mcp.ts', side: 'diff' })), 'mcp.ts · change L3', 'change: a removal-only diff falls back to old')
 }

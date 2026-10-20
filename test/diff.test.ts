@@ -4,7 +4,9 @@ import { mkdtempSync, readFileSync, statSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ChangeLedger } from '../src/main/surfaces/ledger.ts'
-import { changeMarks, diffSnapshots, getDiff, parseDiffRequest, type DiffSource } from '../src/main/surfaces/diff.ts'
+import { changeMarks, diffSnapshots, getDiff, parseChangeRefRequest, parseDiffRequest, selectChange, type DiffSource } from '../src/main/surfaces/diff.ts'
+import { ChangeRefs } from '../src/main/surfaces/change-refs.ts'
+import { changeSelection, type PatchHunk } from '../src/shared/changes.ts'
 import { markHtml, splitHighlightedLines } from '../src/renderer/src/lib/highlightLines.ts'
 import { langForPath } from '../src/renderer/src/lib/highlight.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -194,4 +196,88 @@ const source = (l: ChangeLedger, disk: string | null = null): DiffSource => ({
   const created = (await changeMarks(source(made, 'a\nb\n'), 'h', '/n.ts'))!
   ok(created.state === 'created' && created.hunks.length === 1 && !created.hunks[0].bars.length, 'marks: an untouched created file is one chip, no bars')
   equal(await changeMarks(source(made, null), 'h', '/n.ts'), null, 'marks: an unreadable file has none')
+}
+
+// changeSelection: the text one side of a hunk slice reads as, numbered as the Diff surface numbers its rows.
+{
+  const h: PatchHunk = { oldStart: 3, oldLines: 3, newStart: 3, newLines: 3, lines: [' a', '-b', '+B', ' c', '\\ No newline at end of file'] }
+  const sel = (side: 'diff' | 'before' | 'after', rows?: { start: number; end: number }): string => JSON.stringify(changeSelection(h, side, rows))
+  equal(sel('diff'), JSON.stringify({ ok: true, text: h.lines.join('\n'), old: { start: 3, end: 5 }, new: { start: 3, end: 5 }, lines: 5, bytes: h.lines.join('\n').length }), 'select: diff keeps every row verbatim, no-newline row included')
+  equal(sel('before'), JSON.stringify({ ok: true, text: 'a\nb\nc', old: { start: 3, end: 5 }, new: { start: 3, end: 5 }, lines: 3, bytes: 5 }), 'select: before keeps context and removed rows, stripped')
+  equal(sel('after'), JSON.stringify({ ok: true, text: 'a\nB\nc', old: { start: 3, end: 5 }, new: { start: 3, end: 5 }, lines: 3, bytes: 5 }), 'select: after keeps context and added rows')
+  equal(sel('before', { start: 2, end: 2 }), JSON.stringify({ ok: true, text: 'b', old: { start: 4, end: 4 }, lines: 1, bytes: 1 }), 'select: a removed row has no after-side lines')
+  equal(sel('after', { start: 2, end: 3 }), JSON.stringify({ ok: true, text: 'B', old: { start: 4, end: 4 }, new: { start: 4, end: 4 }, lines: 1, bytes: 1 }), 'select: rows numbered by their own side')
+  equal(sel('before', { start: 3, end: 3 }), JSON.stringify({ ok: false, reason: 'empty', lines: 0, bytes: 0 }), 'select: no row of the side in range is empty')
+  equal(JSON.parse(sel('diff', { start: 5, end: 5 })).reason, 'empty', 'select: a no-newline row alone is empty')
+  ok([{ start: 0, end: 1 }, { start: 4, end: 6 }, { start: 3, end: 2 }, { start: 1.5, end: 2 }].every((r) => JSON.parse(sel('diff', r)).reason === 'empty'), 'select: rows outside the hunk or reversed are empty')
+  const tall = (n: number): PatchHunk => ({ oldStart: 1, oldLines: 0, newStart: 1, newLines: n, lines: Array.from({ length: n }, () => '+x') })
+  ok(changeSelection(tall(400), 'after').ok, 'select: 400 lines fit')
+  equal(JSON.stringify(changeSelection(tall(401), 'after')), JSON.stringify({ ok: false, reason: 'too-large', lines: 401, bytes: 801 }), 'select: 401 lines are too large, measured')
+  const wide = (s: string): PatchHunk => ({ oldStart: 1, oldLines: 0, newStart: 1, newLines: 1, lines: [`+${s}`] })
+  ok(changeSelection(wide('€'.repeat(10922) + 'aa'), 'after').ok, 'select: 32,768 UTF-8 bytes fit')
+  const over = changeSelection(wide('€'.repeat(10923)), 'after')
+  ok(!over.ok && over.reason === 'too-large' && over.bytes === 32769 && over.lines === 1, 'select: 32,769 bytes of multi-byte text are too large')
+}
+
+// selectChange: mint finds the hunk ids getDiff shows, from ledger memory only.
+{
+  const base = Array.from({ length: 20 }, (_, i) => `l${i + 1}`).join('\n') + '\n'
+  const one = base.replace('l3\n', 'C3\n')
+  const envs = [...edit('m1', '/m.ts', base, [hunk(3, 1, 1, ['-l3', '+C3'])])]
+  const l = ledgerWith(envs)
+  let currents = 0
+  const src: DiffSource = { segments: (h, p) => l.segments(h, p), current: async () => (currents++, null) }
+  const diff = (await getDiff(source(l, one), 'h', { path: '/m.ts' }))!
+  const [seg] = diff.segments
+  const req = (h: { id: string }, over: Record<string, unknown> = {}): any => ({ path: '/m.ts', segmentId: seg.id, revision: seg.revision, hunkId: h.id, side: 'before', ...over })
+  ok(seg.mode === 'full', 'mint: a full-mode fixture')
+  const whole = await selectChange(src, 'h', req(seg.groups[0][0]))
+  ok(whole.ok && whole.sel.text === 'l1\nl2\nl3\nl4\nl5\nl6' && JSON.stringify(whole.sel.old) === '{"start":1,"end":6}', 'mint: the full-mode hunk id getDiff shows is found')
+  const r = await selectChange(src, 'h', req(seg.groups[0][0], { rows: { start: 3, end: 3 } }))
+  ok(r.ok && r.sel.text === 'l3' && JSON.stringify(r.sel.old) === '{"start":3,"end":3}' && r.sel.new === undefined, 'mint: one removed row')
+  equal((await selectChange(src, 'h', req(seg.groups[0][0], { revision: 'f'.repeat(32) }))).ok ? '' : 'changed', 'changed', 'mint: a stale revision is changed')
+  equal((await selectChange(src, 'h', req({ id: 'f'.repeat(32) }))) .ok, false, 'mint: an unknown hunk is changed')
+  equal((await selectChange(src, 'h', req(seg.groups[0][0], { segmentId: 'e'.repeat(32) }))).ok, false, 'mint: an unknown segment is changed')
+  const rows = await selectChange(src, 'h', req(seg.groups[0][0], { side: 'after', rows: { start: 3, end: 3 } }))
+  ok(!rows.ok && rows.reason === 'empty', 'mint: a removed row read as after is empty')
+
+  const patchOnly = ledgerWith(edit('p1', '/p.ts', null, [hunk(1, 1, 1, ['-x', '+y'])]))
+  const pd = (await getDiff(source(patchOnly), 'h', { path: '/p.ts' }))!
+  const ps = pd.segments[0]
+  const pr = await selectChange({ segments: (h, p) => patchOnly.segments(h, p) }, 'h', { path: '/p.ts', segmentId: ps.id, revision: ps.revision, hunkId: ps.groups[0][0].id, side: 'diff' })
+  ok(ps.mode === 'patch' && pr.ok && pr.sel.text === '-x\n+y', 'mint: the patch-mode hunk id getDiff shows is found')
+
+  // A ref minted before the segment extends still reads the bytes the user saw.
+  const refs = new ChangeRefs()
+  refs.track('h', { quick: false, sessionId: 'S' })
+  const before = r.ok ? r.sel : null
+  const ref = refs.mint('h', { path: '/m.ts', label: 'm.ts', segmentId: seg.id, revision: seg.revision, hunkId: seg.groups[0][0].id, side: 'before', rows: { start: 3, end: 3 }, old: before!.old, text: before!.text, bytes: before!.bytes })!
+  refs.activate('h', 'p', [ref])
+  for (const e of edit('m2', '/m.ts', one, [hunk(15, 1, 1, ['-l15', '+C15'])])) l.wire('h', e)
+  const grown = (await l.segments('h', '/m.ts'))!
+  ok(grown.length === 1 && grown[0].revision !== seg.revision, 'mint: the segment extended in place')
+  equal((await selectChange(src, 'h', req(seg.groups[0][0]))).ok, false, 'mint: the old revision no longer mints')
+  equal(refs.resolve('h', ref)?.text, 'l3', 'mint: the earlier ref resolves byte-identical')
+  equal(currents, 0, "mint: the current file is never read")
+}
+
+// parseChangeRefRequest: every field shape-checked before use.
+{
+  const hex = 'a'.repeat(32)
+  const good = { path: '/w/a.ts', segmentId: hex, revision: hex, hunkId: hex, side: 'diff' }
+  ok(!!parseChangeRefRequest(good) && JSON.stringify(parseChangeRefRequest({ ...good, rows: { start: 2, end: 3 }, extra: 1 })) === JSON.stringify({ ...good, rows: { start: 2, end: 3 } }), 'parse: the request, unknown keys dropped')
+  const bad = [
+    { ...good, path: 'a.ts' },
+    { ...good, path: '/a\0b' },
+    { ...good, path: '/' + 'a'.repeat(4096) },
+    { ...good, hunkId: 'A'.repeat(32) },
+    { ...good, revision: 'a'.repeat(31) },
+    { ...good, side: 'both' },
+    { ...good, rows: { start: 0, end: 1 } },
+    { ...good, rows: { start: 3, end: 2 } },
+    { ...good, rows: { start: 1, end: 100_001 } },
+    { ...good, rows: [1, 2] },
+    null
+  ]
+  ok(bad.every((b) => parseChangeRefRequest(b) === null), 'parse: a bad path, id, side or row range is refused')
 }

@@ -1,7 +1,9 @@
 // Boundary: the CLI transport (`ClaudeSession`) driven against a fake child.
 // Covers reconnect, generation, and settlement.
 import { ClaudeSession } from '../src/main/cli/session.ts'
-import { ok } from './support/harness.mjs'
+import { readFileSync, statSync } from 'node:fs'
+import { CHANGE_READ_TOOL } from '../src/shared/context.ts'
+import { equal, ok } from './support/harness.mjs'
 
 const spawns = (): any[] => (globalThis as any).__spawns__ || []
 const reset = (): void => {
@@ -132,15 +134,80 @@ reset()
   ok(answers().at(-1)?.[0] === 'e3' && answers().at(-1)?.[1] === 'cancel', 'transport: stop cancels an open elicitation')
 }
 
-// the test MCP config rides alongside the browser's in one variadic --mcp-config
+// the test MCP config rides alongside Clui's in one variadic --mcp-config
 reset()
 {
-  const s = mk({ browserMcp: '{"mcpServers":{}}', mcpConfigPath: '/tmp/stub.json' })
+  const s = mk({ cluiMcp: { config: '{"mcpServers":{}}', allow: [CHANGE_READ_TOOL] }, mcpConfigPath: '/tmp/stub.json' })
   s.start()
   const a: string[] = spawns()[0].spawnargs
   const i = a.indexOf('--mcp-config')
   ok(i >= 0 && a[i + 2] === '/tmp/stub.json' && a.indexOf('--mcp-config', i + 1) === -1, 'transport: both MCP configs in one --mcp-config')
   s.stop()
+}
+
+// The allow rules: the surface tool alone without the browser, the browser server after it with it. Each list
+// ends at the next flag or at the end of argv.
+reset()
+{
+  const allowed = (allow: string[], resume?: string): string[] => {
+    const s = mk({ cluiMcp: { config: '{"mcpServers":{}}', allow }, ...(resume ? { resumeSessionId: resume } : {}) })
+    s.start()
+    const a: string[] = spawns().at(-1).spawnargs
+    s.stop()
+    const i = a.indexOf('--allowedTools')
+    const end = a.findIndex((x, k) => k > i && x.startsWith('--'))
+    return i < 0 ? [] : a.slice(i + 1, end < 0 ? undefined : end)
+  }
+  equal(allowed([CHANGE_READ_TOOL]).join(' '), 'mcp__clui-surface__change_read', 'transport: the surface allow rule alone, tool-level')
+  equal(allowed([CHANGE_READ_TOOL, 'mcp__clui-browser'], 'S').join(' '), 'mcp__clui-surface__change_read mcp__clui-browser', 'transport: the browser rule after it, closed by --resume')
+}
+
+// One 0600 config file holds both servers, and an effort respawn writes the same contents again.
+reset()
+{
+  const config = JSON.stringify({ mcpServers: { 'clui-surface': { type: 'http', url: 'u1' }, 'clui-browser': { type: 'http', url: 'u2' } } })
+  const s = mk({ cluiMcp: { config, allow: [CHANGE_READ_TOOL] } })
+  s.start()
+  const c1 = spawns()[0]
+  const file = (c: any): string => c.spawnargs[c.spawnargs.indexOf('--mcp-config') + 1]
+  ok(c1.spawnargs.filter((x: string) => x === '--mcp-config').length === 1 && readFileSync(file(c1), 'utf8') === config, 'transport: one config file with both servers')
+  equal(statSync(file(c1)).mode & 0o777, 0o600, 'transport: the config is 0600')
+  ackInit(c1)
+  c1.stdout.emit('data', JSON.stringify({ type: 'system', subtype: 'init', session_id: 'S', cwd: '/tmp', tools: [], model: 'orig' }) + '\n')
+  s.setEffort('max')
+  await tick()
+  respond(c1, 'apply_flag_settings', 'error')
+  await tick()
+  c1.emit('close', 0)
+  await tick()
+  const c2 = spawns()[1]
+  ok(!!c2 && readFileSync(file(c2), 'utf8') === config, 'transport: an effort respawn reuses the same config contents')
+  s.stop()
+}
+
+// onWritten: once, right after its envelope is written; never for a send that wasn't.
+reset()
+{
+  const s = mk()
+  s.start()
+  const c = spawns()[0]
+  ackInit(c)
+  const seen: string[] = []
+  const r: any = await s.send(false, async (uuid) => ({
+    ok: true,
+    content: 'x',
+    text: 'x',
+    onWritten: () => seen.push(`${uuid}:${W(c).filter((o: any) => o.type === 'user' && o.uuid === uuid).length}`)
+  }))
+  equal(seen.join(), `${r.packetId}:1`, 'transport: onWritten runs once, after the envelope is written')
+  const stopped = mk()
+  stopped.start()
+  const c2 = spawns()[1]
+  let ran = 0
+  const sent = stopped.send(false, async () => ({ ok: true, content: 'y', text: 'y', onWritten: () => ran++ }))
+  stopped.interrupt()
+  ackInit(c2)
+  ok(((await sent) as any).reason === 'cancelled' && ran === 0, 'transport: a cancelled send never runs onWritten')
 }
 
 // One outbox: a slow first prepare can't let the second message overtake it.
@@ -185,6 +252,7 @@ reset()
   ackInit(c1)
   c1.stdout.emit('data', JSON.stringify({ type: 'system', subtype: 'init', session_id: 'S', cwd: '/tmp', tools: [], model: 'orig' }) + '\n')
   const uuids: string[] = []
+  const written: string[] = []
   let first = true
   let release!: () => void
   const sent = s.send(false, async (uuid) => {
@@ -193,7 +261,7 @@ reset()
       first = false
       await new Promise<void>((r) => (release = r))
     }
-    return { ok: true, content: `id ${uuid}`, text: `id ${uuid}` }
+    return { ok: true, content: `id ${uuid}`, text: `id ${uuid}`, onWritten: () => written.push(uuid) }
   })
   await tick()
   s.setEffort('max')
@@ -210,6 +278,7 @@ reset()
   const env = W(c2).find((o: any) => o.type === 'user')
   ok(uuids.length === 2 && !W(c1).some((o: any) => o.type === 'user'), 'transport: a reconnect during prepare prepares again and skips the old child')
   ok(env && env.uuid === r.packetId && env.message.content === `id ${env.uuid}`, 'transport: the envelope uuid is the packetId in its text')
+  ok(written.length === 1 && written[0] === env?.uuid && written[0] === uuids[1], "transport: only the second preparation's onWritten runs, with the uuid written")
 }
 
 // Send now joins an open turn and arms the cut; with no turn open it starts one.

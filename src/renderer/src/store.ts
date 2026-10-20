@@ -46,7 +46,7 @@ import {
 } from '../../shared/context'
 import { removalSpoken, pausedText, resourceLabel, shortLabel } from './lib/refCopy'
 import type { Via } from './lib/motion'
-import type { ChangeGitStatus, FileChangeSummary, GitPathStatus } from '../../shared/changes'
+import { CHANGE_BYTES_MAX, CHANGE_TEXT_BUDGET, type ChangeGitStatus, type FileChangeSummary, type GitPathStatus } from '../../shared/changes'
 import { SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
 import { turnEndLine } from './lib/turnEnd'
 import { suffixes } from './lib/tree'
@@ -266,7 +266,8 @@ export interface QueuedMessage {
 
 /** Where a reference action lands: null is the draft, else a queued message's id. */
 export type RefTarget = string | null
-export type AddRefResult = { status: 'added'; id: string } | { status: 'duplicate'; id: string; key: string } | { status: 'cap' } | { status: 'invalid' }
+/** `budget`: the change refs' text would pass CHANGE_TEXT_BUDGET for the message. */
+export type AddRefResult = { status: 'added'; id: string } | { status: 'duplicate'; id: string; key: string } | { status: 'cap' } | { status: 'budget' } | { status: 'invalid' }
 
 export interface ToolCall {
   id: string
@@ -772,8 +773,9 @@ interface SessionStore {
   applyAnnotateEvent: (handleId: string, e: AnnotateEvent) => void
   /** Annotate on or off in the active session's viewed tab; refused while Claude drives it. */
   toggleAnnotate: () => void
-  /** Stage a reference on the edit target (or `opts.target`). Refuses a duplicate, the 21st, or a malformed input. */
-  addRef: (handleId: string, input: RefInput, opts?: { target?: RefTarget; visual?: DraftVisual; pinId?: number }) => AddRefResult
+  /** Stage a reference on the edit target (or `opts.target`). Refuses a duplicate, the 21st, a malformed input, or
+   *  change text past the message budget. A change ref needs `bytes`, its mint's measured size. */
+  addRef: (handleId: string, input: RefInput, opts?: { target?: RefTarget; visual?: DraftVisual; pinId?: number; bytes?: number }) => AddRefResult
   removeRef: (handleId: string, id: string, target?: RefTarget) => void
   moveRef: (handleId: string, id: string, delta: -1 | 1, target?: RefTarget) => void
   /** Draft only, by id, so a reference added since survives. */
@@ -3933,6 +3935,11 @@ export const useSession = create<SessionStore>((set, get) => ({
     const dup = refs.find((d) => refKey(d.ref) === key)
     if (dup) return { status: 'duplicate', id: dup.ref.id, key }
     if (refs.length >= MAX_REFS) return { status: 'cap' }
+    const bytes = input.kind === 'change' ? opts?.bytes : undefined
+    if (input.kind === 'change') {
+      if (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0 || bytes > CHANGE_BYTES_MAX) return { status: 'invalid' }
+      if (refs.reduce((n, d) => n + (d.bytes ?? 0), bytes) > CHANGE_TEXT_BUDGET) return { status: 'budget' }
+    }
     const id = `r${++refSeq}`
     // Reselection clears the notice. A page's next document has a new docId, so a pick in the same tab counts.
     const resource = resourceOf(input as ContextReference)
@@ -3941,7 +3948,12 @@ export const useSession = create<SessionStore>((set, get) => ({
     // Reselecting after a change brings back the note the removed reference carried.
     const note = input.note ?? hit.flatMap((k) => slice.referenceNotices[k].removed).find((r) => r.note)?.note
     const ref = { ...input, id, ...(note === undefined ? {} : { note }) } as ContextReference
-    const d: DraftReference = { ref, ...(opts?.visual ? { visual: opts.visual } : {}), ...(opts?.pinId === undefined ? {} : { pinId: opts.pinId }) }
+    const d: DraftReference = {
+      ref,
+      ...(opts?.visual ? { visual: opts.visual } : {}),
+      ...(opts?.pinId === undefined ? {} : { pinId: opts.pinId }),
+      ...(bytes === undefined ? {} : { bytes })
+    }
     const notices = hit.length ? Object.fromEntries(Object.entries(slice.referenceNotices).filter(([k]) => !same(k))) : null
     set((s) => patchSlice(s, handleId, { ...withRefs(slice, target, [...refs, d]), ...(notices ? { referenceNotices: notices } : {}) }))
     afterRefsChange(handleId)
