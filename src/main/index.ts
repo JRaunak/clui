@@ -56,6 +56,7 @@ import { readCliSettings } from './settings/cli-settings'
 import { listModels } from './models/list'
 import { BrowserManager } from './browser/manager'
 import { BrowserMcpServer } from './browser/mcp'
+import { mcpListener } from './lib/mcp-route'
 import { Annotator } from './browser/annotate'
 import { classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from './cli/packet'
 import { contextWatches } from './surfaces/context-watch'
@@ -323,7 +324,7 @@ function createWindow(): void {
 
 function registerIpc(): void {
   const browser = new BrowserManager(() => mainWindow, () => THEME_BG[resolveTheme()])
-  const mcp = new BrowserMcpServer(browser)
+  const mcp = new BrowserMcpServer(browser, mcpListener())
   const annotator = new Annotator(browser, () => mainWindow)
   browser.onLeave = (handleId, tab, why) => annotator.leave(handleId, tab, why)
   browser.onDocumentGone = (handleId, tab, reason) => annotator.gone(handleId, tab, reason)

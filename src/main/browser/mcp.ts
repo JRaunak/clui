@@ -4,9 +4,8 @@
  * another's page. The CLI attaches it per spawn through --mcp-config, never the user's MCP config;
  * the session writes that config to a file only this user can read, since the token would show in argv.
  */
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { WebContents } from 'electron'
+import { mcpListener, type McpRoute, type ToolResult } from '../lib/mcp-route'
 import { siteKeyOf } from '../../shared/browser'
 import { TEXT, WAITING, type BrowserManager } from './manager'
 import { capture, keyEvent, parseRef, refTarget, scrub, PAGE_VIS, type Box, type Cdp, type Observed, type Rect, type Ref, type RefMiss, type View } from './cdp'
@@ -14,10 +13,6 @@ import { moveCursor, clickRing, pill, injectCursor, WORLD } from './cursor'
 import { loginsForSite, secretOf, vaultAvailable } from './vault'
 import { totp } from './totp'
 
-type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: 'image/jpeg' }
-interface ToolResult { content: Content[]; isError?: boolean }
-
-const MAX_BODY = 1 << 20
 const MAX_KEYS = 50
 const SETTLE_WAIT_MS = 10_000
 const SNAPSHOT_CAP = 12_000
@@ -323,7 +318,6 @@ export function fillAllowed(raw: string): boolean {
 }
 
 export class BrowserMcpServer {
-  private readonly tokens = new Map<string, string>()
   /** One tool call at a time per tab, keyed `${handleId}\n${tab}`, so a fill can't interleave with a navigation. */
   private readonly chains = new Map<string, Promise<unknown>>()
   /** Sites this session filled a login on. A form that submits by GET puts the password in the URL,
@@ -334,43 +328,26 @@ export class BrowserMcpServer {
   private shotSeq = 0
   /** Per session, captured at spawn. A session with no entry has every tool. */
   private readonly bundles = new Map<string, Bundles>()
-  private port: Promise<number> | null = null
-
   private readonly browser: BrowserManager
+  private readonly route: McpRoute
 
-  constructor(browser: BrowserManager) {
+  constructor(browser: BrowserManager, listener = mcpListener()) {
     this.browser = browser
-  }
-
-  private listen(): Promise<number> {
-    this.port ??= new Promise((resolve, reject) => {
-      const server = createServer((req, res) => void this.onRequest(req, res).catch(() => {
-        if (!res.headersSent) res.writeHead(500).end()
-      }))
-      server.on('error', reject)
-      server.listen(0, '127.0.0.1', () => {
-        const addr = server.address()
-        if (addr && typeof addr === 'object') resolve(addr.port)
-        else reject(new Error('The browser tool server has no port.'))
-      })
+    this.route = listener.route('mcp', {
+      name: 'clui-browser',
+      tools: (handleId) =>
+        toolsFor(this.bundles.get(handleId) ?? ALL_ON).map((t) => (ALWAYS_LOAD.has(t.name) ? { ...t, _meta: { 'anthropic/alwaysLoad': true } } : t)),
+      call: (handleId, name, args, toolUseId) => this.callTool(handleId, name, args, toolUseId)
     })
-    return this.port
   }
 
   /** Where a session's CLI reaches its tools. Mints the token on first use. */
-  async endpoint(handleId: string): Promise<{ url: string; token: string }> {
-    const port = await this.listen()
-    let token = this.tokens.get(handleId)
-    if (!token) {
-      token = randomBytes(32).toString('hex')
-      this.tokens.set(handleId, token)
-    }
-    return { url: `http://127.0.0.1:${port}/mcp/${handleId}`, token }
+  endpoint(handleId: string): Promise<{ url: string; token: string }> {
+    return this.route.endpoint(handleId)
   }
 
   async configFor(handleId: string): Promise<string> {
-    const { url, token } = await this.endpoint(handleId)
-    return JSON.stringify({ mcpServers: { 'clui-browser': { type: 'http', url, headers: { Authorization: `Bearer ${token}` } } } })
+    return JSON.stringify({ mcpServers: { 'clui-browser': await this.route.entry(handleId) } })
   }
 
   /** Which bundles this session's CLI sees and may call. Set before the CLI lists its tools, which it does once. */
@@ -379,7 +356,7 @@ export class BrowserMcpServer {
   }
 
   revoke(handleId: string): void {
-    this.tokens.delete(handleId)
+    this.route.revoke(handleId)
     for (const map of [this.chains, this.shots]) for (const key of map.keys()) if (key.startsWith(`${handleId}\n`)) map.delete(key)
     this.filledSites.delete(handleId)
     this.bundles.delete(handleId)
@@ -398,72 +375,6 @@ export class BrowserMcpServer {
     const url = this.shownUrl(handleId, wc.getURL())
     const many = (this.browser.tabsOf(handleId)?.tabs.length ?? 0) > 1
     return `${many ? `Tab: ${tab}\n` : ''}${untrusted(url)}\nURL: ${url}\nTitle: ${wc.getTitle()}`
-  }
-
-  private authorized(handleId: string, header: string | undefined): boolean {
-    const want = this.tokens.get(handleId)
-    if (!want || !header?.startsWith('Bearer ')) return false
-    // Compared as bytes: a non-ASCII header of the right string length has a different byte length.
-    const got = Buffer.from(header.slice(7))
-    return got.length === want.length && timingSafeEqual(got, Buffer.from(want))
-  }
-
-  private async onRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const port = await this.listen()
-    // No browser page may reach this server: pages always send Origin on cross-origin requests,
-    // and a DNS-rebinding page can't make its Host header read 127.0.0.1.
-    if (req.headers.origin !== undefined || req.headers.host !== `127.0.0.1:${port}`) return void res.writeHead(403).end()
-    const m = /^\/mcp\/([\w-]+)$/.exec(req.url ?? '')
-    if (!m) return void res.writeHead(404).end()
-    const handleId = m[1]
-    if (!this.authorized(handleId, req.headers.authorization)) return void res.writeHead(401).end()
-    // The CLI probes for a server-sent event stream with GET; it works without one.
-    if (req.method !== 'POST') return void res.writeHead(405).end()
-
-    let size = 0
-    const chunks: Buffer[] = []
-    for await (const chunk of req as AsyncIterable<Buffer>) {
-      size += chunk.length
-      if (size > MAX_BODY) return void res.writeHead(413).end()
-      chunks.push(chunk)
-    }
-    let msg: { id?: unknown; method?: unknown; params?: Record<string, unknown> }
-    try {
-      msg = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-    } catch {
-      return this.reply(res, null, undefined, { code: -32700, message: 'Parse error' })
-    }
-    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return this.reply(res, null, undefined, { code: -32600, message: 'Invalid request' })
-    if (msg.id === undefined) return void res.writeHead(202).end()
-
-    const params = msg.params ?? {}
-    switch (msg.method) {
-      case 'initialize':
-        return this.reply(res, msg.id, {
-          protocolVersion: typeof params.protocolVersion === 'string' ? params.protocolVersion : '2025-06-18',
-          capabilities: { tools: {} },
-          serverInfo: { name: 'clui-browser', version: '1.0.0' }
-        })
-      case 'ping':
-        return this.reply(res, msg.id, {})
-      case 'tools/list':
-        return this.reply(res, msg.id, {
-          tools: toolsFor(this.bundles.get(handleId) ?? ALL_ON).map((t) => (ALWAYS_LOAD.has(t.name) ? { ...t, _meta: { 'anthropic/alwaysLoad': true } } : t))
-        })
-      case 'tools/call': {
-        const name = typeof params.name === 'string' ? params.name : ''
-        const args = params.arguments && typeof params.arguments === 'object' ? (params.arguments as Record<string, unknown>) : {}
-        const meta = params._meta && typeof params._meta === 'object' ? (params._meta as Record<string, unknown>)['claudecode/toolUseId'] : undefined
-        return this.reply(res, msg.id, await this.callTool(handleId, name, args, typeof meta === 'string' ? meta : undefined))
-      }
-      default:
-        return this.reply(res, msg.id, undefined, { code: -32601, message: 'Method not found' })
-    }
-  }
-
-  private reply(res: ServerResponse, id: unknown, result?: unknown, error?: { code: number; message: string }): void {
-    res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ jsonrpc: '2.0', id, ...(error ? { error } : { result }) }))
   }
 
   /** Runs one tool for a session. Never throws: every failure becomes text for the model. */
