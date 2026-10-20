@@ -239,7 +239,7 @@
   --shadow-content: none;
   /* --ink-950, the app background, at 76%. */
   --glass-tint-edge: rgb(22 22 23 / 0.76);
-  --glass-tint-thick: rgb(30 30 31 / 0.92);
+  --glass-tint-thick: rgb(30 30 31 / 0.97);
   --glass-blur-edge: 16px;
   --glass-blur-thick: 20px;
   --glass-sat: 1.15;
