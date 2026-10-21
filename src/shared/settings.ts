@@ -183,8 +183,10 @@ export interface ModelInfo {
 /**
  * Base model ids for when the live Bedrock query hasn't landed or fails (no `aws`, creds
  * refreshing, a non-Bedrock provider). Base ids only: `withVariants` synthesizes the [1m]
- * twins on both the live and fallback paths, so the 1M rule lives in one place. Re-check
- * against `aws bedrock list-inference-profiles` when a new family ships.
+ * twins on both the live and fallback paths, so the 1M rule lives in one place. Each entry
+ * must be a working `--model` value on Bedrock as written, so a model Bedrock lists only
+ * date-suffixed (Haiku 4.5) stays out. Re-check against `aws bedrock list-inference-profiles`
+ * when a new family ships.
  */
 export const FALLBACK_MODEL_IDS: string[] = [
   'claude-opus-5-5',
@@ -197,7 +199,7 @@ export const FALLBACK_MODEL_IDS: string[] = [
   'claude-sonnet-4-6',
   'claude-fable-5-1',
   'claude-fable-5',
-  'claude-haiku-4-5'
+  'claude-haiku-5-5'
 ]
 
 // A model id is never shortened for use: only the full Bedrock profile id, a suffix-free
