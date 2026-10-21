@@ -62,11 +62,18 @@ export interface PermissionSuggestion {
   destination?: string
 }
 
-/** A tool call a permission rule denied without prompting. `input` carries the tool's args
- *  so the UI can name what was blocked. */
+/** Who stopped a denied call. `rule` covers everything the user configured: rules, hooks, a
+ *  mode, working-directory limits. `you` is a Deny at the permission gate. */
+export type DenialSource = 'safety' | 'classifier' | 'rule' | 'you'
+
+/** A tool call the CLI denied this turn. `input` carries the tool's args so the UI can name
+ *  what was blocked. `source` is absent when no attribution joined (CLI drift). */
 export interface PermissionDenial {
   toolName: string
   input: unknown
+  source?: DenialSource
+  /** The CLI's decision_reason, verbatim. The envelope's `message` is written for the model, never shown. */
+  reason?: string
 }
 
 /** One model's slice of a turn's usage (a turn can span models via subagents/switches). */
@@ -290,7 +297,7 @@ export type DomainEvent =
        *  `fromTaskNotification`: cost is real but it isn't the user's turn, so it must not
        *  clear `busy` or run turn-end side effects. */
       fromPeer?: boolean
-      /** Rule-denied tool calls this turn (past-tense enforcement, not the interactive ask). */
+      /** Tool calls denied this turn, attributed by source. */
       denials?: PermissionDenial[]
       /** This turn's own usage (already a delta). Foreground turns only; absent on bg/peer results. */
       usage?: TurnUsage

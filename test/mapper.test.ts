@@ -1,7 +1,7 @@
 // Boundary: the wire→DomainEvent mapper.
 import { readFileSync } from 'node:fs'
 import { EventMapper } from '../src/main/cli/event-mapper.ts'
-import { ok } from './support/harness.mjs'
+import { equal, ok } from './support/harness.mjs'
 
 const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.map(e))
 
@@ -453,4 +453,60 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   const out = JSON.stringify(feed(new EventMapper(), raw))
   ok(texts.length === 5 && !/originalFile|original_file|updated_file|structuredPatch/.test(out), 'mapper: tool_use_result fields never reach a DomainEvent')
   ok(texts.every((t) => !out.includes(JSON.stringify(t).slice(1, -1))), 'mapper: no whole-file text reaches a DomainEvent')
+}
+
+// denials join their permission_denied event or the gate by tool_use_id, and the join resets per turn
+{
+  const m = new EventMapper()
+  const denied = (id: string, type: string, reason?: string) => ({
+    type: 'system',
+    subtype: 'permission_denied',
+    tool_name: 'Bash',
+    tool_use_id: id,
+    decision_reason_type: type,
+    ...(reason ? { decision_reason: reason } : {}),
+    message: 'model-facing text'
+  })
+  const gate = (req: string, id: string) => ({ type: 'control_request', request_id: req, request: { subtype: 'can_use_tool', tool_name: 'Bash', tool_use_id: id, input: {} } })
+  const result = (ids: string[], extra: object = {}) => ({
+    type: 'result',
+    session_id: 's',
+    permission_denials: ids.map((id) => ({ tool_name: 'Bash', tool_use_id: id, tool_input: { command: id } })),
+    ...extra
+  })
+  const evs = feed(m, [
+    denied('t1', 'safetyCheck', 'Dangerous rm operation on mounted drive path: /Volumes/x'),
+    denied('t2', 'subcommandResults'),
+    denied('t3', 'classifier'),
+    denied('t4', 'hook'),
+    denied('t5', 'somethingNew'),
+    gate('r1', 't6'),
+    gate('r2', 't7'),
+    { type: 'control_cancel_request', request_id: 'r2' },
+    gate('r3', 't9'),
+    denied('t9', 'safetyCheck'),
+    result(['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9'])
+  ])
+  const d = evs.find((e) => e.type === 'result')?.denials ?? []
+  const by = Object.fromEntries(d.map((x: any) => [x.input.command, x]))
+  equal(by.t1.source, 'safety', 'mapper: safetyCheck → safety')
+  equal(by.t1.reason, 'Dangerous rm operation on mounted drive path: /Volumes/x', 'mapper: decision_reason carried verbatim')
+  equal(by.t2.source, 'rule', 'mapper: subcommandResults → rule')
+  ok(!('reason' in by.t2), 'mapper: no decision_reason → no reason, never the model-facing message')
+  equal(by.t3.source, 'classifier', 'mapper: classifier → classifier')
+  equal(by.t4.source, 'rule', 'mapper: hook → rule')
+  equal(by.t5.source, 'rule', 'mapper: unknown decision_reason_type → rule')
+  equal(by.t6.source, 'you', 'mapper: gated call denied with no event → you')
+  ok(!('source' in by.t7), 'mapper: a withdrawn gate is not the user denying')
+  ok(!('source' in by.t8), 'mapper: no event and no gate → unattributed')
+  equal(by.t9.source, 'safety', 'mapper: an event outranks the gate')
+  ok(d.every((x: any) => !JSON.stringify(x).includes('model-facing')), 'mapper: message field never reaches a denial')
+
+  const next = feed(m, [result(['t1', 't6'])]).find((e) => e.type === 'result')?.denials ?? []
+  ok(next.every((x: any) => !('source' in x)), 'mapper: the join clears at the owned result')
+
+  const m2 = new EventMapper()
+  feed(m2, [denied('b1', 'safetyCheck'), result([], { origin: { kind: 'task-notification' } })])
+  const after = feed(m2, [result(['b1'])]).find((e) => e.type === 'result')?.denials ?? []
+  equal(after[0]?.source, 'safety', "mapper: a bg result doesn't wipe the user turn's join")
 }

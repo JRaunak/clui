@@ -21,12 +21,13 @@ import { parseRefs, type ContextReference } from '../../../shared/context'
 import { baseOf, spokenRef } from '../lib/refCopy'
 import { viaOf } from '../lib/motion'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
-import { IconArrowUp, IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShieldOff, IconStop, IconWarn } from './Icon'
+import { IconArrowUp, IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShield, IconShieldOff, IconStop, IconWarn } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
 import { openFileAt, useLinkRoot } from '../lib/openLink'
 import { formatCost } from '../lib/formatCost'
 import { turnEndLine, wokenLine } from '../lib/turnEnd'
-import type { PermissionDenial, TurnUsage } from '../../../shared/events'
+import type { DenialSource, PermissionDenial, TurnUsage } from '../../../shared/events'
+import { PERMISSION_MODE_LABELS } from '../../../shared/settings'
 
 export { summarizeInput } from '../lib/instrument'
 
@@ -160,7 +161,7 @@ export function MessageView({ message, hideThinking = false, rebuilt = false }: 
           )}
           {isUser && message.hookNotes && <HookNotes notes={message.hookNotes} />}
           {isUser && message.blocked && <BlockedPromptNotice prompt={parseRefs(message.text).rest} blocked={message.blocked} />}
-          {!isUser && message.denials && message.denials.length > 0 && <BlockedActionsNotice denials={message.denials} />}
+          {!isUser && message.denials && message.denials.length > 0 && <BlockedActions denials={message.denials} />}
           {!isUser && (message.turnEnd || message.usage) && <TurnFooter message={message} />}
         </div>
       </FileLinkContext.Provider>
@@ -217,45 +218,90 @@ function CompactionDivider({ marker }: { marker: CompactionMarker }): JSX.Elemen
 interface DeniedRow {
   tool: string
   target: string
+  reason?: string
   count: number
 }
 
-/** Collapse identical tool+target denials into one row with a ×count. */
+/** Collapse identical tool+target+reason denials into one row with a ×count. */
 function dedupeDenials(denials: PermissionDenial[]): DeniedRow[] {
   const rows: DeniedRow[] = []
   for (const d of denials) {
     const target = highlightOf(d.input)?.value ?? ''
-    const row = rows.find((r) => r.tool === d.toolName && r.target === target)
+    const row = rows.find((r) => r.tool === d.toolName && r.target === target && r.reason === d.reason)
     if (row) row.count++
-    else rows.push({ tool: d.toolName, target, count: 1 })
+    else rows.push({ tool: d.toolName, target, reason: d.reason, count: 1 })
   }
   return rows
 }
 
-/** Info-blue, not error: a rule enforcing as configured is not a fault. */
-function BlockedActionsNotice({ denials }: { denials: PermissionDenial[] }): JSX.Element {
+type NoticeSource = Exclude<DenialSource, 'you'> | undefined
+
+const NOTICE_ORDER: NoticeSource[] = ['safety', 'classifier', 'rule', undefined]
+
+function noticeCopy(source: NoticeSource, n: number): { headline: string; label: string; hint?: string } {
+  const one = n === 1
+  const count = one ? '1 action' : `${n} actions`
+  const interactive = PERMISSION_MODE_LABELS.default
+  const adaptive = PERMISSION_MODE_LABELS.auto
+  switch (source) {
+    case 'safety':
+      return {
+        headline: `${count} stopped by a safety check`,
+        label: 'Actions stopped by a safety check',
+        hint: `Only you can approve ${one ? 'this' : 'these'}. Switch to ${interactive}, then ask Claude to try again.`
+      }
+    case 'classifier':
+      return {
+        headline: `${count} held back by ${adaptive} mode`,
+        label: `Actions held back by ${adaptive} mode`,
+        hint: `To approve ${one ? 'it' : 'them'} yourself, switch to ${interactive}, then ask Claude to try again.`
+      }
+    case 'rule':
+      return { headline: `${count} blocked by your permission settings`, label: 'Actions blocked by your permission settings' }
+    default:
+      return { headline: `${count} blocked`, label: 'Blocked actions' }
+  }
+}
+
+/** One notice per source, since each carries different guidance. The user's own gate Deny gets
+ *  none: repeating their answer back reads as if something else intervened. */
+function BlockedActions({ denials }: { denials: PermissionDenial[] }): JSX.Element | null {
+  const groups = NOTICE_ORDER.map((source) => ({ source, denials: denials.filter((d) => d.source === source) })).filter(
+    (g) => g.denials.length > 0
+  )
+  if (!groups.length) return null
+  return (
+    <div className="flex flex-col gap-1.5">
+      {groups.map((g) => (
+        <BlockedActionsNotice key={g.source ?? 'unknown'} source={g.source} denials={g.denials} />
+      ))}
+    </div>
+  )
+}
+
+/** Info-blue, not error: a guard or rule acting as designed is not a fault. */
+function BlockedActionsNotice({ source, denials }: { source: NoticeSource; denials: PermissionDenial[] }): JSX.Element {
   const [open, setOpen] = useState(false)
+  const hintId = useId()
   const rows = dedupeDenials(denials)
   const first = rows[0]
+  const { headline, label, hint } = noticeCopy(source, denials.length)
+  const Icon = source === 'safety' || source === 'classifier' ? IconShield : IconShieldOff
   return (
-    <section
-      className="rounded-r-md border-l-2 border-info bg-info/7 py-[9px] pl-[13px] pr-3"
-      aria-label="Blocked actions"
-    >
+    <section className="rounded-r-md border-l-2 border-info bg-info/7 py-[9px] pl-[13px] pr-3" aria-label={label}>
       <button
         type="button"
         className="flex w-full items-center gap-2 text-left"
         aria-expanded={open}
+        aria-describedby={hint ? hintId : undefined}
         onClick={() => setOpen((o) => !o)}
       >
         <IconChevron
           className={`h-3.5 w-3.5 shrink-0 text-info transition-transform ${open ? 'rotate-90' : ''}`}
           aria-hidden="true"
         />
-        <IconShieldOff className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
-        <span className="shrink-0 text-label font-medium text-info">
-          {denials.length === 1 ? '1 action' : `${denials.length} actions`} blocked by your permission rules
-        </span>
+        <Icon className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
+        <span className="shrink-0 text-label font-medium text-info">{headline}</span>
         {/* Single-denial only: on multi, a one-item preview misdirects to an arbitrary (often
             benign) entry and hides the rest, so the count alone is the headline. */}
         {!open && denials.length === 1 && first && (
@@ -272,20 +318,28 @@ function BlockedActionsNotice({ denials }: { denials: PermissionDenial[] }): JSX
           </span>
         )}
       </button>
+      {hint && (
+        <p id={hintId} className="mt-0.5 pl-11 text-meta text-dim">
+          {hint}
+        </p>
+      )}
       {open && (
-        <ul className="mt-1.5 flex flex-col gap-1 pl-6">
+        <ul className="mt-1.5 flex flex-col gap-1 pl-11">
           {rows.map((r, i) => (
-            <li key={i} className="flex items-baseline gap-1.5 text-meta">
-              <span className="shrink-0 font-medium text-content">{r.tool}</span>
-              {r.target && (
-                <>
-                  <span className="shrink-0 text-faint" aria-hidden="true">
-                    ·
-                  </span>
-                  <span className="min-w-0 break-all font-mono text-content">{r.target}</span>
-                </>
-              )}
-              {r.count > 1 && <span className="shrink-0 text-faint">×{r.count}</span>}
+            <li key={i} className="text-meta">
+              <div className="flex items-baseline gap-1.5">
+                <span className="shrink-0 font-medium text-content">{r.tool}</span>
+                {r.target && (
+                  <>
+                    <span className="shrink-0 text-faint" aria-hidden="true">
+                      ·
+                    </span>
+                    <span className="min-w-0 break-all font-mono text-content">{r.target}</span>
+                  </>
+                )}
+                {r.count > 1 && <span className="shrink-0 text-faint">×{r.count}</span>}
+              </div>
+              {r.reason && <p className="break-words text-dim">{r.reason}</p>}
             </li>
           ))}
         </ul>

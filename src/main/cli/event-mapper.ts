@@ -5,7 +5,7 @@
  * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
  * drift skips the envelope instead of crashing the app.
  */
-import { parseCliMessage, perTurnUsage, ZERO_USAGE, type DomainEvent, type PermissionSuggestion, type RateLimit, type TurnEnd, type TurnUsage } from '../../shared/events'
+import { parseCliMessage, perTurnUsage, ZERO_USAGE, type DenialSource, type DomainEvent, type PermissionDenial, type PermissionSuggestion, type RateLimit, type TurnEnd, type TurnUsage } from '../../shared/events'
 import { deriveModelInfo } from '../../shared/settings'
 
 // Minimal structural typing of the raw envelopes we care about.
@@ -133,8 +133,11 @@ interface RawEnvelope {
       costBasis?: 'list' | 'managed' | 'unknown'
     }
   >
-  /** Tool calls a permission rule blocked without prompting (not the interactive ask). */
-  permission_denials?: Array<{ tool_name?: string; tool_input?: unknown }>
+  /** Every tool call denied this turn, whoever denied it. */
+  permission_denials?: Array<{ tool_name?: string; tool_use_id?: string; tool_input?: unknown }>
+  // system/permission_denied, which fires before the errored tool_result. The gate's Deny emits none.
+  decision_reason_type?: string
+  decision_reason?: string
   /** Origin of a turn's result. `kind:'task-notification'` = a backgrounded subagent's
    *  completion turn (foreground result has origin null). `kind:'peer'` = a cross-session
    *  message woke this session; its sender + body ride here (the only place). Live 2.1.250. */
@@ -288,6 +291,12 @@ export class EventMapper {
   private sentNow = new Set<string>()
   /** Every uuid Clui stamped, so their command_lifecycle frames aren't read as a peer's. */
   private stamped = new Set<string>()
+  /** This turn's permission_denied attributions by tool_use_id, joined into the result's denials. */
+  private deniedBy = new Map<string, Pick<PermissionDenial, 'source' | 'reason'>>()
+  /** This turn's open gate requests, request_id to tool_use_id. A gated call the result lists as
+   *  denied with no permission_denied event was refused by the user: the gate's Deny is the only
+   *  denial that emits none. A withdrawn request leaves, since nobody answered it. */
+  private gated = new Map<string, string>()
 
   trackSent(uuid: string, sendNow: boolean): void {
     this.unanswered.add(uuid)
@@ -378,7 +387,9 @@ export class EventMapper {
       case 'control_cancel_request':
         // The CLI withdrew a pending permission prompt (e.g. turn interrupted).
         // Surface it so the renderer can dismiss the matching dialog.
-        return env.request_id ? [{ type: 'permission-cancel', requestId: env.request_id }] : []
+        if (!env.request_id) return []
+        this.gated.delete(env.request_id)
+        return [{ type: 'permission-cancel', requestId: env.request_id }]
       case 'assistant': {
         const out: DomainEvent[] = []
         if (env.message?.id) this.lastMessageId = env.message.id
@@ -460,6 +471,12 @@ export class EventMapper {
         if (cumulative) this.usageBaseline = cumulative
         const messageId = this.lastMessageId
         this.lastMessageId = undefined
+        // A bg/peer result isn't the user's turn, so its denials aren't theirs.
+        const denials = ownsTurn && env.permission_denials?.length ? this.attribute(env.permission_denials) : undefined
+        if (ownsTurn) {
+          this.deniedBy.clear()
+          this.gated.clear()
+        }
         const out: DomainEvent[] = [
           {
             type: 'result',
@@ -477,11 +494,7 @@ export class EventMapper {
             fromPeer,
             answersUser,
             sendNowPending: this.sentNow.size > 0,
-            // A bg/peer result isn't the user's turn, so its denials aren't theirs.
-            denials:
-              ownsTurn && env.permission_denials?.length
-                ? env.permission_denials.map((d) => ({ toolName: d.tool_name ?? 'a tool', input: d.tool_input }))
-                : undefined,
+            denials,
             usage: !local && cumulative ? perTurnUsage(cumulative, prevUsage) : undefined,
             messageId: local ? undefined : messageId,
             endReason,
@@ -823,6 +836,14 @@ export class EventMapper {
       case 'ui_toast':
       case 'ui_log':
         return this.mapPluginUi(env)
+      case 'permission_denied':
+        if (env.tool_use_id) {
+          this.deniedBy.set(env.tool_use_id, {
+            source: sourceOf(env.decision_reason_type),
+            ...(env.decision_reason ? { reason: env.decision_reason } : {})
+          })
+        }
+        return []
       case 'permission_check_status':
         return env.tool_use_id ? [{ type: 'permission-check', toolUseId: env.tool_use_id, checking: env.status === 'checking' }] : []
       case 'thinking_tokens': {
@@ -1022,9 +1043,20 @@ export class EventMapper {
     return out
   }
 
+  private attribute(raw: NonNullable<RawEnvelope['permission_denials']>): PermissionDenial[] {
+    const gated = new Set(this.gated.values())
+    return raw.map((d) => {
+      const denial: PermissionDenial = { toolName: d.tool_name ?? 'a tool', input: d.tool_input }
+      if (!d.tool_use_id) return denial
+      const by = this.deniedBy.get(d.tool_use_id) ?? (gated.has(d.tool_use_id) ? { source: 'you' as const } : undefined)
+      return by ? { ...denial, ...by } : denial
+    })
+  }
+
   private mapControlRequest(env: RawEnvelope): DomainEvent[] {
     const req = env.request
     if (req?.subtype === 'can_use_tool' && env.request_id) {
+      if (req.tool_use_id) this.gated.set(env.request_id, req.tool_use_id)
       const agent = req.agent_id ? this.taskMeta.get(req.agent_id) : undefined
       return [
         {
@@ -1074,6 +1106,12 @@ const STOP_KINDS = new Set(['user-rejected', 'interrupted', 'cancelled'])
 
 /** Turn ends the CLI reports as non-errors (2.1.296): the turn stopped short, and nothing failed. */
 const EARLY_ENDS = new Set(['max_turns', 'aborted_streaming', 'aborted_tools', 'stop_hook_prevented', 'hook_stopped', 'tool_deferred', 'background_requested'])
+
+/** Only a safety check and the classifier need the user to step in; everything else the CLI
+ *  can report (rule, hook, mode, workingDir, and any value a bump adds) is the user's own setup. */
+function sourceOf(type: string | undefined): DenialSource {
+  return type === 'safetyCheck' ? 'safety' : type === 'classifier' ? 'classifier' : 'rule'
+}
 
 /** An unknown reason on an error result stays a failure, so a new kind of failure still shows its box. */
 function turnEndOf(env: RawEnvelope, stoppedByUser: boolean, cutForMessage: boolean): TurnEnd | undefined {
