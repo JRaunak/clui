@@ -1,9 +1,9 @@
-import type { KeyboardEvent, MouseEvent, Ref } from 'react'
+import type { CSSProperties, KeyboardEvent, MouseEvent, Ref } from 'react'
 import { hostOf, pinWords, clipName } from '../../../shared/annotate'
 import { changeTail, refLabel, type ContextReference } from '../../../shared/context'
 import type { ProcessedAttachment } from '../lib/images'
 import type { ShownAttachment } from '../store'
-import { baseOf, CHANGE_UNAVAILABLE, rangeText, spokenRef } from '../lib/refCopy'
+import { baseOf, CHANGE_UNAVAILABLE, noteTitle, rangeText, spokenRef } from '../lib/refCopy'
 import { FileIcon } from './FileIcon'
 import { IconClose, IconDiff, IconFile, IconTarget } from './Icon'
 
@@ -19,6 +19,7 @@ export interface ChipView {
   disclose?: string
   /** Main says Claude can't read this change any more; said after line2, never truncated. */
   unavailable?: boolean
+  noted?: boolean
   title: string
   label: string
   /** For the remove button and announcements. */
@@ -89,6 +90,12 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
   }
 }
 
+/** A draft chip whose reference carries the user's note. */
+export const notedChip = (v: ChipView, note: string | undefined): ChipView =>
+  note ? { ...v, noted: true, title: `${v.title}\n${noteTitle(note)}`, label: `${v.label}, with a note` } : v
+
+export const BADGE = 'flex size-4.5 shrink-0 items-center justify-center rounded-full bg-content text-badge font-semibold text-bg-elev'
+
 /** A sent change chip main says Claude can no longer read. */
 export const unavailableChip = (v: ChipView): ChipView => ({ ...v, unavailable: true, title: `${v.title}\n${CHANGE_UNAVAILABLE}`, label: `${v.label}, Claude can no longer read it` })
 
@@ -129,7 +136,8 @@ export function ContextChip({
   describedBy,
   flash,
   onKeyDown,
-  onFocus
+  onFocus,
+  style
 }: {
   view: ChipView
   onOpen?: (e: MouseEvent) => void
@@ -141,6 +149,7 @@ export function ContextChip({
   flash?: boolean
   onKeyDown?: (e: KeyboardEvent<HTMLDivElement>) => void
   onFocus?: () => void
+  style?: CSSProperties
 }): JSX.Element {
   const { n, glyph, thumb } = view
   const box = `relative flex items-center gap-2 rounded-md border border-border bg-bg-raised py-1 pl-1 text-left ${onRemove ? 'pr-2' : 'pr-3'} ${
@@ -165,7 +174,7 @@ export function ContextChip({
           </span>
         )}
         {n !== undefined && (
-          <span aria-hidden="true" className="absolute -left-1 -top-1 flex size-4.5 items-center justify-center rounded-full bg-content text-badge font-semibold text-bg-elev">
+          <span aria-hidden="true" className={`absolute -left-1 -top-1 ${BADGE}`}>
             {n}
           </span>
         )}
@@ -177,6 +186,7 @@ export function ContextChip({
           <span className="truncate">{view.line2}</span>
           {view.disclose && <span className="shrink-0 whitespace-pre">{`${view.line2 ? ' · ' : ''}${view.disclose}`}</span>}
           {view.unavailable && <span className="shrink-0 whitespace-pre">{' · unavailable'}</span>}
+          {view.noted && <span className="shrink-0 whitespace-pre">{' · note'}</span>}
         </span>
       </span>
     </>
@@ -201,6 +211,7 @@ export function ContextChip({
       onClick={onOpen}
       onKeyDown={onKeyDown}
       onFocus={onFocus}
+      style={style}
       className={box}
     >
       {body}

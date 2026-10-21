@@ -6,6 +6,7 @@ import { DiffSurface, useDiffExternal } from './DiffSurface'
 import { FileSurface, GoToLineButton, useFileExternal } from './FileSurface'
 import { TreeRevealButton, TreeSurface, treeExternal } from './TreeSurface'
 import { PanePicker } from './PanePicker'
+import { PointButton } from './PointButton'
 
 /** The Surfaces pane: one header whose tab strip outlives a switch between kinds, over the active
  *  surface's body, or the picker when there are no tabs. Only the active surface is mounted, so the
@@ -23,10 +24,19 @@ export function SurfaceHost(): JSX.Element | null {
   const browser = kind === 'browser'
   const external =
     browser ? browserExternal : kind === 'diff' ? diffExternal : kind === 'file' ? fileExternal : kind === 'tree' ? treeExternal(handleId, cwd) : undefined
+  const pointer = (browser || kind === 'file' || kind === 'diff') && activeId && <PointButton handleId={handleId} kind={kind} id={activeId} path={filePath} />
   const actions = browser ? (
-    <BrowserSettingsButton />
+    <>
+      {pointer}
+      <BrowserSettingsButton />
+    </>
   ) : kind === 'file' ? (
-    <GoToLineButton handleId={handleId} path={filePath} />
+    <>
+      {pointer}
+      <GoToLineButton handleId={handleId} path={filePath} />
+    </>
+  ) : kind === 'diff' ? (
+    pointer
   ) : kind === 'tree' ? (
     <TreeRevealButton />
   ) : undefined

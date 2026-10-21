@@ -217,7 +217,7 @@ function buildMenu(): void {
         },
         { type: 'separator' },
         { label: 'Stop Browser Agent', accelerator: 'CmdOrCtrl+.', click: () => send('browser-stop') },
-        { label: 'Annotate', accelerator: 'CmdOrCtrl+Shift+A', click: () => send('browser-annotate') },
+        { label: 'Point', accelerator: 'CmdOrCtrl+Shift+A', click: () => send('browser-annotate') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
         { type: 'separator' },
         isMac ? closeWindow : { role: 'quit' }

@@ -1,13 +1,15 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { CAP_NOTE, type DraftReference, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 import { surfaceIdOf } from '../../../shared/surfaces'
-import { placement, useActive, useSession, type AddRefResult, type RefTarget } from '../store'
+import { placement, refsOf, useActive, useSession, type AddRefResult, type RefTarget } from '../store'
 import { openFileAt } from '../lib/openLink'
 import { viaOf, type Via } from '../lib/motion'
 import { addedText, baseOf, BUDGET_NOTE, canReopen, noticeLead, removedText, spokenRef } from '../lib/refCopy'
 import { mintedRequest } from '../lib/changeRefs'
 import { requestSurfaceFocus } from '../lib/surfaceFocus'
-import { ContextChip, refChip, type ChipView } from './ContextChip'
+import { ContextChip, notedChip, refChip, type ChipView } from './ContextChip'
+import { usePopover } from './Popover'
+import { RefCard } from './RefCard'
 import { IconClose, IconWarn } from './Icon'
 
 /** Held for --dur-stage, faded over --dur-slow. */
@@ -124,18 +126,58 @@ export function ContextChips({
   const chips = useRef(new Map<string, HTMLDivElement>())
   const refHint = useId()
   const attHint = useId()
+  const setRefNote = useSession((s) => s.setRefNote)
+  const [card, setCard] = useState<{ key: string; via: Via } | null>(null)
+  const cardKey = useRef<string | null>(null)
+  cardKey.current = card?.key ?? null
+  /** The chip whose open card a pointerdown just light-dismissed, so its click doesn't reopen it. */
+  const dismissedBy = useRef<string | null>(null)
+  // A note is kept as typed while its card is open and trimmed once it closes, or another chip's card replaces it.
+  const settle = (id: string | null): void => {
+    const slice = useSession.getState().sessions[handleId]
+    const note = id && slice ? refsOf(slice, target)?.find((d) => d.ref.id === id)?.ref.note : undefined
+    if (id && note !== undefined && note !== note.trim()) setRefNote(handleId, id, note.trim() || undefined, target)
+  }
+  const pop = usePopover<HTMLDivElement>({
+    placement: 'up',
+    align: 'start',
+    above: target === null ? '--composer-dock' : undefined,
+    onOpenChange: (open) => !open && settle(cardKey.current)
+  })
 
   const names = new Map<string, number>()
   for (const d of refs) if (d.ref.kind === 'file' || d.ref.kind === 'change') names.set(baseOf(d.ref.path), (names.get(baseOf(d.ref.path)) ?? 0) + 1)
   const views = refs.map((d, i) => {
     const thumb = d.visual ? `data:image/jpeg;base64,${d.visual.data}` : undefined
-    return refChip(d.ref, i + 1, cwd, thumb, (d.ref.kind === 'file' || d.ref.kind === 'change') && (names.get(baseOf(d.ref.path)) ?? 0) > 1)
+    return notedChip(refChip(d.ref, i + 1, cwd, thumb, (d.ref.kind === 'file' || d.ref.kind === 'change') && (names.get(baseOf(d.ref.path)) ?? 0) > 1), d.ref.note)
   })
   // A change to a file no longer in the session's changes has nothing to show: the Diff tab would show another file.
   const openable = ({ ref: r }: DraftReference): boolean => r.kind !== 'change' || !!changes?.some((c) => c.path === r.path)
   const keys = [...views.map((v) => v.key), ...attachments.map((a) => a.view.key)]
   const current = active && keys.includes(active) ? active : keys[0]
   const signature = keys.join('\0')
+
+  useLayoutEffect(() => {
+    if (!card) return
+    pop.triggerRef.current = chips.current.get(card.key) ?? null
+    pop.show(card.via)
+    pop.popRef.current?.focus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card])
+
+  // A chip that leaves while its card is open takes the card with it.
+  const cardGone = !!card && !refs.some((d) => d.ref.id === card.key)
+  useEffect(() => {
+    if (!cardGone || !pop.open) return
+    pop.close({ returnFocus: false })
+    focusText()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardGone])
+
+  const showCard = (key: string, via: Via): void => {
+    if (card && card.key !== key) settle(card.key)
+    setCard({ key, via })
+  }
 
   const focusKey = (key: string): void => {
     setActive(key)
@@ -217,6 +259,10 @@ export function ContextChips({
         if (!d || !openable(d)) return
         e.preventDefault()
         return openRef(handleId, d, 'keyboard')
+      case ' ':
+        if (!d) return
+        e.preventDefault()
+        return showCard(v.key, 'keyboard')
       case 'Escape':
       case 'ArrowDown':
         e.preventDefault()
@@ -231,6 +277,7 @@ export function ContextChips({
     flash: flash === key
   })
 
+  const shown = card ? refs.find((d) => d.ref.id === card.key) : undefined
   if (!keys.length && !notices.length && !note) return null
   return (
     <>
@@ -263,14 +310,25 @@ export function ContextChips({
         </div>
       ))}
       {keys.length > 0 && (
-        <div role="list" aria-label="Message context" data-ui="context-chips" className="flex max-h-40 flex-wrap gap-2 overflow-y-auto p-1">
+        <div
+          role="list"
+          aria-label="Message context"
+          data-ui="context-chips"
+          className="flex max-h-40 flex-wrap gap-2 overflow-y-auto p-1"
+          onPointerDownCapture={() => void (dismissedBy.current = pop.open ? card?.key ?? null : null)}
+        >
           {views.map((v, i) => (
             <ContextChip
               key={v.key}
               view={v}
               describedBy={refHint}
               onKeyDown={(e) => onKey(e, v, refs[i])}
-              onOpen={openable(refs[i]) ? (e) => openRef(handleId, refs[i], viaOf(e)) : undefined}
+              onOpen={(e) => {
+                if (dismissedBy.current === v.key) return void (dismissedBy.current = null)
+                if (!e.metaKey) return showCard(v.key, viaOf(e))
+                if (openable(refs[i])) openRef(handleId, refs[i], viaOf(e))
+              }}
+              style={card?.key === v.key ? pop.triggerProps.style : undefined}
               onRemove={() => {
                 removeRef(handleId, v.key, target)
                 announce(handleId, `Removed ${v.spoken}`)
@@ -295,12 +353,21 @@ export function ContextChips({
         </div>
       )}
       <span id={refHint} hidden>
-        Enter opens. Delete removes. Option and arrow keys reorder.
+        Enter opens. Space shows details. Delete removes. Option and arrow keys reorder.
       </span>
       <span id={attHint} hidden>
         Delete removes.
       </span>
       {note && <p className="truncate px-1 text-meta text-dim">{note}</p>}
+      <RefCard
+        pop={pop}
+        handleId={handleId}
+        target={target}
+        d={shown}
+        n={shown ? refs.indexOf(shown) + 1 : 0}
+        cwd={cwd}
+        onOpen={shown && openable(shown) ? (via) => openRef(handleId, shown, via) : undefined}
+      />
     </>
   )
 }

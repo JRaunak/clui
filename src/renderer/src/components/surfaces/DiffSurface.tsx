@@ -11,7 +11,7 @@ import { DiffLine, SELECTED_MARK, type LineKind } from './HunkView'
 import { ANNOUNCE_MS, SelectionBar } from './SelectionBar'
 import type { PaneExternal } from './PaneHeader'
 import { highlightTexts, langForPath } from '../../lib/highlight'
-import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
+import { requestSurfaceFocus, setPointing, takePoint, takeSurfaceFocus, usePointing, usePointRequest } from '../../lib/surfaceFocus'
 import { viaOf, type Via } from '../../lib/motion'
 import { changeBlocked, diffSelection, mintedRef, recordMint, requestOf, rowCount, sideEmpty, type DiffSelection } from '../../lib/changeRefs'
 import {
@@ -22,11 +22,15 @@ import {
   changeSelectedSpoken,
   changeSelectedText,
   emptySideTitle,
+  POINT_HINT,
+  POINT_OFF,
   SIDE_TITLE,
   tooLargeText
 } from '../../lib/refCopy'
 
 const TAB = 'diff'
+export const NO_CHANGES = 'No changes to point at.'
+const ROWS_HINT = `${POINT_HINT} One hunk at a time.`
 const SKELETON_MS = 400
 const TYPEAHEAD_MS = 500
 const SKELETON = [62, 48, 71, 35, 80, 54, 66, 40]
@@ -413,6 +417,25 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
     bodyEl.current?.querySelector(`[data-row-hunk="${CSS.escape(sel.hunkId)}"][data-row="${end}"]`)?.scrollIntoView({ block: 'nearest' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [barShown])
+  // Point focuses the region and keeps the hint up until a selection exists. It never ends on blur: the button is outside.
+  const pointing = usePointing(TAB)
+  const asked = usePointRequest(TAB)
+  useLayoutEffect(() => {
+    if (!asked || !takePoint(TAB)) return
+    if (pointing) {
+      setPointing(TAB, false)
+      clearTimeout(selSay.current)
+      return say(POINT_OFF)
+    }
+    if (!changes.length) return say(NO_CHANGES)
+    setPointing(TAB, true)
+    bodyEl.current?.focus({ preventScroll: true })
+    if (sel && selAt) bodyEl.current?.querySelector(`[data-row-hunk="${CSS.escape(sel.hunkId)}"][data-row="${spanOf(sel, selAt)[1]}"]`)?.scrollIntoView({ block: 'nearest' })
+    say('Pointing. Click line numbers, or press Shift and an arrow key, to select rows in one hunk. Enter adds them.')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked])
+  useEffect(() => () => setPointing(TAB, false), [])
+
   // The bar speaks for where an add lands, so In message reads the edit target's refs.
   const inTarget = useActive((s) => {
     const ref = sel && mintedRef(handleId, requestOf(sel))
@@ -456,6 +479,9 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
           <h2 className="text-label font-medium text-content">Changes Claude made</h2>
         </div>
         <p className="max-w-[60ch] px-3 pt-1 text-meta text-dim">{`Claude hasn't changed any files in this session yet. ${SHELL_NOTE}`}</p>
+        <span className="sr-only" aria-live="polite" data-ui="diff-live">
+          {said}
+        </span>
       </div>
     )
   }
@@ -593,9 +619,12 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
       return void addChange()
     }
     if (e.key === 'Escape') {
-      if (!sel) return
+      if (!sel && !pointing) return
       e.preventDefault()
-      return clear()
+      if (sel) return clear()
+      setPointing(TAB, false)
+      clearTimeout(selSay.current)
+      return say(POINT_OFF)
     }
     if (!e.shiftKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return
     e.preventDefault()
@@ -845,6 +874,7 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
           <span id={hintId} hidden>
             {CHANGE_REGION_HINT}
           </span>
+          {!barShown && pointing && built && <SelectionBar label={ROWS_HINT} blocked={ROWS_HINT} onBlocked={() => say(ROWS_HINT)} attached={false} onAdd={() => {}} />}
           {sel && selAt && (
             <SelectionBar
               label={changeSelectedText(rowCount(selAt.hunk, sel.rows), !sel.rows)}

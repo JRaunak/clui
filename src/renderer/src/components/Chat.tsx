@@ -5,7 +5,7 @@ import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type 
 import { ContextChips } from './ContextChips'
 import { Button } from './Button'
 import { FileIcon } from './FileIcon'
-import { pausedText } from '../lib/refCopy'
+import { noteTitle, pausedText } from '../lib/refCopy'
 import { MessageView } from './MessageView'
 import { WorkingStatus } from './WorkingStatus'
 import { CompactSuggestion } from './CompactSuggestion'
@@ -694,7 +694,7 @@ function QueuedAttachments({ atts, refs }: { atts: SendAttachment[]; refs: Draft
           key={r.id}
           data-ui="queued-ref"
           className="inline-flex h-6 max-w-60 items-center gap-1 rounded border border-border bg-bg-raised px-1.5 font-mono text-meta text-dim"
-          title={r.kind === 'browser' ? refLabel(r) : r.kind === 'change' ? `Claude's change to ${relativeTo(cwd, r.path)} · ${changeTail(r.side, r.old, r.new)}` : r.path}
+          title={`${r.kind === 'browser' ? refLabel(r) : r.kind === 'change' ? `Claude's change to ${relativeTo(cwd, r.path)} · ${changeTail(r.side, r.old, r.new)}` : r.path}${r.note ? `\n${noteTitle(r.note)}` : ''}`}
         >
           <span className="text-content">{i + 1}</span>
           {r.kind === 'browser' ? (
@@ -705,6 +705,7 @@ function QueuedAttachments({ atts, refs }: { atts: SendAttachment[]; refs: Draft
             <FileIcon name={r.path} kind={r.kind} className="h-3 w-3 shrink-0" />
           )}
           <span className="truncate">{refLabel(r)}</span>
+          {r.note && <span className="shrink-0"> · note</span>}
           {d.visual && (
             <>
               <IconImage className="h-3 w-3 shrink-0" aria-hidden="true" />

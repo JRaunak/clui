@@ -31,6 +31,7 @@ import {
   isRefInput,
   MAX_REFS,
   messageGist,
+  REF_NOTE_MAX,
   packetLayout,
   refKey,
   resourceOf,
@@ -473,12 +474,12 @@ const IDLE_ANNOTATE: AnnotateDraft = { tab: null, note: null }
 export const EMPTY_REFS: DraftReference[] = []
 export const EMPTY_NOTICES: Record<string, ReferenceInvalidation> = {}
 
-export const DRIVING_NOTE = "Annotate when it's done."
+export const DRIVING_NOTE = "Point when it's done."
 
 const REFUSED: Record<Extract<AnnotateEvent, { type: 'refused' }>['why'], string> = {
-  password: "Password fields can't be annotated.",
+  password: "Password fields can't be added.",
   cap: CAP_NOTE,
-  failed: "That element can't be annotated."
+  failed: "That element can't be added."
 }
 
 /** A session's browser tabs. A closed tab is one whose id is no longer in `tabs`. */
@@ -783,6 +784,8 @@ interface SessionStore {
    *  change text past the message budget. A change ref needs `bytes`, its mint's measured size. */
   addRef: (handleId: string, input: RefInput, opts?: { target?: RefTarget; visual?: DraftVisual; pinId?: number; bytes?: number }) => AddRefResult
   removeRef: (handleId: string, id: string, target?: RefTarget) => void
+  /** The user's note on one reference, kept as typed up to REF_NOTE_MAX; an empty one is deleted. */
+  setRefNote: (handleId: string, id: string, note: string | undefined, target: RefTarget) => void
   moveRef: (handleId: string, id: string, delta: -1 | 1, target?: RefTarget) => void
   /** Draft only, by id, so a reference added since survives. */
   clearRefs: (handleId: string, ids: readonly string[]) => void
@@ -795,6 +798,8 @@ interface SessionStore {
   /** A respawn's draft references: files that pass on the new session stay, the rest become notices. */
   carryRefs: (handleId: string, refs: readonly DraftReference[]) => Promise<void>
   announceRefs: (handleId: string, text: string) => void
+  /** The transcript's polite region, which stays mounted while the pane is closed. */
+  announceStatus: (handleId: string, text: string) => void
   /** Answer a sign-in Gate. The verdict goes straight to main. */
   respondBrowserLogin: (requestId: string, verdict: BrowserLoginVerdict) => Promise<void>
   /** Answers a page's local network ask; the strip goes once main clears the tab's netAsk. */
@@ -3888,11 +3893,11 @@ export const useSession = create<SessionStore>((set, get) => ({
       })
     switch (e.type) {
       case 'on':
-        return put({ tab: e.tab, note: null }, 'Annotate on.')
+        return put({ tab: e.tab, note: null }, 'Pointing on.')
       case 'off': {
         const n = get().sessions[handleId]?.contextRefs.filter((d) => d.ref.kind === 'browser').length ?? 0
         const say =
-          e.why === 'driving' ? 'Annotate off, Claude is using this tab.' : n ? `Annotate off. ${n} element${n === 1 ? '' : 's'} in the composer.` : 'Annotate off.'
+          e.why === 'driving' ? 'Pointing off, Claude is using this tab.' : n ? `Pointing off. ${n} element${n === 1 ? '' : 's'} in the message.` : 'Pointing off.'
         return put({ tab: null, note: null }, say)
       }
       case 'pinned': {
@@ -3941,7 +3946,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       const handleId = active.handleId
       set((s) => ({
         ...patchSlice(s, handleId, { annotate: { ...active.annotate, note: DRIVING_NOTE } }),
-        browserAnnounce: toggled("Claude is using this tab. Annotate when it's done.")
+        browserAnnounce: toggled(`Claude is using this tab. ${DRIVING_NOTE}`)
       }))
       setTimeout(() => {
         const a = get().sessions[handleId]?.annotate
@@ -3995,6 +4000,20 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (!refs?.some((d) => d.ref.id === id)) return
     set((s) => patchSlice(s, handleId, withRefs(slice, t, refs.filter((d) => d.ref.id !== id))))
     afterRefsChange(handleId)
+  },
+
+  setRefNote: (handleId, id, note, target) => {
+    const slice = get().sessions[handleId]
+    const refs = slice && refsOf(slice, target)
+    if (!refs?.some((d) => d.ref.id === id)) return
+    const next = refs.map((d) => {
+      if (d.ref.id !== id) return d
+      const ref = { ...d.ref }
+      if (note) ref.note = note.slice(0, REF_NOTE_MAX)
+      else delete ref.note
+      return { ...d, ref }
+    })
+    set((s) => patchSlice(s, handleId, withRefs(slice, target, next)))
   },
 
   moveRef: (handleId, id, delta, target) => {
@@ -4141,6 +4160,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
 
   announceRefs: (handleId, text) => set((s) => patchSlice(s, handleId, { refAnnounce: toggled(text) })),
+  announceStatus: (handleId, text) => set((s) => patchSlice(s, handleId, said(text))),
 
   viewBrowserTab: (tab) => {
     const s = get()

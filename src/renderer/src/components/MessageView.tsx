@@ -14,7 +14,7 @@ import {
   type WokenTask
 } from '../store'
 import { FileLinkContext, Markdown, StreamingContext } from './Markdown'
-import { ContextChip, legacyChip, refChip, unavailableChip } from './ContextChip'
+import { BADGE, ContextChip, legacyChip, refChip, unavailableChip } from './ContextChip'
 import { openRef } from './ContextChips'
 import { Button } from './Button'
 import { parseRefs, type ContextReference } from '../../../shared/context'
@@ -889,6 +889,7 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
       open: (e) => openFileAt(handleId, abs, { line }, ref.kind === 'folder', viaOf(e))
     }
   }
+  const notes = refs.flatMap((r) => (r.kind === 'current' && r.value.ref.note ? [{ n: r.n, note: r.value.ref.note }] : []))
   const used = new Set<MessageAttachment | undefined>(chips.map((c) => c.thumb))
   const rest = all.filter((a): a is ShownAttachment => a.kind !== 'image-unavailable' && !used.has(a))
   const lost = all.filter((a) => a.kind === 'image-unavailable').length
@@ -901,6 +902,21 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
             return <ContextChip key={c.view.key} view={c.view} openLabel={o?.label} onOpen={o?.open} />
           })}
         </div>
+      )}
+      {notes.length > 0 && (
+        <ul aria-label="Notes" data-ui="ref-notes" className="flex flex-col gap-1">
+          {notes.map(({ n, note }) => (
+            <li key={n} className="flex items-start gap-2 text-meta text-dim">
+              <span aria-hidden="true" className={BADGE}>
+                {n}
+              </span>
+              <span title={note} className="line-clamp-2 whitespace-pre-wrap break-words">
+                <span className="sr-only">Note on reference {n}: </span>
+                {note}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
       {rest.length > 0 && (
         <div className="flex flex-wrap gap-2">

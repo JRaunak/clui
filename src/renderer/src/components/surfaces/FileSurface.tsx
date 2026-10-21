@@ -15,13 +15,13 @@ import { Code } from './HunkView'
 import { PANE_BTN, type PaneExternal } from './PaneHeader'
 import { highlightTexts, langForPath } from '../../lib/highlight'
 import { escapeHtml, markHtml } from '../../lib/highlightLines'
-import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
+import { requestSurfaceFocus, setPointing, takePoint, takeSurfaceFocus, usePointing, usePointRequest } from '../../lib/surfaceFocus'
 import { reducedMotion, viaOf, type Via } from '../../lib/motion'
 import { noteRead } from '../../lib/blockedFiles'
 import { closeTab } from './SurfaceTabs'
 import { ANNOUNCE_MS, SelectionBar } from './SelectionBar'
 import { addFromSurface } from '../ContextChips'
-import { selectedText } from '../../lib/refCopy'
+import { POINT_HINT, POINT_OFF, selectedText } from '../../lib/refCopy'
 
 const SKELETON_MS = 400
 const TEXT_MAX_MB = 5
@@ -64,6 +64,7 @@ const REASON: Record<Refusal['reason'], string> = {
 }
 const RETRY = new Set<Refusal['reason']>(['changed', 'limit', 'unreadable'])
 const CHOOSE = 'Choose file\u2026'
+export const NO_LINES = 'This file has no lines to point at.'
 
 // What a shown file's view holds, for the header buttons and the menu item outside this component.
 const status = new Map<string, Doc['t']>()
@@ -78,7 +79,7 @@ const subscribe = (cb: () => void): (() => void) => {
   listeners.add(cb)
   return () => listeners.delete(cb)
 }
-const useFileStatus = (handleId: string | null, path: string | null): Doc['t'] | null =>
+export const useFileStatus = (handleId: string | null, path: string | null): Doc['t'] | null =>
   useSyncExternalStore(subscribe, () => (handleId && path ? (status.get(`${handleId}\0${path}`) ?? null) : null))
 export const useFileMissing = (handleId: string | null, path: string | null): boolean => useFileStatus(handleId, path) === 'missing'
 
@@ -454,6 +455,25 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revision])
 
+  // Point waits for the read, since only text has lines to point at. It never ends on blur: the button is outside.
+  const pointing = usePointing(tabId)
+  const asked = usePointRequest(tabId)
+  useLayoutEffect(() => {
+    if (!asked || doc.t === 'loading' || !takePoint(tabId)) return
+    if (pointing) {
+      setPointing(tabId, false)
+      clearTimeout(selSay.current)
+      return say(POINT_OFF)
+    }
+    if (doc.t !== 'text') return say(NO_LINES)
+    setPointing(tabId, true)
+    bodyEl.current?.focus({ preventScroll: true })
+    if (selection) bodyEl.current?.querySelector(`[data-line="${selection.end}"]`)?.scrollIntoView({ block: 'nearest' })
+    say('Pointing. Click line numbers, or press Shift and an arrow key, to select lines. Enter adds them.')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked, doc.t])
+  useEffect(() => () => setPointing(tabId, false), [tabId])
+
   // A user open focuses the view once there's one to focus; a destination centres and washes its lines.
   useLayoutEffect(() => {
     if (doc.t === 'loading' || !bodyEl.current) return
@@ -543,9 +563,12 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
       return addSelection()
     }
     if (e.key === 'Escape') {
-      if (!selection && !highlight) return
+      if (!selection && !highlight && !pointing) return
       e.preventDefault()
-      return setSelection(null)
+      if (selection || highlight) return setSelection(null)
+      setPointing(tabId, false)
+      clearTimeout(selSay.current)
+      return say(POINT_OFF)
     }
     if (!e.shiftKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || !count) return
     e.preventDefault()
@@ -933,7 +956,11 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
       >
         {content}
       </div>
-      {barShown && selection && <SelectionBar label={selectedText(selection)} attached={inTarget} onAdd={addSelection} />}
+      {barShown && selection ? (
+        <SelectionBar label={selectedText(selection)} attached={inTarget} onAdd={addSelection} />
+      ) : pointing && doc.t === 'text' ? (
+        <SelectionBar label={POINT_HINT} blocked={POINT_HINT} onBlocked={() => say(POINT_HINT)} attached={false} onAdd={addSelection} />
+      ) : null}
       <span className="sr-only" aria-live="polite">
         {said}
       </span>

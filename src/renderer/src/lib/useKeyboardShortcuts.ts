@@ -18,8 +18,9 @@
  * safety guarantee against hijacking typing.
  */
 import { useEffect } from 'react'
-import { activeSlice, anyTabIn, browserTabOf, useSession } from '../store'
+import { activeSlice, anyTabIn, browserTabOf, surfaceKindOf, useSession } from '../store'
 import { closeTab } from '../components/surfaces/SurfaceTabs'
+import { point } from '../components/surfaces/PointButton'
 import { OPEN_FILE_EVENT, type PaletteMode } from '../components/CommandPalette'
 import { FILE_FIND_EVENT } from '../components/surfaces/FileSurface'
 import { TRANSCRIPT_FIND_EVENT } from '../components/FindBar'
@@ -155,9 +156,17 @@ export function useKeyboardShortcuts(opts: {
           store.togglePane()
           leavePage(page)
           break
-        case 'browser-annotate':
-          if (activeSlice(store)?.paneOpen && !store.viewingSubagent && browserTabOf(activeSlice(store)?.surfaces.active) !== null) store.toggleAnnotate()
+        // A hidden pane has nothing to point at, so Point opens it first.
+        case 'browser-annotate': {
+          if (store.viewingSubagent) break
+          const s = activeSlice(store)
+          const kind = s && surfaceKindOf(s.surfaces, s.surfaces.active)
+          if (s && !s.paneOpen && (kind === 'browser' || kind === 'file' || kind === 'diff')) {
+            store.setPane('half')
+            requestAnimationFrame(point)
+          } else point()
           break
+        }
         case 'browser-stop': {
           if (anyTabIn(activeSlice(store)?.browser, 'driving', 'user')) void store.browserDrive('stop')
           break

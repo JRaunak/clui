@@ -808,6 +808,22 @@ const q = (id: string, text: string): any => ({ id, text, refs: [] })
   await tick()
   ok(JSON.stringify(orders().at(-1).keep) === '[8]' && JSON.stringify(orders().at(-1).shown) === '[[8,1]]', 'refs: removeRef drops the pin')
 
+  // A note is the user's text on one reference: stored as typed, capped, deleted when empty, order untouched.
+  reset({ busy: false })
+  st().addRef('h1', lines(1, 1))
+  st().addRef('h1', lines(2, 2))
+  const [n1, n2] = cur().contextRefs.map((d: any) => d.ref.id)
+  st().setRefNote('h1', n2, ' retry twice ', null)
+  equal(cur().contextRefs[1].ref.note, ' retry twice ', 'note: stored as typed')
+  ok(cur().contextRefs[0].ref.note === undefined && cur().contextRefs[0].ref.id === n1, 'note: other refs and order untouched')
+  st().setRefNote('h1', n2, 'x'.repeat(2100), null)
+  equal(cur().contextRefs[1].ref.note.length, 2000, 'note: capped at REF_NOTE_MAX')
+  st().setRefNote('h1', n2, '', null)
+  ok(!('note' in cur().contextRefs[1].ref), 'note: an empty note is deleted, never ""')
+  useSession.setState((s: any) => ({ sessions: { h1: { ...s.sessions.h1, queuedMessages: [{ id: 'q1', text: 'later', refs: [{ ref: { ...lines(3, 3), id: 'r95' } }] }] } } }))
+  st().setRefNote('h1', 'r95', 'queued', 'q1')
+  ok(cur().queuedMessages[0].refs[0].ref.note === 'queued' && cur().contextRefs.every((d: any) => d.ref.note === undefined), 'note: lands on its target only')
+
   // Submit consumes the draft by id and the queued item keeps the pins: no sync drops them in between.
   reset({ busy: true })
   st().addRef('h1', pin('#a'), { pinId: 7 })

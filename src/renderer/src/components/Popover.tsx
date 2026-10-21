@@ -41,7 +41,7 @@ export function usePopover<T extends HTMLElement = HTMLButtonElement>({
 } = {}) {
   const id = `pop${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
   const anchor = `--${id}`
-  const triggerRef = useRef<T>(null)
+  const triggerRef = useRef<T | null>(null)
   const popRef = useRef<HTMLDivElement | null>(null)
   // State-backed, so the listeners attach when the panel mounts after the hook (a tray that renders
   // nothing until it has tasks) and detach when it leaves.

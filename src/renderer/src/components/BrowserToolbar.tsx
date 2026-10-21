@@ -3,7 +3,7 @@ import { FieldError } from './LoginFields'
 import { DRIVING_NOTE, refsOf, useActive, useSession, viewedTabOf, type BrowserTabs } from '../store'
 import { parseAddress, type AddressParse, type DriveState, type LoadError } from '../../../shared/browser'
 import { CAP_NOTE, MAX_REFS } from '../../../shared/context'
-import { IconChevron, IconClose, IconRefresh, IconStop, IconTarget } from './Icon'
+import { IconChevron, IconClose, IconRefresh, IconStop } from './Icon'
 import { PANE_BTN } from './surfaces/PaneHeader'
 import { listedDir, openFileAt } from '../lib/openLink'
 
@@ -84,10 +84,8 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
   const driving = useActive((s) => viewedTabOf(s?.browser)?.drive === 'driving')
   const wall = useActive((s) => viewedTabOf(s?.browser)?.loginWall === 'hardware')
   const loadError = useActive((s) => viewedTabOf(s?.browser)?.loadError ?? null)
-  const annotating = useActive((s) => !!s && s.annotate.tab === s.browser?.viewed)
   const setNotice = useSession((s) => s.setNotice)
   const announce = useSession((s) => s.announceBrowser)
-  const toggleAnnotate = useSession((s) => s.toggleAnnotate)
 
   const shown = loadError?.url ?? (url === 'about:blank' ? '' : url)
   const [focused, setFocused] = useState(false)
@@ -163,27 +161,6 @@ export function BrowserToolbar({ handleId }: { handleId: string }): JSX.Element 
           className={navBtn}
         >
           {loading ? <IconClose className="h-4 w-4" /> : <IconRefresh className="h-4 w-4" />}
-        </button>
-        <button
-          type="button"
-          data-ui="browser-annotate"
-          aria-label="Annotate"
-          aria-pressed={annotating}
-          aria-keyshortcuts="Meta+Shift+A"
-          aria-disabled={driving || undefined}
-          title={driving ? "Claude is using this tab. Annotate when it's done." : 'Annotate ⌘⇧A'}
-          onClick={() => {
-            if (!driving) toggleAnnotate()
-          }}
-          onKeyDown={(e) => {
-            if (e.key !== 'Escape' || !annotating) return
-            e.preventDefault()
-            toggleAnnotate()
-            document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
-          }}
-          className={`${PANE_BTN} relative aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:pointer-fine:hover:bg-transparent aria-disabled:pointer-fine:hover:text-dim aria-pressed:bg-control-hover aria-pressed:text-content aria-pressed:after:absolute aria-pressed:after:inset-x-1.5 aria-pressed:after:bottom-0 aria-pressed:after:h-0.5 aria-pressed:after:rounded-full aria-pressed:after:bg-accent`}
-        >
-          <IconTarget className="h-4 w-4" />
         </button>
 
         <div className="relative flex min-w-40 flex-1">
@@ -469,7 +446,7 @@ function AnnotateStrip(): JSX.Element {
         <span className="min-w-0 flex-1 truncate text-label text-content">{say}</span>
       ) : (
         <span className="min-w-0 flex-1 truncate text-label text-dim">
-          <span className="font-medium text-content">Annotating</span>
+          <span className="font-medium text-content">Pointing</span>
           {/* A hint cut mid-word reads as broken, so the long clause goes whole when the pane is narrow. */}
           <span className="@max-[640px]:hidden"> · click an element, or Return on the focused one</span> · Esc to finish
         </span>

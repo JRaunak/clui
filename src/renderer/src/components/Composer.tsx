@@ -359,7 +359,7 @@ export function Composer(): JSX.Element {
           ref={dockRef}
           data-ui="composer-dock"
           className={`dock-fade-both relative flex flex-col gap-2 rounded-xl border bg-bg-elev p-2 ${
-            dragOver ? 'border-accent' : 'border-border has-[textarea:focus]:border-control-edge'
+            dragOver ? 'border-accent' : 'border-border has-[textarea[data-composer-input]:focus]:border-control-edge'
           }`}
           style={{ anchorName: '--composer-dock' } as CSSProperties}
           onDrop={onDrop}
