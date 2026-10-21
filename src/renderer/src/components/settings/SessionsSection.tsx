@@ -11,6 +11,8 @@ import {
   EFFORT_LABELS,
   deriveModelInfo,
   groupModels,
+  classifierModelIds,
+  classifierRefuses,
   contextSizeLabel,
   contextWindowForModel,
   type CluiSettings
@@ -67,7 +69,8 @@ function systemNote(raw: string | null): string {
 export function SessionsSection({ settings, sources, set, reset, isOverridden }: DraftProps): JSX.Element {
   const system = useSession((s) => s.systemPermissionMode)
   const resolved = system === undefined ? null : systemDefault(system)
-  const [modelList, setModelList] = useState<ModelListResult>({ ids: [], live: true })
+  // Null until listModels resolves, so a loading list can't read as a live list missing the classifier pin.
+  const [modelList, setModelList] = useState<ModelListResult | null>(null)
   useEffect(() => {
     void window.clui.listModels().then(setModelList)
   }, [])
@@ -76,7 +79,7 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
   // Headers only when there's more than one family; the context-size column only for known ones.
   const modelOptions = useMemo(
     () =>
-      groupModels(modelList.ids.map(deriveModelInfo)).flatMap((g, gi, groups) =>
+      groupModels((modelList?.ids ?? []).map(deriveModelInfo)).flatMap((g, gi, groups) =>
         g.models.map((info, i) => ({
           value: info.id,
           label: info.label,
@@ -88,8 +91,32 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
               : undefined
         }))
       ),
-    [modelList.ids]
+    [modelList?.ids]
   )
+
+  const pin = settings.classifierModel
+  const classifierIds = useMemo(() => classifierModelIds(modelList?.ids ?? []), [modelList?.ids])
+  const pinRefused = !!pin && classifierRefuses(pin)
+  const pinListed = !pin || classifierIds.includes(pin)
+  const classifierNote = pinRefused
+    ? `Claude Code won't use ${deriveModelInfo(pin).label} for the classifier, so new sessions use the CLI default.`
+    : !pinListed && modelList?.live
+      ? `${deriveModelInfo(pin).label} isn't in the current model list, so new sessions use the CLI default.`
+      : null
+  const classifierOptions = useMemo(() => {
+    const listed = groupModels(classifierIds.map(deriveModelInfo)).flatMap((g, _, groups) =>
+      g.models.map((info, i) => ({
+        value: info.id,
+        label: info.label,
+        header: groups.length > 1 && i === 0 ? g.label : undefined
+      }))
+    )
+    // An unlisted pin stays an option so the trigger shows its name, never a raw id.
+    const kept = pinListed
+      ? []
+      : [{ value: pin, label: deriveModelInfo(pin).label, description: pinRefused ? 'Not used by Claude Code' : 'Not in the current model list' }]
+    return [{ value: '', label: 'CLI default', description: 'Claude Code picks the model' }, ...kept, ...listed]
+  }, [classifierIds, pin, pinListed, pinRefused])
 
   const pickWorkspace = async (): Promise<void> => {
     const dir = await window.clui.pickWorkspace()
@@ -148,6 +175,7 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
           onReset={isOverridden('model') ? () => reset('model') : undefined}
           // Amber = degraded but usable: they still have a working list, just possibly incomplete.
           note={
+            modelList &&
             !modelList.live && (
               <p className="flex items-start gap-1.5 text-meta text-warn" role="status">
                 <IconWarn className="mt-px h-3.5 w-3.5 shrink-0" />
@@ -196,6 +224,51 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
             <span className="text-label text-content">Enable for new sessions</span>
           </button>
         </Field>
+
+        <Field
+          label="Adaptive mode classifier"
+          hint="Adaptive mode checks actions with a classifier that runs server-side by default, at no token charge. Run locally, its tokens are billed and don't appear in Clui's cost meter. Applies to sessions started or resumed after you save. Open sessions keep the setting they started with."
+          hintId="local-classifier-hint"
+          onReset={isOverridden('localClassifier') ? () => reset('localClassifier') : undefined}
+        >
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={settings.localClassifier}
+            aria-label="Run the Adaptive mode classifier locally for new sessions"
+            aria-describedby="local-classifier-hint"
+            onClick={() => set('localClassifier', !settings.localClassifier)}
+            className="group flex items-center gap-2 rounded-md py-1 pr-1 text-left"
+          >
+            <CheckBox checked={settings.localClassifier} />
+            <span className="text-label text-content">Run locally for new sessions</span>
+          </button>
+        </Field>
+
+        {settings.localClassifier && (
+          <Field
+            label="Classifier model"
+            hint="Only used while a session is in Adaptive mode."
+            onReset={isOverridden('classifierModel') ? () => reset('classifierModel') : undefined}
+            note={
+              classifierNote ? (
+                <p className="flex items-start gap-1.5 text-meta text-warn" role="status">
+                  <IconWarn className="mt-px h-3.5 w-3.5 shrink-0" />
+                  {classifierNote}
+                </p>
+              ) : (
+                !modelList && <p className="text-meta text-dim">Loading models…</p>
+              )
+            }
+          >
+            <Dropdown<string>
+              value={pin}
+              ariaLabel="Model for the local Adaptive mode classifier"
+              options={classifierOptions}
+              onChange={(m) => set('classifierModel', m)}
+            />
+          </Field>
+        )}
 
         <Field
           label="Default workspace"

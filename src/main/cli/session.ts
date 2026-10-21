@@ -53,7 +53,7 @@ export interface ClaudeSessionOptions {
   model?: string
   /** Value for `--effort`. Undefined = pass no flag. Live-changeable via apply_flag_settings. */
   effort?: string
-  /** From the `enableTaskTools` setting; an explicit shell value wins. */
+  /** From the `enableTaskTools` setting; an explicit shell value wins (see childEnv). */
   enableTaskTools?: boolean
   /** Quick chat: pass `--no-session-persistence` so nothing is written to disk. */
   ephemeral?: boolean
@@ -72,6 +72,24 @@ export interface ClaudeSessionOptions {
   mcpConfigPath?: string
   /** Extra env for the child (merged over process.env). */
   env?: Record<string, string>
+  /** From `classifierEnv`. Merged last, over the shell's values. */
+  classifierEnv?: Record<string, string>
+}
+
+/**
+ * The child's env. The task-tools default goes under process.env so an explicit shell value wins,
+ * while the classifier vars go over it: once the user turns the local classifier on in Clui, a stray
+ * shell value must not change which model gets billed, including a shell pin when Clui chose none.
+ * Runtime markers are stripped from the final merge so a Clui launched inside a Claude Code session
+ * doesn't leak its own markers into the child.
+ */
+export function childEnv(
+  opts: Pick<ClaudeSessionOptions, 'enableTaskTools' | 'env' | 'classifierEnv'>,
+  base: NodeJS.ProcessEnv = process.env
+): Record<string, string | undefined> {
+  const env = stripRuntimeMarkers({ CLAUDE_CODE_ENABLE_TODO_TOOLS: opts.enableTaskTools ? '1' : '0', ...base, ...opts.env })
+  if (opts.classifierEnv?.CLAUDE_CODE_AUTO_MODE_SERVER) delete env.CLAUDE_CODE_AUTO_MODE_MODEL
+  return { ...env, ...opts.classifierEnv }
 }
 
 export declare interface ClaudeSession {
@@ -303,15 +321,7 @@ export class ClaudeSession extends EventEmitter {
 
     const child = spawn(this.opts.cliPath, this.buildArgs(), {
       cwd: this.opts.cwd,
-      // Strip Claude runtime markers from the FINAL merged env: spreading process.env first
-      // would otherwise leak this app's own session markers into the child if Clui was
-      // launched from inside a Claude Code session.
-      // process.env after our default so an explicit CLAUDE_CODE_ENABLE_TODO_TOOLS in the shell wins.
-      env: stripRuntimeMarkers({
-        CLAUDE_CODE_ENABLE_TODO_TOOLS: this.opts.enableTaskTools ? '1' : '0',
-        ...process.env,
-        ...this.opts.env
-      }),
+      env: childEnv(this.opts),
       stdio: ['pipe', 'pipe', 'pipe']
     })
     this.child = child

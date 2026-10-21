@@ -18,6 +18,9 @@ const execFileP = promisify(execFile)
 
 let cache: string[] | null = null
 
+/** The cached live list, null until a live query has succeeded this process. Never the fallback. */
+export const liveModelIds = (): string[] | null => cache
+
 /**
  * Bedrock's inference-profile ids, kept VERBATIM as `--model` values and deduped in list
  * order. Non-Anthropic profiles and the legacy claude-3 family (not effort-capable) are
@@ -82,6 +85,9 @@ function failureReason(e: unknown): NonNullable<ModelListResult['reason']> {
   return /expired|ExpiredToken|sso/i.test(text) ? 'expired-creds' : 'other'
 }
 
+/** The app's warm-up and an opening Settings page ask at once, so one `aws` query answers both. */
+let pending: Promise<ModelListResult> | null = null
+
 /**
  * List available model ids. Live-queries Bedrock; caches ONLY successful results;
  * falls back to the bundled list on failure WITHOUT caching it, so a transient
@@ -89,8 +95,13 @@ function failureReason(e: unknown): NonNullable<ModelListResult['reason']> {
  * next call instead of pinning the stale fallback for the whole process lifetime.
  * `live` is therefore a per-call fact, never a process-wide "offline" state.
  */
-export async function listModels(refresh = false): Promise<ModelListResult> {
-  if (cache && !refresh) return { ids: cache, live: true }
+export function listModels(refresh = false): Promise<ModelListResult> {
+  if (cache && !refresh) return Promise.resolve({ ids: cache, live: true })
+  pending ??= query().finally(() => (pending = null))
+  return pending
+}
+
+async function query(): Promise<ModelListResult> {
   const { profile, region } = (await readCliSettings()).bedrock
   try {
     // A Finder-launched app inherits a minimal env, so `aws` here fails with
