@@ -124,12 +124,12 @@ export function attachmentChip(key: string, a: ProcessedAttachment | ShownAttach
 /**
  * One reference or attachment. A reference carries its position as a neutral badge; the accent stays for the
  * focus ring and the duplicate flash, which stands in for focus. In the composer's row (`onKeyDown` given) the
- * chip is a list item that opens on click; in a sent bubble it's a button when `openLabel` is given, else inert.
+ * chip is a list item that opens on click; in a sent bubble (`peek` given) it's a button that opens its card.
  */
 export function ContextChip({
   view,
   onOpen,
-  openLabel,
+  peek,
   onRemove,
   chipRef,
   tabIndex,
@@ -141,7 +141,7 @@ export function ContextChip({
 }: {
   view: ChipView
   onOpen?: (e: MouseEvent) => void
-  openLabel?: string
+  peek?: { expanded: boolean; ref: Ref<HTMLButtonElement> }
   onRemove?: () => void
   chipRef?: Ref<HTMLDivElement>
   tabIndex?: number
@@ -191,9 +191,22 @@ export function ContextChip({
       </span>
     </>
   )
-  if (openLabel)
+  if (peek)
     return (
-      <button type="button" data-ui="context-chip" title={view.title} aria-label={openLabel} onClick={onOpen} className={box}>
+      <button
+        ref={peek.ref}
+        type="button"
+        data-ui="context-chip"
+        data-ref={view.key}
+        title={view.title}
+        aria-label={view.label}
+        aria-haspopup="dialog"
+        aria-expanded={peek.expanded}
+        aria-describedby={describedBy}
+        onClick={onOpen}
+        style={style}
+        className={box}
+      >
         {body}
       </button>
     )

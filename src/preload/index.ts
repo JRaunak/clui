@@ -93,6 +93,7 @@ const api: CluiApi = {
   classifyRefPaths: (handleId: string, paths: string[]) => ipcRenderer.invoke(IpcChannels.classifyRefPaths, handleId, paths),
   createChangeRef: (handleId, req) => ipcRenderer.invoke(IpcChannels.createChangeRef, handleId, req),
   changeRefStatus: (handleId, refs) => ipcRenderer.invoke(IpcChannels.changeRefStatus, handleId, refs),
+  changeRefPeek: (handleId, ref) => ipcRenderer.invoke(IpcChannels.changeRefPeek, handleId, ref),
   openDiff: (handleId: string, left: string, right: string) =>
     ipcRenderer.invoke(IpcChannels.openDiff, handleId, left, right),
   getDiff: (handleId, req) => ipcRenderer.invoke(IpcChannels.getDiff, handleId, req),

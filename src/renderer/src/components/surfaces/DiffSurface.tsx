@@ -600,7 +600,7 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
     }
     if (r.ok) {
       recordMint(handleId, r.ref.changeRef, req)
-      return addFromSurface(handleId, r.ref, say, r.bytes)
+      return void addFromSurface(handleId, r.ref, say, r.bytes)
     }
     const size = { lines: r.lines ?? 0, bytes: r.bytes ?? 0 }
     if (r.reason === 'changed') {

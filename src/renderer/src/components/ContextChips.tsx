@@ -27,7 +27,7 @@ export function signalRefs(handleId: string, target: RefTarget, s: Signal): void
 
 /** A surface's Add to message. `say` is the source's live region, where focus stays; a duplicate moves focus to
  *  the existing chip, so it's announced from the composer. `bytes` is a change ref's mint size. */
-export function addFromSurface(handleId: string, input: RefInput, say: (t: string) => void, bytes?: number): void {
+export function addFromSurface(handleId: string, input: RefInput, say: (t: string) => void, bytes?: number): AddRefResult {
   const st = useSession.getState()
   const target = st.sessions[handleId]?.referenceEditTarget ?? null
   const r = st.addRef(handleId, input, bytes === undefined ? undefined : { bytes })
@@ -42,6 +42,7 @@ export function addFromSurface(handleId: string, input: RefInput, say: (t: strin
     signalRefs(handleId, target, { note: BUDGET_NOTE })
     say(BUDGET_NOTE)
   } else if (target !== null) say('That queued message is gone, so nothing was added.')
+  return r
 }
 
 /** Adds to the live draft from a source whose focus is in the textarea (`@` pick, drop), so nothing takes focus:
@@ -353,7 +354,7 @@ export function ContextChips({
         </div>
       )}
       <span id={refHint} hidden>
-        Enter opens. Space shows details. Delete removes. Option and arrow keys reorder.
+        Enter opens. Space shows a preview. Delete removes. Option and arrow keys reorder.
       </span>
       <span id={attHint} hidden>
         Delete removes.
@@ -362,8 +363,7 @@ export function ContextChips({
       <RefCard
         pop={pop}
         handleId={handleId}
-        target={target}
-        d={shown}
+        shown={shown && { form: 'draft', d: shown, target }}
         n={shown ? refs.indexOf(shown) + 1 : 0}
         cwd={cwd}
         onOpen={shown && openable(shown) ? (via) => openRef(handleId, shown, via) : undefined}

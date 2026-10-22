@@ -63,7 +63,7 @@ import { mcpListener } from './lib/mcp-route'
 import { Annotator } from './browser/annotate'
 import { changeRefStatus, classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from './cli/packet'
 import { contextWatches } from './surfaces/context-watch'
-import { CHANGE_READ_TOOL, isRefInput, MAX_REFS, relativeTo, type DraftReference } from '../shared/context'
+import { CHANGE_READ_TOOL, CHANGE_REF, isRefInput, MAX_REFS, relativeTo, type DraftReference } from '../shared/context'
 import { WORLD } from './browser/cursor'
 import { approve as approveSite, listLocalNet, listSites, removeSite } from './browser/sites'
 import { listLogins, removeLogin, saveLogin, vaultAvailable } from './browser/vault'
@@ -983,6 +983,10 @@ function registerIpc(): void {
   handle(IpcChannels.classifyRefPaths, (_e, handleId: unknown, paths: unknown) => classifyRefPaths(packetDeps, handleId, paths))
   handle(IpcChannels.createChangeRef, (_e, handleId: unknown, req: unknown) => createChangeRef(handleId, req))
   handle(IpcChannels.changeRefStatus, (_e, handleId: unknown, refs: unknown) => changeRefStatus(packetDeps, handleId, refs))
+  handle(IpcChannels.changeRefPeek, (_e, handleId: unknown, ref: unknown) => {
+    const l = typeof handleId === 'string' && typeof ref === 'string' && CHANGE_REF.test(ref) ? changeRefs.locator(handleId, ref) : null
+    return l ? { ok: true, text: l.text, side: l.side, ...(l.old ? { old: l.old } : {}), ...(l.new ? { new: l.new } : {}), bytes: l.bytes } : { ok: false }
+  })
 
   handle(IpcChannels.editLine, async (_e, handleId: string, path: string, editId: string) => {
     if (typeof handleId !== 'string' || typeof path !== 'string' || typeof editId !== 'string') return null

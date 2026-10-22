@@ -25,10 +25,14 @@ const sideRange = (r: Pick<ChangeInput, 'side' | 'old' | 'new'>): LineRange | un
 /** `mcp.ts change, before side, lines 40 to 45`, `mcp.ts change, lines 40 to 45 before and 41 to 53 after`. Also
  *  speaks a selection that isn't minted yet. */
 export function spokenChange(r: Pick<ChangeInput, 'path' | 'side' | 'old' | 'new'>): string {
-  const base = `${baseOf(r.path)} change`
-  if (r.side === 'diff') return `${base}, ${diffWords(r)}`
+  return `${baseOf(r.path)} change, ${changeWords(r)}`
+}
+
+/** The side and range words of a spoken change, without its file. */
+export function changeWords(r: Pick<ChangeInput, 'side' | 'old' | 'new'>): string {
+  if (r.side === 'diff') return diffWords(r)
   const range = sideRange(r)
-  return `${base}, ${r.side} side${range ? `, ${spokenRange(range)}` : ''}`
+  return `${r.side} side${range ? `, ${spokenRange(range)}` : ''}`
 }
 
 /** What a notice names a removed reference by: the range for a selection, the file, side and range for a change, else

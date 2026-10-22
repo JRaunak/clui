@@ -16,7 +16,7 @@ import type {
 import type { ConfigBundle } from './config'
 import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, LocalNetSite, PaneBounds, SavedLoginInfo } from './browser'
 import type { AnnotateEvent } from './annotate'
-import type { ChangeSide, DraftReference, RefInput, RefInvalid, SourceVersion } from './context'
+import type { ChangeSide, DraftReference, LineRange, RefInput, RefInvalid, SourceVersion } from './context'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff, HunkRows } from './changes'
 import type { ContextMenuItem, FileChangedEvent, FileStat, Refusal, TextRead, TreeListing } from './files'
 import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
@@ -124,6 +124,8 @@ export interface ChangeRefRequest { path: string; segmentId: string; revision: s
 export type ChangeRefResult =
   | { ok: true; ref: Extract<RefInput, { kind: 'change' }>; bytes: number }
   | { ok: false; reason: 'changed' | 'empty' | 'too-large' | 'denied' | 'unavailable'; lines?: number; bytes?: number }
+
+export type ChangeRefPeek = { ok: true; text: string; side: ChangeSide; old?: LineRange; new?: LineRange; bytes: number } | { ok: false }
 
 export interface AnnotationOrder { keep: number[]; shown: [pinId: number, n: number][]; room: number }
 export interface RefWatchEntry { path: string; version: SourceVersion }
@@ -281,6 +283,8 @@ export interface CluiApi {
   createChangeRef: (handleId: string, req: ChangeRefRequest) => Promise<ChangeRefResult>
   /** Per sent change ref (at most 20), whether Claude can still read it in this session. */
   changeRefStatus: (handleId: string, refs: string[]) => Promise<boolean[]>
+  /** The snapshot a draft or sent change ref holds, for the chip's preview. Never the ledger's current hunk. */
+  changeRefPeek: (handleId: string, ref: string) => Promise<ChangeRefPeek>
   /** Open a diff of two files the session may see, in the configured editor. */
   openDiff: (handleId: string, left: string, right: string) => Promise<void>
   /** One changed file's Claude changes as hunks, from the session's ledger. Null when the session or path isn't held. */
@@ -486,6 +490,7 @@ export const IpcChannels = {
   classifyRefPaths: 'clui:classifyRefPaths',
   createChangeRef: 'clui:createChangeRef',
   changeRefStatus: 'clui:changeRefStatus',
+  changeRefPeek: 'clui:changeRefPeek',
   openDiff: 'clui:openDiff',
   getDiff: 'clui:getDiff',
   openChangeDiff: 'clui:openChangeDiff',

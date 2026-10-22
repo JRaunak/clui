@@ -16,10 +16,14 @@ import {
 import { FileLinkContext, Markdown, StreamingContext } from './Markdown'
 import { BADGE, ContextChip, legacyChip, refChip, unavailableChip } from './ContextChip'
 import { openRef } from './ContextChips'
+import { usePopover } from './Popover'
+import { RefCard, type CardRef } from './RefCard'
+import { focusComposer } from './gates/GateFrame'
+import { absOf } from '../lib/peek'
 import { Button } from './Button'
 import { parseRefs, type ContextReference } from '../../../shared/context'
-import { baseOf, spokenRef } from '../lib/refCopy'
-import { viaOf } from '../lib/motion'
+import { baseOf } from '../lib/refCopy'
+import { viaOf, type Via } from '../lib/motion'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
 import { IconArrowUp, IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShield, IconShieldOff, IconStop, IconWarn } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
@@ -828,8 +832,8 @@ function ThinkingBlock({ text }: { text: string }): JSX.Element {
 
 /** A sent message's reference block shows as chips; the block itself went to Claude only. A current reference
  *  claims its crop by content-array index. A legacy block can only pair by order: its crops travel first among
- *  the images, in pin order. A file or folder chip opens it; a page chip stays inert, since its document is gone.
- *  A change chip opens its file's Claude changes while the session still has them. */
+ *  the images, in pin order. Every chip opens its card; ⌘-click opens a file or folder, and a change's file in
+ *  Claude changes while the session still has them. A page has nothing to open, since its document is gone. */
 function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: boolean }): JSX.Element {
   const handleId = useActive((s) => s?.handleId ?? null)
   const cwd = useActive((s) => s?.cwd ?? null)
@@ -863,32 +867,48 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
   const chips = refs.map((r) => {
     if (r.kind === 'legacy') {
       const thumb = r.value.crop ? legacyThumbs[next++] : undefined
-      return { view: legacyChip(`l${r.value.n}`, r.value.n, r.value.kind, r.value.name, r.value.host, thumb?.previewUrl), thumb, ref: null }
+      const card: CardRef = { form: 'legacy', pin: r.value, crop: thumb?.previewUrl }
+      return { view: legacyChip(`l${r.value.n}`, r.value.n, r.value.kind, r.value.name, r.value.host, thumb?.previewUrl), thumb, ref: null, card }
     }
     const { ref, visualAttachmentIndex: vi } = r.value
     const thumb = vi === undefined ? undefined : images.find((a) => a.blockIndex === vi)
     const dupe = named(ref) && (names.get(baseOf(ref.path)) ?? 0) > 1
     const view = refChip(ref, r.n, cwd, thumb?.previewUrl, dupe)
-    return { view: unavailable(ref) ? unavailableChip(view) : view, thumb, ref }
+    const card: CardRef = { form: 'sent', ref, crop: thumb?.previewUrl, addable: !unavailable(ref) }
+    return { view: unavailable(ref) ? unavailableChip(view) : view, thumb, ref, card }
   })
   // The sent revision may be stale, so a file opens scrolled to the range with nothing selected.
-  const opener = (ref: ContextReference | null): { label: string; open: (e: { detail: number }) => void } | undefined => {
+  const opener = (ref: ContextReference | null): ((via: Via) => void) | undefined => {
     if (!handleId || !ref || ref.kind === 'browser') return undefined
-    const abs = ref.path.startsWith('/') || !cwd ? ref.path : `${cwd.replace(/\/+$/, '')}/${ref.path}`
-    if (ref.kind === 'change') {
-      if (!changes?.some((c) => c.path === abs)) return undefined
-      return {
-        label: `Open ${spokenRef(ref)}, in Claude changes${unavailable(ref) ? ', Claude can no longer read it' : ''}`,
-        open: (e) => openRef(handleId, { ref: { ...ref, path: abs } }, viaOf(e))
-      }
-    }
+    const abs = absOf(cwd, ref.path)
+    if (ref.kind === 'change') return changes?.some((c) => c.path === abs) ? (via) => openRef(handleId, { ref: { ...ref, path: abs } }, via) : undefined
     const line = ref.kind === 'file' ? ref.lines?.start : undefined
-    const name = baseOf(ref.path)
-    return {
-      label: ref.kind === 'folder' ? `Show ${name} in the tree` : line ? `Open ${name} at line ${line}` : `Open ${name}`,
-      open: (e) => openFileAt(handleId, abs, { line }, ref.kind === 'folder', viaOf(e))
-    }
+    return (via) => openFileAt(handleId, abs, { line }, ref.kind === 'folder', via)
   }
+  const hintId = useId()
+  const [card, setCard] = useState<{ key: string; via: Via } | null>(null)
+  const pop = usePopover<HTMLButtonElement>({ placement: 'down', align: 'start' })
+  const buttons = useRef(new Map<string, HTMLButtonElement>())
+  /** The chip whose open card a pointerdown just light-dismissed, so its click doesn't reopen it. */
+  const dismissedBy = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    if (!card) return
+    pop.triggerRef.current = buttons.current.get(card.key) ?? null
+    pop.show(card.via)
+    pop.popRef.current?.focus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card])
+  // A bubble the transcript virtualizes away takes its card with it; focus would otherwise fall to the body.
+  useLayoutEffect(() => {
+    const el = pop.popRef.current
+    return () => {
+      if (el?.contains(document.activeElement)) focusComposer()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const shown = card ? chips.find((c) => c.view.key === card.key) : undefined
+  const openable = chips.some((c) => !!opener(c.ref))
+  const inert = chips.some((c) => !opener(c.ref))
   const notes = refs.flatMap((r) => (r.kind === 'current' && r.value.ref.note ? [{ n: r.n, note: r.value.ref.note }] : []))
   const used = new Set<MessageAttachment | undefined>(chips.map((c) => c.thumb))
   const rest = all.filter((a): a is ShownAttachment => a.kind !== 'image-unavailable' && !used.has(a))
@@ -896,12 +916,39 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
   return (
     <>
       {chips.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {chips.map((c) => {
-            const o = opener(c.ref)
-            return <ContextChip key={c.view.key} view={c.view} openLabel={o?.label} onOpen={o?.open} />
-          })}
-        </div>
+        <>
+          <div className="flex flex-wrap gap-2" onPointerDownCapture={() => void (dismissedBy.current = pop.open ? card?.key ?? null : null)}>
+            {chips.map((c) => {
+              const o = opener(c.ref)
+              const key = c.view.key
+              return (
+                <ContextChip
+                  key={key}
+                  view={c.view}
+                  peek={{ expanded: pop.open && card?.key === key, ref: (el) => void (el ? buttons.current.set(key, el) : buttons.current.delete(key)) }}
+                  describedBy={`${hintId}${o ? 'o' : 'i'}`}
+                  style={card?.key === key ? pop.triggerProps.style : undefined}
+                  onOpen={(e) => {
+                    if (dismissedBy.current === key) return void (dismissedBy.current = null)
+                    if (e.metaKey) return o?.(viaOf(e))
+                    setCard({ key, via: viaOf(e) })
+                  }}
+                />
+              )
+            })}
+          </div>
+          {openable && (
+            <span id={`${hintId}o`} hidden>
+              Shows a preview. Command-click opens it in the pane.
+            </span>
+          )}
+          {inert && (
+            <span id={`${hintId}i`} hidden>
+              Shows a preview.
+            </span>
+          )}
+          {handleId && <RefCard pop={pop} handleId={handleId} shown={shown?.card} n={shown?.view.n ?? 0} cwd={cwd} onOpen={opener(shown?.ref ?? null)} />}
+        </>
       )}
       {notes.length > 0 && (
         <ul aria-label="Notes" data-ui="ref-notes" className="flex flex-col gap-1">
