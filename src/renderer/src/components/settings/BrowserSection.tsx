@@ -11,7 +11,6 @@ import type { LinkTarget } from '../../../../shared/settings'
 import { LoginForm } from './LoginForm'
 import { ClearBrowsingData } from './ClearBrowsingData'
 
-const UNDO_MS = 5000
 // A list turns into a scrolling window with a filter at the row count where it would start to scroll.
 const WINDOW_AT = 7
 export const DANGER_BTN =
@@ -68,7 +67,6 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   const [form, setForm] = useState<{ edit: SavedLoginInfo | null; opener: string } | null>(null)
   const [pending, setPendingState] = useState<PendingRemoval[]>([])
   const pendingRef = useRef<PendingRemoval[]>([])
-  const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const undoRef = useRef<(id: string) => void>(() => {})
   const announceSeq = useRef(0)
   const [filterSay, setFilterSay] = useState('')
@@ -87,7 +85,17 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
     pendingRef.current = next
     setPendingState(next)
     useBrowserToasts.setState({
-      items: next.map((p) => ({ kind: 'undo', id: p.id, title: p.title, suffix: p.verb ?? 'removed', at: p.at ?? 0 }))
+      items: next.map((p) => ({
+        kind: 'undo',
+        id: p.id,
+        title: p.title,
+        suffix: p.verb ?? 'removed',
+        at: p.at ?? 0,
+        onExpire: () => {
+          setPending(pendingRef.current.filter((x) => x.id !== p.id))
+          void p.commit()
+        }
+      }))
     })
   }, [])
 
@@ -144,10 +152,8 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
 
   // Closing Settings is not an undo: whatever is still waiting commits now.
   useEffect(() => {
-    const t = timers.current
     useBrowserToasts.setState({ onUndo: (id) => undoRef.current(id) })
     return () => {
-      t.forEach(clearTimeout)
       pendingRef.current.forEach((p) => void p.commit())
       useBrowserToasts.setState({ items: [], onUndo: () => {} })
     }
@@ -156,14 +162,6 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   const remove = (p: PendingRemoval, said: string): void => {
     const item = { ...p, at: Date.now(), commit: async () => { await p.commit(); await relist() } }
     setPending([item, ...pendingRef.current.filter((x) => x.id !== p.id)])
-    timers.current.set(
-      p.id,
-      setTimeout(() => {
-        timers.current.delete(p.id)
-        setPending(pendingRef.current.filter((x) => x.id !== p.id))
-        void item.commit()
-      }, UNDO_MS)
-    )
     useBrowserToasts.setState({ announce: { text: `${said} Undo available.${'\u200b'.repeat(++announceSeq.current % 2)}`, at: item.at } })
   }
 
@@ -220,8 +218,6 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
 
   const undo = (id: string): void => {
     const p = pendingRef.current.find((x) => x.id === id)
-    clearTimeout(timers.current.get(id))
-    timers.current.delete(id)
     setPending(pendingRef.current.filter((x) => x.id !== id))
     // A pointer undo leaves focus alone; a keyboard one follows the restored row.
     const el = document.activeElement

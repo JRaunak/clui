@@ -529,10 +529,11 @@
   }
 }
 
-/* Toast countdown: a hairline that drains full→empty over the undo window, so the auto-dismiss timer is visible. */
+/* Toast countdown: a hairline that drains to empty over the time left, so the auto-dismiss timer is visible.
+   A resume after a hold can start it part-way, from --drain-from. */
 @keyframes toast-drain {
   from {
-    transform: scaleX(1);
+    transform: scaleX(var(--drain-from, 1));
   }
   to {
     transform: scaleX(0);

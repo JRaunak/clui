@@ -1693,7 +1693,11 @@ function evictFor(
   const card: EvictedTab = { id: `evicted-${++evictSeq}`, handleId, tab, index: set0.order.indexOf(victim), at }
   const text = toggled(`Closed ${label}. Clui keeps up to ${SURFACE_TAB_CAP} tabs per session and closed the one you viewed least recently.`)
   set((s) => ({ ...patchSlice(s, handleId, { surfaces, tabsEvicted: true }), evictedTabs: [card, ...s.evictedTabs], evictedAnnounce: { text, at } }))
-  setTimeout(() => set((s) => ({ evictedTabs: s.evictedTabs.filter((c) => c.id !== card.id) })), UNDO_MS)
+}
+
+/** The card's time ran out on the toast stack, which owns the clock so it can pause it. */
+export function expireEvicted(id: string): void {
+  useSession.setState((s) => ({ evictedTabs: s.evictedTabs.filter((c) => c.id !== id) }))
 }
 
 let announceSeq = 0

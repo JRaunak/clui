@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { SessionSummary } from '../../../shared/sessions'
-import { useSession, forgetSessionModel, sessionDisplayTitle, surfaceLabel, UNDO_MS } from '../store'
+import { useSession, forgetSessionModel, sessionDisplayTitle, surfaceLabel, expireEvicted, UNDO_MS } from '../store'
 import { SURFACE_TAB_CAP } from '../../../shared/surfaces'
 import { sessionStatusOf, statusKey, statusText, type SessionStatus } from '../lib/sessionStatus'
 import {
@@ -95,8 +95,6 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   // Ids committed to on-disk delete but not yet dropped by refreshSessions(); kept hidden so rows
   // don't flash back between leaving the toast and leaving `groups`.
   const [committingIds, setCommittingIds] = useState<Set<string>>(() => new Set())
-  // One expiry timer per pending id.
-  const deleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   // sr-only announcement for the latest delete; coalesces rapid ones to the most recent.
   const [announce, setAnnounce] = useState({ text: '', at: 0 })
   // Toggling suffix so two same-titled deletes still differ as text; an unchanged aria-live node is silent.
@@ -138,14 +136,6 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     [setNotice]
   )
 
-  const clearDeleteTimer = useCallback((id: string) => {
-    const t = deleteTimers.current.get(id)
-    if (t) {
-      clearTimeout(t)
-      deleteTimers.current.delete(id)
-    }
-  }, [])
-
   // Commit the irreversible on-disk delete. The id stays in `committingIds` (hidden) until
   // refreshSessions() drops the row from `groups`, so it never flashes back.
   const commitDelete = useCallback(async (pd: PendingDelete): Promise<void> => {
@@ -162,7 +152,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Hide the row and start its own timer; the on-disk delete fires only when that expires.
+  // Hide the row; the on-disk delete fires only when its card expires.
   const requestDelete = useCallback(
     (id: string, projectSlug: string, title: string, liveHandleId?: string) => {
       // If live, stop the process now so the live counter and dots update at once. Undo restores only the on-disk transcript.
@@ -172,41 +162,37 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
       let next = [pd, ...pendingRef.current.filter((p) => p.id !== id)]
       // Over the cap: the oldest commits now.
       if (next.length > STACK_CAP) {
-        for (const overflow of next.slice(STACK_CAP)) {
-          clearDeleteTimer(overflow.id)
-          void commitDelete(overflow)
-        }
+        for (const overflow of next.slice(STACK_CAP)) void commitDelete(overflow)
         next = next.slice(0, STACK_CAP)
       }
       setPending(next)
-
-      const t = setTimeout(() => {
-        deleteTimers.current.delete(id)
-        void commitDelete(pd)
-        setPending(pendingRef.current.filter((p) => p.id !== id))
-      }, UNDO_MS)
-      deleteTimers.current.set(id, t)
       setAnnounce({ text: `Deleted ${title}. Undo available.${'\u200b'.repeat(++announceSeq.current % 2)}`, at: pd.at })
     },
-    [clearDeleteTimer, commitDelete, closeSession, setPending]
+    [commitDelete, closeSession, setPending]
+  )
+
+  const expireDelete = useCallback(
+    (id: string) => {
+      const pd = pendingRef.current.find((p) => p.id === id)
+      if (!pd) return
+      setPending(pendingRef.current.filter((p) => p.id !== id))
+      void commitDelete(pd)
+    },
+    [commitDelete, setPending]
   )
 
   const undoDelete = useCallback(
     (id: string) => {
-      clearDeleteTimer(id)
       setPending(pendingRef.current.filter((p) => p.id !== id))
       // The process is stopped, but the transcript survives on disk. Re-scan so the row reappears as resumable.
       void refreshSessions()
       // eslint-disable-next-line react-hooks/exhaustive-deps
     },
-    [clearDeleteTimer, setPending]
+    [setPending]
   )
 
-  // Cancel any pending timers on unmount.
-  useEffect(() => {
-    const timers = deleteTimers.current
-    return () => timers.forEach(clearTimeout)
-  }, [])
+  // Unmounting is not an undo: the deletes still waiting on their cards commit now.
+  useEffect(() => () => pendingRef.current.forEach((pd) => void commitDelete(pd)), [commitDelete])
 
   // Shallow signature of the live sessions: re-renders only when identity/busy/pending-count changes.
   const liveSig = useSession(
@@ -391,11 +377,11 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
   const stack = (
     <ToastStack
       items={[
-        ...pending.map((p) => ({ kind: 'undo' as const, id: p.id, title: p.title, suffix: '· deleted', at: p.at })),
+        ...pending.map((p) => ({ kind: 'undo' as const, id: p.id, title: p.title, suffix: '· deleted', at: p.at, onExpire: () => expireDelete(p.id) })),
         ...browserToasts.items,
-        ...evictedTabs.map((c) => ({ kind: 'undo' as const, id: c.id, title: surfaceLabel(c.tab), suffix: `closed, ${SURFACE_TAB_CAP} tab limit`, actionLabel: 'Reopen', at: c.at })),
-        ...modToasts.map((t) => ({ kind: 'mod' as const, ...t }))
-      ].sort((a, b) => b.at - a.at)}
+        ...evictedTabs.map((c) => ({ kind: 'undo' as const, id: c.id, title: surfaceLabel(c.tab), suffix: `closed, ${SURFACE_TAB_CAP} tab limit`, actionLabel: 'Reopen', at: c.at, onExpire: () => expireEvicted(c.id) })),
+        ...modToasts.map((t) => ({ kind: 'mod' as const, ...t, onExpire: () => dismissModToast(t.id) }))
+      ]}
       durationMs={UNDO_MS}
       announce={[modAnnounce, browserToasts.announce, evictedAnnounce].reduce((a, b) => (b.at > a.at ? b : a), announce).text}
       onUndo={(id) =>

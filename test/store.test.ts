@@ -1,6 +1,6 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { CHANGE_REFS, useSession, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
+import { CHANGE_REFS, useSession, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -736,6 +736,9 @@ const q = (id: string, text: string): any => ({ id, text, refs: [] })
   st().reopenEvicted(card.id)
   ok(sur().order[3] === 'file:/w/1.ts' && sur().active === 'file:/w/1.ts' && sur().tabs['file:/w/1.ts'].viewState.topLine === 77, 'evict: Reopen puts the tab back at its index with its view state')
   ok(Object.keys(sur().tabs).length === 24 && !sur().tabs['file:/w/2.ts'] && !st().evictedTabs.length, 'evict: Reopen makes room by evicting the next one quietly')
+  useSession.setState({ evictedTabs: [card, { ...card, id: 'evicted-other' }] })
+  expireEvicted(card.id)
+  ok(st().evictedTabs.map((c) => c.id).join() === 'evicted-other', 'evict: an expired card drops only itself')
 }
 
 // References: one staged list per target, mirrored to main's outlines and watches, removed only by staleness or the user.
