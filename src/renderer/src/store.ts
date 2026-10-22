@@ -50,6 +50,7 @@ import { removalSpoken, pausedText, resourceLabel, shortLabel } from './lib/refC
 import type { Via } from './lib/motion'
 import { CHANGE_BYTES_MAX, CHANGE_TEXT_BUDGET, type ChangeGitStatus, type FileChangeSummary, type GitPathStatus } from '../../shared/changes'
 import { SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
+import { clean, type SurfaceCommand, type SurfaceReply, type SurfaceTarget, type TabFact } from '../../shared/surface-tools'
 import { turnEndLine } from './lib/turnEnd'
 import { suffixes } from './lib/tree'
 
@@ -821,7 +822,7 @@ interface SessionStore {
   /** Shows browser tab `tab`, else the last one viewed, else a new one, opening the pane if it's hidden. */
   revealBrowser: (tab: number | null, apply?: (next: BrowserPaneState) => void) => Promise<void>
   /** Places a non-browser surface and applies its intent. Returns its id. */
-  openSurface: (handleId: string, spec: SurfaceSpec, intent: OpenIntent, actor: 'user' | 'claude', openedBy: OpenedBy) => string
+  openSurface: (handleId: string, spec: SurfaceSpec | { kind: 'browser'; tab: number }, intent: OpenIntent, actor: 'user' | 'claude', openedBy: OpenedBy) => string
   /** Closing the active tab activates its neighbour in `order`; a browser placement closes its tab in main. The last tab hides the pane. */
   closeSurface: (handleId: string, id: string) => void
   /** Clears `unseen`, applies a pending destination, and views a browser placement's tab in main. */
@@ -1312,11 +1313,93 @@ export function denyChangeRead(handleId: string): void {
   useSession.setState((s) => (s.sessions[handleId]?.changeRead === false ? {} : patchSlice(s, handleId, { changeRead: false })))
 }
 
+const hidden = (): boolean => typeof document !== 'undefined' && document.hidden
+
+/** What the pane shows a session, as surface_state reports it. Lines and labels only, never selected text. */
+export function paneFacts(handleId: string): SurfaceReply {
+  const st = useSession.getState()
+  const slice = st.sessions[handleId]
+  if (!slice) return { outcome: 'unavailable' }
+  const set0 = slice.surfaces
+  const span = (l: { start: number; end: number } | undefined) => l && { start: l.start, end: l.end }
+  const fact = (id: string): TabFact | null => {
+    const tab = browserTabOf(id)
+    if (tab !== null) return slice.browser ? { kind: 'browser', tab, claude: false, unseen: !!set0.browserUnseen[id] } : null
+    const t = set0.tabs[id]
+    if (!t) return null
+    const at = t.location
+    const pend = t.pendingShow?.location
+    const sel = span(t.selection?.lines)
+    const hl = span(t.highlight?.lines)
+    return {
+      kind: t.kind,
+      ...(t.kind === 'diff' ? { files: slice.changes.length } : { path: t.kind === 'tree' ? (at?.file ?? slice.cwd) : t.key }),
+      claude: t.openedBy === 'claude',
+      unseen: !!t.unseen,
+      ...(t.kind !== 'tree' && at?.line ? { location: { line: at.line, ...(at.endLine ? { endLine: at.endLine } : {}) } } : {}),
+      ...(sel ? { selection: sel } : {}),
+      ...(hl ? { highlight: hl } : {}),
+      ...(pend ? { pending: { ...(pend.line ? { line: pend.line } : {}), ...(pend.endLine ? { endLine: pend.endLine } : {}) } } : {})
+    }
+  }
+  const seen = (id: string): number => (browserTabOf(id) !== null ? (set0.browserLastViewedAt[id] ?? 0) : (set0.tabs[id]?.lastViewedAt ?? 0))
+  const active = set0.active ? fact(set0.active) : null
+  const rest = set0.order
+    .filter((id) => id !== set0.active)
+    .sort((a, b) => seen(b) - seen(a))
+    .flatMap((id) => fact(id) ?? [])
+  const session =
+    handleId !== st.activeHandleId ? 'background' : hidden() ? 'minimized' : st.viewingSubagent || st.settingsSection !== null || slice.pendingPermissions.length ? 'covered' : 'shown'
+  return {
+    pane: slice.paneOpen ? 'open' : 'closed',
+    ...(slice.paneOpen ? { width: slice.surfacePaneFull || !st.stageWide ? 'wide' : 'half' } : {}),
+    session,
+    ...(active ? { active } : {}),
+    tabs: rest.slice(0, 11),
+    omitted: Math.max(0, rest.length - 11)
+  }
+}
+
+/** Claude's surface_open, through the same intent rules as every other open. Main has authorized the target. */
+export function openForClaude(handleId: string, a: SurfaceTarget & { focus: boolean }): SurfaceReply {
+  const st = useSession.getState()
+  const slice = st.sessions[handleId]
+  if (!slice) return { outcome: 'unavailable' }
+  const lines = a.kind === 'file' && a.line ? { start: a.line, end: a.endLine ?? a.line } : null
+  const spec =
+    a.kind === 'browser'
+      ? { kind: a.kind, tab: a.tab }
+      : a.kind === 'file'
+        ? { kind: a.kind, key: a.path, title: basename(a.path), ...(lines ? { location: { line: lines.start, ...(a.endLine ? { endLine: a.endLine } : {}) }, highlight: { lines } } : {}) }
+        : a.kind === 'tree'
+          ? { kind: a.kind, key: '', title: basename(slice.cwd), location: { file: a.path } }
+          : { kind: a.kind, key: '', title: 'Claude changes', ...(a.path ? { location: { file: a.path } } : {}) }
+  const id = st.openSurface(handleId, spec, a.focus ? 'focus' : 'prepare', 'claude', 'claude')
+  const now = useSession.getState()
+  const after = now.sessions[handleId]
+  if (!after) return { outcome: 'unavailable' }
+  if (!after.paneOpen && after.paneAutoOpenSuppressed && after.surfaces.active === id) return { outcome: 'pane-closed' }
+  const visible = handleId === now.activeHandleId && !hidden()
+  const shown =
+    visible && after.paneOpen && !now.viewingSubagent && now.settingsSection === null && after.surfaces.active === id && !after.surfaces.tabs[id]?.pendingShow
+  return { outcome: shown ? 'shown' : a.focus && !visible ? 'deferred' : 'prepared' }
+}
+
+const answered = new Set<string>()
+/** Applies each command at most once and refuses one main has already given up on. */
+export function answerSurface(cmd: SurfaceCommand): void {
+  if (answered.has(cmd.reqId) || Date.now() > cmd.expiresAt) return
+  answered.add(cmd.reqId)
+  if (answered.size > 256) answered.delete(answered.values().next().value as string)
+  void window.clui.surfaceReply(cmd.reqId, cmd.op === 'state' ? paneFacts(cmd.handleId) : openForClaude(cmd.handleId, cmd.args))
+}
+
 function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void): void {
   if (subscribed) return
   subscribed = true
   watchSurfaces()
   watchChangeRead()
+  window.clui.onSurfaceCommand(answerSurface)
   window.clui.onSessionEvent(({ handleId, event }) => {
     applyEvent(handleId, event)
     // A turn can delete a changed file without a tool result naming it (Bash rm), so its
@@ -1703,13 +1786,15 @@ export function expireEvicted(id: string): void {
 let announceSeq = 0
 /** The toggling zero-width space makes a repeated announcement a text change, which is what gets read. */
 const toggled = (text: string): string => `${text}${'\u200b'.repeat(++announceSeq % 2)}`
-const BROWSER_OPENED = 'Claude opened the browser'
-
 /** What a screen reader hears when Claude puts tab `id` on screen; `opened` when the pane or the tab is new. */
 function shownCopy(s: PerSessionState, id: string | null, opened: boolean): string {
   const tab = id ? s.surfaces.tabs[id] : undefined
-  if (!tab) return BROWSER_OPENED
   const verb = opened ? 'Claude opened' : 'Claude is showing'
+  if (!tab) {
+    const n = browserTabOf(id)
+    const title = clean(s.browser?.tabs.find((t) => t.id === n)?.title ?? '')
+    return `${verb} ${title ? `${title} in ` : ''}the browser`
+  }
   const at = tab.location
   if (tab.kind === 'diff') return `${verb} its changes${at?.file ? ` to ${basename(at.file)}` : ''}`
   if (tab.kind === 'tree') {
@@ -3763,12 +3848,14 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
 
   openSurface: (handleId, spec, intent, actor, openedBy) => {
-    const id = surfaceIdOf(spec)
+    const browserTab = spec.kind === 'browser' ? spec.tab : null
+    const id = spec.kind === 'browser' ? placement(spec.tab) : surfaceIdOf(spec)
     // Chosen before the open, so neither the tab being opened nor the one Claude is about to show can go.
-    if (!get().sessions[handleId]?.surfaces.tabs[id]) evictFor(get, set, handleId, id)
+    if (spec.kind !== 'browser' && !get().sessions[handleId]?.surfaces.tabs[id]) evictFor(get, set, handleId, id)
     const s = get()
     const cur = s.sessions[handleId]
-    if (!cur) return id
+    // A browser placement exists only for a tab main has.
+    if (!cur || (browserTab !== null && !cur.surfaces.order.includes(id))) return id
     const now = Date.now()
     const set0 = cur.surfaces
     const viewed = handleId === s.activeHandleId
@@ -3784,26 +3871,39 @@ export const useSession = create<SessionStore>((set, get) => ({
       const recent = showing && set0.active !== id && now - paneInputAt < PANE_RECENT_MS
       if (held || recent) eff = 'prepare'
     }
-    const existing = set0.tabs[id]
-    const base: SurfaceTab = existing
-      ? { ...existing, title: spec.title }
-      : { id, kind: spec.kind, key: spec.key, title: spec.title, openedBy, openedAt: now, lastViewedAt: now, ...(spec.mode ? { mode: spec.mode } : {}), ...(spec.provenance ? { provenance: spec.provenance } : {}) }
-    const dest = { ...(spec.location ? { location: spec.location } : {}), ...(spec.highlight ? { highlight: spec.highlight } : {}) }
-    const order = existing ? set0.order : [...set0.order, id]
-    if (eff === 'prepare') {
-      // The active tab keeps its view until the user asks for the new destination.
-      const tab: SurfaceTab =
-        set0.active === id
-          ? { ...base, ...(Object.keys(dest).length ? { pendingShow: dest } : {}) }
-          : { ...base, ...dest, unseen: true }
-      set(patchSlice(s, handleId, { surfaces: { ...set0, order, tabs: { ...set0.tabs, [id]: tab } } }))
-      return id
+    let placed = cur
+    let fresh = false
+    let located = false
+    if (spec.kind === 'browser') {
+      if (eff === 'prepare') {
+        if (set0.active !== id) set(patchSlice(s, handleId, { surfaces: { ...set0, browserUnseen: { ...set0.browserUnseen, [id]: true } } }))
+        return id
+      }
+    } else {
+      const existing = set0.tabs[id]
+      const base: SurfaceTab = existing
+        ? { ...existing, title: spec.title }
+        : { id, kind: spec.kind, key: spec.key, title: spec.title, openedBy, openedAt: now, lastViewedAt: now, ...(spec.mode ? { mode: spec.mode } : {}), ...(spec.provenance ? { provenance: spec.provenance } : {}) }
+      const dest = { ...(spec.location ? { location: spec.location } : {}), ...(spec.highlight ? { highlight: spec.highlight } : {}) }
+      const order = existing ? set0.order : [...set0.order, id]
+      if (eff === 'prepare') {
+        // The active tab keeps its view until the user asks for the new destination.
+        const tab: SurfaceTab =
+          set0.active === id
+            ? { ...base, ...(Object.keys(dest).length ? { pendingShow: dest } : {}) }
+            : { ...base, ...dest, unseen: true }
+        set(patchSlice(s, handleId, { surfaces: { ...set0, order, tabs: { ...set0.tabs, [id]: tab } } }))
+        return id
+      }
+      placed = { ...cur, surfaces: { ...set0, order, tabs: { ...set0.tabs, [id]: { ...base, ...dest } } } }
+      fresh = !existing
+      located = !!spec.location
     }
-    const placed: PerSessionState = { ...cur, surfaces: { ...set0, order, tabs: { ...set0.tabs, [id]: { ...base, ...dest } } } }
     const activeNow = activation(placed, id, now)
+    if (browserTab !== null && cur.browser?.viewed !== browserTab) void window.clui.browserViewTab(handleId, browserTab)
     if (showing || (!viewed && cur.paneOpen)) {
-      const moved = showing && actor === 'claude' && (set0.active !== id || !!spec.location)
-      set(patchSlice(s, handleId, { ...activeNow, ...(moved ? said(shownCopy({ ...placed, ...activeNow }, id, !existing)) : {}) }))
+      const moved = showing && actor === 'claude' && (set0.active !== id || located)
+      set(patchSlice(s, handleId, { ...activeNow, ...(moved ? said(shownCopy({ ...placed, ...activeNow }, id, fresh)) : {}) }))
     } else if (actor === 'user') {
       // An explicit user open outranks the subagent takeover.
       set({ ...patchSlice(s, handleId, { ...activeNow, paneOpen: true }), ...(viewed ? { viewingSubagent: null, subagentTrail: [], currentTurn: null } : {}) })

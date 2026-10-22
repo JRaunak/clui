@@ -48,7 +48,8 @@ import type { SurfacesRestore } from '../shared/surfaces'
 import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
 import { changeMarks, diffSnapshots, editLine, getDiff, parseChangeRefRequest, parseDiffRequest, selectChange, type DiffSource } from './surfaces/diff'
 import { ChangeRefs } from './surfaces/change-refs'
-import { surfaceServer } from './surfaces/mcp-surface'
+import { surfaceBridge, surfaceServer } from './surfaces/mcp-surface'
+import { SURFACE_OPEN_TOOL, SURFACE_STATE_TOOL } from '../shared/surface-tools'
 import {
   getResolvedSettings,
   getSettings,
@@ -76,6 +77,7 @@ let mainWindow: BrowserWindow | null = null
 let sessionManager: SessionManager | null = null
 let browserManager: BrowserManager | null = null
 let diffs: ReturnType<typeof diffSnapshots> | null = null
+let presentation: ReturnType<typeof surfaceBridge> | null = null
 const LAUNCHERS = /\.(app|command|terminal|tool|fileloc|webloc|inetloc|workflow|action|jar|pkg|mpkg|scpt|applescript)$/i
 
 // Backstop: a window-teardown race can throw "Object has been destroyed" from an
@@ -282,6 +284,11 @@ function createWindow(): void {
     }
   })
 
+  // Commands sent to an earlier window or renderer can't be answered by this one.
+  presentation?.renew()
+  mainWindow.on('closed', () => presentation?.renew())
+  mainWindow.webContents.on('render-process-gone', () => presentation?.renew())
+
   // Probe runs set CLUI_TEST_INACTIVE so the window opens behind whatever the user is working in.
   mainWindow.on('ready-to-show', () => (process.env.CLUI_TEST_INACTIVE === '1' ? mainWindow?.showInactive() : mainWindow?.show()))
 
@@ -330,7 +337,24 @@ function registerIpc(): void {
   const listener = mcpListener()
   const mcp = new BrowserMcpServer(browser, listener)
   const changeRefs = new ChangeRefs()
-  const surface = surfaceServer(changeRefs)
+  const bridge = surfaceBridge((cmd) => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return false
+    mainWindow.webContents.send(IpcChannels.surfaceCommand, cmd)
+    return true
+  })
+  presentation = bridge
+  const surface = surfaceServer(changeRefs, {
+    cwd: (h) => manager.cwd(h),
+    authorize: async (h, p) => {
+      const f = await files.resolveAllowed(h, p, { consumer: 'file', operation: 'read-file' })
+      if (f.ok || f.reason !== 'wrong-type') return f.ok ? 'file' : f.reason
+      const d = await files.resolveAllowed(h, p, { consumer: 'tree', operation: 'list-directory' })
+      return d.ok ? 'tree' : d.reason
+    },
+    changed: async (h, p) => !!(await manager.changes(h))?.some((c) => c.path === p),
+    browserTabs: (h) => browser.tabsOf(h)?.tabs.map(({ id, url, title }) => ({ id, url, title })) ?? null,
+    request: (h, op) => bridge.request(h, op)
+  })
   const surfaceRoute = listener.route('mcp-surface', surface)
   const annotator = new Annotator(browser, () => mainWindow)
   browser.onLeave = (handleId, tab, why) => annotator.leave(handleId, tab, why)
@@ -343,6 +367,7 @@ function registerIpc(): void {
     mcp.revoke(handleId)
     surfaceRoute.revoke(handleId)
     surface.revoke(handleId)
+    bridge.retire(handleId)
     changeRefs.dispose(handleId)
     refWatches.dispose(handleId)
     files.dispose(handleId)
@@ -390,6 +415,7 @@ function registerIpc(): void {
       },
       __cluiSurface: {
         callTool: (handleId: string, name: string, args: Record<string, unknown> = {}) => surface.call(handleId, name, args),
+        endpoint: (handleId: string) => surfaceRoute.endpoint(handleId),
         // The nth hunk (0-based, oldest segment first) of the file's diff as the Diff surface lists it, minted
         // through clui:createChangeRef's own path.
         mint: async (handleId: string, path: string, o: { hunk?: number; side?: 'diff' | 'before' | 'after'; rows?: { start: number; end: number } } = {}) => {
@@ -558,8 +584,10 @@ function registerIpc(): void {
     const handleId = randomUUID()
     const withBrowser = settings.browserEnabled && !opts.ephemeral
     const servers = { 'clui-surface': await surfaceRoute.entry(handleId), ...(withBrowser ? { 'clui-browser': await mcp.entry(handleId) } : {}) }
-    // Tool-level for the surface, so a later surface tool never rides this rule.
-    const allow = [CHANGE_READ_TOOL, ...(withBrowser ? ['mcp__clui-browser'] : [])]
+    const presents = settings.surfaceTools && !opts.ephemeral
+    surface.setPresentation(handleId, presents)
+    // Tool-level for the surface, so a disabled presentation tool never rides a server-wide rule.
+    const allow = [CHANGE_READ_TOOL, ...(presents ? [SURFACE_STATE_TOOL, SURFACE_OPEN_TOOL] : []), ...(withBrowser ? ['mcp__clui-browser'] : [])]
     const restore: SurfacesRestore = opts.resumeSessionId && !opts.ephemeral ? await loadSurfaces(opts.resumeSessionId) : { status: 'none' }
     const saved = restore.status === 'ok' ? restore.entry : null
     if (withBrowser) mcp.setBundles(handleId, { visual: settings.browserVisual, interact: settings.browserInteract, debug: settings.browserDebug })
@@ -663,6 +691,10 @@ function registerIpc(): void {
   })
   handle(IpcChannels.setUltracode, async (_e, handleId: string, on: boolean) => {
     return manager.setUltracode(handleId, on)
+  })
+
+  handle(IpcChannels.surfaceReply, (e, reqId: unknown, reply: unknown) => {
+    if (mainWindow && !mainWindow.isDestroyed() && e.sender === mainWindow.webContents) bridge.reply(reqId, reply)
   })
 
   handle(IpcChannels.stopSession, async (_e, handleId: string) => {

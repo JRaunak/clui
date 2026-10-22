@@ -20,6 +20,7 @@ import type { ChangeSide, DraftReference, LineRange, RefInput, RefInvalid, Sourc
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff, HunkRows } from './changes'
 import type { ContextMenuItem, FileChangedEvent, FileStat, Refusal, TextRead, TreeListing } from './files'
 import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
+import type { SurfaceCommand, SurfaceReply } from './surface-tools'
 import type {
   CluiSettings,
   EffortChoice,
@@ -193,6 +194,9 @@ export interface CluiApi {
   /** The selection references' files to watch, declaratively. */
   syncRefWatches: (handleId: string, entries: RefWatchEntry[]) => Promise<void>
   onRefSourceChanged: (cb: (e: RefSourceChanged) => void) => () => void
+  /** Claude's surface_state and surface_open, applied here. Each command is answered once with surfaceReply. */
+  onSurfaceCommand: (cb: (cmd: SurfaceCommand) => void) => () => void
+  surfaceReply: (reqId: string, reply: SurfaceReply) => Promise<void>
   /** Interrupt the current turn. */
   interrupt: (handleId: string) => Promise<void>
   /** Kill a background task directly (control protocol); false means the caller should
@@ -452,6 +456,8 @@ export const IpcChannels = {
   syncAnnotationOrder: 'clui:syncAnnotationOrder',
   syncRefWatches: 'clui:syncRefWatches',
   refSourceChanged: 'clui:refSourceChanged',
+  surfaceCommand: 'clui:surfaceCommand',
+  surfaceReply: 'clui:surfaceReply',
   interrupt: 'clui:interrupt',
   stopTask: 'clui:stopTask',
   backgroundTask: 'clui:backgroundTask',

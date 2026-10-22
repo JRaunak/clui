@@ -73,6 +73,9 @@ export interface CluiSettings {
   browserVisual: boolean
   browserInteract: boolean
   browserDebug: boolean
+  /** Give new and resumed sessions surface_state and surface_open, which show files, folders, browser tabs and
+   *  Claude changes in the pane. Read at spawn, like browserEnabled. Quick sessions never get them. */
+  surfaceTools: boolean
   /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
    *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
@@ -548,6 +551,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   browserVisual: true,
   browserInteract: true,
   browserDebug: true,
+  surfaceTools: true,
   enableTaskTools: false,
   localClassifier: false,
   classifierModel: '',

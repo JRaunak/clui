@@ -20,6 +20,7 @@ import type { ElicitationResponse } from '../shared/events'
 import type { AnnotateEvent } from '../shared/annotate'
 import type { ChangesEvent } from '../shared/changes'
 import type { FileChangedEvent } from '../shared/files'
+import type { SurfaceCommand } from '../shared/surface-tools'
 
 const api: CluiApi = {
   pickWorkspace: () => ipcRenderer.invoke(IpcChannels.pickWorkspace),
@@ -40,6 +41,12 @@ const api: CluiApi = {
     ipcRenderer.on(IpcChannels.refSourceChanged, listener)
     return () => ipcRenderer.removeListener(IpcChannels.refSourceChanged, listener)
   },
+  onSurfaceCommand: (cb) => {
+    const listener = (_e: unknown, cmd: SurfaceCommand): void => cb(cmd)
+    ipcRenderer.on(IpcChannels.surfaceCommand, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.surfaceCommand, listener)
+  },
+  surfaceReply: (reqId, reply) => ipcRenderer.invoke(IpcChannels.surfaceReply, reqId, reply),
   interrupt: (handleId: string) => ipcRenderer.invoke(IpcChannels.interrupt, handleId),
   stopTask: (handleId: string, taskId: string) =>
     ipcRenderer.invoke(IpcChannels.stopTask, handleId, taskId),
