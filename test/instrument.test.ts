@@ -1,6 +1,6 @@
 // Boundary: the row-state grammar, the aggregate's worst-state pick, "needs you" matching, and the
 // current-turn derivation that the top-band header renders.
-import { rowState, worstState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel, summarizeInput } from '../src/renderer/src/lib/instrument.ts'
+import { monitorRowState, rowState, worstState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel, summarizeInput } from '../src/renderer/src/lib/instrument.ts'
 import { equal } from './support/harness.mjs'
 
 const tool = (o: Record<string, unknown>) => ({ id: 't', name: 'Bash', input: {}, ...o }) as never
@@ -86,4 +86,16 @@ equal(summarizeInput({ skill: 'create-cso-pr', args: '--help' }), 'create-cso-pr
   equal(changeReadOf(messages as never, { ref: `chg_${'4'.repeat(32)}` }), null, 'change_read: a ref never sent has no summary')
   const st = sessionStatusOf({ pendingPermissions: [], lastError: null, busy: true, compacting: false, thinkingTokens: null, messages } as never)
   equal(`${st.lead} ${st.rest}`, 'Read change mcp.ts · before L3', 'change_read: status line')
+}
+
+// A Monitor's row follows the monitor, not its start result.
+{
+  const mon = (result?: string, isError?: boolean): any => ({ id: 'm', name: 'Monitor', input: {}, result, isError })
+  const rec = (status: string): any => ({ taskId: 't', description: 'd', status, startMs: 0, wakes: 0, sharedWakes: 0, costUsd: 0, estimated: false })
+  equal(monitorRowState(mon(), false, false, undefined), 'running', 'monitor row: no result yet keeps the existing state')
+  equal(monitorRowState(mon('bad', true), false, false, rec('running')), 'failed', 'monitor row: an error result failed')
+  equal(monitorRowState(mon('ok'), false, false, rec('running')), 'watching', 'monitor row: running reads watching')
+  equal(monitorRowState(mon('ok'), false, false, rec('completed')), 'ended', 'monitor row: completed reads ended')
+  equal(monitorRowState(mon('ok'), false, false, rec('killed')), 'stopped', 'monitor row: killed reads stopped')
+  equal(monitorRowState(mon('ok'), false, false, undefined), 'ended', 'monitor row: no record reads ended')
 }

@@ -25,12 +25,12 @@ import { parseRefs, type ContextReference } from '../../../shared/context'
 import { baseOf } from '../lib/refCopy'
 import { viaOf, type Via } from '../lib/motion'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
-import { IconArrowUp, IconChevron, IconClose, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShield, IconShieldOff, IconStop, IconWarn } from './Icon'
+import { IconArrowUp, IconChevron, IconClose, IconEye, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShield, IconShieldOff, IconStop, IconWarn } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
 import { openFileAt, useLinkRoot } from '../lib/openLink'
 import { formatCost } from '../lib/formatCost'
 import { turnEndLine, wokenLine } from '../lib/turnEnd'
-import type { DenialSource, PermissionDenial, TurnUsage } from '../../../shared/events'
+import { isListPriced, type DenialSource, type PermissionDenial, type TurnUsage } from '../../../shared/events'
 import { PERMISSION_MODE_LABELS } from '../../../shared/settings'
 
 export { summarizeInput } from '../lib/instrument'
@@ -500,9 +500,11 @@ function BlockedPromptNotice({ prompt, blocked }: { prompt: string; blocked: Blo
 /** It isn't Claude's output, so it sits above the speaker label, off the spine. */
 function WokenByLine({ tasks }: { tasks: WokenTask[] }): JSX.Element {
   const { text, title } = wokenLine(tasks)
+  const monitors = tasks.every((t) => t.kind === 'monitor')
+  const Glyph = monitors ? IconEye : IconSendToTray
   return (
-    <div data-ui="woken-by" className="mb-1 flex items-center gap-1.5 text-meta text-dim">
-      <IconSendToTray className="h-3.5 w-3.5 shrink-0 text-info" />
+    <div data-ui="woken-by" data-kind={monitors ? 'monitor' : undefined} className="mb-1 flex items-center gap-1.5 text-meta text-dim">
+      <Glyph className="h-3.5 w-3.5 shrink-0 text-info" />
       <span className="max-w-[48ch] truncate" title={title}>
         {text}
       </span>
@@ -556,8 +558,7 @@ function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.
   const cachedPct = totalInput > 0 ? Math.round((usage.cacheReadInputTokens / totalInput) * 100) : 0
   const n = (v: number): string => v.toLocaleString('en-US')
   const panelId = `turn-usage-${id}`
-  // A turn without a costBasis counts as a list-price estimate, which on Bedrock is every turn.
-  const estimate = usage.models.some((m) => (m.costBasis ?? 'list') === 'list')
+  const estimate = isListPriced(usage)
   return (
     <div className="flex shrink-0 flex-col items-end">
       <button

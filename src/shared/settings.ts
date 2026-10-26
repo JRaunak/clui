@@ -258,6 +258,7 @@ function parseModelId(id: string): {
  * Which effort levels a model supports, derived from the CLI's verified gates
  * (binary strings "Fable 5, Opus 4.7+, Sonnet 5" for xhigh and "…Opus 4.6+,
  * Sonnet 4.6+" for max). Version-based so future models qualify automatically.
+ * Empty means the model takes no effort level at all.
  */
 function effortsFor(id: string): EffortChoice[] {
   const { family, version, versioned } = parseModelId(id)
@@ -267,10 +268,11 @@ function effortsFor(id: string): EffortChoice[] {
   // An unversioned alias can't be gated by version, and capping it at `high` would strip
   // xhigh/max from what is usually the newest model in its family. Offer the full range and
   // let the CLI reject a level it doesn't support, since a visible error beats a silent
-  // downgrade. Haiku is left out because the bare `haiku` alias resolves to a Haiku without xhigh or max.
+  // downgrade. The bare `haiku` alias resolves to Haiku 4.5, which the CLI's initialize
+  // `models[]` lists with no effort support (2.1.310).
   if (!versioned) {
     if (family === 'opus' || family === 'sonnet' || family === 'fable') return [...base, 'xhigh', 'max']
-    return base
+    return family === 'haiku' ? [] : base
   }
   if (family === 'opus') {
     max = version >= 4.6
@@ -282,9 +284,11 @@ function effortsFor(id: string): EffortChoice[] {
     max = version >= 5
     xhigh = version >= 5
   } else if (family === 'haiku') {
-    // From the CLI's model catalog (2.1.293), unconfirmed by a live turn on this account.
-    max = version >= 5.5
-    xhigh = version >= 5.5
+    // Haiku 4.x takes no effort (initialize `models[]`, 2.1.310). Haiku 5.5's levels come from
+    // the CLI's model catalog (2.1.293).
+    if (version < 5.5) return []
+    max = true
+    xhigh = true
   }
   // unknown: high only.
   const out = [...base]
@@ -498,10 +502,11 @@ export function reconcileModelChoice(current: string, reported: string, listed: 
 
 /** Clamp an effort to what a model supports (nearest lower level). `EFFORT_CHOICES` is
  *  ordered low→max, so walking it downward from the requested index finds the highest
- *  supported level at or below the request. */
+ *  supported level at or below the request. A model that takes no effort keeps the request,
+ *  so it still applies after a switch back to one that does. */
 export function clampEffort(model: ModelChoice, effort: EffortChoice): EffortChoice {
   const allowed = effortsFor(model)
-  if (allowed.includes(effort)) return effort
+  if (!allowed.length || allowed.includes(effort)) return effort
   const reqIdx = EFFORT_CHOICES.indexOf(effort)
   for (let i = reqIdx; i >= 0; i--) {
     if (allowed.includes(EFFORT_CHOICES[i])) return EFFORT_CHOICES[i]
@@ -525,6 +530,22 @@ export function cappedEffort(
   maxEffort?: EffortChoice
 ): EffortChoice {
   return clampEffort(model, maxEffort ? lowerOf(effort, maxEffort) : effort)
+}
+
+/**
+ * The user-facing part of a `check_rejected` set_model reply, e.g. "API error: 400 The provided
+ * model identifier is invalid · model not changed" → "The provided model identifier is invalid.".
+ * Null when nothing readable is left: a raw response body, or text too long for a notice.
+ */
+export function modelCheckReason(raw: string | undefined): string | null {
+  const s = (raw ?? '')
+    .replace(/^API error:\s*(\d{3}\s+)?/i, '')
+    .replace(/\s*·\s*model not changed\.?\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!s || /^[{<]/.test(s) || s.length > 140) return null
+  const out = s[0].toUpperCase() + s.slice(1)
+  return /[.!?]$/.test(out) ? out : `${out}.`
 }
 
 export const DEFAULT_SETTINGS: CluiSettings = {

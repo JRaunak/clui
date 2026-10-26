@@ -77,6 +77,10 @@ export interface ModeChangeResult {
   mode?: string
 }
 
+/** Result of a live model switch. `errorCode` and `reason` are the CLI's error ACK; `timedOut`
+ *  means no reply came, so the switch may still apply late. */
+export type ModelSwitchResult = { ok: true } | { ok: false; timedOut?: true; errorCode?: string; reason?: string }
+
 /** Result of starting a session: our local handle for it. */
 export interface StartSessionResult {
   /** App-local id used to route events/sends before the CLI session id is known. */
@@ -207,8 +211,8 @@ export interface CluiApi {
   /** Change a running session's permission mode mid-session. Resolves false if the CLI
    *  rejected the change, so the renderer can revert its optimistic UI. */
   setPermissionMode: (handleId: string, mode: PermissionModeChoice) => Promise<ModeChangeResult>
-  /** Change a running session's model live. False = rejected (renderer reverts). */
-  setModel: (handleId: string, model: ModelChoice) => Promise<boolean>
+  /** Change a running session's model live. `ok:false` = rejected or unanswered (renderer reverts). */
+  setModel: (handleId: string, model: ModelChoice) => Promise<ModelSwitchResult>
   /** Change a running session's effort (respawns via --resume; per-session only). */
   setEffort: (handleId: string, effort: EffortChoice) => Promise<void>
   /** Push a discovery-name change onto a running session via `/rename` (no-op if not live). */

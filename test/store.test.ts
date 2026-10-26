@@ -1,7 +1,8 @@
 // Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
 // must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
-import { CHANGE_REFS, useSession, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
+import { CHANGE_REFS, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
+import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
 import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
 
@@ -45,7 +46,7 @@ const cum = (costUSD: number, out: number, cacheRead: number, cacheCreate: numbe
 
 // The store's IPC is stubbed: each call is recorded and resolves true unless `replies` overrides it.
 const calls: { name: string; args: unknown[] }[] = []
-const replies: Record<string, (...args: any[]) => unknown> = {}
+const replies: Record<string, (...args: any[]) => unknown> = { setModel: () => ({ ok: true }) }
 ;(globalThis as any).window = {
   clui: new Proxy({}, { get: (_t, name: string) => async (...args: unknown[]) => (calls.push({ name, args }), replies[name] ? replies[name](...args) : true) })
 }
@@ -80,6 +81,7 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   rateLimitAnnounce: '',
   turnTasks: [],
   endedTasks: [],
+  monitors: {},
   turnStartMs: null,
   annotate: { tab: null, note: null },
   contextRefs: [],
@@ -106,6 +108,42 @@ const st = useSession.getState
   reset()
   await st().setModel('claude-haiku-4-5')
   ok(cur().ultracode === false, 'store: a model without Ultra turns it off')
+}
+
+// A refused or unanswered switch reverts the picker and says why; a superseded reply changes nothing.
+{
+  const fail = (r: Record<string, unknown>) => (replies.setModel = () => ({ ok: false, ...r }))
+  fail({ errorCode: 'check_rejected', reason: 'API error: 400 The provided model identifier is invalid · model not changed' })
+  reset({ ultracode: false })
+  await st().setModel('claude-haiku-4-5-20251001')
+  equal(st().notice?.message, "Couldn't switch to Haiku 4.5. The provided model identifier is invalid. The session is still on Opus 5.5.", 'store: a rejected switch shows the cleaned reason')
+  equal(cur().modelChoice, 'claude-opus-5-5[1m]', 'store: and reverts the picker')
+  fail({ errorCode: 'unknown_subtype', reason: 'Unknown subtype set_model' })
+  reset({ ultracode: false })
+  await st().setModel('claude-opus-5-5')
+  equal(st().notice?.message, "Couldn't switch to Opus 5.5 (200K). The session is still on Opus 5.5 (1M).", 'store: other errors get the generic line, sizes split equal labels')
+  fail({ timedOut: true })
+  reset({ ultracode: false })
+  await st().setModel('claude-sonnet-4-6')
+  ok(st().notice?.tone === 'warn' && st().notice?.message.startsWith('The switch to Sonnet 4.6 timed out, so the picker is back on Opus 5.5.'), 'store: a timeout warns instead')
+  let release = (): void => {}
+  replies.setModel = (_h: string, m: string) => (m === 'claude-sonnet-4-6' ? new Promise((r) => (release = () => r({ ok: false }))) : { ok: true })
+  reset({ ultracode: false })
+  const first = st().setModel('claude-sonnet-4-6')
+  await st().setModel('claude-opus-4-8[1m]')
+  release()
+  await first
+  ok(cur().modelChoice === 'claude-opus-4-8[1m]' && !st().notice, 'store: a superseded failure neither reverts nor notifies')
+  replies.setModel = () => ({ ok: true })
+}
+
+// A model with no effort keeps the stored one and sends none, so it's still there on the way back.
+{
+  reset({ ultracode: false, effortChoice: 'max' })
+  await st().setModel('claude-haiku-4-5-20251001')
+  ok(cur().effortChoice === 'max' && !calls.some((c) => c.name === 'setEffort'), 'store: no-effort switch keeps the effort and sends none')
+  await st().setModel('claude-opus-5-5[1m]')
+  equal(cur().effortChoice, 'max', 'store: the switch back restores it')
 }
 
 // Toggling Ultra never touches effort, and its IPC carries only the flag.
@@ -572,6 +610,47 @@ const q = (id: string, text: string): any => ({ id, text, refs: [] })
   ok(msgs[1].wokenBy?.[0]?.kind === 'agent' && msgs[1].wokenBy[0].description === 'sleep', 'store: the woken message names its task')
   ok(cur().endedTasks.length === 0, 'store: the caption consumes the ended tasks')
 }
+
+// Monitors: a turn that starts on its own is billed to the monitors watching, and a peer turn isn't.
+{
+  const call = (id: string, description: string): any => ({ id, name: 'Monitor', input: { command: 'tail -f /tmp/x.log', description, timeout_ms: 600000 }, result: 'Monitor started' })
+  const usage = { costUSD: 0.004, inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, models: [] }
+  const host = { id: 'a', role: 'assistant', text: '', thinking: '', tools: [call('m1', 'build log'), call('m2', 'test log')], blocks: [], turnEnd: {} }
+  const wake = (over: Record<string, unknown>): void => {
+    st().applyEvent('h1', { type: 'text-delta', text: 'saw it' })
+    st().applyEvent('h1', res({ usage, ...over }))
+  }
+  reset({ busy: false, messages: [host] })
+  st().applyEvent('h1', { type: 'bg-task-started', taskId: 't1', toolUseId: 'm1', description: 'tail', taskType: 'local_bash' })
+  equal(cur().monitors.m1?.description, 'build log', 'monitor: the record takes the call\'s description')
+  ok(cur().backgroundTasks.t1, 'monitor: the tray still gets the task')
+  wake({ fromTaskNotification: true })
+  equal(wokenLine(cur().messages.at(-1).wokenBy).text, 'Woken by monitor: build log', 'monitor: one running monitor captions the wake')
+  equal(monitorMeta(cur().monitors.m1, true), '1 wake · $0.0040', 'monitor: the wake and its cost are counted')
+  st().applyEvent('h1', { type: 'bg-task-started', taskId: 't2', toolUseId: 'm2', description: 'tail', taskType: 'local_bash' })
+  wake({ fromTaskNotification: true })
+  equal(wokenLine(cur().messages.at(-1).wokenBy).text, 'Woken by one of 2 monitors', 'monitor: two running monitors share the caption')
+  equal(monitorMeta(cur().monitors.m1, true), '2 wakes, 1 shared · $0.0080', 'monitor: a shared wake counts on the first')
+  equal(monitorMeta(cur().monitors.m2, true), '1 wake, 1 shared · $0.0040', 'monitor: and on the second')
+  wake({ fromPeer: true })
+  ok(!cur().messages.at(-1).wokenBy, 'monitor: a turn from elsewhere drops the guess')
+  equal(cur().monitors.m1.wakes, 2, 'monitor: and counts nothing')
+  st().applyEvent('h1', { type: 'bg-task-notification', taskId: 't1', status: 'completed' })
+  equal(useSession.getState().notice?.message, 'Monitor ended: build log', 'monitor: its end toasts as a monitor')
+  equal(cur().monitors.m1.status, 'completed', 'monitor: the record outlives its task')
+  wake({ fromTaskNotification: true })
+  equal(wokenLine(cur().messages.at(-1).wokenBy).text, 'Monitor ended: build log', 'monitor: the stream-end wake names the ended monitor')
+  equal(cur().monitors.m1.wakes, 3, 'monitor: and is billed to it')
+  equal(cur().monitors.m2.wakes, 1, 'monitor: not to the one still watching')
+  st().applyEvent('h1', { type: 'bg-tasks-changed', taskIds: [] })
+  equal(cur().monitors.m2.status, 'completed', 'monitor: one dropped from the running snapshot has ended')
+  reset({ monitors: { m: { taskId: 't', description: 'd', status: 'running', startMs: 0, wakes: 0, sharedWakes: 0, costUsd: 0, estimated: false } } })
+  st().applyEvent('h1', { type: 'process-exit', code: 0 })
+  equal(cur().monitors.m.status, 'completed', 'monitor: an exited session stops watching')
+}
+equal(wakeCandidates(undefined, [], { m: { taskId: 't', description: 'd', status: 'running', startMs: 0, wakes: 0, sharedWakes: 0, costUsd: 0, estimated: false } }).join(), 'm', 'monitor: a wake with no streamed reply goes to the running monitors')
+equal(wakeCandidates(undefined, [{ kind: 'agent', description: 'a', status: 'completed' }], {}).length, 0, 'monitor: a subagent\'s wake is no monitor\'s')
+ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0, wakes: 0, sharedWakes: 0, costUsd: 0, estimated: false } }, ['m'], { costUSD: 1, inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, models: [{ model: 'x' }] }).m.estimated, 'monitor: an unpriced wake is an estimate')
 
 // A turn that launched background work counts it in its footer until it ends.
 {

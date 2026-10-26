@@ -17,7 +17,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { DomainEvent, ElicitationResponse } from '../../shared/events'
-import type { DispatchResult, ModeChangeResult } from '../../shared/ipc'
+import type { DispatchResult, ModeChangeResult, ModelSwitchResult } from '../../shared/ipc'
+import { clampEffort, deriveModelInfo, isEffortChoice } from '../../shared/settings'
 import { NdjsonParser } from './ndjson'
 import { EventMapper } from './event-mapper'
 import { stripRuntimeMarkers } from './shell-env'
@@ -105,6 +106,8 @@ interface ControlResult {
   ok: boolean
   payload?: Record<string, unknown>
   errorCode?: string
+  error?: string
+  timedOut?: true
 }
 
 /**
@@ -112,7 +115,7 @@ interface ControlResult {
  * orchestration, workflows, cron, worktrees, and plan mode. Read/Edit/Write/Bash/WebFetch/
  * Skill/ToolSearch/NotebookEdit/ReportFindings stay available, so a quick chat can still read
  * and edit. Task-tracking tools (TaskCreate/…) are governed by enableTaskTools, not this list.
- * Names verified live on CLI 2.1.274.
+ * Names verified live on CLI 2.1.310.
  */
 const EPHEMERAL_DISALLOWED_TOOLS = [
   'Task',
@@ -125,6 +128,7 @@ const EPHEMERAL_DISALLOWED_TOOLS = [
   'CronDelete',
   'CronList',
   'ScheduleWakeup',
+  'Monitor',
   'EnterWorktree',
   'ExitWorktree',
   'EnterPlanMode',
@@ -500,7 +504,7 @@ export class ClaudeSession extends EventEmitter {
     if (!raw || typeof raw !== 'object') return
     const env = raw as {
       type?: string
-      response?: { subtype?: string; request_id?: string; response?: Record<string, unknown>; error_code?: string }
+      response?: { subtype?: string; request_id?: string; response?: Record<string, unknown>; error_code?: string; error?: unknown }
     }
     if (env.type !== 'control_response') return
     const reqId = env.response?.request_id
@@ -550,14 +554,20 @@ export class ClaudeSession extends EventEmitter {
       const p = this.pendingControl.get(reqId)!
       this.pendingControl.delete(reqId)
       clearTimeout(p.timer)
-      p.resolve({ ok, payload: env.response?.response, errorCode: env.response?.error_code })
+      const error = env.response?.error
+      p.resolve({
+        ok,
+        payload: env.response?.response,
+        errorCode: env.response?.error_code,
+        error: typeof error === 'string' ? error : undefined
+      })
     }
   }
 
   /**
    * Send a control_request and await its control_response, returning the full result
-   * (success flag + response payload). Resolves `{ok:false}` on `error` or if no
-   * response arrives within `timeoutMs` (so callers can fall back).
+   * (success flag + response payload). Resolves `{ok:false}` on `error`, and
+   * `{ok:false, timedOut:true}` if no response arrives within `timeoutMs` (so callers can fall back).
    * NOTE: only reliable for the CLI's directly-handled ("worker allowlist") subtypes.
    * Callback-gated getters (get_context_usage, etc.) never respond over the wire
    * and would always time out (verified).
@@ -572,7 +582,7 @@ export class ClaudeSession extends EventEmitter {
     return new Promise<ControlResult>((resolve) => {
       const timer = setTimeout(() => {
         this.pendingControl.delete(requestId)
-        resolve({ ok: false })
+        resolve({ ok: false, timedOut: true })
       }, timeoutMs)
       this.pendingControl.set(requestId, { resolve, timer })
       this.writeLine({ type: 'control_request', request_id: requestId, request: { subtype, ...extra } })
@@ -725,14 +735,23 @@ export class ClaudeSession extends EventEmitter {
    * (`set_model`). Verified to work mid-session. Commits opts only on the success ACK
    * so a later effort-respawn rebuilds from the confirmed model.
    */
-  async setModel(model: string): Promise<boolean> {
-    if (!this.child) return false
-    const ok = await this.sendControl('set_model', { model })
-    if (ok) {
-      this.opts = { ...this.opts, model }
-      this.mapper.setModel(model)
+  async setModel(model: string): Promise<ModelSwitchResult> {
+    if (!this.child) return { ok: false }
+    // The CLI checks the model against the API before it ACKs and waits up to 15s for that.
+    const r = await this.sendControlResult('set_model', { model }, 16_000)
+    if (!r.ok) return { ok: false, timedOut: r.timedOut, errorCode: r.errorCode, reason: r.error }
+    const regained = !deriveModelInfo(this.opts.model ?? '').efforts.length && !!deriveModelInfo(model).efforts.length
+    this.opts = { ...this.opts, model }
+    this.mapper.setModel(model)
+    // Whether the CLI kept the effortLevel across a model that takes none is unverified, so
+    // the stored effort is sent again. The renderer's own setEffort then matches and no-ops.
+    const effort = this.opts.effort
+    if (regained && isEffortChoice(effort)) {
+      const next = clampEffort(model, effort)
+      this.opts = { ...this.opts, effort: next }
+      await this.applyEffort(next)
     }
-    return ok
+    return { ok: true }
   }
 
   /**
@@ -747,8 +766,10 @@ export class ClaudeSession extends EventEmitter {
     if (this.opts.effort === effort) return
     this.opts = { ...this.opts, effort }
     if (!this.child) return
-    // Live effort change over the control protocol (verified directly-handled);
-    // respawn fallback if the control_request errors or times out.
+    await this.applyEffort(effort)
+  }
+
+  private async applyEffort(effort: string): Promise<void> {
     const ok = await this.sendControl('apply_flag_settings', { settings: { effortLevel: effort } })
     if (!ok) {
       this.emitEvent({ type: 'error', severity: 'info', message: `Live effort change unavailable. Reconnecting to apply "${effort}"…` })

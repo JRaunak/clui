@@ -50,14 +50,21 @@ export function turnEndLine(reason: TurnEnd | undefined, durationMs: number | un
   }
 }
 
-const VERB: Record<WokenTask['status'], string> = { completed: 'finished', failed: 'failed', killed: 'stopped' }
+const VERB: Record<Exclude<WokenTask['status'], 'running'>, string> = { completed: 'finished', failed: 'failed', killed: 'stopped' }
+const MONITOR_VERB: Record<Exclude<WokenTask['status'], 'running'>, string> = { completed: 'ended', failed: 'failed', killed: 'stopped' }
 
-/** The caption over a turn a background task's end started. */
+/** The caption over a turn that a background task's end or a running monitor started. Only a
+ *  monitor is ever `running` here. */
 export function wokenLine(tasks: WokenTask[]): { text: string; title: string } {
   if (tasks.length === 1) {
     const [t] = tasks
+    if (t.status === 'running') return { text: `Woken by monitor: ${t.description}`, title: t.description }
+    if (t.kind === 'monitor') return { text: `Monitor ${MONITOR_VERB[t.status]}: ${t.description}`, title: t.description }
     const lead = `Background ${t.kind} ${VERB[t.status]}`
     return { text: t.description ? `${lead}: ${t.description}` : lead, title: t.description || lead }
+  }
+  if (tasks.every((t) => t.status === 'running')) {
+    return { text: `Woken by one of ${tasks.length} monitors`, title: tasks.map((t) => t.description).join('\n') }
   }
   const failed = tasks.filter((t) => t.status === 'failed').length
   return {

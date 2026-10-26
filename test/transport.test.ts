@@ -88,10 +88,35 @@ reset()
   ackInit(c)
   const p = s.setModel('new')
   respond(c, 'set_model', 'success')
-  ok((await p) === true, 'transport: setModel → true on success ACK')
+  ok((await p).ok, 'transport: setModel → ok on success ACK')
   const p2 = s.setModel('bad')
-  respond(c, 'set_model', 'error')
-  ok((await p2) === false, 'transport: setModel → false on error ACK')
+  const id = W(c).filter((o: any) => o.request?.subtype === 'set_model').pop()?.request_id
+  const error = 'API error: 400 The provided model identifier is invalid · model not changed'
+  c.stdout.emit('data', JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: id, error, error_code: 'check_rejected' } }) + '\n')
+  const r2 = await p2
+  ok(!r2.ok && r2.errorCode === 'check_rejected' && r2.reason === error && !r2.timedOut, 'transport: setModel error ACK carries the code and reason')
+}
+
+// Leaving a model that takes no effort re-sends the stored effort, clamped to the new model
+reset()
+{
+  const s = mk({ model: 'claude-haiku-4-5-20251001', effort: 'xhigh' })
+  s.start()
+  const c = spawns()[0]
+  ackInit(c)
+  const p = s.setModel('claude-sonnet-4-6')
+  respond(c, 'set_model', 'success')
+  await tick()
+  respond(c, 'apply_flag_settings', 'success')
+  ok((await p).ok, 'transport: regained-effort switch succeeds')
+  const sent = W(c).filter((o: any) => o.request?.subtype === 'apply_flag_settings')
+  ok(sent.length === 1 && sent[0].request.settings.effortLevel === 'high', 'transport: stored effort re-sent, clamped')
+  await s.setEffort('high')
+  ok(W(c).filter((o: any) => o.request?.subtype === 'apply_flag_settings').length === 1, 'transport: the follow-up setEffort no-ops')
+  const p2 = s.setModel('claude-opus-5-5')
+  respond(c, 'set_model', 'success')
+  await p2
+  ok(W(c).filter((o: any) => o.request?.subtype === 'apply_flag_settings').length === 1, 'transport: effort-to-effort switch sends no effort')
 }
 
 // init error ACK tears down instead of hanging

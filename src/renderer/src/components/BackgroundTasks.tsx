@@ -13,6 +13,7 @@ import {
   useSession,
   subagentOwnerOfTask,
   type BackgroundTask,
+  type MonitorRecord,
   type NestedSubagent,
   type SubagentMessage
 } from '../store'
@@ -22,6 +23,7 @@ import { IconCheck, IconStop, IconWarn, IconNoEntry } from './Icon'
 const EMPTY: Record<string, BackgroundTask> = {}
 const EMPTY_SUB_MSGS: Record<string, SubagentMessage[]> = {}
 const EMPTY_SUB_CHILDREN: Record<string, NestedSubagent[]> = {}
+const EMPTY_MONITORS: Record<string, MonitorRecord> = {}
 
 const LINGER_MS = 15_000
 
@@ -29,6 +31,7 @@ export function BackgroundTasks(): JSX.Element | null {
   const tasks = useActive((s) => s?.backgroundTasks ?? EMPTY)
   const subMsgs = useActive((s) => s?.subagentMessages ?? EMPTY_SUB_MSGS)
   const subChildren = useActive((s) => s?.subagentChildren ?? EMPTY_SUB_CHILDREN)
+  const monitors = useActive((s) => s?.monitors ?? EMPTY_MONITORS)
   const handleId = useActive((s) => s?.handleId ?? null)
   const stopTask = useSession((s) => s.stopBackgroundTask)
   const viewSubagent = useSession((s) => s.viewSubagent)
@@ -193,6 +196,7 @@ export function BackgroundTasks(): JSX.Element | null {
                   <Row
                     key={t.taskId}
                     task={t}
+                    monitor={!!t.toolUseId && t.toolUseId in monitors}
                     onStop={() => handleId && void stopTask(handleId, t.taskId)}
                   />
                 ))}
@@ -217,9 +221,12 @@ function Row({
   onStop,
   onOpen,
   nested,
-  ownerDesc
+  ownerDesc,
+  monitor
 }: {
   task: BackgroundTask
+  /** A shell that is a Monitor tool's watch. */
+  monitor?: boolean
   onStop: () => void
   /** Present only for a backgrounded subagent row; opens its transcript. */
   onOpen?: () => void
@@ -255,11 +262,11 @@ function Row({
   // a nested agent (clickable, has a transcript) from a nested shell, since the arrow is one
   // small glyph and hover shows nothing until hovered. Nested spends faint rather than the
   // accent so a parent/child pair doesn't spend the scarce accent twice.
-  const typeLabel = isSubagent && (
+  const typeLabel = (isSubagent || monitor) && (
     <span
       className={`shrink-0 font-mono text-meta font-semibold ${nested ? 'text-dim' : 'text-content'}`}
     >
-      Agent
+      {isSubagent ? 'Agent' : 'Monitor'}
     </span>
   )
   const labelInner = (
@@ -274,7 +281,7 @@ function Row({
     </>
   )
 
-  const stopLabel = `Stop background ${isSubagent ? 'subagent' : 'task'}: ${task.description}${
+  const stopLabel = `${monitor ? 'Stop monitor' : `Stop background ${isSubagent ? 'subagent' : 'task'}`}: ${task.description}${
     ownerDesc ? ` (started by ${ownerDesc})` : ''
   }`
   const trailing = running ? (

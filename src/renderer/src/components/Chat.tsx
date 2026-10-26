@@ -319,7 +319,7 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         : isDirectoryless
           ? 'Type a message below to begin. Not tied to a project folder.'
           : 'Type a message below to begin. Claude runs in this directory.'
-    const family = deriveModelInfo(modelChoice).family
+    const { family, efforts } = deriveModelInfo(modelChoice)
     const familyWord = family.charAt(0).toUpperCase() + family.slice(1)
     return (
       <div
@@ -335,7 +335,8 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
           <p className="text-sm leading-relaxed text-faint">{body}</p>
           {!resumed && ephemeral && (
             <p className="text-xs leading-relaxed text-faint">
-              {familyWord} at high effort. Claude{' '}
+              {familyWord}
+              {efforts.length ? ' at high effort' : ', which takes no effort level'}. Claude{' '}
               {QUICK_PERMISSION_PHRASE[modeChoice] ?? 'uses your default permissions'}, with a limited tool set.
             </p>
           )}

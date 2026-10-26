@@ -1,12 +1,13 @@
 import { CHANGE_READ_TOOL, changeLabel, messageGist, parseRefs, type ContextReference } from '../../../shared/context'
-import type { ChatMessage, PerSessionState, ToolCall } from '../store'
+import type { ChatMessage, MonitorRecord, PerSessionState, ToolCall } from '../store'
 import { isBackgroundedTool } from './lumen'
 import { READ_CHANGE, spokenChange } from './refCopy'
+import { formatCost } from './formatCost'
 
 export { isBackgroundedTool }
 
 /** Backgrounded tools read info blue; amber is reserved for "needs you". */
-export type RowState = 'running' | 'needs-you' | 'checking' | 'failed' | 'not-run' | 'stopped' | 'launching' | 'launched' | 'done'
+export type RowState = 'running' | 'needs-you' | 'checking' | 'failed' | 'not-run' | 'stopped' | 'launching' | 'launched' | 'watching' | 'done' | 'ended'
 
 export const STATE_TEXT: Record<RowState, string> = {
   running: 'running',
@@ -17,7 +18,9 @@ export const STATE_TEXT: Record<RowState, string> = {
   stopped: 'stopped',
   launching: 'launching',
   launched: 'launched',
-  done: 'done'
+  watching: 'watching',
+  done: 'done',
+  ended: 'ended'
 }
 
 /** A backgrounded tool returns at launch while the real work continues in the tray, so its
@@ -32,7 +35,22 @@ export function rowState(tool: ToolCall, needsYou: boolean, checking = false): R
   return bg ? 'launched' : 'done'
 }
 
-const SEVERITY: RowState[] = ['failed', 'needs-you', 'checking', 'running', 'launching', 'launched', 'not-run', 'stopped', 'done']
+/** A Monitor's start result lands at once while it keeps watching, so its state follows the
+ *  monitor. No record means the monitor died with an earlier process (a rebuilt or resumed row). */
+export function monitorRowState(tool: ToolCall, needsYou: boolean, checking: boolean, rec: MonitorRecord | undefined): RowState {
+  if (tool.result === undefined || tool.isError) return rowState(tool, needsYou, checking)
+  if (!rec) return 'ended'
+  return rec.status === 'running' ? 'watching' : rec.status === 'completed' ? 'ended' : rec.status === 'killed' ? 'stopped' : 'failed'
+}
+
+/** "no wakes yet", "1 wake · $0.0040", "3 wakes, 1 shared · $0.02". */
+export function monitorMeta(rec: MonitorRecord, watching: boolean): string {
+  if (!rec.wakes) return watching ? 'no wakes yet' : 'no wakes'
+  const shared = rec.sharedWakes ? `, ${rec.sharedWakes} shared` : ''
+  return `${rec.wakes} wake${rec.wakes === 1 ? '' : 's'}${shared} · ${formatCost(rec.costUsd)}`
+}
+
+const SEVERITY: RowState[] = ['failed', 'needs-you', 'checking', 'running', 'launching', 'launched', 'watching', 'not-run', 'stopped', 'ended', 'done']
 
 /** The aggregate row's single bead shows the most urgent child. */
 export function worstState(states: RowState[]): RowState {

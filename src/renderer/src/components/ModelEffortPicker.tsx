@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useActive, useSession, effortCap } from '../store'
 import { useEscape } from '../lib/useEscape'
 import { IconSliders, IconRefresh, IconLock, IconWarn, IconCheck } from './Icon'
@@ -138,7 +138,10 @@ export function ModelEffortPicker(): JSX.Element {
     if (open && models.length) checkedRef.current?.scrollIntoView({ block: 'nearest' })
   }, [open, models.length])
 
-  const curLabel = deriveModelInfo(modelChoice).label
+  const cur = deriveModelInfo(modelChoice)
+  const curLabel = cur.label
+  const noEffort = !cur.efforts.length
+  const uid = useId()
 
   return (
     <div className="relative min-w-0">
@@ -147,7 +150,7 @@ export function ModelEffortPicker(): JSX.Element {
         data-ui="model-chip"
         {...p.triggerProps}
         aria-haspopup="dialog"
-        title={`${curLabel} · ${EFFORT_LABELS[runningEffort]}`}
+        title={`${curLabel} · ${noEffort ? 'No effort setting' : EFFORT_LABELS[runningEffort]}`}
         onClick={(e) => {
           p.triggerProps.onClick(e)
           setHover(null)
@@ -160,13 +163,16 @@ export function ModelEffortPicker(): JSX.Element {
         <span className="min-w-0 truncate whitespace-nowrap font-medium">{curLabel}</span>
         {/* A lock glyph marks a CLI `maxEffortLevel` cap, so the chip is honest without
             hiding the value. Ultra stays off the chip; its own toggle already says it's on. */}
-        <span
-          className={`flex shrink-0 items-center gap-1 whitespace-nowrap font-medium ${EFFORT_COLORS[runningEffort]}`}
-          title={cappedDown ? `Your CLI settings cap effort at ${capLabel}.` : undefined}
-        >
-          {EFFORT_LABELS[runningEffort]}
-          {cappedDown && <IconLock className="h-3 w-3 opacity-80" />}
-        </span>
+        {!noEffort && (
+          <span
+            data-ui="model-chip-effort"
+            className={`flex shrink-0 items-center gap-1 whitespace-nowrap font-medium ${EFFORT_COLORS[runningEffort]}`}
+            title={cappedDown ? `Your CLI settings cap effort at ${capLabel}.` : undefined}
+          >
+            {EFFORT_LABELS[runningEffort]}
+            {cappedDown && <IconLock className="h-3 w-3 opacity-80" />}
+          </span>
+        )}
         <svg
           viewBox="0 0 12 12"
           className={`h-3 w-3 shrink-0 text-dim transition-transform ${open ? '' : 'rotate-180'}`}
@@ -183,7 +189,7 @@ export function ModelEffortPicker(): JSX.Element {
       <div
         {...p.popoverProps}
         aria-label="Model and effort"
-        className="pop-base pop glass-thick flex w-[196px] flex-col rounded-xl py-1 text-xs"
+        className="pop-base pop glass-thick flex w-[220px] flex-col rounded-xl py-1 text-xs"
         onMouseLeave={scheduleHide}
       >
           <div className="flex shrink-0 items-center justify-between px-3 py-1 text-caps uppercase text-dim">
@@ -244,12 +250,14 @@ export function ModelEffortPicker(): JSX.Element {
                 </div>
               )
             }
+            const rowNoEffort = !info.efforts.length
+            const noEffortId = `${uid}-no-effort-${info.id}`
             return (
               <div
                 key={info.id}
                 style={hover === info.id ? ({ anchorName: '--effort-row' } as React.CSSProperties) : undefined}
                 className="relative"
-                onMouseEnter={() => scheduleHover(info.id)}
+                onMouseEnter={rowNoEffort ? scheduleHide : () => scheduleHover(info.id)}
               >
                 {/* Two click regions (dropdown contract: selecting an item closes the
                     menu). Clicking the MODEL NAME switches the model AND closes, a
@@ -261,6 +269,7 @@ export function ModelEffortPicker(): JSX.Element {
                   <button
                     type="button"
                     ref={info.id === modelChoice ? checkedRef : undefined}
+                    aria-describedby={rowNoEffort ? noEffortId : undefined}
                     className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                     onClick={(e) => {
                       if (info.id !== modelChoice) void setModel(info.id)
@@ -269,7 +278,7 @@ export function ModelEffortPicker(): JSX.Element {
                     }}
                   >
                     <span className="w-3 shrink-0">{info.id === modelChoice && <IconCheck className="h-3 w-3 text-content" />}</span>
-                    <span className="flex-1 truncate">{info.label}</span>
+                    <span className="flex-1 truncate" title={info.label}>{info.label}</span>
                     {/* No size for 'unknown' families (policy selectors, unrecognized ids):
                         they assert no context window. */}
                     {info.family !== 'unknown' && (
@@ -281,37 +290,48 @@ export function ModelEffortPicker(): JSX.Element {
                       </span>
                     )}
                   </button>
-                  <button
-                    type="button"
-                    ref={hover === info.id ? chevronRef : undefined}
-                    aria-expanded={hover === info.id}
-                    className="flex shrink-0 items-center py-2 pr-3 pl-1 text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                    title={`Adjust effort · ${info.label}`}
-                    aria-label={`Adjust effort for ${info.label}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      clearHoverTimer()
-                      setHover((h) => (h === info.id ? null : info.id))
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key !== 'ArrowRight') return
-                      e.preventDefault()
-                      clearHoverTimer()
-                      setHover(info.id)
-                    }}
-                  >
-                    <svg
-                      viewBox="0 0 12 12"
-                      className="h-3 w-3"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
+                  {rowNoEffort ? (
+                    <span
+                      data-ui="no-effort"
+                      id={noEffortId}
+                      className="shrink-0 py-2 pl-1 pr-3 text-meta text-dim"
+                      title="This model doesn't take an effort level"
                     >
-                      <path d="M4.5 3 7.5 6 4.5 9" />
-                    </svg>
-                  </button>
+                      No effort
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      ref={hover === info.id ? chevronRef : undefined}
+                      aria-expanded={hover === info.id}
+                      className="flex shrink-0 items-center py-2 pr-3 pl-1 text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      title={`Adjust effort · ${info.label}`}
+                      aria-label={`Adjust effort for ${info.label}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        clearHoverTimer()
+                        setHover((h) => (h === info.id ? null : info.id))
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'ArrowRight') return
+                        e.preventDefault()
+                        clearHoverTimer()
+                        setHover(info.id)
+                      }}
+                    >
+                      <svg
+                        viewBox="0 0 12 12"
+                        className="h-3 w-3"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M4.5 3 7.5 6 4.5 9" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
 
                 {hover === info.id && (

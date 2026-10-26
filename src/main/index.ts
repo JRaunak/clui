@@ -680,7 +680,7 @@ function registerIpc(): void {
 
   handle(IpcChannels.setModel, async (_e, handleId: string, model: ModelChoice) => {
     // model is the raw --model value; pass it straight through.
-    return model ? manager.setModel(handleId, model) : false
+    return model ? manager.setModel(handleId, model) : { ok: false }
   })
 
   handle(IpcChannels.setEffort, async (_e, handleId: string, effort: EffortChoice) => {

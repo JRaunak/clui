@@ -16,13 +16,13 @@
  * each event into `sessions[handleId]`.
  */
 import { create } from 'zustand'
-import type { DomainEvent, ElicitationResponse, PermissionDenial, PermissionSuggestion, RateLimit, SessionTask, SlashCommandInfo, TurnEnd, TurnUsage } from '../../shared/events'
+import { isListPriced, type DomainEvent, type ElicitationResponse, type PermissionDenial, type PermissionSuggestion, type RateLimit, type SessionTask, type SlashCommandInfo, type TurnEnd, type TurnUsage } from '../../shared/events'
 import type { BlockedPrompt, CompactionMarker, ProjectGroup } from '../../shared/sessions'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { loadFailureOf, siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
-import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, latestModelInFamily, deriveModelInfo, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
+import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, contextSizeLabel, latestModelInFamily, deriveModelInfo, modelCheckReason, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
 import { pinWords, clipName, type AnnotateEvent } from '../../shared/annotate'
 import {
@@ -198,11 +198,30 @@ export interface PeerMessage {
   pending: boolean
 }
 
-/** A background task whose end woke Claude for a turn of its own. */
+/** A background task whose end woke Claude for a turn of its own. A `running` monitor is a
+ *  provisional guess, made when a turn starts on its own while monitors watch. */
 export interface WokenTask {
-  kind: 'agent' | 'command'
+  kind: 'agent' | 'command' | 'monitor'
   description: string
-  status: 'completed' | 'failed' | 'killed'
+  status: 'completed' | 'failed' | 'killed' | 'running'
+  /** A monitor's tool_use id. */
+  id?: string
+}
+
+/** A Monitor tool call's life, kept past its bash task so the row keeps its final state. */
+export interface MonitorRecord {
+  taskId: string
+  description: string
+  status: 'running' | 'completed' | 'killed' | 'failed'
+  startMs: number
+  /** Wakes counted on this monitor, shared ones included. */
+  wakes: number
+  /** Of those, wakes while another monitor was also running. */
+  sharedWakes: number
+  /** Summed cost of those wakes. */
+  costUsd: number
+  /** Some counted wake was priced at list. */
+  estimated: boolean
 }
 
 /** How a finished turn ended, for its footer. Its presence also closes the message, so whatever
@@ -387,6 +406,8 @@ export interface PerSessionState {
   /** Live dynamic workflows (ultracode), keyed by workflow task_id. Populated from
    *  workflow-started/progress/ended events; drives the tray chip + phase tree. */
   workflows: Record<string, WorkflowState>
+  /** Monitor tool calls by tool_use id. */
+  monitors: Record<string, MonitorRecord>
   /** The CLI's live slash-command list (from the initialize response). The
    *  composer filters this to a curated headless-safe allowlist. Empty until the
    *  init handshake lands → composer falls back to the hardcoded built-ins. */
@@ -1155,6 +1176,7 @@ const gitGen = new Map<string, number>()
 const sameGit = (a: GitPathStatus | undefined, b: GitPathStatus): boolean => !!a && JSON.stringify(a) === JSON.stringify(b)
 
 const EMPTY_WOKEN: WokenTask[] = []
+const EMPTY_MONITORS: Record<string, MonitorRecord> = {}
 const EMPTY_CHECKING: Record<string, true> = {}
 
 function withoutKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
@@ -1640,6 +1662,7 @@ async function beginSession(
     subagentMessages: {},
     subagentChildren: {},
     workflows: {},
+    monitors: EMPTY_MONITORS,
     slashCommands: EMPTY_SLASH_COMMANDS,
     tasks: EMPTY_TASKS,
     lastError: null,
@@ -2040,6 +2063,39 @@ function flushRefs(handleId: string): void {
 function endsUserTurn(e: Extract<DomainEvent, { type: 'result' }>): boolean {
   return (!e.fromTaskNotification && !e.fromPeer) || !!e.answersUser
 }
+
+/** A turn that starts on its own while monitors watch was most likely woken by one of them. */
+export function runningMonitorWakes(monitors: Record<string, MonitorRecord>): WokenTask[] {
+  return Object.entries(monitors).flatMap(([id, r]) =>
+    r.status === 'running' ? [{ kind: 'monitor' as const, id, description: r.description, status: 'running' as const }] : []
+  )
+}
+
+/** The monitors a background turn is billed to: the ones its caption names; for a turn the CLI opened
+ *  without streaming, the tasks that ended before it, else every running monitor. */
+export function wakeCandidates(woken: WokenTask[] | undefined, ended: WokenTask[], monitors: Record<string, MonitorRecord>): string[] {
+  const named = woken ?? (ended.length ? ended : null)
+  if (named) return named.flatMap((t) => (t.kind === 'monitor' && t.id ? [t.id] : []))
+  return Object.keys(monitors).filter((id) => monitors[id].status === 'running')
+}
+
+/** One wake on each candidate. The stream doesn't say which of several monitors fired, so each
+ *  counts it and marks it shared. */
+export function countWake(monitors: Record<string, MonitorRecord>, ids: string[], usage?: TurnUsage): Record<string, MonitorRecord> {
+  const shared = ids.length > 1 ? 1 : 0
+  const cost = usage?.costUSD ?? 0
+  const estimated = !!usage && isListPriced(usage)
+  const next = { ...monitors }
+  for (const id of ids) {
+    const r = next[id]
+    if (!r) continue
+    next[id] = { ...r, wakes: r.wakes + 1, sharedWakes: r.sharedWakes + shared, costUsd: r.costUsd + cost, estimated: r.estimated || estimated }
+  }
+  return next
+}
+
+const monitorOfTask = (monitors: Record<string, MonitorRecord>, taskId: string): string | undefined =>
+  Object.keys(monitors).find((id) => monitors[id].taskId === taskId)
 
 /** Find or create the current (last) assistant message to append streamed content. A new one
  *  carries `wokenBy` when a background task's end started its turn. */
@@ -2472,11 +2528,25 @@ export const useSession = create<SessionStore>((set, get) => ({
     if (active.sessionId) rememberModelPrefs(active.sessionId, { model, effort: nextEffort, ultracode: nextUltra })
     // If the CLI rejected the model change, revert the picker + remembered prefs rather
     // than leave the UI (and a future resume) claiming a model that never applied.
-    const ok = await window.clui.setModel(active.handleId, model)
-    if (!ok) {
+    const res = await window.clui.setModel(active.handleId, model)
+    // A reply that lands after a newer pick belongs to a superseded switch and must not overwrite it.
+    if (get().sessions[active.handleId]?.modelChoice !== model) return
+    if (!res.ok) {
+      let target = deriveModelInfo(model).label
+      let current = deriveModelInfo(prev.modelChoice).label
+      if (target === current) {
+        target += ` (${contextSizeLabel(model)})`
+        current += ` (${contextSizeLabel(prev.modelChoice)})`
+      }
+      const reason = res.errorCode === 'check_rejected' ? modelCheckReason(res.reason) : null
       set((s) => ({
         ...patchSlice(s, active.handleId, prev),
-        notice: { message: 'Could not switch model.', tone: 'error' }
+        notice: res.timedOut
+          ? {
+              message: `The switch to ${target} timed out, so the picker is back on ${current}. If the CLI applies it late, the picker updates on your next message.`,
+              tone: 'warn'
+            }
+          : { message: `Couldn't switch to ${target}.${reason ? ` ${reason}` : ''} The session is still on ${current}.`, tone: 'error' }
       }))
       if (active.sessionId)
         rememberModelPrefs(active.sessionId, {
@@ -2834,8 +2904,10 @@ export const useSession = create<SessionStore>((set, get) => ({
       // A turn that starts while the user's isn't running was woken by the tasks that ended before it.
       const assistant = (): ChatMessage => {
         const before = messages.length
-        const m = currentAssistant(messages, slice.busy ? undefined : slice.endedTasks)
-        if (messages.length > before && m.wokenBy) patch.endedTasks = EMPTY_WOKEN
+        const peer = messages[before - 1]?.role === 'peer'
+        const woken = slice.busy ? undefined : slice.endedTasks.length ? slice.endedTasks : peer ? undefined : runningMonitorWakes(slice.monitors)
+        const m = currentAssistant(messages, woken)
+        if (messages.length > before && slice.endedTasks.length && m.wokenBy) patch.endedTasks = EMPTY_WOKEN
         return m
       }
 
@@ -3237,6 +3309,23 @@ export const useSession = create<SessionStore>((set, get) => ({
               startMs: Date.now()
             }
           }
+          const call = e.toolUseId ? messages.findLast((m) => m.tools.some((t) => t.id === e.toolUseId))?.tools.find((t) => t.id === e.toolUseId) : undefined
+          if (call?.name === 'Monitor') {
+            const desc = (call.input as { description?: unknown } | null)?.description
+            patch.monitors = {
+              ...slice.monitors,
+              [call.id]: {
+                taskId: e.taskId,
+                description: typeof desc === 'string' && desc ? desc : e.description,
+                status: 'running',
+                startMs: Date.now(),
+                wakes: 0,
+                sharedWakes: 0,
+                costUsd: 0,
+                estimated: false
+              }
+            }
+          }
           break
         }
         case 'bg-task-updated': {
@@ -3252,6 +3341,10 @@ export const useSession = create<SessionStore>((set, get) => ({
               ...slice.backgroundTasks,
               [e.taskId]: { ...prev, status: narrowTaskStatus(e.status) }
             }
+          }
+          const mon = monitorOfTask(slice.monitors, e.taskId)
+          if (mon && e.status && e.status !== 'running') {
+            patch.monitors = { ...slice.monitors, [mon]: { ...slice.monitors[mon], status: narrowTaskStatus(e.status) } }
           }
           break
         }
@@ -3278,15 +3371,21 @@ export const useSession = create<SessionStore>((set, get) => ({
               delete next[e.taskId]
               patch.backgroundTasks = next
             }
+            const mon = monitorOfTask(slice.monitors, e.taskId)
+            const rec = mon ? slice.monitors[mon] : undefined
+            if (mon && rec) patch.monitors = { ...slice.monitors, [mon]: { ...rec, status } }
+            const description = rec?.description ?? prev.description
             patch.endedTasks = [
               ...slice.endedTasks,
-              { kind: prev.taskType === 'local_agent' ? 'agent' : 'command', description: prev.description, status }
+              mon
+                ? { kind: 'monitor', id: mon, description, status }
+                : { kind: prev.taskType === 'local_agent' ? 'agent' : 'command', description, status }
             ]
-            const kind = prev.taskType === 'local_agent' ? 'Background subagent' : 'Background task'
+            const kind = mon ? 'Monitor' : prev.taskType === 'local_agent' ? 'Background subagent' : 'Background task'
             // Tone tracks the terminal outcome so a killed or failed task isn't announced as success.
-            const verb = status === 'killed' ? 'stopped' : status === 'failed' ? 'failed' : 'finished'
+            const verb = status === 'killed' ? 'stopped' : status === 'failed' ? 'failed' : mon ? 'ended' : 'finished'
             topLevelNotice = {
-              message: `${kind} ${verb}: ${prev.description}`,
+              message: `${kind} ${verb}: ${description}`,
               tone: status === 'killed' ? 'warn' : status === 'failed' ? 'error' : 'success'
             }
           }
@@ -3303,6 +3402,12 @@ export const useSession = create<SessionStore>((set, get) => ({
             if (running.has(id) || lingering) next[id] = t
           }
           patch.backgroundTasks = next
+          // A monitor whose task left the snapshot without a notification has still ended.
+          const gone = Object.keys(slice.monitors).filter((id) => slice.monitors[id].status === 'running' && !running.has(slice.monitors[id].taskId))
+          if (gone.length) {
+            patch.monitors = { ...slice.monitors }
+            for (const id of gone) patch.monitors[id] = { ...slice.monitors[id], status: 'completed' }
+          }
           break
         }
         case 'peer-pending': {
@@ -3411,15 +3516,23 @@ export const useSession = create<SessionStore>((set, get) => ({
             ? messages.findLastIndex((m) => m.role === 'assistant' && !m.hookNotes)
             : messages.findLastIndex((m) => m.role === 'user' || (m.role === 'assistant' && !m.hookNotes))
           const host = messages[idx]
-          if (host?.role === 'assistant' && !host.turnEnd) {
+          const fresh = host?.role === 'assistant' && !host.turnEnd
+          if (e.fromTaskNotification && !e.answersUser) {
+            const ids = wakeCandidates(fresh ? host.wokenBy : undefined, slice.endedTasks, slice.monitors)
+            if (ids.length) patch.monitors = countWake(slice.monitors, ids, e.usage)
+          }
+          if (fresh) {
             const started = userEnd ? slice.turnStartMs : null
             const turnEnd: TurnRecord = {
               reason: e.endReason,
               durationMs: e.durationMs ?? (started !== null && !e.localCommand ? Date.now() - started : undefined),
               ...(slice.turnTasks.length ? { bgTaskIds: slice.turnTasks } : {})
             }
+            // A monitor guess made at the first block was wrong when the CLI says the turn came from elsewhere.
+            const { wokenBy, ...rest } = host
+            const guessed = !e.fromTaskNotification && !!wokenBy?.every((t) => t.kind === 'monitor' && t.status === 'running')
             messages[idx] = {
-              ...host,
+              ...(guessed ? rest : host),
               ...(e.usage ? { usage: e.usage } : {}),
               ...(e.denials?.length ? { denials: e.denials } : {}),
               turnEnd
@@ -3475,6 +3588,11 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.compacting = false
           patch.exited = true
           patch.modStatus = EMPTY_MOD_STATUS
+          // A monitor dies with its process, so its row stops claiming to watch.
+          if (Object.values(slice.monitors).some((m) => m.status === 'running'))
+            patch.monitors = Object.fromEntries(
+              Object.entries(slice.monitors).map(([id, m]) => [id, m.status === 'running' ? { ...m, status: 'completed' } : m])
+            )
           break
       }
 

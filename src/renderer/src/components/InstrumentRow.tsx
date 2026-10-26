@@ -1,8 +1,9 @@
 import { fileLinkTitle, LinkedText, openFileLink, useLinkTarget } from '../lib/openLink'
 import { openFileLabel, toolPathIn } from '../lib/fileLinks'
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react'
-import { activeSlice, useActive, useSession, type ToolCall } from '../store'
+import { activeSlice, useActive, useSession, type MonitorRecord, type ToolCall } from '../store'
 import { formatElapsed } from '../lib/turnEnd'
+import { formatCost } from '../lib/formatCost'
 import { Lumen } from './Lumen'
 import { lumenSiteOf } from '../lib/lumen'
 import { viaOf } from '../lib/motion'
@@ -15,6 +16,8 @@ import {
   isBackgroundedTool,
   isBrowserTool,
   isChangeRead,
+  monitorMeta,
+  monitorRowState,
   needsYouToolIdOf,
   rowState,
   summarizeInput,
@@ -40,13 +43,15 @@ const BEAD_FILL: Record<RowState, string> = {
   stopped: 'border-[1.5px] border-faint',
   launched: 'bg-info',
   launching: 'border-[1.5px] border-info',
-  done: 'border-[1.5px] border-faint'
+  watching: 'bg-info',
+  done: 'border-[1.5px] border-faint',
+  ended: 'border-[1.5px] border-faint'
 }
 
 /** 8px state mark. On the spine it sits outside the card, centred on the line 15px left of the
  *  card edge; inline (inside an aggregate or an off-spine list) it leads the row's grid. */
 export function Bead({ state, lit, placement }: { state: RowState; lit: boolean; placement: Placement }): JSX.Element {
-  const hollow = state === 'launching' || state === 'done' || state === 'failed' || state === 'not-run' || state === 'stopped'
+  const hollow = state === 'launching' || state === 'done' || state === 'ended' || state === 'failed' || state === 'not-run' || state === 'stopped'
   const pos = placement === 'spine' ? 'absolute left-[-19px] top-3' : 'relative'
   // A hollow ring is filled with whatever it sits on, so the spine line doesn't show through it.
   const hole = hollow ? (placement === 'spine' ? 'bg-bg' : 'bg-tool') : ''
@@ -105,6 +110,14 @@ function StatusText({ state, startMs, reason }: { state: RowState; startMs?: num
       return <span className="text-info">launching…</span>
     case 'launched':
       return <span className="text-info">launched</span>
+    case 'watching':
+      return (
+        <span className="text-info">
+          watching{startMs !== undefined && <> <RunningTimer startMs={startMs} /></>}
+        </span>
+      )
+    case 'ended':
+      return <span className="text-faint">ended</span>
     default:
       return <span className="text-faint">done</span>
   }
@@ -178,7 +191,15 @@ export function InstrumentRow({
     const site = lumenSiteOf(s)
     return site?.kind === 'tool' && site.toolId === tool.id
   })
-  const state = rowState(tool, needsYou, checking)
+  const monitor = tool.name === 'Monitor'
+  const rec = useActive((s) => (monitor ? s?.monitors[tool.id] : undefined))
+  const stopping = useActive((s) => !!rec && !!s?.backgroundTasks[rec.taskId]?.stopping)
+  const handleId = useActive((s) => s?.handleId ?? '')
+  const stopTask = useSession((s) => s.stopBackgroundTask)
+  const state = monitor ? monitorRowState(tool, needsYou, checking, rec) : rowState(tool, needsYou, checking)
+  const watching = state === 'watching'
+  const meta = rec && tool.result !== undefined && !tool.isError ? monitorMeta(rec, watching) : ''
+  const canStopMonitor = watching && !stopping && !!rec
   // Task was renamed Agent in CLI 2.1.63; both mean a subagent.
   const isSubagent = tool.name === 'Task' || tool.name === 'Agent'
   const subType = subagentType(tool.input)
@@ -191,7 +212,7 @@ export function InstrumentRow({
   // A failed call's file may not exist, and a Quick session has no folder to open it in.
   const cwd = useActive((s) => (FILE_TOOLS.has(tool.name) && s && !s.ephemeral ? s.cwd : null))
   const filePath = state === 'done' ? toolPathIn(tool.input, cwd) : null
-  const actions = isSubagent || canSendToBackground || (browser && hasBrowser) || !!filePath
+  const actions = isSubagent || canSendToBackground || canStopMonitor || (browser && hasBrowser) || !!filePath
   const errLine = tool.isError ? firstLine(tool.result ?? '') : ''
   const failed = state === 'failed'
   const toggleBody = (e: MouseEvent): void => {
@@ -243,7 +264,7 @@ export function InstrumentRow({
               className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
               aria-expanded={open}
               aria-controls={bodyId}
-              aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}${counted ? `, ${counted.copy}` : ''}, ${STATE_TEXT[state]}`}
+              aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}${counted ? `, ${counted.copy}` : ''}, ${stopping && watching ? 'stopping' : STATE_TEXT[state]}${meta ? `, ${meta.replace(' · ', ', ')}` : ''}`}
               title={summary || undefined}
               onClick={toggleBody}
             />
@@ -262,6 +283,12 @@ export function InstrumentRow({
                   {counted.flagged ? <Flagged copy={counted.copy} /> : <span className="text-dim">{counted.copy}</span>}
                 </span>
               )}
+              {meta && (
+                <span data-ui="monitor-meta" className="min-w-0 truncate text-meta">
+                  <span className="text-faint">· </span>
+                  <span className="text-dim">{meta}</span>
+                </span>
+              )}
               {isSubagent && subType && (
                 <span
                   className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint"
@@ -273,7 +300,11 @@ export function InstrumentRow({
               )}
             </span>
             <span className="text-meta">
-              <StatusText state={state} startMs={tool.startMs} reason={errLine} />
+              {stopping && watching ? (
+                <span className="text-dim">stopping…</span>
+              ) : (
+                <StatusText state={state} startMs={watching ? rec?.startMs : tool.startMs} reason={errLine} />
+              )}
             </span>
             {isSubagent ? (
               // Not a button: a click here falls through to the row. It's the one sign that this row
@@ -292,6 +323,18 @@ export function InstrumentRow({
                     aria-label="Send to background"
                   >
                     <IconSendToTray className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {canStopMonitor && (
+                  <button
+                    type="button"
+                    data-ui="row-stop-monitor"
+                    onClick={() => void stopTask(handleId, rec.taskId)}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint transition-colors hover:text-content focus-visible:text-content focus-visible:outline-offset-[-2px]"
+                    title="Stop this monitor"
+                    aria-label={`Stop monitor: ${rec.description}`}
+                  >
+                    <IconStop className="h-3.5 w-3.5" />
                   </button>
                 )}
                 {browser && hasBrowser && (
@@ -346,6 +389,7 @@ export function InstrumentRow({
         )}
         {open && (
           <div ref={bodyRef} id={bodyId} className={`${animateBody ? 'row-body-in ' : ''}max-h-80 overflow-auto border-t border-border p-2.5`}>
+            {monitor && <MonitorDetail input={tool.input} rec={rec} />}
             <div className="mb-1.5 flex items-center gap-2">
               <span className="text-caps uppercase text-faint">{state === 'not-run' ? 'Reason' : 'Output'}</span>
               <button
@@ -382,6 +426,32 @@ export function InstrumentRow({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function MonitorDetail({ input, rec }: { input: unknown; rec: MonitorRecord | undefined }): JSX.Element {
+  const { command, timeout_ms } = (input && typeof input === 'object' ? input : {}) as { command?: unknown; timeout_ms?: unknown }
+  const row = (label: string, value: React.ReactNode): JSX.Element => (
+    <>
+      <dt className="text-caps uppercase text-faint">{label}</dt>
+      <dd className="min-w-0">{value}</dd>
+    </>
+  )
+  return (
+    <div data-ui="monitor-detail" className="mb-2.5 flex flex-col gap-1.5">
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1 text-meta text-dim">
+        {typeof command === 'string' &&
+          row('Command', <span className="whitespace-pre-wrap break-words font-mono text-code text-content">{command}</span>)}
+        {typeof timeout_ms === 'number' && row('Timeout', formatElapsed(timeout_ms))}
+        {rec &&
+          row(
+            'Wakes',
+            `${rec.wakes}${rec.sharedWakes ? ` (${rec.sharedWakes} shared with another monitor, so they may belong to either)` : ''}`
+          )}
+        {rec && row('Wake cost', `${formatCost(rec.costUsd)}${rec.estimated ? ' estimated at list price' : ''}`)}
+      </dl>
+      <p className="text-meta text-dim">Each event wakes Claude for a billed turn that re-reads this conversation.</p>
     </div>
   )
 }
@@ -448,9 +518,13 @@ export function AggregateRow({
     const site = lumenSiteOf(s)
     return site?.kind === 'tool' && ids.has(site.toolId)
   })
-  const states = tools.map((t) => rowState(t, t.id === needsYouId, anyChecking && !!checkingMap?.[t.id]))
+  const monitors = useActive((s) => s?.monitors)
+  const states = tools.map((t) => {
+    const checking = anyChecking && !!checkingMap?.[t.id]
+    return t.name === 'Monitor' ? monitorRowState(t, t.id === needsYouId, checking, monitors?.[t.id]) : rowState(t, t.id === needsYouId, checking)
+  })
   const worst = worstState(states)
-  const done = states.filter((s) => s === 'done' || s === 'launched').length
+  const done = states.filter((s) => s === 'done' || s === 'launched' || s === 'ended').length
   const failed = states.filter((s) => s === 'failed').length
   const notRun = states.filter((s) => s === 'not-run').length
   const stopped = states.filter((s) => s === 'stopped').length

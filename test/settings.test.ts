@@ -12,6 +12,8 @@ import {
   contextSizeLabel,
   reconcileModelChoice,
   effortLabel,
+  deriveModelInfo,
+  modelCheckReason,
   DEFAULT_SETTINGS,
   type CluiSettings,
   type ResolvedSettings,
@@ -26,7 +28,7 @@ import {
   isDirty,
   isOverridden
 } from '../src/renderer/src/components/settings/draft.ts'
-import { ok } from './support/harness.mjs'
+import { equal, ok } from './support/harness.mjs'
 
 const SP = join(app.getPath('userData'), 'settings.json')
 let v = 0
@@ -55,7 +57,22 @@ ok(contextSizeLabel('us.anthropic.claude-haiku-5-5') === '1M', 'contextSizeLabel
 ok(supports1m('haiku', 5.5) === false, 'supports1m: Haiku 5.5 takes no [1m] suffix')
 ok(supportsUltracodeToggle('us.anthropic.claude-haiku-5-5'), 'supportsUltracodeToggle: Haiku 5.5 has an xhigh tier')
 ok(clampEffort('us.anthropic.claude-haiku-5-5', 'max') === 'max', 'clampEffort: Haiku 5.5 keeps max')
-ok(clampEffort('claude-haiku-4-5', 'max') === 'high', 'clampEffort: Haiku 4.5 still tops out at high')
+ok(clampEffort('claude-haiku-4-5-20251001', 'max') === 'max', 'clampEffort: Haiku 4.5 takes no effort, so the stored one is kept')
+ok(clampEffort('claude-sonnet-4-6', 'max') === 'max', 'clampEffort: Sonnet 4.6 keeps max')
+ok(clampEffort('claude-sonnet-4-6', 'xhigh') === 'high', 'clampEffort: Sonnet 4.6 clamps xhigh to high')
+ok(deriveModelInfo('haiku').efforts.length === 0, 'effortsFor: the bare haiku alias takes no effort')
+ok(deriveModelInfo('claude-haiku-4-5-20251001').efforts.length === 0, 'effortsFor: Haiku 4.5 takes no effort')
+ok(deriveModelInfo('us.anthropic.claude-haiku-5-5').efforts.length === 5, 'effortsFor: Haiku 5.5 takes low..max')
+
+// modelCheckReason: only the readable part of a check_rejected reply reaches the user
+equal(modelCheckReason('API error: 400 The provided model identifier is invalid · model not changed'), 'The provided model identifier is invalid.', 'modelCheckReason: strips the API prefix and the suffix')
+equal(modelCheckReason('model is not enabled for this account'), 'Model is not enabled for this account.', 'modelCheckReason: a bare reason only gains a capital and a period')
+equal(modelCheckReason('Already done!'), 'Already done!', 'modelCheckReason: keeps existing end punctuation')
+equal(modelCheckReason(''), null, 'modelCheckReason: empty → null')
+equal(modelCheckReason(undefined), null, 'modelCheckReason: undefined → null')
+equal(modelCheckReason('{"type":"error"}'), null, 'modelCheckReason: a raw JSON body → null')
+equal(modelCheckReason('API error: 500 <html>oops</html>'), null, 'modelCheckReason: a raw HTML body → null')
+equal(modelCheckReason('x'.repeat(200)), null, 'modelCheckReason: an over-long reason → null')
 
 // reconcile: a stored/kept BASE id of a supports1m model resolves to the [1m] picker entry
 {
@@ -97,7 +114,7 @@ for (const ef of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
 ok(cappedEffort('claude-opus-4-8[1m]', 'max', 'low') === 'low', 'cappedEffort: max asked, low cap → low')
 ok(cappedEffort('claude-opus-4-8[1m]', 'medium', 'xhigh') === 'medium', 'cappedEffort: cap above ask is a no-op')
 // cap still clamps to what the model supports (haiku tops out at high)
-ok(cappedEffort('claude-haiku-4-5', 'max', 'xhigh') === 'high', 'cappedEffort: model support still clamps under a cap')
+ok(cappedEffort('claude-sonnet-4-6', 'max', 'xhigh') === 'high', 'cappedEffort: model support still clamps under a cap')
 
 // The model is the only ultra gate; a cap never is.
 ok(supportsUltracodeToggle('claude-opus-5-5[1m]'), 'supportsUltracodeToggle: opus 5.5 can run ultra')

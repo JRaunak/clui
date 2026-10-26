@@ -80,6 +80,7 @@ export function SessionsSection({
   const sub = useSettingsSub('sessions', 'new')
   const system = useSession((s) => s.systemPermissionMode)
   const resolved = system === undefined ? null : systemDefault(system)
+  const defaultModel = deriveModelInfo(settings.model)
 
   // Group + version-sort the unordered live Bedrock list into the composer picker's shape.
   // Headers only when there's more than one family; the context-size column only for known ones.
@@ -172,7 +173,13 @@ export function SessionsSection({
 
         <Field
           label="Effort"
-          hint={sources.effort === 'cli' ? INHERITING : undefined}
+          hint={
+            defaultModel.efforts.length
+              ? sources.effort === 'cli'
+                ? INHERITING
+                : undefined
+              : `${defaultModel.label} doesn't take an effort level. This default applies when a session switches to a model that does.`
+          }
           onReset={isOverridden('effort') ? () => reset('effort') : undefined}
         >
           <Dropdown<CluiSettings['effort']>
@@ -234,7 +241,7 @@ export function SessionsSection({
         </p>
         <Field
           label="Model family"
-          hint="Runs the latest model in this family, at high effort."
+          hint="Runs the latest model in this family, at high effort when the model takes one."
           onReset={isOverridden('quickModelFamily') ? () => reset('quickModelFamily') : undefined}
         >
           <Dropdown<CluiSettings['quickModelFamily']>

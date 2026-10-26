@@ -101,6 +101,11 @@ export interface TurnUsage {
   models: TurnUsageModel[]
 }
 
+/** A turn without a costBasis counts as a list-price estimate, which on Bedrock is every turn. */
+export function isListPriced(usage: TurnUsage): boolean {
+  return usage.models.some((m) => (m.costBasis ?? 'list') === 'list')
+}
+
 export const ZERO_USAGE: TurnUsage = {
   costUSD: 0,
   inputTokens: 0,
@@ -299,7 +304,7 @@ export type DomainEvent =
       fromPeer?: boolean
       /** Tool calls denied this turn, attributed by source. */
       denials?: PermissionDenial[]
-      /** This turn's own usage (already a delta). Foreground turns only; absent on bg/peer results. */
+      /** This turn's own usage (already a delta), background and peer turns included. Absent on a local command's result or one without modelUsage. */
       usage?: TurnUsage
       /** The API id of the turn's last main-thread assistant message, which keys its saved usage. */
       messageId?: string

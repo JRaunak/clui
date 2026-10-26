@@ -5,7 +5,7 @@
  */
 import { ClaudeSession, type ClaudeSessionOptions } from '../cli/session'
 import type { DomainEvent, ElicitationResponse } from '../../shared/events'
-import type { DispatchResult, ModeChangeResult, PermissionVerdict } from '../../shared/ipc'
+import type { DispatchResult, ModeChangeResult, ModelSwitchResult, PermissionVerdict } from '../../shared/ipc'
 import type { FileChangeSummary } from '../../shared/changes'
 import { ChangeLedger, type PublishFn, type SegmentView } from '../surfaces/ledger'
 import { readTasks } from './tasks'
@@ -145,8 +145,8 @@ export class SessionManager {
     return this.sessions.get(handleId)?.setPermissionMode(mode) ?? Promise.resolve({ ok: false })
   }
 
-  setModel(handleId: string, model: string): Promise<boolean> {
-    return this.sessions.get(handleId)?.setModel(model) ?? Promise.resolve(false)
+  setModel(handleId: string, model: string): Promise<ModelSwitchResult> {
+    return this.sessions.get(handleId)?.setModel(model) ?? Promise.resolve({ ok: false })
   }
 
   setEffort(handleId: string, effort: string): Promise<void> {
