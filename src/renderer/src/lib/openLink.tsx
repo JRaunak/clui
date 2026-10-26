@@ -2,6 +2,7 @@ import { useEffect, useMemo, type MouseEvent } from 'react'
 import { create } from 'zustand'
 import type { FileLinkTarget, LinkTarget } from '../../../shared/settings'
 import { activeSlice, useActive, useSession } from '../store'
+import { useSettings } from './settings'
 import { openEditor } from '../components/surfaces/FileSurface'
 import { revealInTree } from '../components/surfaces/TreeSurface'
 import { lineReaches, workspaceOf, type FileRef, type Workspace } from './fileLinks'
@@ -16,10 +17,7 @@ export const LINK =
 /** The link settings, mirrored so a link's title can name where it opens without reading settings per render.
  *  `editor` is there because whether a line reaches the editor depends on which one it is. */
 export const useLinkTarget = create<{ target: LinkTarget; file: FileLinkTarget; editor: string }>(() => ({ target: 'clui', file: 'clui', editor: 'code' }))
-void window.clui.getSettings().then(
-  ({ values }) => useLinkTarget.setState({ target: values.linkTarget, file: values.fileLinkTarget, editor: values.editorCommand || 'code' }),
-  () => {}
-)
+useSettings.subscribe((s) => s && useLinkTarget.setState({ target: s.values.linkTarget, file: s.values.fileLinkTarget, editor: s.values.editorCommand || 'code' }))
 
 export const LINK_MOD = window.clui.isMac ? '⌘' : 'Ctrl'
 const isWeb = (href: string): boolean => /^https?:\/\//i.test(href)

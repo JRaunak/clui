@@ -16,6 +16,7 @@ import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
 import { useGuardedAsync } from './lib/useGuardedAsync'
 import { useSidebarResize, SIDEBAR_DEFAULT } from './lib/useSidebarResize'
 import { useBrowserEvents } from './lib/useBrowserEvents'
+import { watchSettings } from './lib/settings'
 import { useOccludeWhile } from './lib/browserOcclusion'
 import type { CliInfo } from '../../shared/ipc'
 
@@ -109,6 +110,8 @@ export function App(): JSX.Element {
       useSession.setState({ paneFull: values.subagentPaneFull })
     })
   }, [])
+
+  useEffect(() => watchSettings(), [])
 
   useEffect(() => {
     void window.clui.getFullscreen().then(setIsFullscreen)

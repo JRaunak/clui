@@ -335,6 +335,8 @@ export interface CluiApi {
     patch: Partial<CluiSettings>,
     clear?: SettingsKey[]
   ) => Promise<ResolvedSettings>
+  /** Main's snapshot after every successful update, in commit order. Returns an unsubscribe fn. */
+  onSettingsChanged: (cb: (settings: ResolvedSettings) => void) => () => void
   /** Validate a CLI path (or auto-detect if empty): returns detected info. */
   detectCliAt: (path: string) => Promise<CliInfo>
   /**
@@ -514,6 +516,7 @@ export const IpcChannels = {
   showContextMenu: 'clui:showContextMenu',
   getSettings: 'clui:getSettings',
   updateSettings: 'clui:updateSettings',
+  settingsChanged: 'clui:settingsChanged',
   detectCliAt: 'clui:detectCliAt',
   getSystemPermissionMode: 'clui:getSystemPermissionMode',
   getEffortCaps: 'clui:getEffortCaps',

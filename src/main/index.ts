@@ -1042,6 +1042,7 @@ function registerIpc(): void {
         mainWindow?.setBackgroundColor(windowBg())
         browser.repaint()
       }
+      mainWindow?.webContents.send(IpcChannels.settingsChanged, next)
       return next
     }
   )

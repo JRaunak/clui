@@ -14,7 +14,7 @@ import {
   type MenuAction,
   type RefSourceChanged
 } from '../shared/ipc'
-import type { CluiSettings, EffortChoice, ModelChoice, SettingsKey } from '../shared/settings'
+import type { CluiSettings, EffortChoice, ModelChoice, ResolvedSettings, SettingsKey } from '../shared/settings'
 import type { BrowserEvent } from '../shared/browser'
 import type { ElicitationResponse } from '../shared/events'
 import type { AnnotateEvent } from '../shared/annotate'
@@ -125,6 +125,11 @@ const api: CluiApi = {
   getSettings: () => ipcRenderer.invoke(IpcChannels.getSettings),
   updateSettings: (patch: Partial<CluiSettings>, clear?: SettingsKey[]) =>
     ipcRenderer.invoke(IpcChannels.updateSettings, patch, clear),
+  onSettingsChanged: (cb) => {
+    const listener = (_e: unknown, settings: ResolvedSettings): void => cb(settings)
+    ipcRenderer.on(IpcChannels.settingsChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.settingsChanged, listener)
+  },
   detectCliAt: (path: string) => ipcRenderer.invoke(IpcChannels.detectCliAt, path),
   getSystemPermissionMode: () => ipcRenderer.invoke(IpcChannels.getSystemPermissionMode),
   getEffortCaps: () => ipcRenderer.invoke(IpcChannels.getEffortCaps),

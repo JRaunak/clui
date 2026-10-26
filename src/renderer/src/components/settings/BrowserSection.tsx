@@ -4,9 +4,9 @@ import { useBrowserToasts } from '../Toast'
 import { FieldError, LOGIN_INPUT } from '../LoginFields'
 import { IconEdit, IconPlus, IconTrash } from '../Icon'
 import { useEscape } from '../../lib/useEscape'
-import { CheckBox, Field, Pane } from './shared'
+import { CheckBox, Field, SAVE_FAILED, SubPane, TIMING, useInstantSetting } from './shared'
 import { Dropdown } from '../Dropdown'
-import { LINK, LINK_MOD, useLinkTarget } from '../../lib/openLink'
+import { LINK, LINK_MOD } from '../../lib/openLink'
 import type { LinkTarget } from '../../../../shared/settings'
 import { LoginForm } from './LoginForm'
 import { ClearBrowsingData } from './ClearBrowsingData'
@@ -44,22 +44,23 @@ const netKey = (s: LocalNetSite): string => `net:${s.site}`
 type PendingRemoval = { id: string; hides: string[]; title: string; verb?: string; at?: number; commit: () => Promise<void> }
 type FocusRequest = { key: string; fallback?: string; reveal?: boolean; top?: boolean }
 
-/** The browser switch, approved sites and saved logins. Changes go straight to main without waiting
+const CHILDREN = [
+  { setting: 'browserVisual', ui: 'browser-visual', label: 'See pages as images', hint: 'Off, Claude reads pages as text only.' },
+  {
+    setting: 'browserInteract',
+    ui: 'browser-interact',
+    label: 'Click, type and scroll',
+    hint: 'Also opening and closing tabs, and signing in with saved logins.'
+  },
+  { setting: 'browserDebug', ui: 'browser-debug', label: 'Use developer tools', hint: 'Console, network requests, cookies and storage.' }
+] as const
+
+/** Browser access, approved sites and saved logins. Changes go straight to main without waiting
  *  for Save; a removal commits once its undo toast runs out. The toasts sit outside the pane, so a
  *  pending removal stays undoable from another section. */
 export function BrowserSection({ active }: { active: boolean }): JSX.Element {
-  const target = useLinkTarget((st) => st.target)
-  const [targetFailed, setTargetFailed] = useState(false)
-  // Saved on change, like the browser toggle above; the mirror updates first so open links' titles follow at once.
-  const saveTarget = (next: LinkTarget, reset = false): void => {
-    const prev = useLinkTarget.getState().target
-    useLinkTarget.setState({ target: next })
-    setTargetFailed(false)
-    void window.clui.updateSettings(reset ? {} : { linkTarget: next }, reset ? ['linkTarget'] : undefined).catch(() => {
-      useLinkTarget.setState({ target: prev })
-      setTargetFailed(true)
-    })
-  }
+  const enabled = useInstantSetting('browserEnabled')
+  const target = useInstantSetting('linkTarget')
   const [sites, setSites] = useState<ApprovedSite[]>([])
   const [netSites, setNetSites] = useState<LocalNetSite[]>([])
   const [logins, setLogins] = useState<SavedLoginInfo[]>([])
@@ -76,10 +77,6 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   const [focus, setFocus] = useState<FocusRequest | null>(null)
   const loginsWindow = useRef<HTMLUListElement>(null)
   const uid = useId()
-  const [enabled, setEnabled] = useState<boolean | null>(null)
-  const [enableFailed, setEnableFailed] = useState(false)
-  const [shots, setShots] = useState<boolean | null>(null)
-  const [shotsFailed, setShotsFailed] = useState(false)
 
   const setPending = useCallback((next: PendingRemoval[]) => {
     pendingRef.current = next
@@ -109,17 +106,13 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   }, [])
   useEffect(() => {
     void relist()
-    void window.clui.getSettings().then(({ values }) => {
-      setEnabled(values.browserEnabled)
-      setShots(values.annotateScreenshots)
-    })
   }, [relist])
 
   // Focus moves only after the render that shows its target.
   useLayoutEffect(() => {
     if (!focus) return
     setFocus(null)
-    const pane = document.getElementById('settings-panel-browser')
+    const pane = document.getElementById('settings-subpanel-pane-browser')
     const find = (key?: string): HTMLElement | null =>
       key ? (pane?.querySelector<HTMLElement>(`[data-focus="${CSS.escape(key)}"]`) ?? null) : null
     const el = find(focus.key) ?? find(focus.fallback)
@@ -130,25 +123,6 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   }, [focus])
 
   const sayFilter = useCallback((text: string) => setFilterSay(`${text}${'\u200b'.repeat(++filterSeq.current % 2)}`), [])
-
-  const toggleShots = (): void => {
-    if (shots === null) return
-    setShots(!shots)
-    setShotsFailed(false)
-    void window.clui.updateSettings({ annotateScreenshots: !shots }).catch(() => {
-      setShots(shots)
-      setShotsFailed(true)
-    })
-  }
-  const toggleEnabled = (): void => {
-    if (enabled === null) return
-    setEnabled(!enabled)
-    setEnableFailed(false)
-    void window.clui.updateSettings({ browserEnabled: !enabled }).catch(() => {
-      setEnabled(enabled)
-      setEnableFailed(true)
-    })
-  }
 
   // Closing Settings is not an undo: whatever is still waiting commits now.
   useEffect(() => {
@@ -238,68 +212,61 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
 
   return (
     <>
-      <Pane section="browser" active={active} className="flex flex-col gap-5">
+      <SubPane section="pane" sub="browser" active={active} className="flex flex-col gap-5">
         <Field
-          label="Agentic browser"
-          hint="Running sessions keep what they started with."
+          label="Browser access"
+          hint={`Reading pages, going to sites and switching tabs come with access. ${TIMING}`}
           hintId={`${uid}-enabled`}
-          note={enableFailed && <FieldError id={`${uid}-enabled-err`} text="Couldn't save this setting. Try again." />}
+          note={enabled.failed && <FieldError id={`${uid}-enabled-err`} text={SAVE_FAILED} />}
         >
-          <button
-            type="button"
-            role="checkbox"
-            data-ui="browser-enabled"
-            aria-checked={!!enabled}
-            aria-disabled={enabled === null || undefined}
-            aria-label="Enable the agentic browser for new and resumed sessions"
-            aria-describedby={`${uid}-enabled${enableFailed ? ` ${uid}-enabled-err` : ''}`}
-            onClick={toggleEnabled}
-            className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
-          >
-            <CheckBox checked={!!enabled} />
-            <span className="text-label text-content">Enable for new and resumed sessions</span>
-          </button>
+          <div className="flex flex-col gap-1">
+            <button
+              type="button"
+              role="checkbox"
+              data-ui="browser-enabled"
+              aria-checked={!!enabled.value}
+              aria-disabled={enabled.value === null || undefined}
+              aria-describedby={`${uid}-enabled${enabled.failed ? ` ${uid}-enabled-err` : ''}`}
+              onClick={() => enabled.value !== null && enabled.set(!enabled.value)}
+              className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
+            >
+              <CheckBox checked={!!enabled.value} />
+              <span id={`${uid}-access`} className="text-label text-content">
+                Claude can use the browser
+              </span>
+            </button>
+            <div role="group" aria-labelledby={`${uid}-access`} className="flex flex-col gap-1 pl-6">
+              {CHILDREN.map((c) => (
+                <BrowserChild key={c.setting} {...c} on={!!enabled.value} reasonId={`${uid}-reason`} />
+              ))}
+            </div>
+            {!enabled.value && (
+              <p id={`${uid}-reason`} className="mt-1 pl-6 text-meta text-faint">
+                Turn on browser access above to change these.
+              </p>
+            )}
+          </div>
         </Field>
         <Field
           label="Open web links in"
           hint={
-            enabled
+            enabled.value
               ? `Applies to web links in Claude's replies and tool output. ${LINK_MOD}-click opens the other way.`
-              : 'Takes effect when the agentic browser is on. Until then, links open in your default browser.'
+              : 'Takes effect when browser access is on. Until then, links open in your default browser.'
           }
           hintId={`${uid}-links`}
-          onReset={target !== 'clui' ? () => saveTarget('clui', true) : undefined}
-          note={targetFailed && <FieldError id={`${uid}-links-err`} text="Couldn't save this setting. Try again." />}
+          onReset={target.value && target.value !== 'clui' ? target.reset : undefined}
+          note={target.failed && <FieldError id={`${uid}-links-err`} text={SAVE_FAILED} />}
         >
           <Dropdown<LinkTarget>
-            value={target}
+            value={target.value ?? 'clui'}
             ariaLabel="Open web links in"
             options={[
               { value: 'clui', label: "Clui's browser" },
               { value: 'system', label: 'Default browser' }
             ]}
-            onChange={(v) => saveTarget(v)}
+            onChange={target.set}
           />
-        </Field>
-        <Field
-          label="Annotation screenshots"
-          hint="A small screenshot of each annotated element goes to Claude. Off sends only its text and HTML."
-          hintId={`${uid}-shots`}
-          note={shotsFailed && <FieldError id={`${uid}-shots-err`} text="Couldn't save this setting. Try again." />}
-        >
-          <button
-            type="button"
-            role="checkbox"
-            data-ui="annotate-screenshots"
-            aria-checked={!!shots}
-            aria-disabled={shots === null || undefined}
-            aria-describedby={`${uid}-shots${shotsFailed ? ` ${uid}-shots-err` : ''}`}
-            onClick={toggleShots}
-            className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
-          >
-            <CheckBox checked={!!shots} />
-            <span className="text-label text-content">Send a screenshot with each element</span>
-          </button>
         </Field>
 
         <section className="flex flex-col gap-2" aria-labelledby={`${uid}-sites`}>
@@ -533,8 +500,43 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
         <span className="sr-only" aria-live="polite">
           {filterSay}
         </span>
-      </Pane>
+      </SubPane>
     </>
+  )
+}
+
+/** Stays focusable and keeps showing its value while access is off, so the reason line is reachable. */
+function BrowserChild({
+  setting,
+  ui,
+  label,
+  hint,
+  on,
+  reasonId
+}: (typeof CHILDREN)[number] & { on: boolean; reasonId: string }): JSX.Element {
+  const s = useInstantSetting(setting)
+  const id = useId()
+  const off = !on || s.value === null
+  return (
+    <div className="flex flex-col">
+      <button
+        type="button"
+        role="checkbox"
+        data-ui={ui}
+        aria-checked={!!s.value}
+        aria-disabled={off || undefined}
+        aria-describedby={`${on ? '' : `${reasonId} `}${id}-hint${s.failed ? ` ${id}-err` : ''}`}
+        onClick={() => off || s.set(!s.value)}
+        className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
+      >
+        <CheckBox checked={!!s.value} />
+        <span className="text-label text-content group-aria-disabled:text-faint">{label}</span>
+      </button>
+      <p id={`${id}-hint`} className={`pl-6 text-meta ${off ? 'text-faint' : 'text-dim'}`}>
+        {hint}
+      </p>
+      {s.failed && <FieldError id={`${id}-err`} text={SAVE_FAILED} />}
+    </div>
   )
 }
 

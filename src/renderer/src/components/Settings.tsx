@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type { CluiSettings, SettingsKey } from '../../../shared/settings'
+import type { ModelListResult } from '../../../shared/ipc'
 import { useSession, type SettingsSection } from '../store'
 import { Button } from './Button'
 import { IconClose } from './Icon'
 import { applyTheme } from '../lib/theme'
-import { useLinkTarget } from '../lib/openLink'
 import { useEscape } from '../lib/useEscape'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { useOverlayEnter, useOverlayCovered } from '../lib/overlayOrigin'
 import { Pane } from './settings/shared'
 import { GeneralSection } from './settings/GeneralSection'
 import { SessionsSection } from './settings/SessionsSection'
-import { BrowserSection } from './settings/BrowserSection'
+import { PaneSection } from './settings/PaneSection'
+import { AdvancedSection } from './settings/AdvancedSection'
 import {
   draftPatch,
   draftValues,
@@ -27,8 +28,12 @@ import {
 const SECTIONS: { key: SettingsSection; label: string }[] = [
   { key: 'general', label: 'General' },
   { key: 'sessions', label: 'Sessions' },
-  { key: 'browser', label: 'Browser' }
+  { key: 'pane', label: 'Pane' },
+  { key: 'advanced', label: 'Advanced' }
 ]
+
+// These hold typed values and the theme preview, so they commit on Save. The rest save as they change.
+const STAGED = new Set<SettingsSection>(['general', 'sessions'])
 
 export function Settings({ covered }: { covered: boolean }): JSX.Element {
   const section = useSession((s) => s.settingsSection) ?? 'general'
@@ -43,8 +48,11 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
     latest.current = draft
   }, [draft])
 
+  // Null until listModels resolves, so a loading list can't read as a live list missing the classifier pin.
+  const [modelList, setModelList] = useState<ModelListResult | null>(null)
   useEffect(() => {
     window.clui.getSettings().then((saved) => setDraft((d) => rebaseDraft(d, saved)))
+    void window.clui.listModels().then(setModelList)
   }, [])
 
   // `latest` is null until loaded, so StrictMode's simulated unmount before getSettings() resolves reverts nothing.
@@ -88,7 +96,6 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
     const { patch, clear } = draftPatch(draft)
     try {
       const saved = await window.clui.updateSettings(patch, clear)
-      useLinkTarget.setState({ file: saved.values.fileLinkTarget, editor: saved.values.editorCommand || 'code' })
       // Nothing is staged any more, so the unmount revert leaves the saved theme alone.
       latest.current = rebaseDraft(null, saved)
       closeSettings()
@@ -126,8 +133,8 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
     isOverridden: (k: SettingsKey) => overridden(draft, k)
   }
   const dirty = !!draft && isDirty(draft)
-  // Browser applies its changes right away, so it only needs Save while another section holds an edit.
-  const footer = section !== 'browser' || dirty || !!saveError
+  const staged = STAGED.has(section)
+  const footer = staged || dirty || !!saveError
   const loading = <p className="text-meta text-dim">Loading…</p>
 
   return (
@@ -182,22 +189,23 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
           <Pane section="general" active={section === 'general'} className="flex flex-col gap-5">
             {props ? <GeneralSection {...props} previewTheme={previewTheme} /> : loading}
           </Pane>
-          <Pane section="sessions" active={section === 'sessions'} className="flex flex-col gap-10">
-            {props ? <SessionsSection {...props} /> : loading}
+          <Pane section="sessions" active={section === 'sessions'} flush>
+            {props ? <SessionsSection {...props} modelList={modelList} /> : <div className="px-5 py-4">{loading}</div>}
           </Pane>
-          <BrowserSection active={section === 'browser'} />
+          <PaneSection active={section === 'pane'} />
+          <AdvancedSection active={section === 'advanced'} modelList={modelList} />
         </div>
       </div>
 
       {footer && (
         <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-3">
-          {/* A failed save keeps the modal open and says why; success closes it. On Browser the slot says why Save is here. */}
+          {/* A failed save keeps the modal open and says why; success closes it. On an instant section the slot says why Save is here. */}
           {saveError ? (
             <span className="mr-auto text-xs text-err" role="alert" aria-live="assertive">
               {saveError}
             </span>
           ) : (
-            section === 'browser' && <span className="mr-auto text-meta text-dim">Unsaved changes in other sections.</span>
+            !staged && <span className="mr-auto text-meta text-dim">Unsaved changes in other sections.</span>
           )}
           <Button variant="outline" size="md" onClick={closeSettings}>
             Cancel

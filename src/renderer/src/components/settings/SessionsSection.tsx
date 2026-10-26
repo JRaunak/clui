@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { ModelListResult } from '../../../../shared/ipc'
 import {
   PERMISSION_MODES,
@@ -11,8 +11,6 @@ import {
   EFFORT_LABELS,
   deriveModelInfo,
   groupModels,
-  classifierModelIds,
-  classifierRefuses,
   contextSizeLabel,
   contextWindowForModel,
   type CluiSettings
@@ -21,7 +19,7 @@ import { Dropdown } from '../Dropdown'
 import { PermissionIcon } from '../Composer'
 import { IconWarn } from '../Icon'
 import { useSession } from '../../store'
-import { CheckBox, Field, type DraftProps } from './shared'
+import { Field, SubNav, SubPane, useSettingsSub, type DraftProps } from './shared'
 
 /** What to tell the user when the model list is the bundled fallback. Only Bedrock can be queried
  *  for a list; on other providers the CLI reads its own built-in catalog, so a missing `aws` is normal. */
@@ -66,14 +64,22 @@ function systemNote(raw: string | null): string {
     : `Currently ${label}, from ~/.claude/settings.json.`
 }
 
-export function SessionsSection({ settings, sources, set, reset, isOverridden }: DraftProps): JSX.Element {
+const TABS = [
+  { key: 'new', label: 'New sessions' },
+  { key: 'quick', label: 'Quick sessions' }
+] as const
+
+export function SessionsSection({
+  settings,
+  sources,
+  set,
+  reset,
+  isOverridden,
+  modelList
+}: DraftProps & { modelList: ModelListResult | null }): JSX.Element {
+  const sub = useSettingsSub('sessions', 'new')
   const system = useSession((s) => s.systemPermissionMode)
   const resolved = system === undefined ? null : systemDefault(system)
-  // Null until listModels resolves, so a loading list can't read as a live list missing the classifier pin.
-  const [modelList, setModelList] = useState<ModelListResult | null>(null)
-  useEffect(() => {
-    void window.clui.listModels().then(setModelList)
-  }, [])
 
   // Group + version-sort the unordered live Bedrock list into the composer picker's shape.
   // Headers only when there's more than one family; the context-size column only for known ones.
@@ -94,47 +100,19 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
     [modelList?.ids]
   )
 
-  const pin = settings.classifierModel
-  const classifierIds = useMemo(() => classifierModelIds(modelList?.ids ?? []), [modelList?.ids])
-  const pinRefused = !!pin && classifierRefuses(pin)
-  const pinListed = !pin || classifierIds.includes(pin)
-  const classifierNote = pinRefused
-    ? `Claude Code won't use ${deriveModelInfo(pin).label} for the classifier, so new sessions use the CLI default.`
-    : !pinListed && modelList?.live
-      ? `${deriveModelInfo(pin).label} isn't in the current model list, so new sessions use the CLI default.`
-      : null
-  const classifierOptions = useMemo(() => {
-    const listed = groupModels(classifierIds.map(deriveModelInfo)).flatMap((g, _, groups) =>
-      g.models.map((info, i) => ({
-        value: info.id,
-        label: info.label,
-        header: groups.length > 1 && i === 0 ? g.label : undefined
-      }))
-    )
-    // An unlisted pin stays an option so the trigger shows its name, never a raw id.
-    const kept = pinListed
-      ? []
-      : [{ value: pin, label: deriveModelInfo(pin).label, description: pinRefused ? 'Not used by Claude Code' : 'Not in the current model list' }]
-    return [{ value: '', label: 'CLI default', description: 'Claude Code picks the model' }, ...kept, ...listed]
-  }, [classifierIds, pin, pinListed, pinRefused])
-
-  const pickWorkspace = async (): Promise<void> => {
+  const pick = async (key: 'defaultWorkspace' | 'defaultChatDir'): Promise<void> => {
     const dir = await window.clui.pickWorkspace()
-    if (dir) set('defaultWorkspace', dir)
+    if (dir) set(key, dir)
   }
 
   return (
     <>
-      <section aria-labelledby="settings-new-sessions" className="flex flex-col gap-5">
-        <div className="flex flex-col gap-1">
-          <h3 id="settings-new-sessions" className="text-caps uppercase text-dim">
-            New sessions
-          </h3>
-          <p className="text-meta text-dim">
-            Used when a session starts. Permission mode, model and effort can also be changed in the composer during a
-            session.
-          </p>
-        </div>
+      <SubNav section="sessions" label="Session types" tabs={TABS} value={sub} />
+      <SubPane section="sessions" sub="new" active={sub === 'new'} className="flex flex-col gap-5">
+        <p className="text-meta text-dim">
+          Used when a session starts. Permission mode, model and effort can also be changed in the composer during a
+          session.
+        </p>
         <Field
           label="Permission mode"
           hint="Applied as a --permission-mode flag. System Default passes none, so the CLI uses your settings, and a project's own settings can override it. Clui never writes ~/.claude/settings.json."
@@ -206,71 +184,6 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
         </Field>
 
         <Field
-          label="Task tracking tools"
-          hint="Lets Claude keep a checklist of its work in the task puck. Opus 4.8 and newer only offer these tools when this is on. Off by default."
-          hintId="task-tools-hint"
-          onReset={isOverridden('enableTaskTools') ? () => reset('enableTaskTools') : undefined}
-        >
-          <button
-            type="button"
-            role="checkbox"
-            aria-checked={settings.enableTaskTools}
-            aria-label="Enable task tracking tools for new sessions"
-            aria-describedby="task-tools-hint"
-            onClick={() => set('enableTaskTools', !settings.enableTaskTools)}
-            className="group flex items-center gap-2 rounded-md py-1 pr-1 text-left"
-          >
-            <CheckBox checked={settings.enableTaskTools} />
-            <span className="text-label text-content">Enable for new sessions</span>
-          </button>
-        </Field>
-
-        <Field
-          label="Adaptive mode classifier"
-          hint="Adaptive mode checks actions with a classifier that runs server-side by default, at no token charge. Run locally, its tokens are billed and don't appear in Clui's cost meter. Applies to sessions started or resumed after you save. Open sessions keep the setting they started with."
-          hintId="local-classifier-hint"
-          onReset={isOverridden('localClassifier') ? () => reset('localClassifier') : undefined}
-        >
-          <button
-            type="button"
-            role="checkbox"
-            aria-checked={settings.localClassifier}
-            aria-label="Run the Adaptive mode classifier locally for new sessions"
-            aria-describedby="local-classifier-hint"
-            onClick={() => set('localClassifier', !settings.localClassifier)}
-            className="group flex items-center gap-2 rounded-md py-1 pr-1 text-left"
-          >
-            <CheckBox checked={settings.localClassifier} />
-            <span className="text-label text-content">Run locally for new sessions</span>
-          </button>
-        </Field>
-
-        {settings.localClassifier && (
-          <Field
-            label="Classifier model"
-            hint="Only used while a session is in Adaptive mode."
-            onReset={isOverridden('classifierModel') ? () => reset('classifierModel') : undefined}
-            note={
-              classifierNote ? (
-                <p className="flex items-start gap-1.5 text-meta text-warn" role="status">
-                  <IconWarn className="mt-px h-3.5 w-3.5 shrink-0" />
-                  {classifierNote}
-                </p>
-              ) : (
-                !modelList && <p className="text-meta text-dim">Loading models…</p>
-              )
-            }
-          >
-            <Dropdown<string>
-              value={pin}
-              ariaLabel="Model for the local Adaptive mode classifier"
-              options={classifierOptions}
-              onChange={(m) => set('classifierModel', m)}
-            />
-          </Field>
-        )}
-
-        <Field
           label="Default workspace"
           hint="Offered when starting a new session."
           onReset={isOverridden('defaultWorkspace') ? () => reset('defaultWorkspace') : undefined}
@@ -285,23 +198,40 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
             />
             <button
               className="rounded border border-border px-3 text-xs text-dim hover:text-content"
-              onClick={() => void pickWorkspace()}
+              onClick={() => void pick('defaultWorkspace')}
             >
               Browse…
             </button>
           </div>
         </Field>
-      </section>
 
-      <section aria-labelledby="settings-quick-sessions" className="flex flex-col gap-5">
-        <div className="flex flex-col gap-1">
-          <h3 id="settings-quick-sessions" className="text-caps uppercase text-dim">
-            Quick sessions
-          </h3>
-          <p className="text-meta text-dim">
-            Throwaway chats with a limited tool set. These settings apply to every quick session.
-          </p>
-        </div>
+        <Field
+          label="Workbench folder"
+          hint="Where sessions started without a project folder run. Leave blank for ~/.clui. Open Workbench sessions stay where they are."
+          onReset={isOverridden('defaultChatDir') ? () => reset('defaultChatDir') : undefined}
+        >
+          <div className="flex gap-2">
+            <input
+              aria-label="Workbench folder"
+              className="flex-1 rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
+              placeholder="~/.clui"
+              value={settings.defaultChatDir}
+              onChange={(e) => set('defaultChatDir', e.target.value)}
+            />
+            <button
+              className="rounded border border-border px-3 text-xs text-dim hover:text-content"
+              onClick={() => void pick('defaultChatDir')}
+            >
+              Browse…
+            </button>
+          </div>
+        </Field>
+      </SubPane>
+
+      <SubPane section="sessions" sub="quick" active={sub === 'quick'} className="flex flex-col gap-5">
+        <p className="text-meta text-dim">
+          Throwaway chats with a limited tool set. These settings apply to every quick session.
+        </p>
         <Field
           label="Model family"
           hint="Runs the latest model in this family, at high effort."
@@ -334,7 +264,7 @@ export function SessionsSection({ settings, sources, set, reset, isOverridden }:
             onChange={(m) => set('quickPermissionMode', m)}
           />
         </Field>
-      </section>
+      </SubPane>
     </>
   )
 }

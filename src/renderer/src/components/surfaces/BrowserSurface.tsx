@@ -29,7 +29,7 @@ export function BrowserSettingsButton(): JSX.Element {
       data-ui="browser-settings"
       aria-label="Browser settings"
       title="Browser settings"
-      onClick={() => openSettings('browser')}
+      onClick={() => openSettings('pane', 'browser')}
       className={PANE_BTN}
     >
       <IconSettings className="h-4 w-4" />

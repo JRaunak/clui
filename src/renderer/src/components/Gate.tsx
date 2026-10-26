@@ -196,7 +196,7 @@ function SiteGate({ request, count }: { request: PendingPermission; count: GateC
             This approves {site} for every session. You can remove it in{' '}
             <button
               type="button"
-              onClick={() => openSettings('browser')}
+              onClick={() => openSettings('pane', 'browser')}
               className="rounded-sm text-content underline decoration-[var(--color-dim)] underline-offset-2 pointer-fine:hover:decoration-[var(--color-content)]"
             >
               Browser settings
