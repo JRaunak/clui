@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { activeSlice, anyTabIn, paneTarget, selectPaneOpen, surfaceKindOf, useActive, useSession } from '../store'
 import { CurrentTurnHeader } from './CurrentTurnHeader'
 import { FindBar } from './FindBar'
-import { IconAgentBrowser, IconDiff, IconFile, IconFolder, IconPaneRight } from './Icon'
+import { IconPaneRight } from './Icon'
 import { viaOf } from '../lib/motion'
 import { setPaneVia } from '../lib/dive'
 
@@ -159,9 +159,9 @@ export function TopSlot({
   )
 }
 
-/** Shows or hides this session's pane, a disclosure for the right sidebar. Its glyph and name are the
- *  tab it would show or is showing. While Claude drives a hidden browser, a static dot marks it, since
- *  the light itself stays in the transcript. */
+/** Shows or hides this session's pane, a disclosure for the right sidebar. The glyph is always the pane's,
+ *  so the button keeps one shape; its name and title add the tab it would show or is showing. While
+ *  Claude drives a hidden browser, a static dot marks it, since the light itself stays in the transcript. */
 function PaneToggle(): JSX.Element {
   const open = useSession((s) => !s.viewingSubagent && selectPaneOpen(activeSlice(s)))
   const driving = useActive((s) => anyTabIn(s?.browser, 'driving'))
@@ -172,17 +172,16 @@ function PaneToggle(): JSX.Element {
   })
   const togglePane = useSession((s) => s.togglePane)
   const verb = open ? 'Hide' : 'Show'
-  // With no target a click shows the picker, so the glyph stays the generic pane one even when the session has a browser.
-  const { Glyph, name, what } =
+  const { name, what } =
     kind === 'diff'
-      ? { Glyph: IconDiff, name: 'Claude changes', what: 'Claude changes' }
-      : kind === 'file'
-        ? { Glyph: IconFile, name: `File, ${title}`, what: title }
+      ? { name: 'Pane, Claude changes', what: 'Claude changes' }
+      : kind === 'file' && title
+        ? { name: `Pane, file ${title}`, what: title }
         : kind === 'tree'
-          ? { Glyph: IconFolder, name: 'File tree', what: 'file tree' }
+          ? { name: 'Pane, file tree', what: 'file tree' }
           : kind === 'browser'
-            ? { Glyph: IconAgentBrowser, name: driving && !open ? 'Browser, Claude is driving' : 'Browser', what: 'browser' }
-            : { Glyph: IconPaneRight, name: 'Pane', what: 'pane' }
+            ? { name: driving && !open ? 'Pane, browser, Claude is driving' : 'Pane, browser', what: 'browser' }
+            : { name: 'Pane', what: 'pane' }
   return (
     <button
       type="button"
@@ -198,8 +197,8 @@ function PaneToggle(): JSX.Element {
       }}
       className="toggle-press relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-dim transition-colors focus-visible:-outline-offset-2 pointer-fine:hover:bg-[var(--glass-row-hover)] pointer-fine:hover:text-content"
     >
-      <Glyph className="h-4 w-4" />
-      {driving && !open && <span aria-hidden="true" className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent ring-2 ring-bg" />}
+      <IconPaneRight className="h-4 w-4" />
+      {driving && !open && <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-accent ring-2 ring-bg" />}
     </button>
   )
 }
