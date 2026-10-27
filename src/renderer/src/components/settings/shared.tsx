@@ -50,7 +50,7 @@ export function Pane({
 type Sub = keyof SettingsSubs
 
 // Not `settings-tab-*`: Settings focuses `settings-tab-${section}` whenever the section changes.
-const subTabId = (section: Sub, sub: string): string => `settings-subtab-${section}-${sub}`
+export const subTabId = (section: Sub, sub: string): string => `settings-subtab-${section}-${sub}`
 const subPanelId = (section: Sub, sub: string): string => `settings-subpanel-${section}-${sub}`
 
 /** The tab a section's sub-nav shows, its first until one is picked during this open. */

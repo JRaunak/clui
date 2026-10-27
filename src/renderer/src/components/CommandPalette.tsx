@@ -23,6 +23,7 @@ import { FileIcon } from './FileIcon'
 import { cleanError, openEditor } from './surfaces/FileSurface'
 import { tilde } from '../lib/tree'
 import { fileCount } from '../lib/paneItems'
+import { fileLike } from '../lib/presentation'
 import { runPaneItem } from './surfaces/PanePicker'
 import { WORKSPACE_FILE_CAP } from '../../../shared/files'
 import type { ProjectGroup } from '../../../shared/sessions'
@@ -150,7 +151,7 @@ export function CommandPalette({
     const relOf = (abs: string): string => (abs.startsWith(`${cwd}/`) ? abs.slice(cwd.length + 1) : tilde(abs, window.clui.homeDir))
     if (!fileQuery.trim()) {
       const open = Object.values(tabs)
-        .filter((t) => t.kind === 'file')
+        .filter((t) => fileLike(t.kind))
         .sort((a, b) => b.lastViewedAt - a.lastViewedAt)
         .map((t): FileOption => ({ abs: t.key, rel: relOf(t.key), matches: [], group: 'Open in pane' }))
       const listed = new Set(open.map((o) => o.abs))

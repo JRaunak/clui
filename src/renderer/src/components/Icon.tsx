@@ -494,3 +494,13 @@ export function IconEyeOff(p: IconProps): JSX.Element {
     </Svg>
   )
 }
+
+export function IconCode(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="m8 7-5 5 5 5" />
+      <path d="m16 7 5 5-5 5" />
+      <path d="m14 4-4 16" />
+    </Svg>
+  )
+}

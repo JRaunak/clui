@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type { CluiSettings, SettingsKey } from '../../../shared/settings'
 import type { ModelListResult } from '../../../shared/ipc'
-import { useSession, type SettingsSection } from '../store'
+import { useSession, type SettingsSection, type SettingsSubs } from '../store'
 import { Button } from './Button'
 import { IconClose } from './Icon'
 import { applyTheme } from '../lib/theme'
 import { useEscape } from '../lib/useEscape'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { useOverlayEnter, useOverlayCovered } from '../lib/overlayOrigin'
-import { Pane } from './settings/shared'
+import { Pane, subTabId } from './settings/shared'
 import { GeneralSection } from './settings/GeneralSection'
 import { SessionsSection } from './settings/SessionsSection'
 import { PaneSection } from './settings/PaneSection'
@@ -64,9 +64,13 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
   }, [])
 
   // Runs after Overlay's own effect has focused the dialog, so the active tab wins, on open and on
-  // a section change from outside (a deep link, or ⌘, while open).
+  // a section change from outside (a deep link, or ⌘, while open). A deep link that opened Settings on a
+  // sub-tab lands on that sub-tab; every later section change lands on the section's own tab.
+  const entry = useRef<SettingsSection | null>(section)
   useEffect(() => {
-    document.getElementById(`settings-tab-${section}`)?.focus()
+    const sub = section === entry.current ? useSession.getState().settingsSub[section as keyof SettingsSubs] : undefined
+    if (section !== entry.current) entry.current = null
+    document.getElementById(sub ? subTabId(section as keyof SettingsSubs, sub) : `settings-tab-${section}`)?.focus()
   }, [section])
 
   // Through the escape stack, so an open dropdown inside closes first.

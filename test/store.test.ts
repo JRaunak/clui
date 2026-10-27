@@ -354,6 +354,14 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   st().openSurface('h1', DIFF, 'focus', 'user', 'user')
   ok(sur().active === 'diff' && st().viewingSubagent === null, 'intent: an explicit user activation closes the subagent view')
 
+  // One resource, one tab: a file open of a page Claude made lands on its artifact tab.
+  fresh()
+  const art = st().openSurface('h1', { kind: 'artifact', key: '/tmp/w/index.html', title: 'index.html', provenance: { sessionId: 's', creatingEditId: 'e1' } }, 'prepare', 'claude', 'change')
+  ok(st().openSurface('h1', { kind: 'file', key: '/tmp/w/index.html', title: 'index.html' }, 'focus', 'user', 'user') === art, 'identity: a file open of an artifact path returns the artifact tab')
+  ok(sur().order.length === 1 && sur().active === art && sur().tabs[art].kind === 'artifact', 'identity: no second tab, and the artifact tab is active')
+  st().openSurface('h1', { kind: 'file', key: '/tmp/w/other.html', title: 'other.html' }, 'focus', 'user', 'user')
+  ok(sur().order.length === 2, 'identity: another path still gets its own file tab')
+
   // focus · Claude · open, user on another tab and touched the pane in the last 10s → prepare.
   fresh({ paneOpen: true })
   openDiff()

@@ -25,6 +25,7 @@ import { StatusBar } from './StatusBar'
 import { Notice } from './Notice'
 import { SPLIT_MIN, getStage } from '../lib/stage'
 import { focusPaneTitle } from '../lib/dive'
+import { fileLike, presentationOf, useNoPreview } from '../lib/presentation'
 
 export type PaneState = 'collapsed' | 'half' | 'full'
 
@@ -133,8 +134,12 @@ export function Stage({
   const onTree = useActive((s) => kind === 'surfaces' && s?.surfaces.active === 'tree')
   const diffOpenable = useActive((s) => !!selectedChange(s)?.snapshot)
   const handleId = useSession((s) => s.activeHandleId)
-  const filePath = useActive((s) => (kind === 'surfaces' && s?.surfaces.active && s.surfaces.tabs[s.surfaces.active]?.kind === 'file' ? s.surfaces.tabs[s.surfaces.active].key : null))
+  const fileKind = kind === 'surfaces' && fileLike(activeKind) ? activeKind : null
+  const filePath = useActive((s) => (fileKind && s?.surfaces.active ? (s.surfaces.tabs[s.surfaces.active]?.key ?? null) : null))
+  const fileMode = useActive((s) => (fileKind && s?.surfaces.active ? s.surfaces.tabs[s.surfaces.active]?.mode : undefined))
   const fileStatus = useFileStatus(handleId, filePath)
+  const noPreview = !!useNoPreview(handleId, filePath)
+  const shown = presentationOf(fileKind && filePath !== null ? { kind: fileKind, key: filePath, mode: fileMode } : undefined, noPreview)
   const externalBlocked = useActive((s) => !!browserExternalBlock(viewedTabOf(s?.browser)?.url ?? ''))
   // The native menu can't read the renderer, so its pane, browser and Open externally items follow what this Stage shows.
   useEffect(() => {
@@ -149,13 +154,16 @@ export function Stage({
         : onDiff
           ? { kind: 'diff', enabled: diffOpenable }
           : filePath
-            ? { kind: 'file', enabled: fileStatus !== 'missing' }
+            ? { kind: shown === 'preview' ? 'page' : 'file', enabled: fileStatus !== 'missing' }
             : onTree
               ? { kind: 'tree', enabled: true }
               : { kind: 'none', enabled: false },
-      fileLines: fileStatus === 'text'
+      fileLines: fileStatus === 'text',
+      presentation: !shown ? 'none' : shown === 'preview' ? 'source' : 'preview',
+      // A focused page is main's to report, so this covers only focus in the pane's own DOM.
+      reload: shown === 'preview' && focusInSecondary
     })
-  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary])
+  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, shown, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary])
 
   const pane = useMemo<PaneApi>(
     () => ({

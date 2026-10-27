@@ -18,6 +18,7 @@ import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, L
 import type { AnnotateEvent } from './annotate'
 import type { ChangeSide, DraftReference, LineRange, RefInput, RefInvalid, SourceVersion } from './context'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff, HunkRows } from './changes'
+import type { HtmlOpenResult, HtmlViewEvent } from './html-view'
 import type { ContextMenuItem, FileChangedEvent, FileStat, Refusal, TextRead, TreeListing } from './files'
 import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
 import type { SurfaceCommand, SurfaceReply } from './surface-tools'
@@ -427,6 +428,20 @@ export interface CluiApi {
   /** What the native menu's pane and browser items act on, pushed whenever it changes. */
   menuState: (state: MenuState) => void
   onBrowserEvent: (cb: (handleId: string, e: BrowserEvent) => void) => () => void
+  /** A Preview of `path` for the pane tab `tabId`, replacing that tab's earlier view. Loads at once unless
+   *  `changedSince`. The view is hidden until htmlSetVisible. */
+  htmlOpen: (handleId: string, tabId: string, path: string) => Promise<HtmlOpenResult>
+  /** Fire-and-forget: sent at most once per animation frame. */
+  htmlSetBounds: (viewId: string, b: PaneBounds | null) => void
+  /** Resolves to a fresh still captured just before hiding, or null. Showing one native view hides every other. */
+  htmlSetVisible: (viewId: string, visible: boolean) => Promise<string | null>
+  /** Loads the current bytes: Reload, and Run for a changed-since artifact. */
+  htmlReload: (viewId: string) => Promise<void>
+  /** Destroys the view and revokes its cap; its page's later requests fail. */
+  htmlClose: (viewId: string) => Promise<void>
+  /** Keyboard focus into the shown page, which a DOM focus() can't give. */
+  htmlFocus: (viewId: string) => Promise<void>
+  onHtmlEvent: (cb: (e: HtmlViewEvent) => void) => () => void
 }
 
 /** Actions emitted by the native application menu. */
@@ -452,6 +467,12 @@ export type MenuAction =
   | 'browser-toggle'
   | 'pane-external'
   | 'file-goto'
+  | 'pane-reload'
+  /** Swaps the active tab between Source and Preview. */
+  | 'pane-presentation'
+  /** F6 / ⇧F6 pressed inside a native page, handed back to the renderer's region cycle. */
+  | 'region-next'
+  | 'region-prev'
 
 /** IPC channel names (single source of truth). */
 export const IpcChannels = {
@@ -570,7 +591,14 @@ export const IpcChannels = {
   browserVaultAvailable: 'clui:browserVaultAvailable',
   browserDataInfo: 'clui:browserDataInfo',
   browserClearData: 'clui:browserClearData',
-  menuState: 'clui:menuState'
+  menuState: 'clui:menuState',
+  htmlOpen: 'clui:htmlOpen',
+  htmlSetBounds: 'clui:htmlSetBounds',
+  htmlSetVisible: 'clui:htmlSetVisible',
+  htmlReload: 'clui:htmlReload',
+  htmlClose: 'clui:htmlClose',
+  htmlFocus: 'clui:htmlFocus',
+  htmlEvent: 'clui:htmlEvent'
 } as const
 
 export interface MenuState {
@@ -583,7 +611,11 @@ export interface MenuState {
   /** What ⌘W closes, as far as the renderer's focus tells. Main overrides it while a native page has focus. */
   close: 'session' | 'tab' | 'none'
   /** The active surface's Open externally target, and whether it can open now. */
-  external: { kind: 'file' | 'diff' | 'browser' | 'tree' | 'none'; enabled: boolean }
+  external: { kind: 'file' | 'diff' | 'browser' | 'tree' | 'page' | 'none'; enabled: boolean }
   /** A text file tab shows, so Go to Line has lines to go to. */
   fileLines: boolean
+  /** The active tab's presentation switch: 'source' while Preview shows, 'preview' while Source does. */
+  presentation: 'source' | 'preview' | 'none'
+  /** An HTML Preview is the active tab and focus is in the pane, so ⌘R reloads it. Main adds a focused HTML page itself. */
+  reload: boolean
 }

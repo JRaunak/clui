@@ -5,6 +5,7 @@ import { siteKeyOf, type TabState } from '../../../../shared/browser'
 import type { SurfaceKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
 import { suffixes, tilde } from '../../lib/tree'
+import { fileLike } from '../../lib/presentation'
 import { FileIcon } from '../FileIcon'
 import { Menu } from '../Menu'
 import { usePaneEntries } from './PanePicker'
@@ -63,6 +64,8 @@ interface TabView {
   label: string
   /** Distinguishes file tabs that share a basename. */
   suffix: string
+  /** Made by Claude: the suffix ends in the text mark. */
+  mark: boolean
   /** The rest of the accessible name, after the label. */
   more: string
   tip: string
@@ -104,7 +107,7 @@ export function SurfaceTabs(): JSX.Element {
   // Tabs already here when the strip mounted don't fade, so reopening the pane stays still.
   const [initial] = useState(() => new Set(order))
 
-  const files = order.flatMap((id) => (surfaceTabs[id]?.kind === 'file' ? [surfaceTabs[id].key] : []))
+  const files = order.flatMap((id) => (fileLike(surfaceTabs[id]?.kind) ? [surfaceTabs[id].key] : []))
   const dup = suffixes(files)
   // A restored file that can't open keeps its look. Its name and tooltip say why, re-checked when the window regains focus.
   const restoredFiles = order.flatMap((id) => {
@@ -130,17 +133,20 @@ export function SurfaceTabs(): JSX.Element {
       const label = tabLabel(t)
       const unseen = !!browserUnseen[id]
       const tip = [`Tab ${t.id} · ${label}`, t.url === 'about:blank' ? '' : t.url, info?.line ?? '']
-      return [{ id, kind: 'browser', label, suffix: '', more: `, tab ${t.id}${info?.suffix ?? ''}`, tip: tip.filter(Boolean).join('\n'), closeName: `Close tab ${t.id}`, state, unseen, fade: enter.includes(t.id) && !initial.has(id) }]
+      return [{ id, kind: 'browser', label, suffix: '', mark: false, more: `, tab ${t.id}${info?.suffix ?? ''}`, tip: tip.filter(Boolean).join('\n'), closeName: `Close tab ${t.id}`, state, unseen, fade: enter.includes(t.id) && !initial.has(id) }]
     }
     const t = surfaceTabs[id]
     if (!t) return []
     const label = surfaceLabel(t)
-    const common = { id, kind: t.kind, label, suffix: '', more: '', tip: label, closeName: `Close ${label}`, state: null, unseen: !!t.unseen, fade: (t.openedBy === 'claude' || t.openedBy === 'change') && !initial.has(id) }
+    const common = { id, kind: t.kind, label, suffix: '', mark: false, more: '', tip: label, closeName: `Close ${label}`, state: null, unseen: !!t.unseen, fade: (t.openedBy === 'claude' || t.openedBy === 'change') && !initial.has(id) }
     if (t.kind === 'diff') return [{ ...common, tip: 'What Claude changed in this session' }]
     if (t.kind === 'tree') return [{ ...common, more: ', file tree', tip: cwd ? tilde(cwd, window.clui.homeDir) : label }]
-    if (t.kind !== 'file') return [common]
+    if (!fileLike(t.kind)) return [common]
     const suffix = dup.get(t.key) ?? ''
     const named = suffix ? `${label} ${suffix}` : label
+    // The mark is text, so it never rests on colour.
+    if (t.kind === 'artifact')
+      return [{ ...common, suffix, mark: true, more: `${suffix ? ` ${suffix}` : ''}, made by Claude`, tip: `${label}\nMade by Claude in this session`, closeName: `Close ${named}` }]
     const dir = dirOf(relTo(cwd, t.key))
     const why = handleId && restoredTab({ createdMs }, t) ? blockedOf(handleId, t.key) : null
     const blocked = why ? BLOCKED[why] : null
@@ -238,7 +244,7 @@ export function SurfaceTabs(): JSX.Element {
                 key={v.id}
                 data-kind={v.kind}
                 data-enter={v.fade || undefined}
-                className={`group/tab relative flex h-7 w-[200px] min-w-[96px] shrink items-center rounded-md ${
+                className={`group/tab @container relative flex h-7 w-[200px] min-w-[96px] shrink items-center rounded-md ${
                   v.fade ? 'transition-opacity duration-fast ease-out starting:opacity-0 motion-reduce:transition-none' : ''
                 }`}
               >
@@ -283,7 +289,7 @@ export function SurfaceTabs(): JSX.Element {
                         <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
                         <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
                       </span>
-                    ) : v.kind === 'file' ? (
+                    ) : v.kind === 'file' || v.kind === 'artifact' ? (
                       <FileIcon name={v.label} kind="file" className="h-3.5 w-3.5" />
                     ) : (
                       Glyph && <Glyph className="h-3.5 w-3.5" />
@@ -291,6 +297,8 @@ export function SurfaceTabs(): JSX.Element {
                   </span>
                   <span className="min-w-0 truncate">{v.label}</span>
                   {v.suffix && <span className="ml-1 min-w-0 shrink-[2] truncate text-meta text-faint">{v.suffix}</span>}
+                  {/* Dropped rather than cut to "b…" in a narrow tab; the name and tooltip still carry it. */}
+                  {v.mark && <span className="ml-1 shrink-0 text-meta text-faint @max-[140px]:hidden">{v.suffix ? '· by Claude' : 'by Claude'}</span>}
                 </button>
                 {unseenShown && (
                   <span aria-hidden="true" data-ui="surface-tab-unseen" className="pointer-events-none absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center">

@@ -68,6 +68,10 @@ export interface CluiSettings {
   fileLinkTarget: FileLinkTarget
   /** Send each annotated element with a small screenshot of it, besides its text and HTML. */
   annotateScreenshots: boolean
+  /** HTML Claude created in the session may load scripts, styles and fonts over HTTPS. Other HTML never may. */
+  artifactRemoteResources: boolean
+  /** The same pages may fetch files in their own folder and connect over HTTPS, WSS and to localhost. */
+  artifactNetworkRequests: boolean
   /** Browser tool bundles past observing (snapshot, tabs, navigate): screenshot, page input, and the
    *  console/network/storage readers. Read at spawn, like browserEnabled. */
   browserVisual: boolean
@@ -606,6 +610,8 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   linkTarget: 'clui',
   fileLinkTarget: 'clui',
   annotateScreenshots: true,
+  artifactRemoteResources: true,
+  artifactNetworkRequests: false,
   browserVisual: true,
   browserInteract: true,
   browserDebug: true,

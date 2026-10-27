@@ -3,14 +3,15 @@ import { requestPoint, usePointing } from '../../lib/surfaceFocus'
 import { IconTarget } from '../Icon'
 import { DISABLED_BTN, PANE_BTN } from './PaneHeader'
 import { NO_CHANGES } from './DiffSurface'
+import { fileLike } from '../../lib/presentation'
 
 const PRESSED =
   'relative aria-pressed:bg-control-hover aria-pressed:text-content aria-pressed:after:absolute aria-pressed:after:inset-x-1.5 aria-pressed:after:bottom-0 aria-pressed:after:h-0.5 aria-pressed:after:rounded-full aria-pressed:after:bg-accent'
 
 export const NO_TARGET = "Point needs a page, a file or Claude's changes in the pane."
 
-/** Point for the active surface: the page's inspect mode, else the mounted File or Diff surface toggles pointing.
- *  A disabled surface announces why, so the button and ⌘⇧A both come here. */
+/** Point for the active surface: the page's inspect mode, else the mounted File, page Preview or Diff surface takes
+ *  the request. A disabled surface announces why, so the button and ⌘⇧A both come here. */
 export function point(): void {
   const st = useSession.getState()
   const s = activeSlice(st)
@@ -18,7 +19,7 @@ export function point(): void {
   const id = s.surfaces.active
   const kind = surfaceKindOf(s.surfaces, id)
   if (kind === 'browser') return st.toggleAnnotate()
-  if ((kind === 'file' || kind === 'diff') && id) return requestPoint(id)
+  if (id && (kind === 'diff' || fileLike(kind))) return requestPoint(id)
   st.announceStatus(s.handleId, NO_TARGET)
 }
 

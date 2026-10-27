@@ -5,8 +5,9 @@ export const WORKSPACE_FILE_CAP = 3000
 
 export interface Refusal {
   ok: false
-  /** `permission` is the OS refusing Clui itself (EACCES/EPERM); `unreadable` is any other read failure. */
-  reason: 'invalid' | 'denied' | 'missing' | 'wrong-type' | 'changed' | 'too-large' | 'limit' | 'unreadable' | 'permission' | 'unavailable'
+  /** `permission` is the OS refusing Clui itself (EACCES/EPERM); `unreadable` is any other read failure.
+   *  `too-broad` is an HTML page inside a session folder at or above home, which can't be a page's workspace. */
+  reason: 'invalid' | 'denied' | 'missing' | 'wrong-type' | 'changed' | 'too-large' | 'limit' | 'unreadable' | 'permission' | 'unavailable' | 'too-broad'
 }
 
 export interface TextRead {

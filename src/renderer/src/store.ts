@@ -53,10 +53,12 @@ import { SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type Save
 import { clean, type SurfaceCommand, type SurfaceReply, type SurfaceTarget, type TabFact } from '../../shared/surface-tools'
 import { turnEndLine } from './lib/turnEnd'
 import { suffixes } from './lib/tree'
+import { fileLike } from './lib/presentation'
+import { isHtml } from '../../shared/html-view'
 
 export type SettingsSection = 'general' | 'sessions' | 'pane' | 'advanced'
 /** The sections with a second tab row, and their tabs. */
-export type SettingsSubs = { sessions: 'new' | 'quick'; pane: 'general' | 'browser' }
+export type SettingsSubs = { sessions: 'new' | 'quick'; pane: 'general' | 'browser' | 'artifacts' }
 
 /** A tool-permission request awaiting the user's decision. */
 export interface PendingPermission {
@@ -1458,6 +1460,12 @@ function prepareChanges(handleId: string, prev: PerSessionState, next: FileChang
   const before = new Map(prev.changes.map((c) => [c.path, c.editIds.length]))
   const fresh = next.find((c) => (before.get(c.path) ?? 0) < c.editIds.length)
   const st = useSession.getState()
+  // An HTML page Claude creates is its artifact, a tab of its own beside the Claude changes entry.
+  for (const c of next) {
+    if (before.has(c.path) || !c.created || !isHtml(c.path) || !c.editIds[0] || !prev.sessionId) continue
+    const provenance = { sessionId: prev.sessionId, creatingEditId: c.editIds[0] }
+    st.openSurface(handleId, { kind: 'artifact', key: c.path, title: basename(c.path), provenance }, 'prepare', 'claude', 'change')
+  }
   const set0 = st.sessions[handleId]?.surfaces
   if (!fresh || !set0 || set0.active === 'diff' || set0.tabs.diff?.unseen) return
   st.openSurface(handleId, { kind: 'diff', key: '', title: 'Claude changes', location: { file: fresh.path } }, 'prepare', 'claude', 'change')
@@ -1836,7 +1844,7 @@ function shownCopy(s: PerSessionState, id: string | null, opened: boolean): stri
     const rel = at?.file?.startsWith(`${s.cwd}/`) ? at.file.slice(s.cwd.length + 1) : at?.file && basename(at.file)
     return `${verb} ${rel ? `${rel} in ` : ''}the file tree`
   }
-  const files = s.surfaces.order.flatMap((x) => (s.surfaces.tabs[x]?.kind === 'file' ? [s.surfaces.tabs[x].key] : []))
+  const files = s.surfaces.order.flatMap((x) => (fileLike(s.surfaces.tabs[x]?.kind) ? [s.surfaces.tabs[x].key] : []))
   const dir = suffixes(files).get(tab.key)
   const name = dir ? `${basename(tab.key)} in ${dir}` : basename(tab.key)
   if (at?.line && at.endLine && at.endLine > at.line) return `${verb} lines ${at.line} to ${at.endLine} of ${name}`
@@ -3987,7 +3995,9 @@ export const useSession = create<SessionStore>((set, get) => ({
 
   openSurface: (handleId, spec, intent, actor, openedBy) => {
     const browserTab = spec.kind === 'browser' ? spec.tab : null
-    const id = spec.kind === 'browser' ? placement(spec.tab) : surfaceIdOf(spec)
+    // One resource gets one tab, so a page Claude made opens as its artifact tab, never a second file tab.
+    const made = spec.kind === 'file' ? Object.values(get().sessions[handleId]?.surfaces.tabs ?? {}).find((t) => t.kind === 'artifact' && t.key === spec.key) : undefined
+    const id = spec.kind === 'browser' ? placement(spec.tab) : (made?.id ?? surfaceIdOf(spec))
     // Chosen before the open, so neither the tab being opened nor the one Claude is about to show can go.
     if (spec.kind !== 'browser' && !get().sessions[handleId]?.surfaces.tabs[id]) evictFor(get, set, handleId, id)
     const s = get()

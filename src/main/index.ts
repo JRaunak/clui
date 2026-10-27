@@ -43,6 +43,8 @@ import { listWorkspaceFiles } from './workspace/files'
 import { readGitStatus } from './workspace/git-status'
 import { createFileAccess, readText, statFile, type FileResource, type Refusal } from './surfaces/files'
 import { listTree, treeTarget } from './surfaces/tree'
+import { HtmlViews } from './surfaces/html-view'
+import { registerScheme } from './surfaces/protocol'
 import { bindSession, deleteSurfaces, flushSurfaces, forgetSession, loadSurfaces, saveSession, trackSession } from './surfaces/persist'
 import type { SurfacesRestore } from '../shared/surfaces'
 import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
@@ -76,6 +78,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 let mainWindow: BrowserWindow | null = null
 let sessionManager: SessionManager | null = null
 let browserManager: BrowserManager | null = null
+let htmlViews: HtmlViews | null = null
 let diffs: ReturnType<typeof diffSnapshots> | null = null
 let presentation: ReturnType<typeof surfaceBridge> | null = null
 const LAUNCHERS = /\.(app|command|terminal|tool|fileloc|webloc|inetloc|workflow|action|jar|pkg|mpkg|scpt|applescript)$/i
@@ -136,8 +139,15 @@ app.on('web-contents-created', (_e, wc) => {
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
 const TAKES_TYPING = new Set<MenuAction>(['find-in-conversation', 'find-next', 'find-prev', 'open-file', 'file-goto', 'open-palette', 'open-command-palette', 'search-global'])
-let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false }, fileLines: false }
-const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = { file: 'Open in Editor', diff: 'Open Diff in Editor', browser: 'Open in Default Browser', tree: 'Open Folder in Editor', none: 'Open Externally' }
+let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false }, fileLines: false, presentation: 'none', reload: false }
+const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = {
+  file: 'Open in Editor',
+  diff: 'Open Diff in Editor',
+  browser: 'Open in Default Browser',
+  tree: 'Open Folder in Editor',
+  page: 'Open in Default App',
+  none: 'Open Externally'
+}
 
 function buildMenu(): void {
   const send = (action: MenuAction): void => {
@@ -245,6 +255,18 @@ function buildMenu(): void {
       ]
     },
     {
+      label: 'View',
+      submenu: [
+        {
+          label: menuState.presentation === 'preview' ? 'Show Preview' : 'Show Source',
+          accelerator: 'Shift+CmdOrCtrl+V',
+          enabled: menuState.presentation !== 'none',
+          click: () => send('pane-presentation')
+        },
+        { label: 'Reload Page', accelerator: 'CmdOrCtrl+R', enabled: menuState.reload || (!!focusedPage && !!htmlViews?.owns(focusedPage)), click: () => send('pane-reload') }
+      ]
+    },
+    {
       label: 'Window',
       submenu: [
         { role: 'minimize' },
@@ -288,7 +310,12 @@ function createWindow(): void {
   // Commands sent to an earlier window or renderer can't be answered by this one.
   presentation?.renew()
   mainWindow.on('closed', () => presentation?.renew())
-  mainWindow.webContents.on('render-process-gone', () => presentation?.renew())
+  mainWindow.webContents.on('render-process-gone', () => {
+    presentation?.renew()
+    htmlViews?.disposeAll()
+  })
+  // A reloaded renderer knows none of the HTML views, which would otherwise sit over it with live caps.
+  mainWindow.webContents.on('did-navigate', () => htmlViews?.disposeAll())
 
   // Probe runs set CLUI_TEST_INACTIVE so the window opens behind whatever the user is working in.
   mainWindow.on('ready-to-show', () => (process.env.CLUI_TEST_INACTIVE === '1' ? mainWindow?.showInactive() : mainWindow?.show()))
@@ -300,7 +327,10 @@ function createWindow(): void {
   }
   mainWindow.on('enter-full-screen', pushFullscreen)
   mainWindow.on('leave-full-screen', pushFullscreen)
-  mainWindow.on('resize', () => browserManager?.relayout())
+  mainWindow.on('resize', () => {
+    browserManager?.relayout()
+    htmlViews?.relayout()
+  })
 
   // nativeTheme's `updated` isn't documented to fire for Reduce transparency, so re-send it whenever
   // the window regains focus, which is where the user returns after changing System Settings.
@@ -371,6 +401,7 @@ function registerIpc(): void {
     bridge.retire(handleId)
     changeRefs.dispose(handleId)
     refWatches.dispose(handleId)
+    html.dispose(handleId)
     files.dispose(handleId)
     forgetSession(handleId)
     for (const [id, owner] of watchOwners) if (owner === handleId) watchOwners.delete(id)
@@ -462,7 +493,10 @@ function registerIpc(): void {
       if (event.type === 'process-exit') disposeBrowser(handleId)
       push(IpcChannels.sessionEvent, { handleId, event })
     },
-    (handleId, summaries) => push(IpcChannels.changesEvent, { handleId, summaries })
+    (handleId, summaries) => {
+      push(IpcChannels.changesEvent, { handleId, summaries })
+      void htmlViews?.attribute(handleId)
+    }
   )
   sessionManager = manager
   /** A watch id answers only to the session that made it. */
@@ -471,6 +505,23 @@ function registerIpc(): void {
     cwd: (h) => manager.cwd(h),
     changedPaths: async (h) => (await manager.changes(h))?.map((c) => c.path) ?? null
   })
+  const html = new HtmlViews({
+    window: () => mainWindow,
+    files,
+    // Ledger paths are as Claude's tool calls wrote them; the view's are canonical.
+    segments: async (h, p) => {
+      for (const c of (await manager.changes(h)) ?? []) {
+        if (basename(c.path) === basename(p) && (await realpath(c.path).catch(() => null)) === p) return manager.segments(h, c.path)
+      }
+      return null
+    },
+    settings: () => {
+      const s = getSettingsSync()
+      return { remote: s.artifactRemoteResources, data: s.artifactNetworkRequests }
+    },
+    alive: (h) => manager.cwd(h) !== null
+  })
+  htmlViews = html
   const diffSource: DiffSource = {
     segments: (h, p) => manager.segments(h, p),
     current: async (h, p) => {
@@ -714,6 +765,14 @@ function registerIpc(): void {
     if (fromTrustedFrame(e)) browser.setBounds(handleId, b)
   })
   handle(IpcChannels.browserSetVisible, (_e, handleId: string, visible: boolean) => browser.setVisible(handleId, visible))
+  handle(IpcChannels.htmlOpen, (_e, handleId: string, tabId: string, path: string) => html.open(handleId, tabId, path))
+  ipcMain.on(IpcChannels.htmlSetBounds, (e, viewId: string, b: PaneBounds | null) => {
+    if (fromTrustedFrame(e)) html.setBounds(viewId, b)
+  })
+  handle(IpcChannels.htmlSetVisible, (_e, viewId: string, visible: boolean) => html.setVisible(viewId, visible === true))
+  handle(IpcChannels.htmlReload, (_e, viewId: string) => html.reload(viewId))
+  handle(IpcChannels.htmlClose, (_e, viewId: string) => html.close(viewId))
+  handle(IpcChannels.htmlFocus, (_e, viewId: string) => html.focus(viewId))
   handle(IpcChannels.browserViewTab, (_e, handleId: string, tab: number) => browser.viewTab(handleId, tab))
   handle(IpcChannels.browserNewTab, async (_e, handleId: string) => {
     const tab = await browser.newTab(handleId, 'user')
@@ -1044,6 +1103,7 @@ function registerIpc(): void {
         mainWindow?.setBackgroundColor(windowBg())
         browser.repaint()
       }
+      html.repolicy()
       mainWindow?.webContents.send(IpcChannels.settingsChanged, next)
       return next
     }
@@ -1101,6 +1161,8 @@ function registerIpc(): void {
 // process drive Clui's pages, the signed-in browser pane among them.
 if (app.isPackaged && app.commandLine.hasSwitch('remote-debugging-port')) app.exit(1)
 
+registerScheme()
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
@@ -1136,6 +1198,7 @@ app.on('window-all-closed', () => {
   sessionManager?.stopAll()
   // Stopped sessions emit no exit event, so their pages would outlive the window.
   browserManager?.disposeAll()
+  htmlViews?.disposeAll()
   if (process.platform !== 'darwin') app.quit()
 })
 

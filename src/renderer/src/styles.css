@@ -156,6 +156,8 @@
   --color-on-info: #1a1a1a; /* near-black on the light info-blue fill */
   --color-user: var(--ink-750);
   --color-tool: var(--ink-tool);
+  /* An HTML view's page with no background of its own, as a browser draws it: white in both themes, matching main's view background. */
+  --color-page-canvas: #ffffff;
   --color-err: var(--red-400);
   --color-ok: var(--teal-400);
   --color-warn: var(--amber-400);

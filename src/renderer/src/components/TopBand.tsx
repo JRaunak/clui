@@ -5,6 +5,7 @@ import { FindBar } from './FindBar'
 import { IconPaneRight } from './Icon'
 import { viaOf } from '../lib/motion'
 import { setPaneVia } from '../lib/dive'
+import { fileLike } from '../lib/presentation'
 
 /**
  * The top band over the Stage's top 44px, which the transcript scrolls beneath. Its glass layer shows
@@ -175,7 +176,7 @@ function PaneToggle(): JSX.Element {
   const { name, what } =
     kind === 'diff'
       ? { name: 'Pane, Claude changes', what: 'Claude changes' }
-      : kind === 'file' && title
+      : fileLike(kind) && title
         ? { name: `Pane, file ${title}`, what: title }
         : kind === 'tree'
           ? { name: 'Pane, file tree', what: 'file tree' }

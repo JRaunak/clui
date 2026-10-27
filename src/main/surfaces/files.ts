@@ -14,7 +14,8 @@ import { MAX_REFS } from '../../shared/context'
 import type { FileStat, Refusal, TextRead } from '../../shared/files'
 
 export type FileOperation = 'read-file' | 'list-directory' | 'watch-file' | 'watch-directory' | 'open-external'
-export type FileConsumer = 'file' | 'tree' | 'diff' | 'editor'
+/** `web` is an HTML view's own page and assets: workspace files only, never a grant or a ledger path. */
+export type FileConsumer = 'file' | 'tree' | 'diff' | 'editor' | 'web'
 export interface FileAccess {
   consumer: FileConsumer
   operation: FileOperation
@@ -58,7 +59,7 @@ const DEBOUNCE_MS = 100
 const PATH_MAX = 4096
 
 const OPERATIONS = new Set<unknown>(['read-file', 'list-directory', 'watch-file', 'watch-directory', 'open-external'])
-const CONSUMERS = new Set<unknown>(['file', 'tree', 'diff', 'editor'])
+const CONSUMERS = new Set<unknown>(['file', 'tree', 'diff', 'editor', 'web'])
 
 // Node doesn't expose the macOS flag; the SDK's fcntl.h defines it as 0x20000000. Anywhere it's
 // unknown, reads fail closed rather than fall back to O_NOFOLLOW, which guards only the last component.
@@ -78,7 +79,7 @@ const refuse = (reason: Refusal['reason']): Refusal => ({ ok: false, reason })
 const code = (e: unknown): unknown => (e as NodeJS.ErrnoException | null)?.code
 const failed = (e: unknown): 'permission' | 'unreadable' => (code(e) === 'EACCES' || code(e) === 'EPERM' ? 'permission' : 'unreadable')
 const isInt = (v: unknown, min: number, max: number): v is number => Number.isSafeInteger(v) && (v as number) >= min && (v as number) <= max
-const within = (root: string, p: string): boolean => p === root || p.startsWith(root.endsWith('/') ? root : root + '/')
+export const within = (root: string, p: string): boolean => p === root || p.startsWith(root.endsWith('/') ? root : root + '/')
 const dirOp = (op: FileOperation): boolean => op === 'list-directory' || op === 'watch-directory'
 
 export const revisionOf = (s: BigIntStats): string =>
@@ -273,7 +274,7 @@ export function createFileAccess(sessions: FileSessions) {
   let home: Promise<string | null> | undefined
   const grantKey = (handleId: string | null, consumer: FileConsumer): string => `${handleId ?? ''}\0${consumer}`
 
-  async function scopeOf(handleId: string | null, { consumer, operation }: FileAccess, path: string): Promise<'workspace' | 'exact' | null> {
+  async function scopeOf(handleId: string | null, { consumer, operation }: FileAccess, path: string): Promise<'workspace' | 'exact' | 'broad' | null> {
     if (handleId !== null) {
       const cwd = sessions.cwd(handleId)
       if (cwd === null) return null
@@ -283,9 +284,13 @@ export function createFileAccess(sessions: FileSessions) {
       // A cwd at or above home would expose all of home: exact grants only. The APFS
       // Data volume reaches the same files under /System/Volumes/Data, which realpath keeps as is.
       // A cwd that's gone still scopes its own paths, so they read as missing rather than outside.
-      if (root && h !== null && !within(root.path, h) && !within('/System/Volumes', root.path) && within(root.path, path)) return 'workspace'
+      if (root && h !== null && within(root.path, path)) {
+        if (!within(root.path, h) && !within('/System/Volumes', root.path)) return 'workspace'
+        // A page inside such a cwd is the session's own, so it's refused as that, never as outside it.
+        if (consumer === 'web') return 'broad'
+      }
     }
-    if (dirOp(operation)) return null
+    if (dirOp(operation) || consumer === 'web') return null
     if (grants.get(grantKey(null, consumer))?.has(path)) return 'exact'
     if (handleId === null) return null
     if (grants.get(grantKey(handleId, consumer))?.has(path)) return 'exact'
@@ -327,6 +332,7 @@ export function createFileAccess(sessions: FileSessions) {
     if (!c) return refuse('denied')
     const scope = await scopeOf(handleId, access, c.path)
     if (!scope) return refuse('denied')
+    if (scope === 'broad') return refuse('too-broad')
     if (!c.exists) return refuse('missing')
     return identify(c.path, handleId, { consumer: access.consumer, operation: access.operation }, scope)
   }

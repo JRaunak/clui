@@ -24,6 +24,7 @@ import { point } from '../components/surfaces/PointButton'
 import { OPEN_FILE_EVENT, type PaletteMode } from '../components/CommandPalette'
 import { FILE_FIND_EVENT, FILE_GOTO_EVENT } from '../components/surfaces/FileSurface'
 import { TRANSCRIPT_FIND_EVENT } from '../components/FindBar'
+import { fileLike, showsSource } from './presentation'
 
 /** Focus is in the Surfaces pane: its DOM, or a native page in it, which only main can report. */
 function inPane(page: boolean): boolean {
@@ -32,15 +33,16 @@ function inPane(page: boolean): boolean {
 }
 
 /**
- * Find, Find Next and Find Previous go to one target. A File tab owns them while focus is in the pane
- * showing it. Anywhere else, a native page included, they search the conversation, matching the menu's labels.
- * Only one find is open at a time, so ⌘G never steps two.
+ * Find, Find Next and Find Previous go to one target. A file tab showing Source owns them while focus is in
+ * the pane showing it, and a Preview there takes none. Anywhere else, a native page included, they search the
+ * conversation, matching the menu's labels. Only one find is open at a time, so ⌘G never steps two.
  */
 function routeFind(what: 'open' | 'next' | 'prev', page: boolean): void {
   const store = useSession.getState()
   const slice = activeSlice(store)
-  const id = slice?.surfaces.active
-  if (inPane(page) && !!id && slice?.surfaces.tabs[id]?.kind === 'file') {
+  const tab = slice?.surfaces.active ? slice.surfaces.tabs[slice.surfaces.active] : undefined
+  if (inPane(page) && fileLike(tab?.kind)) {
+    if (!showsSource(store.activeHandleId, tab)) return
     if (store.findOpen) store.setFindOpen(false)
     window.dispatchEvent(new CustomEvent(FILE_FIND_EVENT, { detail: what }))
     return
@@ -50,6 +52,22 @@ function routeFind(what: 'open' | 'next' | 'prev', page: boolean): void {
   // Find Next with the bar closed reopens it rather than stepping a query nobody can see.
   if (what === 'open' || !store.findOpen) store.setFindOpen(true)
   else window.dispatchEvent(new CustomEvent(TRANSCRIPT_FIND_EVENT, { detail: what }))
+}
+
+const REGIONS = '#app-sidebar, [data-ui="pane-primary"], [data-ui="pane-secondary"]'
+
+/** F6 / ⇧F6: focus the next region's main control from `here`. False when there's no other region to go to. */
+function cycleRegion(back: boolean, here: Element | null = document.activeElement?.closest(REGIONS) ?? null): boolean {
+  const targets = [
+    document.querySelector<HTMLElement>('#app-sidebar [data-new-session]'),
+    document.querySelector<HTMLElement>('[data-ui="pane-primary"] [data-composer-input]'),
+    document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-pane-title]')
+  ].filter((el): el is HTMLElement => !!el && !el.closest('[inert]'))
+  if (targets.length < 2) return false
+  const at = targets.findIndex((el) => el.closest(REGIONS) === here)
+  const next = at < 0 ? (back ? targets.length - 1 : 0) : (at + (back ? -1 : 1) + targets.length) % targets.length
+  targets[next].focus()
+  return true
 }
 
 /**
@@ -151,6 +169,18 @@ export function useKeyboardShortcuts(opts: {
         case 'pane-external':
           document.querySelector<HTMLElement>('[data-ui="pane-external"]')?.click()
           break
+        case 'pane-presentation':
+          document.querySelector<HTMLElement>('[data-ui="pane-presentation"]')?.click()
+          break
+        case 'pane-reload':
+          document.querySelector<HTMLElement>('[data-ui="html-reload"]')?.click()
+          break
+        // F6 pressed inside a native page, which main has already taken focus back from. The DOM's focus is
+        // still wherever it was before the page took it, so the cycle counts from the pane.
+        case 'region-next':
+        case 'region-prev':
+          cycleRegion(action === 'region-prev', document.querySelector('[data-ui="pane-secondary"]'))
+          break
         // Menu accelerators are a keyboard path, so the pane changes without a transition.
         case 'browser-toggle':
           if (!activeSlice(store)?.browser) break
@@ -168,7 +198,7 @@ export function useKeyboardShortcuts(opts: {
           if (store.viewingSubagent) break
           const s = activeSlice(store)
           const kind = s && surfaceKindOf(s.surfaces, s.surfaces.active)
-          if (s && !s.paneOpen && (kind === 'browser' || kind === 'file' || kind === 'diff')) {
+          if (s && !s.paneOpen && (kind === 'browser' || kind === 'diff' || fileLike(kind))) {
             store.setPane('half')
             requestAnimationFrame(point)
           } else point()
@@ -204,21 +234,8 @@ export function useKeyboardShortcuts(opts: {
         return
       }
 
-      // Each region lands on its main control.
       if (e.key === 'F6' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        const REGIONS = '#app-sidebar, [data-ui="pane-primary"], [data-ui="pane-secondary"]'
-        const targets = [
-          document.querySelector<HTMLElement>('#app-sidebar [data-new-session]'),
-          document.querySelector<HTMLElement>('[data-ui="pane-primary"] [data-composer-input]'),
-          document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-pane-title]')
-        ].filter((el): el is HTMLElement => !!el && !el.closest('[inert]'))
-        if (targets.length < 2) return
-        e.preventDefault()
-        const here = document.activeElement?.closest(REGIONS) ?? null
-        const at = targets.findIndex((el) => el.closest(REGIONS) === here)
-        const step = e.shiftKey ? -1 : 1
-        const next = at < 0 ? (e.shiftKey ? targets.length - 1 : 0) : (at + step + targets.length) % targets.length
-        targets[next].focus()
+        if (cycleRegion(e.shiftKey)) e.preventDefault()
         return
       }
 

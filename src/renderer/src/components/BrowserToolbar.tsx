@@ -10,7 +10,7 @@ import { listedDir, openFileAt } from '../lib/openLink'
 // The toolbar sits over the pane's flat floor, where the solid form is pixel-identical and skips a filter.
 const SOLID = { ['--control-material' as string]: 'solid' } as CSSProperties
 
-const STRIP_BTN =
+export const STRIP_BTN =
   'flex h-7 shrink-0 items-center justify-center rounded-md border border-control-edge bg-control px-2.5 text-label text-content transition-colors pointer-fine:hover:bg-control-hover active:bg-border-strong'
 
 const ANNOUNCE: Partial<Record<DriveState, string>> = {

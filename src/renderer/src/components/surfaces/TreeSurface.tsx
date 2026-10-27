@@ -44,7 +44,8 @@ const SHORT: Record<Refusal['reason'], string> = {
   limit: 'too many folders are open',
   unreadable: "it couldn't be read",
   permission: "macOS didn't let Clui read it",
-  unavailable: "Clui can't read folders safely on this system"
+  unavailable: "Clui can't read folders safely on this system",
+  'too-broad': 'session folder is home or above'
 }
 const sentence = (s: string): string => `${s[0].toUpperCase()}${s.slice(1)}.`
 

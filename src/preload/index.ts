@@ -16,6 +16,7 @@ import {
 } from '../shared/ipc'
 import type { CluiSettings, EffortChoice, ModelChoice, ResolvedSettings, SettingsKey } from '../shared/settings'
 import type { BrowserEvent } from '../shared/browser'
+import type { HtmlViewEvent } from '../shared/html-view'
 import type { ElicitationResponse } from '../shared/events'
 import type { AnnotateEvent } from '../shared/annotate'
 import type { ChangesEvent } from '../shared/changes'
@@ -203,6 +204,17 @@ const api: CluiApi = {
     const listener = (_e: unknown, handleId: string, ev: BrowserEvent): void => cb(handleId, ev)
     ipcRenderer.on(IpcChannels.browserEvent, listener)
     return () => ipcRenderer.removeListener(IpcChannels.browserEvent, listener)
+  },
+  htmlOpen: (handleId, tabId, path) => ipcRenderer.invoke(IpcChannels.htmlOpen, handleId, tabId, path),
+  htmlSetBounds: (viewId, b) => ipcRenderer.send(IpcChannels.htmlSetBounds, viewId, b),
+  htmlSetVisible: (viewId, visible) => ipcRenderer.invoke(IpcChannels.htmlSetVisible, viewId, visible),
+  htmlReload: (viewId) => ipcRenderer.invoke(IpcChannels.htmlReload, viewId),
+  htmlClose: (viewId) => ipcRenderer.invoke(IpcChannels.htmlClose, viewId),
+  htmlFocus: (viewId) => ipcRenderer.invoke(IpcChannels.htmlFocus, viewId),
+  onHtmlEvent: (cb) => {
+    const listener = (_e: unknown, ev: HtmlViewEvent): void => cb(ev)
+    ipcRenderer.on(IpcChannels.htmlEvent, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.htmlEvent, listener)
   }
 }
 

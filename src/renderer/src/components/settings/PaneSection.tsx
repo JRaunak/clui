@@ -8,8 +8,11 @@ import { CheckField, Field, Pane, SAVE_FAILED, SubNav, SubPane, TIMING, useInsta
 
 const TABS = [
   { key: 'general', label: 'General' },
-  { key: 'browser', label: 'Browser' }
+  { key: 'browser', label: 'Browser' },
+  { key: 'artifacts', label: 'Artifacts' }
 ] as const
+
+const APPLY = 'Open pages reload with the new setting.'
 
 export function PaneSection({ active }: { active: boolean }): JSX.Element {
   const sub = useSettingsSub('pane', 'general')
@@ -51,6 +54,26 @@ export function PaneSection({ active }: { active: boolean }): JSX.Element {
         />
       </SubPane>
       <BrowserSection active={sub === 'browser'} />
+      <SubPane section="pane" sub="artifacts" active={sub === 'artifacts'} className="flex flex-col gap-5">
+        <p className="text-meta text-dim">
+          HTML pages Claude creates in a session open as artifacts, marked Made by Claude. These settings apply only to them; other HTML files always
+          run offline.
+        </p>
+        <CheckField
+          setting="artifactRemoteResources"
+          ui="artifact-remote"
+          label="Web resources"
+          hint={`Lets pages use libraries and fonts from CDNs over HTTPS. Those scripts run with the page's access and can send what it shows to their servers. ${APPLY}`}
+          text="Load scripts, styles and fonts from the web"
+        />
+        <CheckField
+          setting="artifactNetworkRequests"
+          ui="artifact-network"
+          label="Data requests"
+          hint={`Lets pages read data files in their own folder and connect to any address over HTTPS or WSS, and to localhost and 127.0.0.1 for local dev servers. Pages never get your browser's logins or cookies, or files outside their folder. ${APPLY}`}
+          text="Let pages fetch data"
+        />
+      </SubPane>
     </Pane>
   )
 }

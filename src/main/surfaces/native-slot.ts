@@ -27,9 +27,10 @@ export class NativeViewSlot {
     return shown.has(this)
   }
 
+  /** Claimed before the others hide, so a hide or close during their stills isn't undone afterwards. */
   async show(): Promise<void> {
-    for (const other of [...shown]) if (other !== this && shown.has(other)) await other.hideOwner()
     shown.add(this)
+    for (const other of [...shown]) if (other !== this && shown.has(other)) await other.hideOwner()
   }
 
   hide(): void {

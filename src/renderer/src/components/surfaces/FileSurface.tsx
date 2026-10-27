@@ -41,7 +41,7 @@ export const FILE_FIND_EVENT = 'clui:file-find'
 const MARK = 'rounded-[2px] bg-border-strong text-content [&_*]:text-content'
 const MARK_ACTIVE = 'rounded-[2px] bg-content text-bg [&_*]:text-bg'
 const TEXT_BTN = 'h-6 shrink-0 rounded px-2 text-content hover:bg-control-hover'
-const STATE_BODY = 'flex flex-col items-start gap-2 px-4 py-6'
+export const STATE_BODY = 'flex flex-col items-start gap-2 px-4 py-6'
 
 const baseOf = (p: string): string => p.slice(p.lastIndexOf('/') + 1) || p
 const lines = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'}`
@@ -51,7 +51,7 @@ const toLines = (t: string): string[] => {
   if (ls.length > 1 && ls.at(-1) === '') ls.pop()
   return ls
 }
-const REASON: Record<Refusal['reason'], string> = {
+export const REASON: Record<Refusal['reason'], string> = {
   invalid: "The file's path isn't valid.",
   denied: "Clui only shows files in this session's folder or files Claude changed.",
   missing: "The file isn't on disk.",
@@ -61,16 +61,17 @@ const REASON: Record<Refusal['reason'], string> = {
   limit: 'The system has too many files open. Try again in a moment.',
   unreadable: '',
   permission: "macOS didn't let Clui read it. Check Clui's access in System Settings > Privacy & Security.",
-  unavailable: "Clui can't read files safely on this system."
+  unavailable: "Clui can't read files safely on this system.",
+  'too-broad': "The session's folder is your home folder or above it, so Clui won't preview pages from it."
 }
-const RETRY = new Set<Refusal['reason']>(['changed', 'limit', 'unreadable'])
+export const RETRY = new Set<Refusal['reason']>(['changed', 'limit', 'unreadable'])
 const CHOOSE = 'Choose file\u2026'
 const NO_LINES = 'This file has no lines to point at.'
 
 // What a shown file's view holds, for the header buttons and the menu item outside this component.
 const status = new Map<string, Doc['t']>()
 const listeners = new Set<() => void>()
-function setStatus(key: string, t: Doc['t'] | null): void {
+export function setStatus(key: string, t: Doc['t'] | null): void {
   if ((status.get(key) ?? null) === t) return
   if (t) status.set(key, t)
   else status.delete(key)
@@ -87,13 +88,46 @@ const useFileMissing = (handleId: string | null, path: string | null): boolean =
 export const openEditor = (handleId: string, path: string, line?: number): Promise<void> =>
   window.clui.openInEditor(handleId, path, line).catch((e: unknown) => useSession.setState({ notice: { message: cleanError(e), tone: 'error' } }))
 
-export function useFileExternal(handleId: string | null, path: string | null): PaneExternal {
+export const openDefault = (handleId: string, path: string): Promise<void> =>
+  window.clui.openPath(handleId, path).then((r) => {
+    if (!r.ok) useSession.setState({ notice: { message: r.message, tone: 'error' } })
+  })
+
+/** `page`: the tab shows a Preview, which opens in the file's default app rather than the editor. */
+export function useFileExternal(handleId: string | null, path: string | null, page = false): PaneExternal {
   const gone = useFileMissing(handleId, path)
   return {
-    label: 'Open in editor',
+    label: page ? 'Open in default app' : 'Open in editor',
     disabledReason: gone ? 'The file no longer exists.' : undefined,
-    onOpen: () => (handleId && path ? openEditor(handleId, path) : undefined)
+    onOpen: () => (handleId && path ? (page ? openDefault : openEditor)(handleId, path) : undefined)
   }
+}
+
+/** A file that isn't on disk anymore, with the way to what Claude changed in it. `close` is the restored tab's Close button. */
+export function FileMissing({ handleId, path, close }: { handleId: string; path: string; close?: JSX.Element | null }): JSX.Element {
+  const cwd = useActive((s) => s?.cwd ?? null)
+  const change = useActive((s) => !!s?.changes.some((c) => c.path === path))
+  const openSurface = useSession((s) => s.openSurface)
+  const viewChange = (via: Via): void => {
+    requestSurfaceFocus('diff', via)
+    openSurface(handleId, { kind: 'diff', key: '', title: 'Claude changes', location: { file: path } }, 'focus', 'user', 'user')
+  }
+  return (
+    <div className={STATE_BODY}>
+      <p className="text-ui font-medium text-content">File not found</p>
+      <p className="max-w-[60ch] text-meta text-dim">{`${toWorkspaceRelative(cwd, path)} isn't on disk anymore. It may have been moved or deleted.`}</p>
+      {(change || close) && (
+        <div className="flex gap-2">
+          {change && (
+            <Button variant="secondary" size="sm" onClick={(e) => viewChange(viaOf(e))}>
+              {"View Claude's changes"}
+            </Button>
+          )}
+          {close}
+        </div>
+      )}
+    </div>
+  )
 }
 
 type Doc =
@@ -146,7 +180,6 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   const setView = useSession((s) => s.setSurfaceView)
   const openSurface = useSession((s) => s.openSurface)
   const name = baseOf(path)
-  const rel = toWorkspaceRelative(cwd, path)
   const lang = langForPath(path)
   const selection = tab?.selection?.lines ?? null
   const highlight = tab?.highlight?.lines ?? null
@@ -483,14 +516,19 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   }, [doc.t, location, scroller])
 
   // A restored tab lands where it was left; a settled scroll and unmounting save its top line.
-  const restoreAt = useMemo(() => (tab?.viewState?.kind === 'file' && !location?.line ? tab.viewState.topLine : 1), [])
+  // An artifact's viewState is its page's, so its Source keeps its place in sourceView.
+  const viewKey = tab?.kind === 'artifact' ? 'sourceView' : 'viewState'
+  const restoreAt = useMemo(() => {
+    const v = tab?.[viewKey]
+    return v?.kind === 'file' && !location?.line ? v.topLine : 1
+  }, [])
   const viewTimer = useRef<ReturnType<typeof setTimeout>>()
   const saveTop = (): void => {
     if (docRef.current.t !== 'text') return
     const n = topLine()
-    const v = useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]?.viewState
+    const v = useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]?.[viewKey]
     if (v?.kind === 'file' && v.topLine === n) return
-    setView(handleId, tabId, { viewState: { kind: 'file', topLine: n, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
+    setView(handleId, tabId, { [viewKey]: { kind: 'file', topLine: n, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
   }
   useEffect(
     () => () => {
@@ -803,36 +841,13 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
       <div className={STATE_BODY}>
         <p className="text-ui font-medium text-content">Binary file</p>
         <p className="max-w-[60ch] text-meta text-dim">{`${name} can't be shown as text.`}</p>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() =>
-            void window.clui.openPath(handleId, path).then((r) => {
-              if (!r.ok) useSession.setState({ notice: { message: r.message, tone: 'error' } })
-            })
-          }
-        >
+        <Button variant="secondary" size="sm" onClick={() => void openDefault(handleId, path)}>
           Open in default app
         </Button>
       </div>
     )
   } else if (doc.t === 'missing') {
-    content = (
-      <div className={STATE_BODY}>
-        <p className="text-ui font-medium text-content">File not found</p>
-        <p className="max-w-[60ch] text-meta text-dim">{`${rel} isn't on disk anymore. It may have been moved or deleted.`}</p>
-        {(change || restored) && (
-          <div className="flex gap-2">
-            {change && (
-              <Button variant="secondary" size="sm" onClick={(e) => viewChange(undefined, viaOf(e))}>
-                {"View Claude's changes"}
-              </Button>
-            )}
-            {closeButton}
-          </div>
-        )}
-      </div>
-    )
+    content = <FileMissing handleId={handleId} path={path} close={closeButton} />
   } else if (doc.t === 'error' && doc.reason === 'denied' && restored) {
     content = (
       <div className={STATE_BODY}>

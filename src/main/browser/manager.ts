@@ -550,6 +550,7 @@ export class BrowserManager {
     }
     if (visible) {
       await e.slot.show()
+      if (!e.slot.shown) return null
       t.lastViewedMs = Date.now()
       this.ensureView(handleId, e, t)
       this.sync(e)
