@@ -6,7 +6,7 @@
  * drift skips the envelope instead of crashing the app.
  */
 import { parseCliMessage, perTurnUsage, ZERO_USAGE, type DenialSource, type DomainEvent, type PermissionDenial, type PermissionSuggestion, type RateLimit, type TurnEnd, type TurnUsage } from '../../shared/events'
-import { deriveModelInfo } from '../../shared/settings'
+import { contextWindowForModel, deriveModelInfo } from '../../shared/settings'
 
 // Minimal structural typing of the raw envelopes we care about.
 interface RawEnvelope {
@@ -280,7 +280,12 @@ export class EventMapper {
    *  from its later task_updated. Cleared on the task's terminal notification. */
   private taskMeta = new Map<string, { toolUseId?: string; description?: string; taskType: string }>()
   /** The session's current model, for naming it in a model-access error. */
-  private model = ''
+  private model: string
+
+  /** `model` is the id the session was spawned with. */
+  constructor(model = '') {
+    this.model = model
+  }
   /** This foreground turn's API error, from its `is_api_error_message` assistant envelope. */
   private apiError: ApiError | null = null
   /** Messages Clui sent that no result has answered yet. A result lists the uuids it answered,
@@ -323,12 +328,6 @@ export class EventMapper {
   /** Swallow everything from a Clui-injected `/rename` (see the `suppressRenameTurn` field). */
   beginRenameSuppression(): void {
     this.suppressRenameTurn = true
-  }
-
-  /** Best-effort context window for a model id (fallback when result absent). */
-  private contextWindowFor(model: string | undefined): number {
-    if (model && /\[1m\]/i.test(model)) return 1_000_000
-    return 200_000
   }
 
   /** Counts input + cache tokens (the resident context) to match the statusline's
@@ -567,8 +566,10 @@ export class EventMapper {
 
   private mapSystem(env: RawEnvelope): DomainEvent[] {
     if (env.subtype === 'init') {
-      // Seed the context window from the model id (refined later by the result).
-      this.contextWindow = this.contextWindowFor(env.model)
+      // Seed the context window from the model id (refined later by the result). The CLI echoes a native-1M
+      // model without the [1m] it was spawned with, so the spawned id names the window.
+      const echo = env.model ?? ''
+      this.contextWindow = contextWindowForModel(this.model.replace(/\[1m\]$/i, '') === echo ? this.model : echo)
       this.model = env.model ?? ''
       return [
         {

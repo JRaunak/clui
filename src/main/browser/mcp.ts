@@ -58,8 +58,11 @@ const PAGE_TOOLS = [
   },
   {
     name: 'click',
-    description: 'Click a ref, or x,y of screenshot shotId.',
-    inputSchema: { type: 'object', properties: { ref: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, shotId: { type: 'string' } } }
+    description: "Click a ref, or x,y of screenshot shotId. button right opens the page's own context menu.",
+    inputSchema: {
+      type: 'object',
+      properties: { ref: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, shotId: { type: 'string' }, button: { type: 'string', enum: ['left', 'right'] } }
+    }
   },
   {
     name: 'type',
@@ -608,12 +611,14 @@ export class BrowserMcpServer {
 
       case 'click': {
         const before = wc.getURL()
+        const button = args.button === 'right' ? 'right' : 'left'
+        const done = button === 'right' ? 'right-clicked' : 'clicked'
         const clickAt = async (x: number, y: number): Promise<ToolResult> => {
           void clickRing(wc, x, y)
-          await cdp.click(x, y)
+          await cdp.click(x, y, button)
           await settle(wc)
           const after = wc.getURL()
-          return text(after === before ? 'clicked' : `clicked. The page is now ${this.shownUrl(handleId, after)}`)
+          return text(after === before ? done : `${done}. The page is now ${this.shownUrl(handleId, after)}`)
         }
         if (args.ref != null) return this.actOnRef(handleId, tab, page, args.ref, (box) => clickAt(box.x, box.y))
         return this.atShot(handleId, tab, page, 'click', args, clickAt)

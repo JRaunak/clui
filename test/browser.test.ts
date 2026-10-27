@@ -354,7 +354,7 @@ equal(siteFromInput('   '), null, 'site input: blank is not a site')
   }
   const cdp = {
     locate: () => Promise.resolve(spots.shift() ?? { why: 'gone' }),
-    click: (x: number, y: number) => (clicks.push(`${x},${y}`), Promise.resolve()),
+    click: (x: number, y: number, button = 'left') => (clicks.push(`${button === 'left' ? '' : `${button} `}${x},${y}`), Promise.resolve()),
     hover: (x: number, y: number) => (clicks.push(`hover ${x},${y}`), Promise.resolve()),
     focusedIsPassword: () => Promise.resolve(false),
     insertText: () => Promise.resolve(),
@@ -397,6 +397,8 @@ equal(siteFromInput('   '), null, 'site input: blank is not a site')
   equal(clicks.length, 0, 'act: and nothing was clicked')
   equal(await go('click', { ref }, [{ x: 1, y: 1, password: false }, { x: 5, y: 6, password: false }]), 'clicked', 'act: click by ref')
   equal(clicks.join(' '), '5,6', 'act: input lands at the re-read box')
+  equal(await go('click', { ref, button: 'right' }, [{ x: 1, y: 1, password: false }, { x: 5, y: 6, password: false }]), 'right-clicked', 'act: right-click by ref')
+  equal(clicks.join(' '), 'right 5,6', 'act: a right-click presses the right button')
   equal(await go('hover', { ref }, [{ x: 1, y: 1, password: false }, { x: 2, y: 2, password: false }]), 'Hovering over 3.', 'act: hover by ref')
   worldCode.length = 0
   const refused = await go('type', { ref, text: 'x' }, [{ x: 1, y: 1, password: true }])

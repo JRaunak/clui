@@ -290,6 +290,14 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(after?.type === 'context-usage' && after.measured && after.contextWindow === 1_000_000, 'mapper: a result-reported window is measured')
 }
 
+// Spawned at [1m], the CLI echoes the base id; the window still comes from the spawned id.
+{
+  const m = new EventMapper('claude-opus-5-5[1m]')
+  m.map({ type: 'system', subtype: 'init', model: 'claude-opus-5-5', session_id: 's' })
+  const seen = feed(m, [{ type: 'assistant', message: { content: [], usage: { input_tokens: 5000 } } }]).find((e) => e.type === 'context-usage')
+  ok(seen?.type === 'context-usage' && seen.contextWindow === 1_000_000, 'mapper: a base-id echo of a [1m] spawn keeps the 1M window')
+}
+
 // Resume: the CLI's meta note of where it saved images isn't a user message; a peer message (also meta) still is.
 {
   const { mkdtempSync, writeFileSync } = await import('node:fs')

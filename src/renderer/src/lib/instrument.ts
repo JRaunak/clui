@@ -188,6 +188,7 @@ function actionLabel(name: string, input: unknown): string {
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
   if (action === 'navigate' && typeof o.url === 'string') return `navigate ${o.url.replace(/^https?:\/\//, '')}`
   const ref = refNumber(o.ref)
+  if (action === 'click' && o.button === 'right') return ref === null ? 'right-click' : `right-click ${ref}`
   if ((action === 'click' || action === 'type') && ref !== null) return `${action} ${ref}`
   if (action === 'scroll' && typeof o.dy === 'number') return `scroll ${o.dy}`
   if (action === 'press') {

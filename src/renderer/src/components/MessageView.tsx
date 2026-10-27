@@ -974,7 +974,7 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
         </div>
       )}
       {lost > 0 && <p data-ui="image-unavailable" className="text-meta text-dim">{lost === 1 ? 'Image not available' : `${lost} images not available`}</p>}
-      {text && <div className="whitespace-pre-wrap text-sm leading-relaxed text-content">{renderUserText(text)}</div>}
+      {text && <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-content">{renderUserText(text)}</div>}
     </>
   )
 }

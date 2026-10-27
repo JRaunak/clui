@@ -407,10 +407,10 @@ export class Cdp {
     return this.input('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
   }
 
-  async click(x: number, y: number): Promise<void> {
+  async click(x: number, y: number, button: 'left' | 'right' = 'left'): Promise<void> {
     await this.hover(x, y)
-    await this.input('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 })
-    await this.input('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
+    await this.input('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, clickCount: 1 })
+    await this.input('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, clickCount: 1 })
   }
 
   insertText(text: string): Promise<void> {
