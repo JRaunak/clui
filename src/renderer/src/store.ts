@@ -22,7 +22,7 @@ import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
 import { loadFailureOf, siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
-import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, supportsUltracodeToggle, contextWindowForModel, contextSizeLabel, latestModelInFamily, deriveModelInfo, modelCheckReason, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
+import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, setLiveEfforts, supportsUltracodeToggle, contextWindowForModel, contextSizeLabel, latestModelInFamily, deriveModelInfo, modelCheckReason, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
 import { pinWords, clipName, type AnnotateEvent } from '../../shared/annotate'
 import {
@@ -3176,6 +3176,10 @@ export const useSession = create<SessionStore>((set, get) => ({
         }
         case 'reconnected':
           clearNotice = true
+          break
+        case 'model-efforts':
+          setLiveEfforts(e.efforts)
+          patch.effortChoice = clampEffort(slice.modelChoice, slice.effortChoice)
           break
         case 'slash-commands':
           // The CLI's live command list from the initialize response. Stored raw;

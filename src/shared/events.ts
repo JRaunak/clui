@@ -10,6 +10,7 @@
  * Keep this list minimal and defensive; never hard-depend on the raw jsonl shape.
  */
 import type { CompactionMarker } from './sessions'
+import type { EffortChoice } from './settings'
 
 /**
  * One entry from the CLI's live task list (Task tool family), read from disk at
@@ -78,8 +79,7 @@ export interface PermissionDenial {
 
 /** One model's slice of a turn's usage (a turn can span models via subagents/switches). */
 export interface TurnUsageModel {
-  /** The CLI's raw modelUsage key. The live result also names a canonicalModel but the persisted
-   *  cost-state doesn't, so deltas match on this. */
+  /** The CLI's raw modelUsage key. */
   id?: string
   model: string
   provider?: string
@@ -89,7 +89,7 @@ export interface TurnUsageModel {
   costBasis?: 'list' | 'managed' | 'unknown'
 }
 
-/** A single turn's usage from the result envelope's `modelUsage`. Per-turn, distinct from the
+/** A single turn's usage from the result envelope's `model_usage_since_last_result`. Per-turn, distinct from the
  *  cumulative-session context ring and footer cost. */
 export interface TurnUsage {
   costUSD?: number
@@ -104,34 +104,6 @@ export interface TurnUsage {
 /** A turn without a costBasis counts as a list-price estimate, which on Bedrock is every turn. */
 export function isListPriced(usage: TurnUsage): boolean {
   return usage.models.some((m) => (m.costBasis ?? 'list') === 'list')
-}
-
-export const ZERO_USAGE: TurnUsage = {
-  costUSD: 0,
-  inputTokens: 0,
-  outputTokens: 0,
-  cacheReadInputTokens: 0,
-  cacheCreationInputTokens: 0,
-  thinkingTokens: 0,
-  models: []
-}
-
-/** The CLI reports every modelUsage field cumulatively for the process, so a turn's own
- *  usage is the current envelope minus the previous one. max(0, …) guards a transient lower
- *  report; per-model cost deltas off the prior snapshot's same model so the whole card
- *  stays one scope. */
-export function perTurnUsage(cur: TurnUsage, prev: TurnUsage): TurnUsage {
-  const d = (a: number | undefined, b: number | undefined): number => Math.max(0, (a ?? 0) - (b ?? 0))
-  const prevByModel = new Map(prev.models.map((m) => [m.id ?? m.model, m.costUSD]))
-  return {
-    costUSD: d(cur.costUSD, prev.costUSD),
-    inputTokens: d(cur.inputTokens, prev.inputTokens),
-    outputTokens: d(cur.outputTokens, prev.outputTokens),
-    cacheReadInputTokens: d(cur.cacheReadInputTokens, prev.cacheReadInputTokens),
-    cacheCreationInputTokens: d(cur.cacheCreationInputTokens, prev.cacheCreationInputTokens),
-    thinkingTokens: d(cur.thinkingTokens, prev.thinkingTokens),
-    models: cur.models.map((m) => ({ ...m, costUSD: d(m.costUSD, prevByModel.get(m.id ?? m.model)) }))
-  }
 }
 
 /** Why a turn stopped short of completing, for the turn's footer. Errors aren't here: they keep the red box. */
@@ -168,6 +140,8 @@ export type DomainEvent =
    *  Includes TUI-only commands the renderer filters out (the CLI carries no
    *  headless-safe flag, so see `isHeadlessSafeCommand`). */
   | { type: 'slash-commands'; commands: SlashCommandInfo[] }
+  /** Effort levels by model key, from the initialize response's `models[]`. */
+  | { type: 'model-efforts'; efforts: Record<string, EffortChoice[]> }
   /** A respawn finished its handshake. A session that hasn't run a turn emits no init, so this
    *  is what ends a respawn's "Reconnecting…" notice. */
   | { type: 'reconnected' }

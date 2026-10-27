@@ -8,7 +8,9 @@ import {
   clampEffort,
   cappedEffort,
   supportsUltracodeToggle,
-  supports1m,
+  takes1mSuffix,
+  effortsFromCatalog,
+  setLiveEfforts,
   contextSizeLabel,
   reconcileModelChoice,
   effortLabel,
@@ -38,23 +40,23 @@ const onDisk = (): any => JSON.parse(readFileSync(SP, 'utf8'))
 
 ok(sameModel('provider-a', 'provider-b') === false, 'model: distinct unknown ids are not equal')
 ok(sameModel('claude-opus-4-8', 'us.anthropic.claude-opus-4-8') === true, 'model: recognized prefixed/bare equivalent')
-ok(sameModel('claude-opus-4-8[1m]', 'claude-opus-4-8') === false, 'model: 1m vs non-1m differ')
+ok(sameModel('claude-sonnet-4-6[1m]', 'claude-sonnet-4-6') === false, 'model: a suffix model at 1M and 200K differ')
+ok(sameModel('claude-opus-5-5[1m]', 'us.anthropic.claude-opus-5-5') === true, 'model: a native-1M model is the same with or without [1m]')
 
-// supports1m: the verified 1M set (Fable 5+, Opus 4.6+, Sonnet 4.6+); everything else 200K
-ok(supports1m('opus', 4.6) === true, 'supports1m: opus 4.6 is 1M')
-ok(supports1m('opus', 4.5) === false, 'supports1m: opus 4.5 is 200K')
-ok(supports1m('sonnet', 4.6) === true, 'supports1m: sonnet 4.6 is 1M')
-ok(supports1m('sonnet', 4.5) === false, 'supports1m: sonnet 4.5 is 200K')
-ok(supports1m('fable', 5) === true, 'supports1m: fable 5 is 1M')
-ok(supports1m('fable', 4) === false, 'supports1m: fable 4 is 200K')
-ok(supports1m('haiku', 4.5) === false, 'supports1m: no haiku is 1M')
+// takes1mSuffix: only Opus 4.6 and Sonnet 4.6 reach 1M through the suffix
+ok(takes1mSuffix('opus', 4.6) && takes1mSuffix('sonnet', 4.6), 'takes1mSuffix: the 4.6 models')
+ok(!takes1mSuffix('opus', 4.7) && !takes1mSuffix('sonnet', 5) && !takes1mSuffix('fable', 5) && !takes1mSuffix('haiku', 5.5), 'takes1mSuffix: native-1M models take none')
+ok(!takes1mSuffix('opus', 4.5) && !takes1mSuffix('haiku', 4.5), 'takes1mSuffix: 200K models take none')
 
 // contextSizeLabel: derived from the window, never hardcoded
-ok(contextSizeLabel('claude-opus-4-8[1m]') === '1M', 'contextSizeLabel: [1m] → 1M')
-ok(contextSizeLabel('claude-opus-4-8') === '200K', 'contextSizeLabel: base → 200K')
+ok(contextSizeLabel('claude-sonnet-4-6[1m]') === '1M', 'contextSizeLabel: [1m] → 1M')
+ok(contextSizeLabel('claude-sonnet-4-6') === '200K', 'contextSizeLabel: a suffix model at its base → 200K')
+ok(contextSizeLabel('claude-opus-4-6') === '200K', 'contextSizeLabel: Opus 4.6 base → 200K')
+ok(contextSizeLabel('us.anthropic.claude-opus-4-7') === '1M', 'contextSizeLabel: Opus 4.7 is natively 1M')
+ok(contextSizeLabel('us.anthropic.claude-sonnet-5') === '1M', 'contextSizeLabel: Sonnet 5 is natively 1M')
+ok(contextSizeLabel('claude-fable-5-1') === '1M', 'contextSizeLabel: Fable is natively 1M')
 ok(contextSizeLabel('claude-haiku-4-5') === '200K', 'contextSizeLabel: haiku → 200K')
 ok(contextSizeLabel('us.anthropic.claude-haiku-5-5') === '1M', 'contextSizeLabel: Haiku 5.5 is natively 1M')
-ok(supports1m('haiku', 5.5) === false, 'supports1m: Haiku 5.5 takes no [1m] suffix')
 ok(supportsUltracodeToggle('us.anthropic.claude-haiku-5-5'), 'supportsUltracodeToggle: Haiku 5.5 has an xhigh tier')
 ok(clampEffort('us.anthropic.claude-haiku-5-5', 'max') === 'max', 'clampEffort: Haiku 5.5 keeps max')
 ok(clampEffort('claude-haiku-4-5-20251001', 'max') === 'max', 'clampEffort: Haiku 4.5 takes no effort, so the stored one is kept')
@@ -74,21 +76,21 @@ equal(modelCheckReason('{"type":"error"}'), null, 'modelCheckReason: a raw JSON 
 equal(modelCheckReason('API error: 500 <html>oops</html>'), null, 'modelCheckReason: a raw HTML body → null')
 equal(modelCheckReason('x'.repeat(200)), null, 'modelCheckReason: an over-long reason → null')
 
-// reconcile: a stored/kept BASE id of a supports1m model resolves to the [1m] picker entry
+// reconcile: a stored/kept BASE id of a suffix model resolves to the [1m] picker entry
 {
-  const listed = ['us.anthropic.claude-opus-4-8[1m]', 'us.anthropic.claude-haiku-4-5']
+  const listed = ['us.anthropic.claude-sonnet-4-6[1m]', 'us.anthropic.claude-opus-5-5', 'us.anthropic.claude-haiku-4-5']
   ok(
-    reconcileModelChoice('us.anthropic.claude-opus-4-8', 'claude-opus-4-8', listed) ===
-      'us.anthropic.claude-opus-4-8[1m]',
-    'reconcile: kept base 1M model adopts the list [1m] entry'
+    reconcileModelChoice('us.anthropic.claude-sonnet-4-6', 'claude-sonnet-4-6', listed) ===
+      'us.anthropic.claude-sonnet-4-6[1m]',
+    'reconcile: kept base suffix model adopts the list [1m] entry'
   )
   ok(
-    reconcileModelChoice('us.anthropic.claude-sonnet-5', 'claude-opus-4-8', listed) ===
-      'us.anthropic.claude-opus-4-8[1m]',
-    'reconcile: reported base 1M model (no direct list match) adopts the [1m] entry'
+    reconcileModelChoice('us.anthropic.claude-sonnet-5', 'claude-sonnet-4-6', listed) ===
+      'us.anthropic.claude-sonnet-4-6[1m]',
+    'reconcile: reported base suffix model (no direct list match) adopts the [1m] entry'
   )
   ok(
-    reconcileModelChoice('claude-opus-4-8', 'claude-opus-4-8', []) === 'claude-opus-4-8[1m]',
+    reconcileModelChoice('claude-sonnet-4-6', 'claude-sonnet-4-6', []) === 'claude-sonnet-4-6[1m]',
     'reconcile: empty list synthesizes the [1m] suffix so the size still reads 1M'
   )
   ok(
@@ -97,10 +99,30 @@ equal(modelCheckReason('x'.repeat(200)), null, 'modelCheckReason: an over-long r
     'reconcile: a 200K model is left untouched'
   )
   ok(
-    reconcileModelChoice('claude-opus-4-8[1m]', 'claude-opus-4-8[1m]', listed) ===
-      'claude-opus-4-8[1m]',
+    reconcileModelChoice('claude-sonnet-4-6[1m]', 'claude-sonnet-4-6[1m]', listed) ===
+      'claude-sonnet-4-6[1m]',
     'reconcile: an already-[1m] choice is unchanged'
   )
+  equal(reconcileModelChoice('us.anthropic.claude-opus-5-5[1m]', 'claude-opus-5-5', listed), 'us.anthropic.claude-opus-5-5', 'reconcile: an old [1m] pick of a native-1M model lands on its base row')
+  equal(reconcileModelChoice('claude-opus-5-5', 'claude-opus-5-5', []), 'claude-opus-5-5', 'reconcile: a native-1M model never gains the suffix')
+}
+
+// The live catalog (2.1.311 initialize models[], trimmed) outranks the version rules.
+{
+  const efforts = effortsFromCatalog([
+    { value: 'default', resolvedModel: 'us.anthropic.claude-opus-5-5', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'] },
+    { value: 'us.anthropic.claude-sonnet-4-6[1m]', resolvedModel: 'us.anthropic.claude-sonnet-4-6[1m]', supportsEffort: true, supportedEffortLevels: ['low', 'high', 'turbo'] },
+    { value: 'haiku', resolvedModel: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', supportsThinkingOff: true },
+    { value: 'opus', resolvedModel: 'us.anthropic.claude-opus-5-5', supportsEffort: true },
+    'junk'
+  ])
+  equal(Object.keys(efforts).sort().join(' '), 'claude-haiku-4-5-20251001 claude-opus-5-5 claude-sonnet-4-6 default haiku', 'catalog: keyed by bare id, aliases and resolved models both, a row with no levels skipped')
+  equal(efforts['claude-sonnet-4-6'].join(' '), 'low high', 'catalog: unknown levels are dropped, order is canonical')
+  equal(efforts.haiku.length, 0, 'catalog: a model without supportsEffort takes none')
+  setLiveEfforts(efforts)
+  equal(deriveModelInfo('us.anthropic.claude-sonnet-4-6').efforts.join(' '), 'low high', 'catalog: the live levels beat the version rule')
+  equal(deriveModelInfo('claude-opus-4-8').efforts.length, 5, 'catalog: an unlisted model keeps the version rule')
+  setLiveEfforts({})
 }
 
 // cappedEffort: no cap → byte-identical to clampEffort (the no-regression guarantee)
@@ -153,9 +175,15 @@ ok(!supportsUltracodeToggle('claude-haiku-4-5'), 'supportsUltracodeToggle: haiku
   ok(!('theme' in d), 'settings: legacy-default key dropped')
 }
 {
-  writeFileSync(SP, JSON.stringify({ model: 'claude-opus-4-8[1m]' }))
+  writeFileSync(SP, JSON.stringify({ model: 'claude-sonnet-4-6[1m]' }))
   const r = await (await fresh()).getResolvedSettings()
-  ok(r.values.model === 'claude-opus-4-8[1m]', 'settings: explicit pick in overrides-only file preserved')
+  ok(r.values.model === 'claude-sonnet-4-6[1m]', 'settings: explicit pick in overrides-only file preserved')
+}
+{
+  writeFileSync(SP, JSON.stringify({ model: 'us.anthropic.claude-opus-5-5[1m]' }))
+  const r = await (await fresh()).getResolvedSettings()
+  equal(r.values.model, 'us.anthropic.claude-opus-5-5', 'settings: an old [1m] pick of a native-1M model resolves to its base id')
+  equal(onDisk().model, 'us.anthropic.claude-opus-5-5[1m]', 'settings: and the file keeps what the user picked')
 }
 // The browser switch is read at every spawn: off by default, a non-boolean never turns it on,
 // and switching it back off leaves no key behind.

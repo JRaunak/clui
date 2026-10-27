@@ -330,47 +330,6 @@ export async function readTranscript(
   return parseTranscriptFile(file, cap, { turnUsage })
 }
 
-/** The running total a `--resume` spawn starts from: the transcript's last cost-state, which the
- *  CLI seeds its own count with. Null when there's none (the last process never exited cleanly). */
-export async function readCostBaseline(sessionId: string): Promise<TurnUsage | null> {
-  const file = await findTranscriptFile(sessionId)
-  if (!file) return null
-  let last: { totalCostUSD?: number; modelUsage?: Record<string, Record<string, number | undefined>> } | null = null
-  const rl = createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity })
-  try {
-    for await (const line of rl) {
-      if (!line.includes('"cost-state"')) continue
-      try {
-        const o = JSON.parse(line)
-        if (o?.type === 'cost-state') last = o
-      } catch {
-        /* a torn line */
-      }
-    }
-  } finally {
-    rl.close()
-  }
-  if (!last) return null
-  const usage: TurnUsage = {
-    costUSD: last.totalCostUSD ?? 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadInputTokens: 0,
-    cacheCreationInputTokens: 0,
-    thinkingTokens: 0,
-    models: []
-  }
-  for (const [id, u] of Object.entries(last.modelUsage ?? {})) {
-    usage.inputTokens += u.inputTokens ?? 0
-    usage.outputTokens += u.outputTokens ?? 0
-    usage.cacheReadInputTokens += u.cacheReadInputTokens ?? 0
-    usage.cacheCreationInputTokens += u.cacheCreationInputTokens ?? 0
-    usage.thinkingTokens += u.thinkingTokens ?? 0
-    usage.models.push({ id, model: id, costUSD: u.costUSD })
-  }
-  return usage
-}
-
 /**
  * Locate + read a WORKFLOW/SUBAGENT agent transcript by its agentId. These live at
  * `projects/<slug>/<session>/subagents/[workflows/<wf>/]agent-<id>.jsonl` (same

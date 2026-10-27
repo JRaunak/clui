@@ -5,8 +5,24 @@
  * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
  * drift skips the envelope instead of crashing the app.
  */
-import { parseCliMessage, perTurnUsage, ZERO_USAGE, type DenialSource, type DomainEvent, type PermissionDenial, type PermissionSuggestion, type RateLimit, type TurnEnd, type TurnUsage } from '../../shared/events'
+import { parseCliMessage, type DenialSource, type DomainEvent, type PermissionDenial, type PermissionSuggestion, type RateLimit, type TurnEnd, type TurnUsage } from '../../shared/events'
 import { contextWindowForModel, deriveModelInfo } from '../../shared/settings'
+
+type ModelUsage = Record<
+  string,
+  {
+    contextWindow?: number
+    costUSD?: number
+    inputTokens?: number
+    outputTokens?: number
+    cacheReadInputTokens?: number
+    cacheCreationInputTokens?: number
+    thinkingTokens?: number
+    provider?: string
+    canonicalModel?: string
+    costBasis?: 'list' | 'managed' | 'unknown'
+  }
+>
 
 // Minimal structural typing of the raw envelopes we care about.
 interface RawEnvelope {
@@ -118,21 +134,9 @@ interface RawEnvelope {
   api_error?: string | null
   api_error_params?: { remedy?: string }
   total_cost_usd?: number
-  modelUsage?: Record<
-    string,
-    {
-      contextWindow?: number
-      costUSD?: number
-      inputTokens?: number
-      outputTokens?: number
-      cacheReadInputTokens?: number
-      cacheCreationInputTokens?: number
-      thinkingTokens?: number
-      provider?: string
-      canonicalModel?: string
-      costBasis?: 'list' | 'managed' | 'unknown'
-    }
-  >
+  modelUsage?: ModelUsage
+  /** Usage since the previous result. Unlike modelUsage, it never carries a resumed session's earlier total. */
+  model_usage_since_last_result?: ModelUsage
   /** Every tool call denied this turn, whoever denied it. */
   permission_denials?: Array<{ tool_name?: string; tool_use_id?: string; tool_input?: unknown }>
   // system/permission_denied, which fires before the errored tool_result. The gate's Deny emits none.
@@ -183,14 +187,13 @@ interface RawUsage {
   output_tokens?: number
 }
 
-/** Every field here is CUMULATIVE session-to-date (the CLI reports modelUsage and
- *  total_cost_usd that way, verified live); the store deltas it against the prior envelope to
- *  get one turn's marginal. models[] is kept so a multi-model turn can show a per-model split. */
+/** modelUsage is cumulative for the process, so a result's own usage comes from model_usage_since_last_result.
+ *  models[] is kept so a multi-model turn can show a per-model split. */
 function turnUsageFrom(env: RawEnvelope): TurnUsage | undefined {
-  const entries = env.modelUsage ? Object.entries(env.modelUsage) : []
+  const entries = Object.entries(env.model_usage_since_last_result ?? {})
   if (entries.length === 0) return undefined
   const usage: TurnUsage = {
-    costUSD: env.total_cost_usd,
+    costUSD: 0,
     inputTokens: 0,
     outputTokens: 0,
     cacheReadInputTokens: 0,
@@ -199,6 +202,7 @@ function turnUsageFrom(env: RawEnvelope): TurnUsage | undefined {
     models: []
   }
   for (const [id, u] of entries) {
+    usage.costUSD = (usage.costUSD ?? 0) + (u.costUSD ?? 0)
     usage.inputTokens += u.inputTokens ?? 0
     usage.outputTokens += u.outputTokens ?? 0
     usage.cacheReadInputTokens += u.cacheReadInputTokens ?? 0
@@ -211,15 +215,8 @@ function turnUsageFrom(env: RawEnvelope): TurnUsage | undefined {
 
 /** Track in-flight tool_use blocks by their stream index → id, to attach input deltas. */
 export class EventMapper {
-  /** This process's cumulative usage at the previous result. A resumed process starts its count
-   *  from the transcript's last cost-state, so the session seeds it from there. */
-  private usageBaseline: TurnUsage = ZERO_USAGE
   /** The current turn's latest main-thread assistant message id. */
   private lastMessageId: string | undefined
-
-  setUsageBaseline(usage: TurnUsage): void {
-    this.usageBaseline = usage
-  }
 
   /** content-block index → tool_use id (for input-delta association). */
   private indexToToolId = new Map<number, string>()
@@ -463,11 +460,8 @@ export class EventMapper {
         const local = typeof env.local_command === 'string'
         const cut = this.sentNow.size > 0 && /^aborted_/.test(env.terminal_reason ?? '')
         const endReason = local ? undefined : turnEndOf(env, wasInterrupted, cut)
-        // Every result advances the process total, so the baseline moves on each one. A local command
-        // ran no model turn, so it has no usage of its own.
-        const cumulative = turnUsageFrom(env)
-        const prevUsage = this.usageBaseline
-        if (cumulative) this.usageBaseline = cumulative
+        // A local command ran no model turn, so it has no usage of its own.
+        const usage = local ? undefined : turnUsageFrom(env)
         const messageId = this.lastMessageId
         this.lastMessageId = undefined
         // A bg/peer result isn't the user's turn, so its denials aren't theirs.
@@ -494,7 +488,7 @@ export class EventMapper {
             answersUser,
             sendNowPending: this.sentNow.size > 0,
             denials,
-            usage: !local && cumulative ? perTurnUsage(cumulative, prevUsage) : undefined,
+            usage,
             messageId: local ? undefined : messageId,
             endReason,
             durationMs: local ? undefined : env.duration_ms,

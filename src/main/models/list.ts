@@ -10,7 +10,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { ModelListResult } from '../../shared/ipc'
-import { FALLBACK_MODEL_IDS, deriveModelInfo, supports1m } from '../../shared/settings'
+import { FALLBACK_MODEL_IDS, deriveModelInfo, takes1mSuffix } from '../../shared/settings'
 import { loginShellAuthEnv } from '../cli/shell-env'
 import { readCliSettings } from '../settings/cli-settings'
 
@@ -140,14 +140,13 @@ async function query(): Promise<ModelListResult> {
 }
 
 /**
- * One picker entry per model at its real max context: a `supports1m` model becomes only its
- * `${id}[1m]` id (Bedrock exposes 1M via the suffix, never as a separate profile), every other
- * keeps its base id. Never append `[1m]` to a non-1M model: Haiku 400s the suffix. Re-verify the
- * `supports1m` set on a CLI bump; it drifts like the effort gates.
+ * One picker entry per model at its real max context: a `takes1mSuffix` model becomes only its
+ * `${id}[1m]` id (Bedrock exposes its 1M only via the suffix, never as a separate profile), every other
+ * keeps its base id. Never append `[1m]` to a 200K model: Haiku 400s the suffix.
  */
 function withVariants(ids: string[]): string[] {
   return ids.map((id) => {
     const { family, version } = deriveModelInfo(id)
-    return supports1m(family, version) && !/\[1m\]$/.test(id) ? `${id}[1m]` : id
+    return takes1mSuffix(family, version) && !/\[1m\]$/.test(id) ? `${id}[1m]` : id
   })
 }

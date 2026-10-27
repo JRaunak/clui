@@ -1,48 +1,7 @@
-// Boundary: the per-turn usage delta. The CLI reports modelUsage cumulatively, so the trailer
-// must subtract the prior envelope to show one turn's own cost/tokens (not the running total).
 import { CHANGE_REFS, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
-import { perTurnUsage } from '../src/shared/events.ts'
 import { equal, ok } from './support/harness.mjs'
-
-const cum = (costUSD: number, out: number, cacheRead: number, cacheCreate: number) => ({
-  costUSD,
-  inputTokens: 3,
-  outputTokens: out,
-  cacheReadInputTokens: cacheRead,
-  cacheCreationInputTokens: cacheCreate,
-  thinkingTokens: 0,
-  models: [{ model: 'claude-sonnet-4-6', provider: 'bedrock', costUSD }]
-})
-
-// Turn 1 off a zero baseline equals its own cumulative.
-{
-  const zero = cum(0, 0, 0, 0)
-  const t1 = perTurnUsage(cum(0.0074, 4, 24310, 0), zero)
-  equal(t1.costUSD, 0.0074, 'perTurn: turn 1 cost equals cumulative off zero baseline')
-  equal(t1.outputTokens, 4, 'perTurn: turn 1 output equals cumulative')
-  equal(t1.cacheReadInputTokens, 24310, 'perTurn: turn 1 cache read equals cumulative')
-}
-
-// Turn 2 is the marginal: cumulative doubled cache read must NOT show doubled.
-{
-  const prev = cum(0.0074, 4, 24310, 0)
-  const t2 = perTurnUsage(cum(0.0155, 51, 48620, 12), prev)
-  ok(Math.abs((t2.costUSD ?? 0) - 0.0081) < 1e-9, 'perTurn: turn 2 cost is the marginal, not cumulative')
-  equal(t2.outputTokens, 47, 'perTurn: turn 2 output is the delta (51-4), not 51')
-  equal(t2.cacheReadInputTokens, 24310, 'perTurn: turn 2 cache read is the delta, not the doubled 48620')
-  equal(t2.cacheCreationInputTokens, 12, 'perTurn: turn 2 cache creation is the delta')
-  equal(t2.models[0].costUSD, t2.costUSD, 'perTurn: per-model cost shares the headline scope')
-}
-
-// A transient lower report (effort respawn / pre-seed) floors at zero, never negative.
-{
-  const prev = cum(0.02, 100, 1000, 0)
-  const t = perTurnUsage(cum(0.01, 50, 500, 0), prev)
-  equal(t.costUSD, 0, 'perTurn: a lower cumulative floors at 0')
-  equal(t.outputTokens, 0, 'perTurn: a lower token count floors at 0')
-}
 
 // The store's IPC is stubbed: each call is recorded and resolves true unless `replies` overrides it.
 const calls: { name: string; args: unknown[] }[] = []
@@ -119,9 +78,9 @@ const st = useSession.getState
   equal(st().notice?.message, "Couldn't switch to Haiku 4.5. The provided model identifier is invalid. The session is still on Opus 5.5.", 'store: a rejected switch shows the cleaned reason')
   equal(cur().modelChoice, 'claude-opus-5-5[1m]', 'store: and reverts the picker')
   fail({ errorCode: 'unknown_subtype', reason: 'Unknown subtype set_model' })
-  reset({ ultracode: false })
-  await st().setModel('claude-opus-5-5')
-  equal(st().notice?.message, "Couldn't switch to Opus 5.5 (200K). The session is still on Opus 5.5 (1M).", 'store: other errors get the generic line, sizes split equal labels')
+  reset({ ultracode: false, modelChoice: 'claude-sonnet-4-6[1m]' })
+  await st().setModel('claude-sonnet-4-6')
+  equal(st().notice?.message, "Couldn't switch to Sonnet 4.6 (200K). The session is still on Sonnet 4.6 (1M).", 'store: other errors get the generic line, sizes split equal labels')
   fail({ timedOut: true })
   reset({ ultracode: false })
   await st().setModel('claude-sonnet-4-6')

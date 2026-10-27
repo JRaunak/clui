@@ -283,9 +283,9 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
 // The window is a guess from the model id until a result reports it; only then is it measured.
 {
   const m = new EventMapper()
-  m.map({ type: 'system', subtype: 'init', model: 'us.anthropic.claude-opus-5-5', session_id: 's' })
+  m.map({ type: 'system', subtype: 'init', model: 'us.anthropic.claude-sonnet-4-6', session_id: 's' })
   const before = feed(m, [{ type: 'assistant', message: { content: [], usage: { input_tokens: 5000 } } }]).find((e) => e.type === 'context-usage')
-  const after = feed(m, [{ type: 'result', result: 'ok', session_id: 's', modelUsage: { 'us.anthropic.claude-opus-5-5': { contextWindow: 1_000_000 } } }]).find((e) => e.type === 'context-usage')
+  const after = feed(m, [{ type: 'result', result: 'ok', session_id: 's', modelUsage: { 'us.anthropic.claude-sonnet-4-6': { contextWindow: 1_000_000 } } }]).find((e) => e.type === 'context-usage')
   ok(before?.type === 'context-usage' && !before.measured && before.contextWindow === 200_000, 'mapper: a window from the model id is not measured')
   ok(after?.type === 'context-usage' && after.measured && after.contextWindow === 1_000_000, 'mapper: a result-reported window is measured')
 }
@@ -404,12 +404,19 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   const early = one({ is_error: false, terminal_reason: 'brand_new_stop' })
   ok(early[0].endReason?.kind === 'early' && early[0].endReason.reason === 'brand_new_stop', 'mapper: an unknown non-error reason is an early stop')
   ok(one({ terminal_reason: 'completed', duration_ms: 1234 })[0].durationMs === 1234 && !one({ terminal_reason: 'completed' })[0].endReason, 'mapper: a completed turn carries its duration and no reason')
-  const local = one({ local_command: 'usage', num_turns: 0, modelUsage: { m: { costUSD: 0 } }, total_cost_usd: 0 })
+  const local = one({ local_command: 'usage', num_turns: 0, model_usage_since_last_result: { m: { costUSD: 0 } }, total_cost_usd: 0 })
   ok(local[0].usage === undefined, 'mapper: a local command has no per-turn usage')
-  const priced = one({ modelUsage: { m: { costUSD: 0.1, costBasis: 'list' } }, total_cost_usd: 0.1 })
+  const priced = one({ model_usage_since_last_result: { m: { costUSD: 0.1, costBasis: 'list' } }, total_cost_usd: 0.1 })
   ok(priced[0].usage?.models[0]?.costBasis === 'list', 'mapper: costBasis rides on the turn usage')
-  const woken = one({ origin: { kind: 'task-notification' }, modelUsage: { m: { costUSD: 0.2 } }, total_cost_usd: 0.2 })
+  const woken = one({ origin: { kind: 'task-notification' }, model_usage_since_last_result: { m: { costUSD: 0.2 } }, total_cost_usd: 0.2 })
   ok(woken[0].usage?.costUSD === 0.2, 'mapper: a woken turn gets its own usage')
+  // A resumed process's second result (2.1.311 capture): modelUsage carries the session's total, the since field this turn.
+  const resumed = one({
+    modelUsage: { h: { costUSD: 0.04565, outputTokens: 149, cacheReadInputTokens: 82247 } },
+    model_usage_since_last_result: { h: { costUSD: 0.00432, outputTokens: 38, cacheReadInputTokens: 28278 } },
+    total_cost_usd: 0.04565
+  })
+  ok(resumed[0].usage?.costUSD === 0.00432 && resumed[0].usage.outputTokens === 38 && resumed[0].usage.cacheReadInputTokens === 28278, 'mapper: turn usage is the since-last-result slice, not the total')
 }
 
 // Auto mode: the check heartbeat, and a call it held back without running.

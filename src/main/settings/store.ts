@@ -22,6 +22,7 @@ import {
   PERMISSION_MODES,
   QUICK_MODEL_FAMILIES,
   QUICK_PERMISSION_MODES,
+  canonicalModelId,
   clampEffort,
   isEffortChoice,
   type CluiSettings,
@@ -92,6 +93,8 @@ function resolveInherited(storedPartial: StoredSettings, cli: CliSettings): Reso
     values.effort = cli.effortLevel
     sources.effort = 'cli'
   }
+  // An older pick of a native-1M model carries [1m], and the picker lists it without.
+  values.model = canonicalModelId(values.model)
   // Clamp whenever EITHER side was inherited: an inherited effort can exceed an
   // overridden model's ceiling just as easily as the reverse.
   values.effort = clampEffort(values.model, values.effort)

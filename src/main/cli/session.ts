@@ -18,11 +18,10 @@ import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { DomainEvent, ElicitationResponse } from '../../shared/events'
 import type { DispatchResult, ModeChangeResult, ModelSwitchResult } from '../../shared/ipc'
-import { clampEffort, deriveModelInfo, isEffortChoice } from '../../shared/settings'
+import { clampEffort, deriveModelInfo, effortsFromCatalog, isEffortChoice, setLiveEfforts } from '../../shared/settings'
 import { NdjsonParser } from './ndjson'
 import { EventMapper } from './event-mapper'
 import { stripRuntimeMarkers } from './shell-env'
-import { readCostBaseline } from '../sessions/transcript'
 import { recordTurnUsage } from '../sessions/usage'
 
 /** `onWritten` runs right after this exact envelope is written, never for a preparation that isn't. */
@@ -289,15 +288,6 @@ export class ClaudeSession extends EventEmitter {
     this.parser = new NdjsonParser()
     this.mapper = new EventMapper(this.opts.model)
     if (gen > 1) this.emitEvent({ type: 'mod-status-reset' })
-    // The transcript's last cost-state is what this process starts counting from. It's read while the
-    // CLI boots, and no result can land before the first turn, which is seconds away.
-    const resumeId = this.opts.resumeSessionId
-    if (resumeId) {
-      const mapper = this.mapper
-      void readCostBaseline(resumeId)
-        .then((b) => b && mapper.setUsageBaseline(b))
-        .catch(() => {})
-    }
     this.stderrBuf = ''
     if (this.initTimer) {
       clearTimeout(this.initTimer)
@@ -540,6 +530,11 @@ export class ClaudeSession extends EventEmitter {
             aliases: Array.isArray(c.aliases) ? c.aliases.filter((a) => typeof a === 'string') : undefined
           }))
         if (commands.length) this.emitEvent({ type: 'slash-commands', commands })
+      }
+      const efforts = effortsFromCatalog(env.response?.response?.models)
+      if (Object.keys(efforts).length) {
+        setLiveEfforts(efforts)
+        this.emitEvent({ type: 'model-efforts', efforts })
       }
       if (this.respawned) {
         this.respawned = false

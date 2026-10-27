@@ -234,7 +234,6 @@ function parseModelId(id: string): {
   versioned: boolean
 } {
   const s = id.toLowerCase()
-  const is1m = /\[1m\]/.test(s)
   const family = s.includes('opus')
     ? 'opus'
     : s.includes('sonnet')
@@ -251,7 +250,36 @@ function parseModelId(id: string): {
   const before = s.match(/(\d+)-(\d)-(?:opus|sonnet|haiku|fable)/)
   const m = after ?? before
   const version = m ? Number(m[1]) + (m[2] ? Number(m[2]) / 10 : 0) : 0
-  return { family, version, is1m, versioned: version > 0 }
+  return { family, version, is1m: /\[1m\]/.test(s) || native1m(family, version), versioned: version > 0 }
+}
+
+/** Effort levels by model key from the CLI's initialize `models[]`. That list comes from the CLI's model catalog,
+ *  which refreshes without a CLI release, so it outranks the version rules in effortsFor. */
+let liveEfforts: Record<string, EffortChoice[]> = {}
+
+/** A model id with its window suffix, provider prefix and Bedrock `-v1:0` revision stripped. */
+const modelKey = (id: string): string =>
+  id.toLowerCase().replace(/\[1m\]$/, '').replace(/^(?:[a-z0-9-]+\.)*anthropic\./, '').replace(/-v\d+:\d+$/, '')
+
+/** The effort levels each model in an initialize response's `models[]` takes. An alias also keys its resolved
+ *  model, unless the list names that model itself. */
+export function effortsFromCatalog(models: unknown): Record<string, EffortChoice[]> {
+  const out: Record<string, EffortChoice[]> = {}
+  if (!Array.isArray(models)) return out
+  const rows = models.flatMap((m) => {
+    if (!m || typeof m !== 'object') return []
+    const { value, resolvedModel, supportsEffort, supportedEffortLevels: levels } = m as Record<string, unknown>
+    if (typeof value !== 'string') return []
+    if (supportsEffort === true && !Array.isArray(levels)) return []
+    const efforts = supportsEffort === true ? EFFORT_CHOICES.filter((e) => (levels as unknown[]).includes(e)) : []
+    return [{ ids: typeof resolvedModel === 'string' ? [value, resolvedModel] : [value], efforts }]
+  })
+  for (const pass of [0, 1]) for (const { ids, efforts } of rows) if (ids[pass]) out[modelKey(ids[pass])] ??= efforts
+  return out
+}
+
+export function setLiveEfforts(efforts: Record<string, EffortChoice[]>): void {
+  liveEfforts = efforts
 }
 
 /**
@@ -261,6 +289,8 @@ function parseModelId(id: string): {
  * Empty means the model takes no effort level at all.
  */
 function effortsFor(id: string): EffortChoice[] {
+  const live = liveEfforts[modelKey(id)]
+  if (live) return live
   const { family, version, versioned } = parseModelId(id)
   const base: EffortChoice[] = ['low', 'medium', 'high']
   let max = false
@@ -333,12 +363,11 @@ export const CLASSIFIER_REFUSED_MODELS: readonly string[] = ['claude-sonnet-5-5'
 const stripWindow = (id: string): string => id.replace(/\[1m\]$/i, '')
 
 export function classifierRefuses(id: string): boolean {
-  const key = stripWindow(id.toLowerCase()).replace(/^(?:[a-z0-9-]+\.)*anthropic\./, '')
-  return CLASSIFIER_REFUSED_MODELS.includes(key)
+  return CLASSIFIER_REFUSED_MODELS.includes(modelKey(id))
 }
 
 /** Classifier picker ids from a model list: base ids, since a classifier call never needs a 1M window
- *  and every supports1m model is listed only at its [1m] id. Selectors and refused models are dropped. */
+ *  and a model that needs the suffix is listed only at its [1m] id. Selectors and refused models are dropped. */
 export function classifierModelIds(ids: readonly string[]): string[] {
   return [...new Set(ids.map(stripWindow))].filter((id) => !isModelSelector(id) && !classifierRefuses(id))
 }
@@ -423,29 +452,37 @@ export function groupModels(models: ModelInfo[]): ModelGroup[] {
 }
 
 /**
- * The verified 1M-context set (Claude API pricing table + live Bedrock, CLI 2.1.278):
- * Fable 5+, Opus 4.6+, Sonnet 4.6+. Haiku and older versions are 200K. Drifts like the
- * effort gates; re-verify on a CLI/model bump.
+ * Models that run at 1M with no suffix: Opus 4.7+, Sonnet 5+, Fable and Haiku 5.5+ (CLI changelog; 2.1.311's initialize
+ * `models[]` lists a `[1m]` twin only for Sonnet 4.6). The CLI echoes these without the suffix even when spawned with
+ * it. Drifts like the effort gates; re-verify on a CLI/model bump.
  */
-export function supports1m(family: ModelInfo['family'], version: number): boolean {
+function native1m(family: ModelInfo['family'], version: number): boolean {
   return (
+    (family === 'opus' && version >= 4.7) ||
+    (family === 'sonnet' && version >= 5) ||
     (family === 'fable' && version >= 5) ||
-    (family === 'opus' && version >= 4.6) ||
-    (family === 'sonnet' && version >= 4.6)
+    (family === 'haiku' && version >= 5.5)
   )
 }
 
+/** Models whose 1M window exists only at the `[1m]` id (Opus 4.6, Sonnet 4.6); their base id is 200K. */
+export function takes1mSuffix(family: ModelInfo['family'], version: number): boolean {
+  return (family === 'opus' && version >= 4.6 && version < 4.7) || (family === 'sonnet' && version >= 4.6 && version < 5)
+}
+
+/** A native-1M model's id without the `[1m]` an older pick or the CLI's settings may carry. */
+export function canonicalModelId(id: string): string {
+  const p = parseModelId(id)
+  return native1m(p.family, p.version) ? stripWindow(id) : id
+}
+
 /**
- * Context-window size (tokens) for a model id: 1M for the `[1m]` variant, else 200K.
- * The `result` event carries the authoritative window once a turn streams; this is
- * the id-derived estimate used before that (session start, and on a mid-session model
- * switch, where the picker changes the window with no new turn to re-derive it).
+ * Context-window size (tokens) for a model id. The `result` event carries the authoritative window once a turn
+ * streams; this is the id-derived estimate used before that (session start, and on a mid-session model switch,
+ * where the picker changes the window with no new turn to re-derive it).
  */
 export function contextWindowForModel(id: string): number {
-  if (/\[1m\]/i.test(id)) return 1_000_000
-  // Haiku 5.5 is 1M natively and takes no [1m] suffix (CLI catalog, 2.1.293), so supports1m stays false.
-  const { family, version } = parseModelId(id)
-  return family === 'haiku' && version >= 5.5 ? 1_000_000 : 200_000
+  return parseModelId(id).is1m ? 1_000_000 : 200_000
 }
 
 /**
@@ -480,16 +517,16 @@ export function sameModel(a: string, b: string): boolean {
  *  the model the CLI is ACTUALLY running (e.g. after a mid-session switch survives
  *  a resume) instead of the stale Settings default. */
 export function reconcileModelChoice(current: string, reported: string, listed: string[]): string {
-  const resolved = sameModel(current, reported)
-    ? current
-    : (listed.find((id) => sameModel(id, reported)) ?? reported)
-  // A supports1m model is offered ONLY at its [1m] id, so a resolved BASE id (an older
+  const resolved = canonicalModelId(
+    sameModel(current, reported) ? current : (listed.find((id) => sameModel(id, reported)) ?? reported)
+  )
+  // A model that takes the suffix is offered ONLY at its [1m] id, so a resolved BASE id (an older
   // stored pick, or the CLI reporting the base) matches no picker row. Adopt the list's
   // [1m] entry for the same model; synthesize the suffix when the list is empty so the size
   // still reads 1M. 200K models and models whose base entry is still offered are untouched.
   if (!/\[1m\]$/i.test(resolved)) {
     const p = parseModelId(resolved)
-    if (supports1m(p.family, p.version)) {
+    if (takes1mSuffix(p.family, p.version)) {
       const oneM = listed.find((id) => {
         const q = parseModelId(id)
         return q.is1m && q.family === p.family && q.version === p.version
@@ -555,7 +592,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   permissionMode: 'inherit',
   // Model/effort are Clui-managed and always concrete (independent of settings.json).
   // model is the raw --model value; the list is derived from Bedrock at runtime.
-  model: 'claude-opus-5-5[1m]',
+  model: 'claude-opus-5-5',
   effort: 'high',
   defaultWorkspace: '',
   // Dark is Clui's signature surface; light + system are opt-in.
