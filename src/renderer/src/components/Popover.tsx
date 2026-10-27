@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { useEscape } from '../lib/useEscape'
 import { viaOf, type Via } from '../lib/motion'
-import { occludeIfIntersects } from '../lib/browserOcclusion'
+import { occludeIfIntersects } from '../lib/nativeOcclusion'
 
 export type PopoverPlacement = 'up' | 'down'
 export type PopoverAlign = 'start' | 'end'

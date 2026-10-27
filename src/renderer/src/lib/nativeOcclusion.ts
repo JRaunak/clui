@@ -10,8 +10,8 @@ function emit(): void {
   listeners.forEach((l) => l(occluded))
 }
 
-/** Hide the native browser view while something overlaps it. Returns the release function. */
-export function occludeBrowser(): () => void {
+/** Hide the native views while something overlaps them. Returns the release function. */
+export function occludeNative(): () => void {
   const id = Symbol()
   holds.add(id)
   if (holds.size === 1) emit()
@@ -31,19 +31,21 @@ export function onOcclusion(l: Listener): () => void {
 
 /** For overlays that cover the whole window whenever they're mounted. */
 export function useOccludeWhile(active: boolean): void {
-  useEffect(() => (active ? occludeBrowser() : undefined), [active])
+  useEffect(() => (active ? occludeNative() : undefined), [active])
 }
 
-/** For popovers: occlude only if the element's rect intersects the browser pane. */
+/** For popovers: occlude only if the element's rect intersects a native view's slot. */
 export function occludeIfIntersects(el: Element | null): (() => void) | null {
-  const pane = document.querySelector('[data-ui="browser-pane"]')
-  if (!el || !pane) return null
+  const slots = document.querySelectorAll('[data-native-slot]')
+  if (!el || !slots.length) return null
   const a = el.getBoundingClientRect()
-  const b = pane.getBoundingClientRect()
-  const hit = a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
-  return hit ? occludeBrowser() : null
+  const hit = [...slots].some((slot) => {
+    const b = slot.getBoundingClientRect()
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+  })
+  return hit ? occludeNative() : null
 }
 
 // Registered at module load, before any pane mounts: a transition that opens the pane runs its
 // hooks before the pane exists, so a pane-owned hook would miss its own opening.
-transitionHooks.add(() => occludeBrowser())
+transitionHooks.add(() => occludeNative())

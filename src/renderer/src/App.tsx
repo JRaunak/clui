@@ -17,7 +17,7 @@ import { useGuardedAsync } from './lib/useGuardedAsync'
 import { useSidebarResize, SIDEBAR_DEFAULT } from './lib/useSidebarResize'
 import { useBrowserEvents } from './lib/useBrowserEvents'
 import { watchSettings } from './lib/settings'
-import { useOccludeWhile } from './lib/browserOcclusion'
+import { useOccludeWhile } from './lib/nativeOcclusion'
 import type { CliInfo } from '../../shared/ipc'
 
 /** Shown on the new-session controls while the CLI can't start a session. */

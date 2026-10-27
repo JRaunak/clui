@@ -1,13 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { useActive, useSession, viewedTabOf } from '../../store'
-import { onOcclusion } from '../../lib/browserOcclusion'
-import { getStage } from '../../lib/stage'
+import { useNativeSlot } from '../../lib/useNativeSlot'
 import { takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { PANE_BTN, type PaneExternal } from './PaneHeader'
 import { BrowserDriveStrip, BrowserNetStrip, BrowserToolbar } from '../BrowserToolbar'
 import { Button } from '../Button'
 import { IconSettings } from '../Icon'
-import { loadFailureOf, type LoadError } from '../../../../shared/browser'
+import { loadFailureOf, type LoadError, type PaneBounds } from '../../../../shared/browser'
 
 const EXTERNAL_LABEL = 'Open in default browser'
 
@@ -86,39 +85,8 @@ export function BrowserSurface({ handleId }: { handleId: string }): JSX.Element 
   const tab = useActive((s) => s?.browser?.viewed ?? 0)
   const announce = useSession((s) => s.browserAnnounce)
 
-  useEffect(() => {
-    const el = areaRef.current
-    const stage = getStage()
-    if (!el) return
-    let raf = 0
-    const schedule = (): void => {
-      if (raf) return
-      raf = requestAnimationFrame(() => {
-        raf = 0
-        const r = el.getBoundingClientRect()
-        window.clui.browserSetBounds(handleId, {
-          x: Math.round(r.left),
-          y: Math.round(r.top),
-          width: Math.round(r.width),
-          height: Math.round(r.height)
-        })
-      })
-    }
-    schedule()
-    const ro = new ResizeObserver(schedule)
-    ro.observe(el)
-    window.addEventListener('resize', schedule)
-    stage?.addEventListener('transitionend', schedule)
-    return () => {
-      ro.disconnect()
-      window.removeEventListener('resize', schedule)
-      stage?.removeEventListener('transitionend', schedule)
-      cancelAnimationFrame(raf)
-    }
-  }, [handleId])
-
-  const [occluded, setOccluded] = useState(false)
-  useEffect(() => onOcclusion(setOccluded), [])
+  const report = useCallback((b: PaneBounds) => window.clui.browserSetBounds(handleId, b), [handleId])
+  const occluded = useNativeSlot(areaRef, report)
   // The card and the failure panel sit in the page area, so the view has to step aside for them too.
   const visible = !occluded && !wall && !loadError
   useLayoutEffect(() => {
@@ -138,7 +106,7 @@ export function BrowserSurface({ handleId }: { handleId: string }): JSX.Element 
       <BrowserToolbar handleId={handleId} />
       <BrowserNetStrip />
       <BrowserDriveStrip key={handleId} />
-      <div data-ui="browser-pane" ref={areaRef} className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-bg">
+      <div data-ui="browser-pane" data-native-slot="" ref={areaRef} className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-bg">
         {still && !loadError && <img src={still} alt="" className="absolute inset-0 h-full w-full object-cover object-left-top" />}
         {loadError && <LoadFailure handleId={handleId} tab={tab} err={loadError} committed={!!url && url !== 'about:blank'} />}
         {wall && (

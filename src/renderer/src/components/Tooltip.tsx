@@ -5,7 +5,7 @@
  * never closes an open picker.
  */
 import { cloneElement, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type ReactElement } from 'react'
-import { occludeIfIntersects } from '../lib/browserOcclusion'
+import { occludeIfIntersects } from '../lib/nativeOcclusion'
 
 export function Tooltip({
   content,

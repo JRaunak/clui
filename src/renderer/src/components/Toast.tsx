@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { flushSync } from 'react-dom'
 import { create } from 'zustand'
-import { occludeIfIntersects } from '../lib/browserOcclusion'
+import { occludeIfIntersects } from '../lib/nativeOcclusion'
 import { IconClose } from './Icon'
 
 /**

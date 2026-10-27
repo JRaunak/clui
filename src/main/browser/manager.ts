@@ -25,6 +25,7 @@ import { hideCursor, injectCursor, restCursor } from './cursor'
 import { approve, decideLocalNet, forgetLocalNet, isApproved, isApprovedCached, listSites, localNetCached } from './sites'
 import { IpcChannels, type CluiApi } from '../../shared/ipc'
 import { saveLogin } from './vault'
+import { NativeViewSlot } from '../surfaces/native-slot'
 
 type LoginVerdict = Parameters<CluiApi['browserLoginVerdict']>[2]
 
@@ -38,7 +39,6 @@ const QUIET_MS = 150
 const BOUNDS_WAIT_MS = 300
 /** A view just added to the window paints its first frame a few ms later; reads before it see nothing. */
 const FRAME_MS = 32
-const PARK_SIZE = { width: 800, height: 600 }
 
 export const TEXT = {
   refused: 'Only http(s) pages can be opened.',
@@ -73,8 +73,6 @@ interface Tab {
   cdp: Cdp | null
   state: BrowserState
   lastViewedMs: number
-  /** Currently a child of the window (re-adding a child reorders it, so it's tracked). */
-  attached: boolean
   /** Reasons to keep the view in the window while nobody views it, so its page has a real viewport. */
   parks: number
   agentActingUntil: number
@@ -95,8 +93,7 @@ interface Entry {
   /** The tab Claude acts in when a call names none. */
   lastUsed: number
   nextId: number
-  bounds: PaneBounds | null
-  shown: boolean
+  slot: NativeViewSlot
   /** Stop covers every tab, including ones opened before the next reset. */
   stopped: boolean
   deniedSites: Set<string>
@@ -200,7 +197,6 @@ export class BrowserManager {
       cdp: null,
       state: { ...initialState(), drive: e.stopped ? 'stopped' : 'idle', ...(saved ? { url: saved.url } : {}) },
       lastViewedMs: saved?.lastViewedAt ?? Date.now(),
-      attached: false,
       parks: 0,
       agentActingUntil: 0,
       inputSentAt: 0,
@@ -222,8 +218,7 @@ export class BrowserManager {
       viewed: 1,
       lastUsed: 1,
       nextId: 1,
-      bounds: null,
-      shown: false,
+      slot: new NativeViewSlot(this.window, () => this.setVisible(handleId, false)),
       stopped: false,
       deniedSites: new Set(),
       userSites: new Set()
@@ -280,7 +275,7 @@ export class BrowserManager {
 
   private busy(handleId: string, e: Entry, t: Tab, pins = true): boolean {
     return (
-      (e.shown && e.viewed === t.id) ||
+      (e.slot.shown && e.viewed === t.id) ||
       t.parks > 0 ||
       t.state.drive === 'driving' ||
       t.state.drive === 'user' ||
@@ -304,7 +299,7 @@ export class BrowserManager {
     const still = await this.still(t)
     // The capture yields, and the tab may have been viewed, driven or closed meanwhile.
     if (t.view !== view || this.busy(handleId, e, t)) return
-    this.detach(t)
+    e.slot.place(view, null)
     t.view = null
     t.cdp = null
     if (!view.webContents.isDestroyed()) view.webContents.close()
@@ -412,7 +407,7 @@ export class BrowserManager {
     return {
       viewed: e.viewed,
       lastUsed: e.lastUsed,
-      tabs: e.tabs.map((t) => ({ ...t.state, id: t.id, attached: t.attached, parked: t.parks > 0 }))
+      tabs: e.tabs.map((t) => ({ ...t.state, id: t.id, attached: e.slot.holds(t.view), parked: t.parks > 0 }))
     }
   }
 
@@ -441,7 +436,7 @@ export class BrowserManager {
     if (prev && prev !== t) this.onLeave?.(handleId, prev.id, 'away')
     e.viewed = t.id
     t.lastViewedMs = now
-    if (e.shown) this.ensureView(handleId, e, t)
+    if (e.slot.shown) this.ensureView(handleId, e, t)
     this.sync(e)
   }
 
@@ -477,10 +472,10 @@ export class BrowserManager {
     const i = e.tabs.indexOf(t)
     // Focus inside a closing page would stay with the dead view, where the renderer can't move it.
     const hadFocus = !!t.view && !t.view.webContents.isDestroyed() && t.view.webContents.isFocused()
-    if (e.tabs.length === 1) e.shown = false
+    if (e.tabs.length === 1) e.slot.hide()
     else if (e.viewed === tab) this.show(handleId, e, e.tabs[i + 1] ?? e.tabs[i - 1])
     e.tabs.splice(i, 1)
-    this.drop(handleId, t)
+    this.drop(handleId, e, t)
     if (hadFocus) this.window()?.webContents.focus()
     this.emit(handleId, { type: 'tab-closed', tab, by, viewed: e.viewed })
     for (const fn of t.closers) fn(by)
@@ -490,7 +485,7 @@ export class BrowserManager {
    * Tears down one tab's page and answers its login Gates. A site Gate belongs to the session, and
    * another tab may be waiting on the same answer, so it stays up.
    */
-  private drop(handleId: string, t: Tab): void {
+  private drop(handleId: string, e: Entry, t: Tab): void {
     if (t.stillTimer) clearTimeout(t.stillTimer)
     t.stillTimer = null
     t.onBounds?.()
@@ -500,7 +495,7 @@ export class BrowserManager {
       a.resolve({ action: 'decline' })
     }
     if (t.view) {
-      this.detach(t)
+      e.slot.place(t.view, null)
       if (!t.view.webContents.isDestroyed()) t.view.webContents.close()
     }
     t.view = null
@@ -510,42 +505,15 @@ export class BrowserManager {
 
   // --- showing, bounds, stills ---
 
-  /**
-   * The viewed tab sits in the pane while the pane is shown and its bounds are known. A parked
-   * tab sits with only its top-left pixel inside the window's bottom-right corner, under the rounded mask:
-   * the page gets a full viewport and paints, and nobody sees it.
-   */
+  /** The viewed tab sits in the pane while the pane is shown and its bounds are known; a parked tab sits parked. */
   private sync(e: Entry): void {
     const win = this.window()
     if (!win || win.isDestroyed()) return
-    const z = win.webContents.getZoomFactor()
-    const pane = e.bounds
-      ? z === 1
-        ? e.bounds
-        : { x: Math.round(e.bounds.x * z), y: Math.round(e.bounds.y * z), width: Math.round(e.bounds.width * z), height: Math.round(e.bounds.height * z) }
-      : null
+    const pane = e.slot.pane()
     for (const t of e.tabs) {
       if (!t.view) continue
-      let rect: PaneBounds | null = null
-      if (e.shown && pane && t.id === e.viewed) rect = pane
-      else if (t.parks > 0) {
-        const [w, h] = win.getContentSize()
-        rect = { x: w - 1, y: h - 1, width: pane?.width ?? PARK_SIZE.width, height: pane?.height ?? PARK_SIZE.height }
-      }
-      if (!rect) {
-        this.detach(t)
-        continue
-      }
-      t.view.setBounds(rect)
-      if (!t.attached) win.contentView.addChildView(t.view)
-      t.attached = true
+      e.slot.place(t.view, e.slot.shown && pane && t.id === e.viewed ? pane : t.parks > 0 ? e.slot.park() : null)
     }
-  }
-
-  private detach(t: Tab): void {
-    const win = this.window()
-    if (t.view && t.attached && win && !win.isDestroyed()) win.contentView.removeChildView(t.view)
-    t.attached = false
   }
 
   /** A parked view's corner moves with the window's size, and a window that grew would show it. */
@@ -564,7 +532,7 @@ export class BrowserManager {
   setBounds(handleId: string, b: PaneBounds | null): void {
     const e = this.entries.get(handleId)
     if (!e) return
-    e.bounds = b
+    e.slot.bounds = b
     this.sync(e)
     const t = e.tabs.find((x) => x.id === e.viewed)
     if (!t) return
@@ -577,21 +545,20 @@ export class BrowserManager {
     const t = e?.tabs.find((x) => x.id === e.viewed)
     if (!e) return null
     if (!t) {
-      e.shown = false
+      e.slot.hide()
       return null
     }
     if (visible) {
-      for (const [h, other] of this.entries) if (h !== handleId && other.shown) await this.setVisible(h, false)
-      e.shown = true
+      await e.slot.show()
       t.lastViewedMs = Date.now()
       this.ensureView(handleId, e, t)
       this.sync(e)
       return null
     }
-    if (!e.shown) return t.state.still
+    if (!e.slot.shown) return t.state.still
     // Whatever asked to hide the page is about to draw where it sits, so it goes first. A capture
     // straight after the detach still returns the last frame that was on screen.
-    e.shown = false
+    e.slot.hide()
     t.lastViewedMs = Date.now()
     this.sync(e)
     return this.refreshStill(handleId, t)
@@ -871,13 +838,13 @@ export class BrowserManager {
     this.ensureView(handleId, e, t)
     const strip = t.state.drive === 'idle' || t.state.drive === 'done'
     this.setDrive(handleId, t, 'driving')
-    const fresh = !t.attached
+    const fresh = !e.slot.holds(t.view)
     t.parks++
     this.sync(e)
     // The status strip that comes with driving shortens the page a frame or two later, and a tool
     // reading the page before then would aim at the old, taller viewport.
-    if (strip && e.shown && e.viewed === tab) await this.nextBounds(t)
-    else if (fresh && t.attached) await sleep(FRAME_MS)
+    if (strip && e.slot.shown && e.viewed === tab) await this.nextBounds(t)
+    else if (fresh && e.slot.holds(t.view)) await sleep(FRAME_MS)
     return null
   }
 
@@ -982,7 +949,8 @@ export class BrowserManager {
       this.asks.delete(key)
       a.resolve(key.includes('\nsite\n') ? false : { action: 'decline' })
     }
-    for (const t of e.tabs) this.drop(handleId, t)
+    for (const t of e.tabs) this.drop(handleId, e, t)
+    e.slot.hide()
   }
 }
 
