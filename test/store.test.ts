@@ -483,6 +483,36 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   st().openSurface('h1', DIFF, 'open', 'user', 'user')
   ok(sur().order.filter((x: string) => x === 'diff').length === 1, 'intent: the diff is a session singleton')
 
+  // The tree taking over from a file in the cwd reveals it once; other tabs, outside files and a sent destination don't.
+  const TREE = { kind: 'tree' as const, key: '', title: 'w' }
+  fresh({ paneOpen: true })
+  st().openSurface('h1', FILE, 'open', 'user', 'user')
+  st().openSurface('h1', TREE, 'open', 'user', 'user')
+  ok(sur().active === 'tree' && sur().tabs.tree.reveal === FILE.key, 'reveal: the tree opened from a cwd file reveals it')
+  st().activateSurface('h1', 'tree')
+  ok(!sur().tabs.tree.reveal, 'reveal: re-activating the active tree reveals nothing')
+  openDiff()
+  st().activateSurface('h1', 'tree')
+  ok(!sur().tabs.tree.reveal, 'reveal: from a non-file tab nothing is revealed')
+  st().openSurface('h1', { kind: 'file', key: '/elsewhere/b.ts', title: 'b.ts' }, 'open', 'user', 'user')
+  st().activateSurface('h1', 'tree')
+  ok(!sur().tabs.tree.reveal, 'reveal: a file outside the cwd is not revealed')
+  st().activateSurface('h1', id)
+  st().openSurface('h1', { ...TREE, location: { file: '/tmp/w/src' } }, 'open', 'claude', 'claude')
+  ok(!sur().tabs.tree.reveal && sur().tabs.tree.location.file === '/tmp/w/src', 'reveal: a destination sent with the open wins')
+  st().activateSurface('h1', id)
+  st().openSurface('h1', { ...TREE, location: { file: '/tmp/w/main' } }, 'prepare', 'claude', 'claude')
+  st().activateSurface('h1', 'tree')
+  ok(!sur().tabs.tree.reveal && sur().tabs.tree.location.file === '/tmp/w/main', 'reveal: a destination Claude placed behind wins')
+  st().openSurface('h1', { ...TREE, location: { file: '/tmp/w/lib' } }, 'prepare', 'claude', 'claude')
+  st().activateSurface('h1', id)
+  st().activateSurface('h1', 'tree')
+  ok(!sur().tabs.tree.reveal && sur().tabs.tree.location.file === '/tmp/w/lib', 'reveal: a pending destination wins')
+  st().activateSurface('h1', id)
+  st().togglePane()
+  st().activateSurface('h1', 'tree')
+  ok(!cur().paneOpen && sur().tabs.tree.reveal === FILE.key, 'reveal: a hidden pane still reveals the last file tab')
+
   // Reconciliation: seeded tab 1, Claude's tab behind and unseen, optimistic close, neighbour, last tab.
   fresh({ browser: browserOf([1]), surfaces: { ...empty, order: ['browser:1'], active: 'browser:1' }, paneOpen: true })
   st().applyBrowserEvent('h1', { type: 'tab-opened', tab: tab(2), by: 'agent', viewed: 1 })
@@ -505,7 +535,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   st().applyBrowserEvent('h1', { type: 'tab-closed', tab: 1, by: 'agent', viewed: 1 })
   ok(sur().active === 'diff' && cur().paneOpen, 'placement: closing a browser tab behind another surface leaves it active')
   st().closeSurface('h1', 'diff')
-  ok(cur().paneOpen && sur().order.length === 0 && sur().active === null, 'placement: closing the last tab leaves the pane on the picker')
+  ok(!cur().paneOpen && sur().order.length === 0 && sur().active === null && cur().statusAnnounce.startsWith('Closed the last tab. Pane hidden.') && !cur().paneAutoOpenSuppressed, 'placement: closing the last tab hides the pane, says so, and leaves auto-open on')
 
   // Claude's closes are said from where the strip lands, including the picker when the pane empties.
   fresh({ browser: browserOf([1, 2]), surfaces: { ...empty, order: ['browser:1', 'browser:2'], active: 'browser:2' }, paneOpen: true })
@@ -515,7 +545,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   ok(cur().browser.announce.startsWith('Claude closed tab 2. Showing Claude changes'), 'announce: a close that lands on another kind names it')
   st().closeSurface('h1', 'diff')
   st().applyBrowserEvent('h1', { type: 'tab-closed', tab: 1, by: 'agent', viewed: 1 })
-  ok(cur().paneOpen && sur().active === null && cur().browser.announce.startsWith('Claude closed tab 1') && !cur().statusAnnounce, 'announce: Claude closing the last tab leaves the picker and says so in the strip')
+  ok(!cur().paneOpen && sur().active === null && cur().statusAnnounce.startsWith('Claude closed the last tab. Pane hidden.') && !cur().paneAutoOpenSuppressed, 'announce: Claude closing the last tab hides the pane and says so in the status region')
 
   // The toggle opens on the tab Claude drives; ⇧⌘B stays on the browser.
   fresh({ browser: { ...browserOf([1, 2]), tabs: [tab(1), tab(2, { drive: 'driving' })] }, surfaces: { ...empty, order: ['browser:1', 'browser:2', 'diff'], active: 'diff', tabs: { diff: { id: 'diff', kind: 'diff', key: '', title: 'Claude changes', openedBy: 'user', openedAt: 0, lastViewedAt: 0 } } } })
@@ -784,7 +814,14 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   const off = restoredPane(saved(null), false)
   ok(off.browser === null && off.surfaces.order.join() === 'tree,file:/w/1.ts' && off.surfaces.active === 'file:/w/1.ts', 'restore: without browser access placements drop out and the active one hands over')
   const newer = restoredPane({ status: 'newer' }, true)
-  ok(newer.restoreNote === 'newer' && newer.surfaces.order.join() === 'browser:1' && !newer.paneOpen, 'restore: a newer sidecar opens like a new session, noted for the picker')
+  ok(newer.restoreNote === 'newer' && !newer.surfaces.order.length && !newer.browser?.tabs.length && !newer.paneOpen, 'restore: a newer sidecar opens like a new session, noted for the picker')
+  const fresh0 = restoredPane({ status: 'none' }, true)
+  ok(fresh0.browser?.tabs.length === 0 && fresh0.browser.viewed === 1 && !fresh0.surfaces.order.length && fresh0.surfaces.active === null, 'restore: a new browser session starts with no tab')
+  const none = restoredPane(saved({ tabs: [], nextId: 1, viewed: 1 }), true)
+  ok(none.browser?.tabs.length === 0 && none.surfaces.order.join() === 'tree,file:/w/1.ts' && none.surfaces.active === 'file:/w/1.ts', 'restore: a session saved with no browser tab drops its stale placements')
+  const old = saved({ tabs: [{ id: 1, url: 'about:blank', lastViewedAt: 0 }], nextId: 2, viewed: 1 })
+  const seeded = restoredPane({ ...old, entry: { ...old.entry, set: { order: ['browser:1'], active: 'browser:1', tabs: {} } } }, true)
+  ok(seeded.browser?.tabs.length === 1 && seeded.surfaces.order.join() === 'browser:1' && seeded.surfaces.active === 'browser:1', "restore: an older sidecar's blank seeded tab loads as a real tab")
 
   // The note goes with the first tab and doesn't come back.
   const empty = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }

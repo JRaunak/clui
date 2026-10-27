@@ -135,8 +135,8 @@ app.on('web-contents-created', (_e, wc) => {
  * and standard window commands keep working in text fields (a custom menu that
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
-const TAKES_TYPING = new Set<MenuAction>(['find-in-conversation', 'find-next', 'find-prev', 'open-file', 'open-palette', 'open-command-palette', 'search-global'])
-let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false } }
+const TAKES_TYPING = new Set<MenuAction>(['find-in-conversation', 'find-next', 'find-prev', 'open-file', 'file-goto', 'open-palette', 'open-command-palette', 'search-global'])
+let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false }, fileLines: false }
 const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = { file: 'Open in Editor', diff: 'Open Diff in Editor', browser: 'Open in Default Browser', tree: 'Open Folder in Editor', none: 'Open Externally' }
 
 function buildMenu(): void {
@@ -189,7 +189,7 @@ function buildMenu(): void {
         { label: 'New Session in a Directory…', accelerator: 'CmdOrCtrl+Shift+N', click: () => send('new-named-session') },
         { label: 'Quick Switcher…', accelerator: 'CmdOrCtrl+K', click: () => send('open-palette') },
         { label: 'Command Palette…', accelerator: 'CmdOrCtrl+Shift+K', click: () => send('open-command-palette') },
-        { label: close === 'session' ? 'Close Session' : 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: close !== 'none', click: () => send('close-session') },
+        { label: close === 'session' ? 'Close Session' : 'Close Tab', accelerator: 'CmdOrCtrl+W', enabled: close !== 'none', click: (_i, _w, e) => send(e?.triggeredByAccelerator ? 'close-session' : 'close-session-menu') },
         { type: 'separator' },
         // Native accelerators, not DOM keys, so they still fire while focus sits inside a native view.
         { label: 'Open File…', accelerator: 'CmdOrCtrl+P', enabled: menuState.canPane, click: () => send('open-file') },
@@ -220,6 +220,7 @@ function buildMenu(): void {
         { type: 'separator' },
         { label: 'Stop Browser Agent', accelerator: 'CmdOrCtrl+.', click: () => send('browser-stop') },
         { label: 'Point', accelerator: 'CmdOrCtrl+Shift+A', click: () => send('browser-annotate') },
+        { id: 'file-goto', label: 'Go to Line…', accelerator: 'CmdOrCtrl+L', enabled: menuState.fileLines, click: () => send('file-goto') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
         { type: 'separator' },
         isMac ? closeWindow : { role: 'quit' }
@@ -390,6 +391,7 @@ function registerIpc(): void {
         resetPage: (handleId: string) => {
           browser.dispose(handleId)
           browser.enable(handleId)
+          return browser.newTab(handleId, 'user')
         },
         newTab: async (handleId: string, by: TabActor, url?: string) => {
           const tab = await browser.newTab(handleId, by, url)

@@ -247,6 +247,29 @@ close(3, 'agent')
 equal(said(await pending3), 'error: Tab 3 was closed.', "tabs: Claude's own close answers a call queued in that tab")
 equal(said(await tabsMcp.callTool('h2', 'click', { tab: 9 })), "error: There's no tab 9. Call tabs to see the open tabs.", 'tabs: a call naming a closed tab is refused')
 
+// With no tab open, a page tool is refused before it names a tab, and navigate opens one for Claude.
+const zeroTabs: string[] = []
+const opened: string[] = []
+const zeroStub = {
+  tabsOf: () => ({ viewed: 1, lastUsed: 1, tabs: [] }),
+  sessionStopped: () => false,
+  newTab: async (_h: string, by: string, url?: string) => {
+    opened.push(`${by}:${url}`)
+    return 1
+  },
+  used: () => {},
+  toolTab: (_h: string, id: string, tab: number) => zeroTabs.push(`${id}:${tab}`),
+  onTabClosed: () => () => {},
+  beginTool: async () => 'stub refusal',
+  endTool: () => {}
+}
+const zeroMcp = new BrowserMcpServer(zeroStub as never)
+equal(said(await zeroMcp.callTool('h4', 'snapshot', {}, 'toolu_z')), 'error: No tabs are open. Open one with new_tab.', 'no tabs: a page tool is refused')
+equal(zeroTabs.join(), '', 'no tabs: the refused call names no tab to the renderer')
+equal(said(await zeroMcp.callTool('h4', 'navigate', {})), 'error: navigate needs a url.', 'no tabs: navigate still needs a url')
+equal(said(await zeroMcp.callTool('h4', 'navigate', { url: 'http://localhost:1/' }, 'toolu_n')), 'error: Opened tab 1. stub refusal', 'no tabs: navigate opens a tab, then navigates in it')
+equal(`${opened.join()}|${zeroTabs.join()}`, 'agent:http://localhost:1/|toolu_n:1', 'no tabs: the tab is Claude\'s and carries the call')
+
 // The debug tools put page data into the transcript, so what they hide is pinned here.
 import { requestUrl, isLocal } from '../src/main/browser/mcp.ts'
 import { scrub } from '../src/main/browser/cdp.ts'

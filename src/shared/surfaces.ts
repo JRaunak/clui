@@ -70,6 +70,8 @@ export interface SurfaceTab {
   lastViewedAt: number
   provenance?: { sessionId: string; creatingEditId?: string; messageId?: string }
   unseen?: boolean
+  /** Tree only: the file whose tab was active when the tree took over, revealed once on mount. Never saved. */
+  reveal?: string
 }
 
 /** Browser content and identity stay in BrowserManager and slice.browser; this only places them. */

@@ -22,7 +22,7 @@ import { activeSlice, anyTabIn, browserTabOf, surfaceKindOf, useSession } from '
 import { closeTab } from '../components/surfaces/SurfaceTabs'
 import { point } from '../components/surfaces/PointButton'
 import { OPEN_FILE_EVENT, type PaletteMode } from '../components/CommandPalette'
-import { FILE_FIND_EVENT } from '../components/surfaces/FileSurface'
+import { FILE_FIND_EVENT, FILE_GOTO_EVENT } from '../components/surfaces/FileSurface'
 import { TRANSCRIPT_FIND_EVENT } from '../components/FindBar'
 
 /** Focus is in the Surfaces pane: its DOM, or a native page in it, which only main can report. */
@@ -58,6 +58,10 @@ function routeFind(what: 'open' | 'next' | 'prev', page: boolean): void {
  * @param onNewSessionInDir pick a workspace folder, then start there (⌘⇧N)
  * @param onOpenSettings open the Settings modal (⌘,)
  */
+const MODIFIERS = new Set(['Meta', 'Shift', 'Alt', 'Control'])
+/** Set when ⌘W closed the pane's last tab, until the user's next key or click. */
+let wClosedPane = false
+
 export function useKeyboardShortcuts(opts: {
   onNewSession: () => void
   onNewQuickSession: () => void
@@ -103,12 +107,15 @@ export function useKeyboardShortcuts(opts: {
         case 'new-named-session':
           onNewSessionInDir()
           break
-        case 'close-session': {
-          // In the pane ⌘W closes tabs and stops at the picker; mashing it must never end the conversation.
+        case 'close-session':
+        case 'close-session-menu': {
+          // In the pane ⌘W closes tabs, and the last one hides the pane. Mashing it must never end the
+          // conversation, so after that only a fresh action lets ⌘W close the session.
           const active = activeSlice(store)?.surfaces.active
           if (inPane(page)) {
             if (active) closeTab(active, true)
-          } else if (store.activeHandleId) void store.closeSession(store.activeHandleId)
+            wClosedPane = !activeSlice(useSession.getState())?.paneOpen
+          } else if ((action === 'close-session-menu' || !wClosedPane) && store.activeHandleId) void store.closeSession(store.activeHandleId)
           break
         }
         case 'open-settings':
@@ -167,6 +174,9 @@ export function useKeyboardShortcuts(opts: {
           } else point()
           break
         }
+        case 'file-goto':
+          window.dispatchEvent(new Event(FILE_GOTO_EVENT))
+          break
         case 'browser-stop': {
           if (anyTabIn(activeSlice(store)?.browser, 'driving', 'user')) void store.browserDrive('stop')
           break
@@ -224,11 +234,19 @@ export function useKeyboardShortcuts(opts: {
       }
     }
     document.addEventListener('keydown', onKeyDown)
+    // Holding ⌘ for the next ⌘W fires a Meta keydown, which mustn't count as a fresh action.
+    const fresh = (e: Event): void => {
+      if (!(e instanceof KeyboardEvent && MODIFIERS.has(e.key))) wClosedPane = false
+    }
+    document.addEventListener('keydown', fresh, true)
+    document.addEventListener('pointerdown', fresh, true)
 
     return () => {
       off()
       window.removeEventListener(OPEN_FILE_EVENT, openFile)
       document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('keydown', fresh, true)
+      document.removeEventListener('pointerdown', fresh, true)
     }
   }, [
     onNewSession,

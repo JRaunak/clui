@@ -27,7 +27,7 @@ const SHOTS_KEPT = 8
 const PAGE_TOOLS = [
   {
     name: 'navigate',
-    description: 'Open an http(s) URL.',
+    description: 'Open an http(s) URL. With no tab open, opens one.',
     inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] }
   },
   {
@@ -142,7 +142,7 @@ export const TOOLS = [
   },
   {
     name: 'close_tab',
-    description: 'Close a tab; the last leaves an empty one.',
+    description: 'Close a tab; closing the last leaves none.',
     inputSchema: { type: 'object', properties: { tab: { type: 'number' } }, required: ['tab'] }
   }
 ]
@@ -388,6 +388,11 @@ export class BrowserMcpServer {
     if (name === 'close_tab') return this.closeTab(handleId, args, toolUseId)
     const info = this.browser.tabsOf(handleId)
     if (!info) return text(TEXT.off, true)
+    if (!info.tabs.length) {
+      if (name !== 'navigate') return text(TEXT.noTabs, true)
+      if (typeof args.url !== 'string' || !args.url.trim()) return text('navigate needs a url.', true)
+      return this.openTab(handleId, { url: args.url }, toolUseId)
+    }
     const tab = targetTab(args.tab, info.tabs.map((t) => t.id), info.lastUsed, info.viewed)
     if (typeof tab === 'string') return text(tab, true)
     this.browser.used(handleId, tab)

@@ -2,7 +2,6 @@ import { activeSlice, DRIVING_NOTE, surfaceKindOf, useActive, useSession, viewed
 import { requestPoint, usePointing } from '../../lib/surfaceFocus'
 import { IconTarget } from '../Icon'
 import { DISABLED_BTN, PANE_BTN } from './PaneHeader'
-import { NO_LINES, useFileStatus } from './FileSurface'
 import { NO_CHANGES } from './DiffSurface'
 
 const PRESSED =
@@ -23,15 +22,14 @@ export function point(): void {
   st.announceStatus(s.handleId, NO_TARGET)
 }
 
-export function PointButton({ handleId, kind, id, path }: { handleId: string; kind: 'browser' | 'file' | 'diff'; id: string; path: string | null }): JSX.Element {
+export function PointButton({ kind, id }: { kind: 'browser' | 'diff'; id: string }): JSX.Element {
   const annotating = useActive((s) => !!s && s.annotate.tab === s.browser?.viewed)
   const driving = useActive((s) => viewedTabOf(s?.browser)?.drive === 'driving')
-  const noLines = useFileStatus(handleId, path) !== 'text'
   const noChanges = useActive((s) => !s?.changes.length)
   const pointing = usePointing(kind === 'browser' ? null : id)
   const pressed = kind === 'browser' ? annotating : pointing
   const reason =
-    kind === 'browser' ? (driving ? `Claude is using this tab. ${DRIVING_NOTE}` : undefined) : kind === 'file' ? (noLines ? NO_LINES : undefined) : noChanges ? NO_CHANGES : undefined
+    kind === 'browser' ? (driving ? `Claude is using this tab. ${DRIVING_NOTE}` : undefined) : noChanges ? NO_CHANGES : undefined
   return (
     <button
       type="button"

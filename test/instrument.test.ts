@@ -81,6 +81,7 @@ equal(summarizeInput({ skill: 'create-cso-pr', args: '--help' }), 'create-cso-pr
   const sent = serializeContext([{ version: 1, ref: { id: 'r1', kind: 'change', changeRef: REF, path: 'src/mcp.ts', side: 'before', old: { start: 3, end: 3 } } }], 'why?', { packetId: null })
   const messages = [msg('u1', 'user', sent), msg('a1', 'assistant', '', { tools: [{ id: 't1', name: 'mcp__clui-surface__change_read', input: { ref: REF } }] })]
   equal(toolLabel('mcp__clui-surface__change_read'), 'Read change', 'change_read: its row name')
+  equal(toolLabel('mcp__clui-surface__surface_open') + toolLabel('mcp__clui-surface__surface_state'), 'PanePane', 'toolLabel: the pane tools say Pane')
   equal(toolLabel('Agent') + toolLabel('mcp__clui-browser__click') + toolLabel('Read'), 'AgentBrowserRead', 'toolLabel: the other names are unchanged')
   equal(JSON.stringify(changeReadOf(messages as never, { ref: REF })), JSON.stringify({ label: 'mcp.ts · before L3', spoken: 'mcp.ts change, before side, line 3' }), 'change_read: summary from the sent ref')
   equal(changeReadOf(messages as never, { ref: `chg_${'4'.repeat(32)}` }), null, 'change_read: a ref never sent has no summary')

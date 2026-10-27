@@ -43,6 +43,8 @@ export function SurfacePane({
     if (quiet) useSession.setState({ paneOpenedQuietly: false })
     else document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-pane-title]')?.focus()
     return () => {
+      const el = document.activeElement
+      if (el && el !== document.body) return
       if (opener && document.contains(opener)) opener.focus()
       else document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
     }

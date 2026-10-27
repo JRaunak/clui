@@ -26,7 +26,7 @@ const tabLabel = (t: Pick<TabState, 'title' | 'url'>): string => t.title || site
 /**
  * Closes a tab of the active session. The right neighbour takes its place, else the left; `refocus`
  * moves focus to it, which happens before the close so focus never falls to the body. Closing the
- * last tab leaves the pane on the picker, which takes the focus.
+ * last tab hides the pane, so focus that was in it goes to the composer.
  */
 export function closeTab(id: string, refocus: boolean): void {
   const st = useSession.getState()
@@ -36,6 +36,10 @@ export function closeTab(id: string, refocus: boolean): void {
   if (!slice || i < 0) return
   const next = order[i + 1] ?? order[i - 1]
   if (next && refocus) tabButton(next)?.focus()
+  if (order.length === 1) {
+    const el = document.activeElement
+    if (!el || el === document.body || el.closest('[data-ui="pane-secondary"]')) document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
+  }
   st.closeSurface(slice.handleId, id)
 }
 
@@ -207,129 +211,136 @@ export function SurfaceTabs(): JSX.Element {
   }
   const inList = (): boolean => !!listRef.current?.contains(document.activeElement)
 
+  // With no tabs the picker fills the pane and lists the same entries, and an empty tablist is invalid.
+  const any = views.length > 0
+
   return (
     <div className="flex min-w-0 items-center">
-      <div
-        ref={listRef}
-        role="tablist"
-        aria-label="Pane tabs"
-        aria-orientation="horizontal"
-        data-ui="surface-tabs"
-        onBlur={(e) => {
-          if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) focused.current = null
-        }}
-        className="flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden scrollbar-none"
-      >
-        {views.map((v, i) => {
-          const on = v.id === active
-          // Activation clears unseen, and a driving tab's dot already says something is happening there.
-          const unseenShown = v.unseen && !on && v.state !== 'driving'
-          const Glyph = GLYPH[v.kind]
-          return (
-            <div
-              key={v.id}
-              data-kind={v.kind}
-              data-enter={v.fade || undefined}
-              className={`group/tab relative flex h-7 w-[200px] min-w-[96px] shrink items-center rounded-md ${
-                v.fade ? 'transition-opacity duration-fast ease-out starting:opacity-0 motion-reduce:transition-none' : ''
-              }`}
-            >
-              <button
-                type="button"
-                role="tab"
-                data-tab={v.id}
-                aria-selected={on}
-                // A named button, not visible text plus an sr-only span: Chrome joins those with a stray space.
-                aria-label={`${v.label}${v.more}`}
-                aria-keyshortcuts="Delete"
-                aria-description={unseenShown ? 'updated' : undefined}
-                tabIndex={on ? 0 : -1}
-                title={unseenShown ? `${v.tip}\n${UNSEEN_LINE}` : v.tip}
-                onClick={() => handleId && activate(handleId, v.id)}
-                onKeyDown={(e) => onKeyDown(e, i)}
-                onFocus={(e) => {
-                  focused.current = v.id
-                  e.currentTarget.scrollIntoView(NEAREST)
-                }}
-                // A middle press would start autoscroll, and a closing tab shouldn't take focus first.
-                onMouseDown={(e) => {
-                  if (e.button === 1) e.preventDefault()
-                }}
-                onAuxClick={(e) => {
-                  if (e.button === 1) closeTab(v.id, inList())
-                }}
-                className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border pl-2.5 text-label focus-visible:-outline-offset-2 active:bg-border-strong ${
-                  on
-                    ? 'border-control-edge bg-control pr-2.5 font-medium text-content'
-                    : `border-transparent pointer-fine:group-hover/tab:bg-[var(--glass-row-hover)] pointer-fine:group-hover/tab:text-content ${
-                        unseenShown ? 'pr-7 text-content' : 'pr-2.5 text-dim'
-                      }`
+      {any && (
+        <div
+          ref={listRef}
+          role="tablist"
+          aria-label="Pane tabs"
+          aria-orientation="horizontal"
+          data-ui="surface-tabs"
+          onBlur={(e) => {
+            if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) focused.current = null
+          }}
+          className="flex min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden scrollbar-none"
+        >
+          {views.map((v, i) => {
+            const on = v.id === active
+            // Activation clears unseen, and a driving tab's dot already says something is happening there.
+            const unseenShown = v.unseen && !on && v.state !== 'driving'
+            const Glyph = GLYPH[v.kind]
+            return (
+              <div
+                key={v.id}
+                data-kind={v.kind}
+                data-enter={v.fade || undefined}
+                className={`group/tab relative flex h-7 w-[200px] min-w-[96px] shrink items-center rounded-md ${
+                  v.fade ? 'transition-opacity duration-fast ease-out starting:opacity-0 motion-reduce:transition-none' : ''
                 }`}
               >
-                {/* Live state outranks the kind, so it takes the glyph's place rather than adding to the row. */}
-                <span aria-hidden="true" className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                  {v.state === 'driving' ? (
-                    <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                  ) : v.state === 'user' ? (
-                    <span className="flex gap-0.5">
-                      <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
-                      <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
-                    </span>
-                  ) : v.kind === 'file' ? (
-                    <FileIcon name={v.label} kind="file" className="h-3.5 w-3.5" />
-                  ) : (
-                    Glyph && <Glyph className="h-3.5 w-3.5" />
-                  )}
-                </span>
-                <span className="min-w-0 truncate">{v.label}</span>
-                {v.suffix && <span className="ml-1 min-w-0 shrink-[2] truncate text-meta text-faint">{v.suffix}</span>}
-              </button>
-              {unseenShown && (
-                <span aria-hidden="true" data-ui="surface-tab-unseen" className="pointer-events-none absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center">
-                  <span className="h-1.5 w-1.5 rounded-full bg-content" />
-                </span>
-              )}
-              {/* The keyboard closes with Delete on the tab, so the button stays out of the Tab order. It paints the
-                  tab's own fill over the title's tail, so the active tab's title gets the same room as the rest. */}
-              <button
-                type="button"
-                data-ui="surface-tab-close"
-                aria-label={v.closeName}
-                title="Close tab"
-                tabIndex={-1}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => closeTab(v.id, inList())}
-                className={`absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-sm text-dim pointer-fine:hover:text-content ${
-                  on
-                    ? 'bg-control pointer-fine:hover:bg-[linear-gradient(var(--glass-row-hover),var(--glass-row-hover))]'
-                    : 'pointer-events-none bg-bg bg-[linear-gradient(var(--glass-row-hover),var(--glass-row-hover))] opacity-0 pointer-fine:group-hover/tab:pointer-events-auto pointer-fine:group-hover/tab:opacity-100 group-active/tab:bg-border-strong group-active/tab:bg-none'
-                }`}
-              >
-                <IconClose className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )
-        })}
-      </div>
-      <Menu
-        label="Open in pane"
-        align="start"
-        width="min-w-[220px]"
-        items={entries.map((it) => ({
-          key: it.key,
-          label: it.label,
-          icon: <it.Glyph className="h-3.5 w-3.5" />,
-          onClick: it.run,
-          hint: it.meta && (it.mono ? <span className="font-mono">{it.meta}</span> : it.meta),
-          hintTitle: it.meta,
-          description: it.description,
-          keys: it.keys,
-          returnFocus: it.key === 'open-file'
-        }))}
-        trigger={{ 'data-ui': 'pane-add', 'aria-label': 'Open in pane', title: 'Open in pane', className: `${PANE_BTN} ml-0.5 shrink-0` }}
-      >
-        <IconPlus className="h-4 w-4" />
-      </Menu>
+                <button
+                  type="button"
+                  role="tab"
+                  data-tab={v.id}
+                  aria-selected={on}
+                  // A named button, not visible text plus an sr-only span: Chrome joins those with a stray space.
+                  aria-label={`${v.label}${v.more}`}
+                  aria-keyshortcuts="Delete"
+                  aria-description={unseenShown ? 'updated' : undefined}
+                  tabIndex={on ? 0 : -1}
+                  title={unseenShown ? `${v.tip}\n${UNSEEN_LINE}` : v.tip}
+                  onClick={() => handleId && activate(handleId, v.id)}
+                  onKeyDown={(e) => onKeyDown(e, i)}
+                  onFocus={(e) => {
+                    focused.current = v.id
+                    e.currentTarget.scrollIntoView(NEAREST)
+                  }}
+                  // A middle press would start autoscroll, and a closing tab shouldn't take focus first.
+                  onMouseDown={(e) => {
+                    if (e.button === 1) e.preventDefault()
+                  }}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) closeTab(v.id, inList())
+                  }}
+                  className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border pl-2.5 text-label focus-visible:-outline-offset-2 active:bg-border-strong ${
+                    on
+                      ? 'border-control-edge bg-control pr-2.5 font-medium text-content'
+                      : `border-transparent pointer-fine:group-hover/tab:bg-[var(--glass-row-hover)] pointer-fine:group-hover/tab:text-content ${
+                          unseenShown ? 'pr-7 text-content' : 'pr-2.5 text-dim'
+                        }`
+                  }`}
+                >
+                  {/* Live state outranks the kind, so it takes the glyph's place rather than adding to the row. */}
+                  <span aria-hidden="true" className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                    {v.state === 'driving' ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                    ) : v.state === 'user' ? (
+                      <span className="flex gap-0.5">
+                        <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
+                        <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
+                      </span>
+                    ) : v.kind === 'file' ? (
+                      <FileIcon name={v.label} kind="file" className="h-3.5 w-3.5" />
+                    ) : (
+                      Glyph && <Glyph className="h-3.5 w-3.5" />
+                    )}
+                  </span>
+                  <span className="min-w-0 truncate">{v.label}</span>
+                  {v.suffix && <span className="ml-1 min-w-0 shrink-[2] truncate text-meta text-faint">{v.suffix}</span>}
+                </button>
+                {unseenShown && (
+                  <span aria-hidden="true" data-ui="surface-tab-unseen" className="pointer-events-none absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center">
+                    <span className="h-1.5 w-1.5 rounded-full bg-content" />
+                  </span>
+                )}
+                {/* The keyboard closes with Delete on the tab, so the button stays out of the Tab order. It paints the
+                    tab's own fill over the title's tail, so the active tab's title gets the same room as the rest. */}
+                <button
+                  type="button"
+                  data-ui="surface-tab-close"
+                  aria-label={v.closeName}
+                  title="Close tab"
+                  tabIndex={-1}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => closeTab(v.id, inList())}
+                  className={`absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-sm text-dim pointer-fine:hover:text-content ${
+                    on
+                      ? 'bg-control pointer-fine:hover:bg-[linear-gradient(var(--glass-row-hover),var(--glass-row-hover))]'
+                      : 'pointer-events-none bg-bg bg-[linear-gradient(var(--glass-row-hover),var(--glass-row-hover))] opacity-0 pointer-fine:group-hover/tab:pointer-events-auto pointer-fine:group-hover/tab:opacity-100 group-active/tab:bg-border-strong group-active/tab:bg-none'
+                  }`}
+                >
+                  <IconClose className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {any && (
+        <Menu
+          label="Open in pane"
+          align="start"
+          width="min-w-[220px]"
+          items={entries.map((it) => ({
+            key: it.key,
+            label: it.label,
+            icon: <it.Glyph className="h-3.5 w-3.5" />,
+            onClick: it.run,
+            hint: it.meta && (it.mono ? <span className="font-mono">{it.meta}</span> : it.meta),
+            hintTitle: it.meta,
+            description: it.description,
+            keys: it.keys,
+            returnFocus: it.key === 'open-file'
+          }))}
+          trigger={{ 'data-ui': 'pane-add', 'aria-label': 'Open in pane', title: 'Open in pane', className: `${PANE_BTN} ml-0.5 shrink-0` }}
+        >
+          <IconPlus className="h-4 w-4" />
+        </Menu>
+      )}
       <span className="sr-only" aria-live="polite">
         {announce}
       </span>

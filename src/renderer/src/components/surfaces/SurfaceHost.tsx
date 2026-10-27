@@ -3,8 +3,8 @@ import { PaneHeader } from './PaneHeader'
 import { SurfaceTabs } from './SurfaceTabs'
 import { BrowserSettingsButton, BrowserSurface, useBrowserExternal } from './BrowserSurface'
 import { DiffSurface, useDiffExternal } from './DiffSurface'
-import { FileSurface, GoToLineButton, useFileExternal } from './FileSurface'
-import { TreeRevealButton, TreeSurface, treeExternal } from './TreeSurface'
+import { FileSurface, useFileExternal } from './FileSurface'
+import { TreeSurface, treeExternal } from './TreeSurface'
 import { PanePicker } from './PanePicker'
 import { PointButton } from './PointButton'
 
@@ -24,22 +24,15 @@ export function SurfaceHost(): JSX.Element | null {
   const browser = kind === 'browser'
   const external =
     browser ? browserExternal : kind === 'diff' ? diffExternal : kind === 'file' ? fileExternal : kind === 'tree' ? treeExternal(handleId, cwd) : undefined
-  const pointer = (browser || kind === 'file' || kind === 'diff') && activeId && <PointButton handleId={handleId} kind={kind} id={activeId} path={filePath} />
+  const pointer = (browser || kind === 'diff') && activeId && <PointButton kind={kind} id={activeId} />
   const actions = browser ? (
     <>
       {pointer}
       <BrowserSettingsButton />
     </>
-  ) : kind === 'file' ? (
-    <>
-      {pointer}
-      <GoToLineButton handleId={handleId} path={filePath} />
-    </>
-  ) : kind === 'diff' ? (
+  ) : (
     pointer
-  ) : kind === 'tree' ? (
-    <TreeRevealButton />
-  ) : undefined
+  )
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <PaneHeader external={external} actions={actions}>

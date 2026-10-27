@@ -841,8 +841,8 @@ interface SessionStore {
   /** Set the active session's pane. Opening it replaces a subagent view and needs a cwd; with no tabs it
    *  shows the picker. Half or full is an explicit size choice, kept for that session. */
   setPane: (next: BrowserPaneState) => void
-  /** The band's toggle: hides a showing pane, else opens it on paneTarget, or on a new browser tab when
-   *  there's nothing to show, or on the picker without a browser. `apply` makes the pane change, so a
+  /** The band's toggle: hides a showing pane, else opens it on paneTarget, or on the picker when there's
+   *  nothing to show. `apply` makes the pane change, so a
    *  pointer caller can wrap it in a transition. */
   togglePane: (apply?: (next: BrowserPaneState) => void) => void
   /** ⇧⌘B: hides a pane that shows the browser, else shows a browser tab. */
@@ -867,7 +867,7 @@ interface SessionStore {
 
 export type SurfaceSpec = Pick<SurfaceTab, 'kind' | 'key' | 'title'> &
   Partial<Pick<SurfaceTab, 'mode' | 'location' | 'highlight' | 'provenance'>>
-export type SurfaceViewPatch = Partial<Pick<SurfaceTab, 'mode' | 'location' | 'selection' | 'highlight' | 'viewState' | 'sourceView'>>
+export type SurfaceViewPatch = Partial<Pick<SurfaceTab, 'mode' | 'location' | 'selection' | 'highlight' | 'viewState' | 'sourceView' | 'reveal'>>
 
 /**
  * The effort ceiling the CLI will enforce for a model, or undefined when none is set. A
@@ -1020,8 +1020,9 @@ function placeBrowser<T extends Pick<PerSessionState, 'surfaces' | 'browser'>>(s
 }
 
 /** The slice fields that make `id` the active tab: unseen cleared, a pending destination applied, and
- *  a browser placement's tab viewed. The caller asks main to view that tab. */
-function activation(slice: PerSessionState, id: string, now: number): Partial<PerSessionState> {
+ *  a browser placement's tab viewed. The caller asks main to view that tab. The tree taking over from a
+ *  file in the cwd reveals that file, unless Claude sent it somewhere. */
+function activation(slice: PerSessionState, id: string, now: number, located = false): Partial<PerSessionState> {
   const set = slice.surfaces
   const tab = browserTabOf(id)
   if (tab !== null) {
@@ -1032,8 +1033,12 @@ function activation(slice: PerSessionState, id: string, now: number): Partial<Pe
     }
   }
   const cur = set.tabs[id]
-  const { pendingShow, unseen: _u, ...rest } = cur
-  const next: SurfaceTab = { ...rest, ...pendingShow, lastViewedAt: now }
+  const { pendingShow, unseen, reveal: _r, ...rest } = cur
+  const from = set.active ? set.tabs[set.active] : undefined
+  // An unseen tree holds a destination Claude placed behind; that wins like a pending or just-sent one.
+  const sent = located || !!pendingShow?.location || !!unseen
+  const reveal = cur.kind === 'tree' && from?.kind === 'file' && !!slice.cwd && from.key.startsWith(`${slice.cwd}/`) && !sent ? from.key : null
+  const next: SurfaceTab = { ...rest, ...pendingShow, ...(reveal ? { reveal } : {}), lastViewedAt: now }
   return { surfaces: { ...set, active: id, tabs: { ...set.tabs, [id]: next } } }
 }
 
@@ -1091,7 +1096,7 @@ const surfacesSave = (s: PerSessionState): SurfacesSave => ({
  * here counts as a change, so the first save waits for one.
  */
 export function restoredPane(restore: SurfacesRestore, browser: boolean): Pick<PerSessionState, 'browser' | 'surfaces' | 'paneOpen' | 'surfacePaneFull' | 'restoreNote'> {
-  const tabs = !browser ? null : restore.status === 'ok' && restore.entry.browserTabs ? restore.entry.browserTabs : { tabs: [{ id: 1, url: 'about:blank', lastViewedAt: 0 }], nextId: 2, viewed: 1 }
+  const tabs = !browser ? null : restore.status === 'ok' && restore.entry.browserTabs ? restore.entry.browserTabs : { tabs: [], nextId: 1, viewed: 1 }
   const b: BrowserTabs | null = tabs && {
     tabs: tabs.tabs.map((t) => ({ ...BLANK_BROWSER, id: t.id, url: t.url })),
     viewed: tabs.viewed,
@@ -1103,7 +1108,7 @@ export function restoredPane(restore: SurfacesRestore, browser: boolean): Pick<P
   if (restore.status !== 'ok') {
     return {
       browser: b,
-      surfaces: b ? { ...EMPTY_SURFACES, order: [placement(1)], active: placement(1) } : EMPTY_SURFACES,
+      surfaces: EMPTY_SURFACES,
       paneOpen: false,
       surfacePaneFull: false,
       restoreNote: restore.status === 'none' ? null : restore.status
@@ -3806,6 +3811,8 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (!gone || e.by !== 'agent') return patchSlice(s, handleId, { browser })
           const cur = s.sessions[handleId]
           const after = placeBrowser({ ...cur, browser }).surfaces
+          // The strip's live region goes with the pane, so the status region says this one.
+          if (!after.order.length) return patchSlice(s, handleId, { browser, paneOpen: false, ...(cur.paneOpen ? said('Claude closed the last tab. Pane hidden.') : {}) })
           const say = (text: string): Partial<SessionStore> => patchSlice(s, handleId, { browser: { ...browser, announce: toggled(text) } })
           if (cur.surfaces.active !== placement(e.tab)) return say(`Claude closed tab ${e.tab}: ${siteKeyOf(gone.url) ?? 'New page'}`)
           const n = browserTabOf(after.active)
@@ -4026,7 +4033,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       fresh = !existing
       located = !!spec.location
     }
-    const activeNow = activation(placed, id, now)
+    const activeNow = activation(placed, id, now, located)
     if (browserTab !== null && cur.browser?.viewed !== browserTab) void window.clui.browserViewTab(handleId, browserTab)
     if (showing || (!viewed && cur.paneOpen)) {
       const moved = showing && actor === 'claude' && (set0.active !== id || located)
@@ -4051,6 +4058,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     const set0 = cur.surfaces
     const order = set0.order.filter((x) => x !== id)
     const next = set0.active === id ? neighbourOf(set0.order, id, order) : set0.active
+    // Auto-open isn't suppressed: the user closed a tab, not the pane, so Claude opening one later still shows it.
+    const emptied = order.length ? {} : { paneOpen: false, ...(cur.paneOpen ? said('Closed the last tab. Pane hidden.') : {}) }
     const tab = browserTabOf(id)
     const b = cur.browser
     if (tab !== null && b) {
@@ -4058,11 +4067,11 @@ export const useSession = create<SessionStore>((set, get) => ({
       const i = b.tabs.findIndex((t) => t.id === tab)
       const after = b.tabs[i + 1] ?? b.tabs[i - 1]
       const browser = { ...b, tabs: b.tabs.filter((t) => t.id !== tab), viewed: b.viewed === tab ? (after?.id ?? b.viewed) : b.viewed }
-      set(patchSlice(s, handleId, { browser, surfaces: { ...set0, active: next } }))
+      set(patchSlice(s, handleId, { browser, surfaces: { ...set0, active: next }, ...emptied }))
       void window.clui.browserCloseTab(handleId, tab)
     } else {
       const { [id]: _gone, ...tabs } = set0.tabs
-      set(patchSlice(s, handleId, { surfaces: { ...set0, order, active: next, tabs } }))
+      set(patchSlice(s, handleId, { surfaces: { ...set0, order, active: next, tabs }, ...emptied }))
     }
     const st = get()
     const now = st.sessions[handleId]

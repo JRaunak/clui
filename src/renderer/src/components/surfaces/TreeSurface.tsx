@@ -5,9 +5,9 @@ import type { ContextMenuItem, Refusal } from '../../../../shared/files'
 import type { FileChangeSummary } from '../../../../shared/changes'
 import { Button } from '../Button'
 import { FileIcon } from '../FileIcon'
-import { IconChevron, IconDiff, IconLocate } from '../Icon'
+import { IconChevron, IconDiff } from '../Icon'
 import { describe, Figure, figureWidth, MINUS } from '../ChangedFiles'
-import { DISABLED_BTN, PANE_BTN, type PaneExternal } from './PaneHeader'
+import type { PaneExternal } from './PaneHeader'
 import { openEditor } from './FileSurface'
 import { ancestorsOf, changeIndex, flatten, nameOf, parentOf, sortEntries, survivor, tilde, typeahead, vetExpanded, type DirState, type TreeRow } from '../../lib/tree'
 import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
@@ -70,36 +70,6 @@ export function revealInTree(path: string, via: Via, open = false): void {
   window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: pendingReveal }))
 }
 
-/** The file tab looked at last; Reveal finds it in the tree. */
-const lastFile = (s: { surfaces: { tabs: Record<string, { kind: string; key: string; lastViewedAt: number }> } } | null): string | null => {
-  let best: { key: string; at: number } | null = null
-  for (const t of Object.values(s?.surfaces.tabs ?? {})) if (t.kind === 'file' && (!best || t.lastViewedAt > best.at)) best = { key: t.key, at: t.lastViewedAt }
-  return best?.key ?? null
-}
-
-export function TreeRevealButton(): JSX.Element {
-  const cwd = useActive((s) => s?.cwd ?? null)
-  const target = useActive(lastFile)
-  const name = target ? baseOf(target) : ''
-  const outside = !!target && !!cwd && !target.startsWith(`${cwd}/`)
-  const label = target ? `Reveal ${name} in tree` : 'Reveal in tree'
-  const title = !target ? 'Reveal in tree. No file is open.' : outside ? `Reveal in tree. ${name} is outside this folder.` : label
-  const off = !target || outside
-  return (
-    <button
-      type="button"
-      data-ui="tree-reveal"
-      aria-label={label}
-      title={title}
-      aria-disabled={off || undefined}
-      onClick={(e) => !off && window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: { path: target, via: viaOf(e) } }))}
-      className={`${PANE_BTN} ${DISABLED_BTN}`}
-    >
-      <IconLocate className="h-4 w-4" />
-    </button>
-  )
-}
-
 /**
  * The session's folder as a navigator: a flat, virtualized WAI-ARIA tree. Folders list on expand
  * and stay watched while shown; Git-ignored and hidden entries are dimmed, never hidden. Claude's
@@ -115,7 +85,7 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
     const tab = slice?.surfaces.tabs[TAB]
     const v = tab?.viewState
     const fromSidecar = !!tab && restoredTab(slice, tab)
-    return { view: v?.kind === 'tree' ? v : null, file: lastFile(slice), fromSidecar, vet: fromSidecar && !vetted.has(handleId) }
+    return { view: v?.kind === 'tree' ? v : null, fromSidecar, vet: fromSidecar && !vetted.has(handleId) }
   })
   // Saved folders reopen level by level as their parents list, so an ignored or hidden one is never opened.
   const [vetting, setVetting] = useState<string[]>(() => (restored.vet ? (restored.view?.expanded ?? []) : []))
@@ -267,10 +237,8 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
   }
   const select = (rel: string): void => setView(handleId, TAB, { location: { file: abs(rel) } })
 
-  // The first listing places focus on the selection, else the top. The last file looked at becomes the
-  // selection if its row shows up before every shown folder has finished its first listing.
+  // The first listing places focus on the selection, else the top.
   const placed = useRef(false)
-  const adopt = useRef(restored.file ? relOf(restored.file) : null)
   useLayoutEffect(() => {
     if (!placed.current && dirs['']?.t === 'ok' && scroller) {
       placed.current = true
@@ -280,13 +248,6 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
       if (!restored.view?.scrollTop && i) virtuoso.current?.scrollToIndex({ index: i, align: 'center' })
       if (takeSurfaceFocus(TAB)) treeEl.current?.focus({ preventScroll: true })
     }
-    const want = adopt.current
-    if (!placed.current || want === null) return
-    if (index.has(want)) {
-      adopt.current = null
-      if (want !== selected) select(want)
-      focusRow(want)
-    } else if (['', ...shown].every((rel) => dirs[rel] && dirs[rel].t !== 'loading')) adopt.current = null
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirs, scroller])
 
@@ -370,20 +331,23 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
   }
 
   // Reveal expands the target's folders, ignored or hidden ones included, then lands on its row once it's listed.
-  const revealing = useRef<{ rel: string; via: Via } | null>(null)
+  // The file the tree took over from lands quietly: selected and scrolled to, focus and announcements untouched.
+  const revealing = useRef<{ rel: string; via: Via; quiet: boolean } | null>(null)
   useEffect(() => {
-    const take = ({ path, via, open }: Reveal): void => {
+    const take = ({ path, via, open }: Reveal, quiet = false): void => {
       pendingReveal = null
       const rel = relOf(path)
       if (!rel) return
-      revealing.current = { rel, via }
-      // An asked-for row outranks the last file looked at.
-      adopt.current = null
+      revealing.current = { rel, via, quiet }
       const need = open ? [...ancestorsOf(rel), rel] : ancestorsOf(rel)
       setExpanded((prev) => [...prev.filter((x) => !need.includes(x)), ...need].slice(-EXPANDED_MAX))
     }
     const onReveal = (e: Event): void => take((e as CustomEvent<Reveal>).detail)
+    const from = useSession.getState().sessions[handleId]?.surfaces.tabs[TAB]?.reveal
+    if (from) setView(handleId, TAB, { reveal: undefined })
+    // A folder link's explicit reveal outranks the file the tree took over from.
     if (pendingReveal) take(pendingReveal)
+    else if (from) take({ path: from, via: 'keyboard' }, true)
     window.addEventListener(REVEAL_EVENT, onReveal)
     return () => window.removeEventListener(REVEAL_EVENT, onReveal)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -396,6 +360,7 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
       if (!settled) return
       // Every folder on the way is listed and the file isn't there: land on the deepest folder that is.
       revealing.current = null
+      if (want.quiet) return
       say(`${nameOf(want.rel)} isn't in the tree.`)
       const near = ancestorsOf(want.rel).findLast((a) => index.has(a))
       if (near) land(near, want.via)
@@ -403,6 +368,10 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
       return
     }
     revealing.current = null
+    if (want.quiet) {
+      select(want.rel)
+      return focusRow(want.rel)
+    }
     land(want.rel, want.via)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows])

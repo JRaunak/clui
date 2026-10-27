@@ -19,7 +19,7 @@ import { SurfacePane } from './surfaces/SurfacePane'
 import { SurfaceHost } from './surfaces/SurfaceHost'
 import { browserExternalBlock } from './surfaces/BrowserSurface'
 import { selectedChange } from './surfaces/DiffSurface'
-import { useFileMissing } from './surfaces/FileSurface'
+import { useFileStatus } from './surfaces/FileSurface'
 import { TopBand } from './TopBand'
 import { StatusBar } from './StatusBar'
 import { Notice } from './Notice'
@@ -134,7 +134,7 @@ export function Stage({
   const diffOpenable = useActive((s) => !!selectedChange(s)?.snapshot)
   const handleId = useSession((s) => s.activeHandleId)
   const filePath = useActive((s) => (kind === 'surfaces' && s?.surfaces.active && s.surfaces.tabs[s.surfaces.active]?.kind === 'file' ? s.surfaces.tabs[s.surfaces.active].key : null))
-  const fileGone = useFileMissing(handleId, filePath)
+  const fileStatus = useFileStatus(handleId, filePath)
   const externalBlocked = useActive((s) => !!browserExternalBlock(viewedTabOf(s?.browser)?.url ?? ''))
   // The native menu can't read the renderer, so its pane, browser and Open externally items follow what this Stage shows.
   useEffect(() => {
@@ -149,12 +149,13 @@ export function Stage({
         : onDiff
           ? { kind: 'diff', enabled: diffOpenable }
           : filePath
-            ? { kind: 'file', enabled: !fileGone }
+            ? { kind: 'file', enabled: fileStatus !== 'missing' }
             : onTree
               ? { kind: 'tree', enabled: true }
-              : { kind: 'none', enabled: false }
+              : { kind: 'none', enabled: false },
+      fileLines: fileStatus === 'text'
     })
-  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileGone, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary])
+  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary])
 
   const pane = useMemo<PaneApi>(
     () => ({

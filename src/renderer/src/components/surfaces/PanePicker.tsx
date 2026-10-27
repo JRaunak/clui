@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, type KeyboardEvent } from 'react'
 import { activeSlice, useActive, useSession, type SurfaceSpec } from '../../store'
 import { paneItems, type PaneItem, type PaneItemKey } from '../../lib/paneItems'
-import { requestSurfaceFocus } from '../../lib/surfaceFocus'
+import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { useEscape } from '../../lib/useEscape'
 import { usePane } from '../Stage'
 import { openFilePalette } from '../CommandPalette'
@@ -28,10 +28,18 @@ const focusAddress = (): void => document.querySelector<HTMLElement>('[data-ui="
 
 /** A new browser tab, with focus on its address bar. */
 async function openBrowserTab(): Promise<void> {
-  focusAddress()
-  await useSession.getState().newBrowserTab()
-  // From another kind, the address only exists once the new tab's surface has mounted.
-  requestAnimationFrame(focusAddress)
+  const shown = !!document.querySelector('[data-ui="browser-url"]')
+  // From another kind, the address only exists once the browser surface mounts, a frame or more after main's
+  // tab-opened event, so the surface takes the focus then.
+  if (shown) focusAddress()
+  else requestSurfaceFocus('browser')
+  try {
+    await useSession.getState().newBrowserTab()
+  } catch (e) {
+    // A request left behind would pull focus into the next browser tab Claude opens.
+    takeSurfaceFocus('browser')
+    throw e
+  }
 }
 
 /** Creates or activates a singleton and puts focus in it. One already on screen mounts nothing that would take
@@ -64,9 +72,14 @@ export function usePaneEntries(): PaneEntry[] {
   const cwd = useActive((s) => s?.cwd ?? null)
   const changes = useActive((s) => s?.changes.length ?? 0)
   const browser = useActive((s) => !!s?.browser)
+  const treeOpen = useActive((s) => !!s?.surfaces.tabs.tree)
+  const changesOpen = useActive((s) => !!s?.surfaces.tabs.diff)
   return useMemo(
-    () => (cwd ? paneItems({ cwd, home: window.clui.homeDir, changes, browser }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) })) : []),
-    [cwd, changes, browser]
+    () =>
+      cwd
+        ? paneItems({ cwd, home: window.clui.homeDir, changes, browser, treeOpen, changesOpen }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) }))
+        : [],
+    [cwd, changes, browser, treeOpen, changesOpen]
   )
 }
 
@@ -80,8 +93,7 @@ export function PanePicker(): JSX.Element {
   const hide = useCallback(() => useSession.getState().togglePane(), [])
   useEscape(pane.escapeActive, hide)
 
-  // Opening the pane focuses row 1 through SurfacePane. Closing the last tab drops focus to the body, so it lands
-  // here instead.
+  // A session switch can unmount what held focus and leave it on the body, so row 1 takes it.
   useEffect(() => {
     const el = document.activeElement
     if (!useSession.getState().paneOpenedQuietly && (!el || el === document.body)) listRef.current?.querySelector<HTMLElement>('button')?.focus()

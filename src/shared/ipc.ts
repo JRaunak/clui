@@ -435,6 +435,8 @@ export type MenuAction =
   | 'new-quick-session'
   | 'new-named-session'
   | 'close-session'
+  /** File > Close Session picked with the pointer: deliberate, so the ⌘W streak guard doesn't apply. */
+  | 'close-session-menu'
   | 'open-settings'
   | 'open-palette'
   | 'open-command-palette'
@@ -449,6 +451,7 @@ export type MenuAction =
   | 'browser-annotate'
   | 'browser-toggle'
   | 'pane-external'
+  | 'file-goto'
 
 /** IPC channel names (single source of truth). */
 export const IpcChannels = {
@@ -581,4 +584,6 @@ export interface MenuState {
   close: 'session' | 'tab' | 'none'
   /** The active surface's Open externally target, and whether it can open now. */
   external: { kind: 'file' | 'diff' | 'browser' | 'tree' | 'none'; enabled: boolean }
+  /** A text file tab shows, so Go to Line has lines to go to. */
+  fileLines: boolean
 }

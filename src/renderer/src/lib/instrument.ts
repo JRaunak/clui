@@ -3,6 +3,7 @@ import type { ChatMessage, MonitorRecord, PerSessionState, ToolCall } from '../s
 import { isBackgroundedTool } from './lumen'
 import { READ_CHANGE, spokenChange } from './refCopy'
 import { formatCost } from './formatCost'
+import { SURFACE_OPEN_TOOL, SURFACE_STATE_TOOL } from '../../../shared/surface-tools'
 
 export { isBackgroundedTool }
 
@@ -137,7 +138,9 @@ export const isChangeRead = (name: string): boolean => name === CHANGE_READ_TOOL
 /** What a row, a group and the status line call a tool. A history read is never a bare `Read`, so a group of both
  *  doesn't fold into one name. */
 export function toolLabel(name: string): string {
-  return name === 'Task' || name === 'Agent' ? 'Agent' : isBrowserTool(name) ? 'Browser' : isChangeRead(name) ? READ_CHANGE : name
+  if (name === 'Task' || name === 'Agent') return 'Agent'
+  if (isBrowserTool(name)) return 'Browser'
+  return name === SURFACE_OPEN_TOOL || name === SURFACE_STATE_TOOL ? 'Pane' : isChangeRead(name) ? READ_CHANGE : name
 }
 
 type ChangeRef = Extract<ContextReference, { kind: 'change' }>

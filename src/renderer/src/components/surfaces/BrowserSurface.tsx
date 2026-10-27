@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useActive, useSession, viewedTabOf } from '../../store'
 import { onOcclusion } from '../../lib/browserOcclusion'
 import { getStage } from '../../lib/stage'
+import { takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { PANE_BTN, type PaneExternal } from './PaneHeader'
 import { BrowserDriveStrip, BrowserNetStrip, BrowserToolbar } from '../BrowserToolbar'
 import { Button } from '../Button'
@@ -75,6 +76,9 @@ function LoadFailure({ handleId, tab, err, committed }: { handleId: string; tab:
  */
 export function BrowserSurface({ handleId }: { handleId: string }): JSX.Element {
   const areaRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (takeSurfaceFocus('browser')) document.querySelector<HTMLElement>('[data-ui="browser-url"]')?.focus()
+  }, [])
   const url = useActive((s) => viewedTabOf(s?.browser)?.url ?? '')
   const still = useActive((s) => viewedTabOf(s?.browser)?.still ?? null)
   const wall = useActive((s) => viewedTabOf(s?.browser)?.loginWall === 'hardware')

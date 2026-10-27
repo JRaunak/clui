@@ -213,7 +213,7 @@ export class BrowserManager {
     return t
   }
 
-  /** A session that starts with the tools, on tab 1 or on the tabs it saved. A page is created the first time
+  /** A session that starts with the tools, with no tabs or the tabs it saved. A page is created the first time
    *  its tab is shown or driven, and a saved tab loads its address then. */
   enable(handleId: string, saved?: SavedBrowser | null): void {
     if (this.entries.has(handleId)) return
@@ -232,7 +232,7 @@ export class BrowserManager {
       for (const t of saved.tabs) this.addTab(e, t)
       e.nextId = saved.nextId
       e.viewed = e.lastUsed = saved.tabs.some((t) => t.id === saved.viewed) ? saved.viewed : (saved.tabs.at(-1)?.id ?? 1)
-    } else this.addTab(e)
+    }
     this.entries.set(handleId, e)
   }
 

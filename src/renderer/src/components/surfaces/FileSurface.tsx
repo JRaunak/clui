@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent } from 'react'
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { diffLines } from 'diff'
 import { refsOf, restoredTab, useActive, useSession } from '../../store'
@@ -12,7 +12,7 @@ import { FindField } from '../FindField'
 import { IconDiff, IconHash, IconTarget } from '../Icon'
 import { toWorkspaceRelative } from '../ChangedFiles'
 import { Code } from './HunkView'
-import { PANE_BTN, type PaneExternal } from './PaneHeader'
+import type { PaneExternal } from './PaneHeader'
 import { highlightTexts, langForPath } from '../../lib/highlight'
 import { escapeHtml, markHtml } from '../../lib/highlightLines'
 import { requestSurfaceFocus, setPointing, takePoint, takeSurfaceFocus, usePointing, usePointRequest } from '../../lib/surfaceFocus'
@@ -34,7 +34,8 @@ const REMAP_MS = 50
 /** The window's unload never unmounts the open file, so its top line saves once a scroll settles. */
 const VIEW_SETTLE_MS = 250
 const SKELETON = [62, 48, 71, 35, 80, 54, 66, 40, 58, 44, 75, 50]
-const GOTO_EVENT = 'clui:file-goto'
+/** ⌘L from the File menu. */
+export const FILE_GOTO_EVENT = 'clui:file-goto'
 /** ⌘F, ⌘G and ⇧⌘G routed to the File surface; detail is 'open' | 'next' | 'prev'. */
 export const FILE_FIND_EVENT = 'clui:file-find'
 const MARK = 'rounded-[2px] bg-border-strong text-content [&_*]:text-content'
@@ -64,7 +65,7 @@ const REASON: Record<Refusal['reason'], string> = {
 }
 const RETRY = new Set<Refusal['reason']>(['changed', 'limit', 'unreadable'])
 const CHOOSE = 'Choose file\u2026'
-export const NO_LINES = 'This file has no lines to point at.'
+const NO_LINES = 'This file has no lines to point at.'
 
 // What a shown file's view holds, for the header buttons and the menu item outside this component.
 const status = new Map<string, Doc['t']>()
@@ -81,7 +82,7 @@ const subscribe = (cb: () => void): (() => void) => {
 }
 export const useFileStatus = (handleId: string | null, path: string | null): Doc['t'] | null =>
   useSyncExternalStore(subscribe, () => (handleId && path ? (status.get(`${handleId}\0${path}`) ?? null) : null))
-export const useFileMissing = (handleId: string | null, path: string | null): boolean => useFileStatus(handleId, path) === 'missing'
+const useFileMissing = (handleId: string | null, path: string | null): boolean => useFileStatus(handleId, path) === 'missing'
 
 export const openEditor = (handleId: string, path: string, line?: number): Promise<void> =>
   window.clui.openInEditor(handleId, path, line).catch((e: unknown) => useSession.setState({ notice: { message: cleanError(e), tone: 'error' } }))
@@ -93,24 +94,6 @@ export function useFileExternal(handleId: string | null, path: string | null): P
     disabledReason: gone ? 'The file no longer exists.' : undefined,
     onOpen: () => (handleId && path ? openEditor(handleId, path) : undefined)
   }
-}
-
-export function GoToLineButton({ handleId, path }: { handleId: string; path: string | null }): JSX.Element {
-  const off = useFileStatus(handleId, path) !== 'text'
-  return (
-    <button
-      type="button"
-      data-ui="file-goto"
-      aria-label="Go to line"
-      title={off ? 'This file has no lines to go to' : 'Go to line ⌘L'}
-      aria-keyshortcuts="Meta+L"
-      aria-disabled={off || undefined}
-      onClick={() => !off && window.dispatchEvent(new Event(GOTO_EVENT))}
-      className={`${PANE_BTN} aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:pointer-fine:hover:bg-transparent aria-disabled:pointer-fine:hover:text-dim`}
-    >
-      <IconHash className="h-4 w-4" />
-    </button>
-  )
 }
 
 type Doc =
@@ -196,6 +179,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   const range = useRef({ start: 0, end: 0 })
   const anchor = useRef<number | null>(null)
   const active = useRef<number | null>(null)
+  const down = useRef<{ x: number; y: number } | null>(null)
   const keepLine = useRef<number | null>(null)
   const openVia = useRef<Via>('keyboard')
   const itemsRef = useRef<Item[]>([])
@@ -556,6 +540,24 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     setSelection({ start: Math.min(a, b), end: Math.max(a, b) })
   }
 
+  // A later Shift-click starts fresh instead of extending a selection the user dismissed.
+  const clearSelection = (): void => {
+    anchor.current = active.current = null
+    setSelection(null)
+  }
+
+  // A plain click on the code dismisses the selection. A drag that just became one, a click that
+  // wandered, and the line numbers and controls inside the body keep their own meaning.
+  const onBodyClick = (e: MouseEvent): void => {
+    const at = down.current
+    down.current = null
+    if (!selection || !at || e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+    if (Math.hypot(e.clientX - at.x, e.clientY - at.y) > 3) return
+    if (e.target instanceof Element && e.target.closest('[data-num], button, a, input, textarea')) return
+    if (!window.getSelection()?.isCollapsed) return
+    clearSelection()
+  }
+
   const onRegionKey = (e: KeyboardEvent): void => {
     if (e.target !== e.currentTarget) return
     if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && selection) {
@@ -565,7 +567,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     if (e.key === 'Escape') {
       if (!selection && !highlight && !pointing) return
       e.preventDefault()
-      if (selection || highlight) return setSelection(null)
+      if (selection || highlight) return clearSelection()
       setPointing(tabId, false)
       clearTimeout(selSay.current)
       return say(POINT_OFF)
@@ -623,12 +625,6 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   useEffect(() => setCurrent(0), [deferred])
 
   useEffect(() => {
-    const inPane = (): boolean => !!document.activeElement?.closest('[data-ui="pane-secondary"]')
-    const onKey = (e: globalThis.KeyboardEvent): void => {
-      if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey || e.key.toLowerCase() !== 'l' || !inPane()) return
-      e.preventDefault()
-      if (docRef.current.t === 'text') openBar('goto')
-    }
     const onGoto = (): void => {
       if (docRef.current.t === 'text') openBar('goto')
     }
@@ -645,12 +641,10 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
       if (what === 'open' || bar !== 'find') return openBar('find')
       stepFind(what === 'prev' ? -1 : 1)
     }
-    document.addEventListener('keydown', onKey)
-    window.addEventListener(GOTO_EVENT, onGoto)
+    window.addEventListener(FILE_GOTO_EVENT, onGoto)
     window.addEventListener(FILE_FIND_EVENT, onFind)
     return () => {
-      document.removeEventListener('keydown', onKey)
-      window.removeEventListener(GOTO_EVENT, onGoto)
+      window.removeEventListener(FILE_GOTO_EVENT, onGoto)
       window.removeEventListener(FILE_FIND_EVENT, onFind)
     }
   }, [openBar, stepFind, bar])
@@ -950,8 +944,13 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
         data-ui="file-body"
         data-beside-header=""
         {...(doc.t === 'loading' ? {} : { 'data-pane-title': '' })}
+        aria-keyshortcuts="Meta+Shift+A Meta+L"
         onKeyDown={onRegionKey}
+        onMouseDown={(e) => {
+          down.current = { x: e.clientX, y: e.clientY }
+        }}
         onMouseUp={onMouseUp}
+        onClick={onBodyClick}
         className="min-h-0 flex-1 overflow-y-auto"
       >
         {content}
