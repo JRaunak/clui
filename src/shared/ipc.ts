@@ -18,7 +18,7 @@ import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, L
 import type { AnnotateEvent } from './annotate'
 import type { ChangeSide, DraftReference, LineRange, RefInput, RefInvalid, SourceVersion } from './context'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff, HunkRows } from './changes'
-import type { HtmlOpenResult, HtmlViewEvent } from './html-view'
+import type { HtmlOpenResult, HtmlViewEvent, PagePlace, PageStart } from './html-view'
 import type { ContextMenuItem, FileChangedEvent, FileStat, ImageCap, Refusal, TextRead, TreeListing } from './files'
 import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
 import type { SurfaceCommand, SurfaceReply } from './surface-tools'
@@ -434,15 +434,15 @@ export interface CluiApi {
   onBrowserEvent: (cb: (handleId: string, e: BrowserEvent) => void) => () => void
   /** A Preview of `path` for the pane tab `tabId`, replacing that tab's earlier view. Loads at once unless
    *  `changedSince`. The view is hidden until htmlSetVisible. */
-  htmlOpen: (handleId: string, tabId: string, path: string, anchor?: string) => Promise<HtmlOpenResult>
+  htmlOpen: (handleId: string, tabId: string, path: string, start?: PageStart) => Promise<HtmlOpenResult>
   /** Fire-and-forget: sent at most once per animation frame. */
   htmlSetBounds: (viewId: string, b: PaneBounds | null) => void
   /** Resolves to a fresh still captured just before hiding, or null. Showing one native view hides every other. */
   htmlSetVisible: (viewId: string, visible: boolean) => Promise<string | null>
   /** Loads the current bytes: Reload, and Run for a changed-since artifact. */
   htmlReload: (viewId: string) => Promise<void>
-  /** Destroys the view and revokes its cap; its page's later requests fail. */
-  htmlClose: (viewId: string) => Promise<void>
+  /** Destroys the view and revokes its cap; its page's later requests fail. Resolves to where the document was. */
+  htmlClose: (viewId: string) => Promise<PagePlace | null>
   /** Keyboard focus into the shown page, which a DOM focus() can't give. */
   htmlFocus: (viewId: string) => Promise<void>
   onHtmlEvent: (cb: (e: HtmlViewEvent) => void) => () => void

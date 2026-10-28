@@ -339,7 +339,7 @@ export function SelectionNotice({ notice, onDismiss }: { notice: 'cleared' | 're
 }
 
 /** A file that isn't on disk anymore, with the way to what Claude changed in it. `close` is the restored tab's Close button. */
-export function FileMissing({ handleId, path, close }: { handleId: string; path: string; close?: JSX.Element | null }): JSX.Element {
+export function FileMissing({ handleId, path, close, titleId, bodyId }: { handleId: string; path: string; close?: JSX.Element | null; titleId?: string; bodyId?: string }): JSX.Element {
   const cwd = useActive((s) => s?.cwd ?? null)
   const change = useActive((s) => !!s?.changes.some((c) => c.path === path))
   const openSurface = useSession((s) => s.openSurface)
@@ -349,12 +349,14 @@ export function FileMissing({ handleId, path, close }: { handleId: string; path:
   }
   return (
     <div className={STATE_BODY}>
-      <p className="text-ui font-medium text-content">File not found</p>
-      <p className="max-w-[60ch] text-meta text-dim">{`${toWorkspaceRelative(cwd, path)} isn't on disk anymore. It may have been moved or deleted.`}</p>
+      <p id={titleId} className="text-ui font-medium text-content">
+        File not found
+      </p>
+      <p id={bodyId} className="max-w-[60ch] text-meta text-dim">{`${toWorkspaceRelative(cwd, path)} isn't on disk anymore. It may have been moved or deleted.`}</p>
       {(change || close) && (
         <div className="flex gap-2">
           {change && (
-            <Button variant="secondary" size="sm" onClick={(e) => viewChange(viaOf(e))}>
+            <Button variant="secondary" size="sm" aria-describedby={titleId && bodyId ? `${titleId} ${bodyId}` : undefined} onClick={(e) => viewChange(viaOf(e))}>
               {"View Claude's changes"}
             </Button>
           )}

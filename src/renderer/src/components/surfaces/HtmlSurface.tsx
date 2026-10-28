@@ -13,7 +13,8 @@ import { STRIP_BTN } from '../BrowserToolbar'
 import { IconFolderOpen, IconRefresh } from '../Icon'
 import { PANE_BTN } from './PaneHeader'
 import { cleanError, FileMissing, openDefault, REASON, RETRY, setStatus, STATE_BODY } from './fileDoc'
-import type { HtmlBlocked, HtmlPolicy } from '../../../../shared/html-view'
+import type { HtmlBlocked, HtmlPolicy, PagePlace } from '../../../../shared/html-view'
+import { fileViewKey, type SurfaceLocation } from '../../../../shared/surfaces'
 import type { PaneBounds } from '../../../../shared/browser'
 import type { Refusal } from '../../../../shared/files'
 import { useSay } from '../../lib/useSay'
@@ -78,6 +79,19 @@ const OUTSIDE: Record<PageRefusal, { title: (name: string) => string; body: stri
   }
 }
 const EVAL_MESSAGE = "A script on this page needs eval, which pages in Clui can't use."
+
+/** Locations a page has opened at; the same tab mounting again starts at its saved place instead. */
+const anchored = new WeakSet<SurfaceLocation>()
+
+/** Keeps a page's place in its tab's file view state, beside Source's own. */
+function keepPlace(handleId: string, tabId: string, page: PagePlace | null): void {
+  const st = useSession.getState()
+  const tab = st.sessions[handleId]?.surfaces.tabs[tabId]
+  if (!tab || !page) return
+  const key = fileViewKey(tab.kind)
+  const v = tab[key]
+  st.setSurfaceView(handleId, tabId, { [key]: { ...(v?.kind === 'file' ? v : { kind: 'file', topLine: 1, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 }), page } })
+}
 
 /** A file link the user followed in the page at `page`. One that can't open says why and opens no tab. */
 async function openPageLink(handleId: string, page: string, href: string, meta: boolean, via: Via): Promise<void> {
@@ -171,7 +185,7 @@ function PolicyButton({ policy, changedSince, paneTitle, buttonRef }: { policy: 
  */
 export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; tabId: string; explicit: boolean }): JSX.Element | null {
   const path = useActive((s) => s?.surfaces.tabs[tabId]?.key ?? '')
-  const anchor = useActive((s) => s?.surfaces.tabs[tabId]?.location?.anchor)
+  const location = useActive((s) => s?.surfaces.tabs[tabId]?.location)
   const setView = useSession((s) => s.setSurfaceView)
   const openSettings = useSession((s) => s.openSettings)
   const name = baseOf(path)
@@ -210,9 +224,15 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
     setBlocked(null)
     setOutsideEdit(false)
     const slowTimer = setTimeout(() => setSlow(true), LOADING_MS)
-    window.clui.htmlOpen(handleId, tabId, path, anchor).then(
+    // An anchor wins once; the saved place is read here, not subscribed to, since every report updates it.
+    const anchor = location?.anchor && !anchored.has(location) ? location.anchor : undefined
+    const tab = useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]
+    const v = tab && tab[fileViewKey(tab.kind)]
+    const place = v?.kind === 'file' ? v.page : undefined
+    window.clui.htmlOpen(handleId, tabId, path, anchor ? { anchor } : place).then(
       (r) => {
         if (!live) return void (r.ok && window.clui.htmlClose(r.viewId))
+        if (anchor && location && r.ok) anchored.add(location)
         if (!r.ok) {
           if (r.reason === 'denied' || r.reason === 'too-broad') {
             markNoPreview(handleId, path, r.reason)
@@ -235,9 +255,9 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
     return () => {
       live = false
       clearTimeout(slowTimer)
-      if (id) void window.clui.htmlClose(id)
+      if (id) void window.clui.htmlClose(id).then((p) => keepPlace(handleId, tabId, p))
     }
-  }, [handleId, tabId, path, anchor, statusKey, reopen])
+  }, [handleId, tabId, path, location, statusKey, reopen])
   useEffect(() => () => setStatus(statusKey, null), [statusKey])
 
   // A deleted page comes back on its own, as a missing File tab does.
@@ -298,6 +318,9 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
         case 'still':
           setStill(e.still)
           break
+        case 'place':
+          keepPlace(handleId, tabId, { x: e.x, y: e.y })
+          break
         case 'link':
           void openLink(e.url, e.meta)
           break
@@ -311,7 +334,7 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
           break
       }
     })
-  }, [viewId, artifact, gate, statusKey, say, handleId, path])
+  }, [viewId, artifact, gate, statusKey, say, handleId, tabId, path])
 
   const areaRef = useRef<HTMLDivElement>(null)
   const report = useCallback((b: PaneBounds) => viewId && window.clui.htmlSetBounds(viewId, b), [viewId])
@@ -320,10 +343,23 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
   useLayoutEffect(() => {
     if (viewId) void window.clui.htmlSetVisible(viewId, shown && !occluded)
   }, [viewId, shown, occluded])
-  // A user open lands on the page's region once there's a page, so its label is what a screen reader says.
+  // A user open takes focus once it settles: the page's region, so its label is what a screen reader says, or the
+  // first action of the state shown instead. Whatever the open settles into takes it, so it never lingers to pull focus later.
+  const stateRef = useRef<HTMLDivElement>(null)
+  // The one state shown names itself with these, so a focused action is heard with the state's message.
+  const titleId = useId()
+  const bodyId = useId()
+  const settled = shown || gate || !!failure || opened.t === 'missing' || opened.t === 'refused' || (opened.t === 'outside' && explicit)
   useEffect(() => {
-    if (shown && takeSurfaceFocus(tabId)) areaRef.current?.focus({ preventScroll: true })
-  }, [shown, tabId])
+    const via = settled ? takeSurfaceFocus(tabId) : null
+    if (!via) return
+    const box = stateRef.current
+    const el = shown ? areaRef.current : (box?.querySelector<HTMLElement>('[data-autofocus]') ?? box?.querySelector<HTMLElement>('button, a[href]') ?? box)
+    // The key that opened it went to a native page, so the renderer can't tell the focus came from a keyboard.
+    // TypeScript's DOM lib doesn't declare focusVisible yet; Chromium takes it.
+    const opts: FocusOptions & { focusVisible?: boolean } = { preventScroll: true, focusVisible: via === 'keyboard' }
+    el?.focus(opts)
+  }, [settled, shown, tabId])
 
   // Under the changed-since gate any reload is Run, so it clears the gate.
   const reload = (): void => {
@@ -369,33 +405,42 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
 
   if (opened.t === 'outside' && !explicit) return null
 
+  const described = (body: boolean): { 'aria-describedby': string } => ({ 'aria-describedby': body ? `${titleId} ${bodyId}` : titleId })
+  // Reload replaces the state; focus moves to toolbar Reload when there is one, else the reopened tab takes it.
+  const retry = (e: MouseEvent): void => {
+    if (!reloadRef.current) requestSurfaceFocus(tabId, viaOf(e))
+    reload()
+    reloadRef.current?.focus()
+  }
+
   let state: JSX.Element | null = null
   if (opened.t === 'outside') {
     state = (
       <div className={STATE_BODY}>
-        <p className="text-ui font-medium text-content">{OUTSIDE[opened.why].title(name)}</p>
-        <p className="max-w-[60ch] text-meta text-dim">{OUTSIDE[opened.why].body}</p>
+        <p id={titleId} className="text-ui font-medium text-content">{OUTSIDE[opened.why].title(name)}</p>
+        <p id={bodyId} className="max-w-[60ch] text-meta text-dim">{OUTSIDE[opened.why].body}</p>
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" size="sm" data-pane-title="" onClick={showSource}>
+          <Button variant="secondary" size="sm" data-pane-title="" {...described(true)} onClick={showSource}>
             Show source
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => void openDefault(handleId, path)}>
+          <Button variant="secondary" size="sm" {...described(true)} onClick={() => void openDefault(handleId, path)}>
             Open in default app
           </Button>
         </div>
       </div>
     )
   } else if (opened.t === 'missing') {
-    state = <FileMissing handleId={handleId} path={path} />
+    state = <FileMissing handleId={handleId} path={path} titleId={titleId} bodyId={bodyId} />
   } else if (gate) {
     state = (
       <div className={STATE_BODY}>
-        <p className="text-ui font-medium text-content">This page changed after Claude made it</p>
-        <p className="max-w-[60ch] text-meta text-dim">{"The code that would run now isn't only Claude's."}</p>
+        <p id={titleId} className="text-ui font-medium text-content">This page changed after Claude made it</p>
+        <p id={bodyId} className="max-w-[60ch] text-meta text-dim">{"The code that would run now isn't only Claude's."}</p>
         <div className="flex flex-wrap gap-2">
           <Button
             variant="secondary"
             size="sm"
+            {...described(true)}
             onClick={() => {
               reload()
               reloadRef.current?.focus()
@@ -403,31 +448,33 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
           >
             Run the page
           </Button>
-          <Button variant="secondary" size="sm" onClick={showSource}>
+          {/* Running is consent, so an open lands on the way out instead. */}
+          <Button variant="secondary" size="sm" data-autofocus="" {...described(true)} onClick={showSource}>
             Show source
           </Button>
         </div>
       </div>
     )
   } else if (failure || opened.t === 'refused') {
-    const retry = !!failure || (opened.t === 'refused' && RETRY.has(opened.reason))
+    const canRetry = !!failure || (opened.t === 'refused' && RETRY.has(opened.reason))
+    const body = !!failure || (opened.t === 'refused' && !!opened.message)
     state = (
       <div className={STATE_BODY}>
-        <p className="text-ui font-medium text-content">{failure?.t === 'crashed' ? 'This page stopped' : `Couldn't load ${name}`}</p>
+        <p id={titleId} className="text-ui font-medium text-content">{failure?.t === 'crashed' ? 'This page stopped' : `Couldn't load ${name}`}</p>
         {failure?.t === 'crashed' ? (
-          <p className="max-w-[60ch] text-meta text-dim">{`Its process ended (${failure.reason}).`}</p>
+          <p id={bodyId} className="max-w-[60ch] text-meta text-dim">{`Its process ended (${failure.reason}).`}</p>
         ) : failure ? (
-          <p className="font-mono text-meta text-faint">{failure.name}</p>
+          <p id={bodyId} className="font-mono text-meta text-faint">{failure.name}</p>
         ) : (
-          opened.t === 'refused' && opened.message && <p className="max-w-[60ch] text-meta text-dim">{opened.message}</p>
+          opened.t === 'refused' && opened.message && <p id={bodyId} className="max-w-[60ch] text-meta text-dim">{opened.message}</p>
         )}
         <div className="flex flex-wrap gap-2">
-          {retry && (
-            <Button variant="secondary" size="sm" data-pane-title="" onClick={reload}>
+          {canRetry && (
+            <Button variant="secondary" size="sm" data-pane-title="" {...described(body)} onClick={retry}>
               Reload
             </Button>
           )}
-          <Button variant="secondary" size="sm" {...(retry ? {} : { 'data-pane-title': '' })} onClick={showSource}>
+          <Button variant="secondary" size="sm" {...(canRetry ? {} : { 'data-pane-title': '' })} {...described(body)} onClick={showSource}>
             Show source
           </Button>
         </div>
@@ -544,7 +591,18 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
       >
         {still && !state && <img src={still} alt="" className="absolute inset-0 h-full w-full object-cover object-left-top" />}
         {loading && <p className="px-4 py-6 text-meta text-dim">{`Loading ${name}`}</p>}
-        {state && <div className="absolute inset-0 overflow-y-auto bg-bg">{state}</div>}
+        {state && (
+          <div
+            ref={stateRef}
+            tabIndex={-1}
+            role="group"
+            aria-labelledby={titleId}
+            // Inside the pane's rounded clip, so the ring draws inward on a concentric radius.
+            className="absolute inset-0 overflow-y-auto bg-bg focus-visible:rounded-[calc(var(--radius-lg)-2px)] focus-visible:outline-offset-[-2px]"
+          >
+            {state}
+          </div>
+        )}
       </div>
       <span className="sr-only" aria-live="polite">
         {said}

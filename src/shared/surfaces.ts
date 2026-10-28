@@ -1,5 +1,6 @@
 import type { HunkRows } from './changes'
 import type { ChangeSide, LineRange, SourceVersion } from './context'
+import type { PagePlace } from './html-view'
 export type SurfaceKind = 'browser' | 'tree' | 'file' | 'diff' | 'image' | 'doc' | 'sheet' | 'artifact'
 export type OpenedBy = 'user' | 'claude' | 'link' | 'change'
 export type ViewMode = 'auto' | 'preview' | 'source'
@@ -45,12 +46,12 @@ export interface SurfaceSelection {
 }
 export type SurfaceViewState =
   | { kind: 'tree'; expanded: string[]; scrollTop: number }
-  | { kind: 'file'; topLine: number; offsetPx: number; scrollLeft: number; previewScrollTop: number; find?: string }
+  /** `page`: an HTML Preview's document scroll, kept beside Source's place. */
+  | { kind: 'file'; topLine: number; offsetPx: number; scrollLeft: number; previewScrollTop: number; find?: string; page?: PagePlace }
   | { kind: 'diff'; path?: string; segmentId?: string; revision?: string; topHunk?: string; offsetPx: number; find?: string }
   | { kind: 'image'; zoom: number | 'fit'; panX: number; panY: number }
   | { kind: 'doc'; page: number; zoom: number | 'fit-width' | 'fit-page'; offsetPx: number; find?: string }
   | { kind: 'sheet'; sheet?: string; topRow: number; leftCol: number; rowOffset: number; colOffset: number }
-  | { kind: 'artifact'; scrollX: number; scrollY: number }
 
 export interface SurfaceTab {
   /** Resource identity; Source/Preview does not create another tab. */
@@ -88,6 +89,9 @@ export interface SurfaceSet {
 
 /** `prepare` places a tab unseen without activating it; a Claude `focus` falls back to it while the user is busy in the pane or a Gate is up. */
 export type OpenIntent = 'focus' | 'open' | 'prepare'
+
+/** Where a tab keeps its `kind: 'file'` view state. A viewState must be of the tab's own kind, so an artifact's goes in sourceView. */
+export const fileViewKey = (kind: SurfaceTab['kind']): 'viewState' | 'sourceView' => (kind === 'artifact' ? 'sourceView' : 'viewState')
 
 /** Tree and diff are session singletons; a path resource is one tab whatever its presentation. */
 export const surfaceIdOf = (t: Pick<SurfaceTab, 'kind' | 'key' | 'provenance'>): string =>

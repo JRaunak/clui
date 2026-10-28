@@ -10,7 +10,8 @@ import { stat } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import type { PaneBounds } from '../../shared/browser'
 import type { Refusal, TextRead } from '../../shared/files'
-import { isHtml, type HtmlBlocked, type HtmlOpenResult, type HtmlPolicy, type HtmlViewEvent, type LinkVia } from '../../shared/html-view'
+import { isHtml, type HtmlBlocked, type HtmlOpenResult, type HtmlPolicy, type HtmlViewEvent, type LinkVia, type PagePlace } from '../../shared/html-view'
+import { WORLD } from '../browser/cursor'
 import { IpcChannels } from '../../shared/ipc'
 import { CHUNK_MAX, readBytes, readText, revisionOf, statFile, type createFileAccess, type FileAccess, type FileResource } from './files'
 import { NativeViewSlot, stillOf } from './native-slot'
@@ -25,10 +26,13 @@ const GESTURE_MS = 1000
 const SETTLE_MS = 300
 const BLOCKED_MS = 500
 const STILL_MS = 500
+const PLACE_MS = 500
+const HOLD_MS = 2000
+const READ_MS = 300
 const READ: FileAccess = { consumer: 'web', operation: 'read-file' }
 const USER_INPUT = new Set(['mouseDown', 'mouseUp', 'rawKeyDown', 'keyDown', 'mouseWheel'])
 
-/** `meta`: ⌘ held on a key. A mouse event carries no modifiers, so a ⌘-click shows only as a background-tab open. */
+/** `meta`: ⌘ held on a key. Electron's mouse input-event leaves out `modifiers` despite its type, so a ⌘-click shows only as a background-tab open. */
 export interface Gesture {
   via: LinkVia
   meta: boolean
@@ -56,6 +60,54 @@ export function gesture(now: () => number = Date.now): { mark(g: Gesture): void;
     }
   }
 }
+
+/** A start the renderer sent, or null. An anchor wins over a saved place. */
+export function startOf(v: unknown): { anchor: string } | PagePlace | null {
+  if (!v || typeof v !== 'object') return null
+  const o = v as Record<string, unknown>
+  if (typeof o.anchor === 'string') return o.anchor && o.anchor.length <= 1000 ? { anchor: o.anchor } : null
+  return placeOf([o.x, o.y])
+}
+
+/** Two finite non-negative numbers as a place, rounded to whole CSS px. */
+export function placeOf(v: unknown): PagePlace | null {
+  if (!Array.isArray(v) || v.length !== 2 || !v.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0)) return null
+  return { x: Math.round(v[0]), y: Math.round(v[1]) }
+}
+
+/**
+ * Where a close or a report takes the page's place from: nowhere while the page never ran or its load failed or
+ * crashed, since that document isn't the page and the tab keeps what it had; the held place while a hold settles;
+ * else the document.
+ */
+export function placeFrom(v: { loaded: boolean; failed: boolean; hold: PagePlace | null; holdUntil: number }, now: number): 'none' | 'held' | 'read' {
+  if (!v.loaded || v.failed) return 'none'
+  return v.hold || now < v.holdUntil ? 'held' : 'read'
+}
+
+/**
+ * Puts the document at a place and holds it there for HOLD_MS while the page grows. Trusted input ends the hold, and
+ * so does a scroll the page makes itself, which shows as a position the hold didn't set.
+ */
+export const holdScript = ({ x, y }: PagePlace): string => `(() => {
+  const keys = ['wheel', 'keydown', 'pointerdown', 'touchstart']
+  let at = null
+  const go = () => { scrollTo(${x}, ${y}); at = [scrollX, scrollY] }
+  const moved = () => { if (scrollX !== at[0] || scrollY !== at[1]) end() }
+  const input = (e) => { if (e.isTrusted) end() }
+  const grown = new ResizeObserver(go)
+  const timer = setTimeout(() => end(), ${HOLD_MS})
+  const end = () => {
+    clearTimeout(timer)
+    grown.disconnect()
+    removeEventListener('scroll', moved, true)
+    for (const k of keys) removeEventListener(k, input, true)
+  }
+  go()
+  grown.observe(document.documentElement)
+  addEventListener('scroll', moved, true)
+  for (const k of keys) addEventListener(k, input, true)
+})()`
 
 /** Claude's record of a path from its ledger segments: an artifact when an edit created it, and its last write. */
 export function claudeRecord(path: string, segs: readonly { created: boolean; after?: string }[] | null): { artifact: boolean; after: string | null } {
@@ -146,8 +198,16 @@ interface View {
   /** Canonical. */
   path: string
   root: string
-  /** `#id` or '': where a fresh load of the page starts. A reload keeps the page where it is. */
+  /** `#id` or '': where the next fresh load starts, once. A reload keeps the page where it is. */
   anchor: string
+  /** The document's last known place, held on a fresh load that has no anchor. */
+  place: PagePlace | null
+  /** Set by a fresh load, taken by its dom-ready. */
+  hold: PagePlace | null
+  /** Until then the page is still settling at `place`, so `place` is what a read reports. User input ends it early. */
+  holdUntil: number
+  /** The current load failed or its process is gone. */
+  failed: boolean
   policy: HtmlPolicy
   host: string
   view: WebContentsView
@@ -168,7 +228,7 @@ interface View {
   unattributed: string[]
   /** A recreated view stays parked until its first dom-ready, so the pane keeps the still instead of a blank page. */
   held: boolean
-  timers: { blocked?: ReturnType<typeof setTimeout>; still?: ReturnType<typeof setTimeout>; settle?: ReturnType<typeof setTimeout> }
+  timers: { blocked?: ReturnType<typeof setTimeout>; still?: ReturnType<typeof setTimeout>; settle?: ReturnType<typeof setTimeout>; place?: ReturnType<typeof setTimeout> }
 }
 
 const refuse = (reason: Refusal['reason']): Refusal => ({ ok: false, reason })
@@ -209,9 +269,9 @@ export class HtmlViews {
     return this.views.get(v.id) === v && v.view.webContents === wc
   }
 
-  /** `anchor`: an element id the first load scrolls to. */
-  async open(handleId: string, tabId: string, path: string, anchor?: unknown): Promise<HtmlOpenResult> {
-    if (typeof tabId !== 'string' || !tabId || tabId.length > 1000 || (anchor !== undefined && (typeof anchor !== 'string' || anchor.length > 1000))) return refuse('invalid')
+  async open(handleId: string, tabId: string, path: string, start?: unknown): Promise<HtmlOpenResult> {
+    if (typeof tabId !== 'string' || !tabId || tabId.length > 1000) return refuse('invalid')
+    const at = startOf(start)
     const leads = this.opening(`${handleId}\0${tabId}`)
     const r = await this.deps.files.resolveAllowed(handleId, path, READ)
     if (!r.ok) return r
@@ -224,7 +284,7 @@ export class HtmlViews {
     const win = this.deps.window()
     // A newer open of this tab, StrictMode's second mount among them, owns it now.
     if (!leads() || !win || win.isDestroyed() || !this.deps.alive(handleId)) return refuse('unavailable')
-    for (const v of [...this.views.values()]) if (v.handleId === handleId && v.tabId === tabId) this.close(v.id)
+    for (const v of [...this.views.values()]) if (v.handleId === handleId && v.tabId === tabId) void this.close(v.id)
     const policy: HtmlPolicy = artifact ? { artifact, ...this.deps.settings() } : { artifact, remote: false, data: false }
     const served = new Map<string, string>()
     const root = dirname(r.path)
@@ -235,7 +295,11 @@ export class HtmlViews {
       tabId,
       path: r.path,
       root,
-      anchor: anchor ? `#${encodeURIComponent(anchor)}` : '',
+      anchor: at && 'anchor' in at ? `#${encodeURIComponent(at.anchor)}` : '',
+      place: at && 'x' in at ? at : null,
+      hold: null,
+      holdUntil: 0,
+      failed: false,
       policy,
       host: this.caps.issue({ handleId, root, policy, served }),
       view: this.create(policy),
@@ -292,8 +356,10 @@ export class HtmlViews {
     wc.on('will-redirect', (e) => e.preventDefault())
     wc.on('input-event', (_e, input) => {
       if (!USER_INPUT.has(input.type) || !this.mine(v, wc)) return
+      v.holdUntil = 0
       if (input.type === 'mouseUp') v.gesture.mark({ via: 'pointer', meta: false, middle: 'button' in input && input.button === 'middle' })
       this.stillSoon(v)
+      this.placeSoon(v)
     })
     wc.on('before-input-event', (e, input) => {
       if (input.type !== 'keyDown' || !this.mine(v, wc)) return
@@ -316,6 +382,7 @@ export class HtmlViews {
     wc.on('did-start-navigation', (e) => {
       if (!e.isMainFrame || e.isSameDocument || !this.mine(v, wc)) return
       v.generation++
+      v.failed = false
       v.finished = false
       v.blocked = noBlocks()
       clearTimeout(v.timers.blocked)
@@ -323,6 +390,11 @@ export class HtmlViews {
     wc.on('dom-ready', () => {
       if (!this.mine(v, wc)) return
       this.emit({ type: 'dom-ready', viewId: v.id, generation: v.generation })
+      if (v.hold) {
+        v.holdUntil = Date.now() + HOLD_MS
+        void wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: holdScript(v.hold) }]).catch(() => {})
+      }
+      v.hold = null
       if (!v.held) return
       v.held = false
       this.sync(v)
@@ -335,9 +407,15 @@ export class HtmlViews {
     wc.on('did-stop-loading', () => this.mine(v, wc) && this.stillSoon(v))
     // -3 is ERR_ABORTED: a newer load replacing this one.
     wc.on('did-fail-load', (_e, code, name, _url, isMainFrame) => {
-      if (isMainFrame && code !== -3 && this.mine(v, wc)) this.emit({ type: 'load-failed', viewId: v.id, code, name })
+      if (!isMainFrame || code === -3 || !this.mine(v, wc)) return
+      v.failed = true
+      this.emit({ type: 'load-failed', viewId: v.id, code, name })
     })
-    wc.on('render-process-gone', (_e, d) => this.mine(v, wc) && this.emit({ type: 'crashed', viewId: v.id, reason: d.reason }))
+    wc.on('render-process-gone', (_e, d) => {
+      if (!this.mine(v, wc)) return
+      v.failed = true
+      this.emit({ type: 'crashed', viewId: v.id, reason: d.reason })
+    })
     wc.on('unresponsive', () => this.mine(v, wc) && this.emit({ type: 'unresponsive', viewId: v.id }))
     wc.on('responsive', () => this.mine(v, wc) && this.emit({ type: 'responsive', viewId: v.id }))
   }
@@ -368,7 +446,11 @@ export class HtmlViews {
     v.unattributed = []
     this.sync(v)
     if (v.loaded && wc.getURL().startsWith(`${SCHEME}://${v.host}/`)) wc.reload()
-    else void wc.loadURL(`${SCHEME}://${v.host}${pageUrlPath(v.root, v.host, basename(v.path))}${v.anchor}`).catch(() => {})
+    else {
+      v.hold = v.anchor ? null : v.place
+      void wc.loadURL(`${SCHEME}://${v.host}${pageUrlPath(v.root, v.host, basename(v.path))}${v.anchor}`).catch(() => {})
+      v.anchor = ''
+    }
     v.loaded = true
   }
 
@@ -448,6 +530,28 @@ export class HtmlViews {
     return v.still
   }
 
+  // --- place ---
+
+  /** The document's scroll, or null when the page can't say in time. */
+  private async readPlace(v: View): Promise<PagePlace | null> {
+    const wc = v.view.webContents
+    const from = placeFrom(v, Date.now())
+    if (from === 'none' || !live(wc)) return null
+    if (from === 'held') return v.place
+    const read = wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: '[scrollX, scrollY]' }]).then(placeOf, () => null)
+    return Promise.race([read, new Promise<null>((r) => setTimeout(() => r(null), READ_MS))])
+  }
+
+  private placeSoon(v: View): void {
+    clearTimeout(v.timers.place)
+    v.timers.place = setTimeout(async () => {
+      const at = await this.readPlace(v)
+      if (!at || this.views.get(v.id) !== v || (at.x === v.place?.x && at.y === v.place.y)) return
+      v.place = at
+      this.emit({ type: 'place', viewId: v.id, ...at })
+    }, PLACE_MS)
+  }
+
   // --- changes ---
 
   private async watch(v: View): Promise<void> {
@@ -478,7 +582,7 @@ export class HtmlViews {
     const page = await this.deps.files.resolveAllowed(v.handleId, v.path, READ)
     if (this.views.get(v.id) !== v) return
     if (!page.ok && page.reason === 'missing') {
-      this.close(v.id)
+      void this.close(v.id)
       return this.emit({ type: 'missing', viewId: v.id })
     }
     const seen = new Map(v.served)
@@ -543,33 +647,38 @@ export class HtmlViews {
     }
   }
 
-  /** The page and its timers; the cap, slot, watches and a pending settle are the caller's. */
-  private drop(v: View): void {
+  /** The page and its timers; the cap, slot, watches and a pending settle are the caller's. The page closes once `after` settles. */
+  private drop(v: View, after: Promise<unknown> = Promise.resolve()): void {
     clearTimeout(v.timers.blocked)
     clearTimeout(v.timers.still)
+    clearTimeout(v.timers.place)
     v.parked = false
     v.slot.place(v.view, null)
-    if (live(v.view.webContents)) v.view.webContents.close()
+    const wc = v.view.webContents
+    void after.finally(() => live(wc) && wc.close())
   }
 
-  close(viewId: string): void {
+  /** Resolves to where the document was, for the tab to keep. */
+  close(viewId: string): Promise<PagePlace | null> {
     const v = this.views.get(viewId)
-    if (!v) return
+    if (!v) return Promise.resolve(null)
     this.views.delete(viewId)
     const hadFocus = this.focused(v)
     this.caps.revoke(v.host)
     for (const id of v.watches) this.deps.files.unwatch(id)
     clearTimeout(v.timers.settle)
     v.slot.hide()
-    this.drop(v)
+    const at = this.readPlace(v)
+    this.drop(v, at)
     if (hadFocus) this.deps.window()?.webContents.focus()
+    return at
   }
 
   dispose(handleId: string): void {
-    for (const v of [...this.views.values()]) if (v.handleId === handleId) this.close(v.id)
+    for (const v of [...this.views.values()]) if (v.handleId === handleId) void this.close(v.id)
   }
 
   disposeAll(): void {
-    for (const id of [...this.views.keys()]) this.close(id)
+    for (const id of [...this.views.keys()]) void this.close(id)
   }
 }

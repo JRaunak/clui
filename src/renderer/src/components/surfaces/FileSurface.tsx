@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { useActive, useSession } from '../../store'
 import type { ChangeMarks } from '../../../../shared/changes'
-import type { SurfaceLocation } from '../../../../shared/surfaces'
+import { fileViewKey, type SurfaceLocation } from '../../../../shared/surfaces'
 import { FindField } from '../FindField'
 import { IconDiff, IconHash, IconTarget } from '../Icon'
 import { Code } from './HunkView'
@@ -269,8 +269,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
   }, [doc.t, location, scroller])
 
   // A restored tab lands where it was left; a settled scroll and unmounting save its top line.
-  // An artifact's viewState is its page's, so its Source keeps its place in sourceView.
-  const viewKey = tab?.kind === 'artifact' ? 'sourceView' : 'viewState'
+  const viewKey = fileViewKey(tab?.kind ?? 'file')
   const restoreAt = useMemo(() => {
     const v = tab?.[viewKey]
     return v?.kind === 'file' && !location?.line ? v.topLine : 1
@@ -281,7 +280,8 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     const n = topLine()
     const v = useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]?.[viewKey]
     if (v?.kind === 'file' && v.topLine === n) return
-    setView(handleId, tabId, { [viewKey]: { kind: 'file', topLine: n, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
+    // The same state holds an HTML Preview's place, which this mustn't drop.
+    setView(handleId, tabId, { [viewKey]: { ...(v?.kind === 'file' ? v : { kind: 'file', offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 }), topLine: n } })
   }
   useEffect(
     () => () => {

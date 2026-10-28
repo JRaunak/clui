@@ -207,7 +207,7 @@ const api: CluiApi = {
     ipcRenderer.on(IpcChannels.browserEvent, listener)
     return () => ipcRenderer.removeListener(IpcChannels.browserEvent, listener)
   },
-  htmlOpen: (handleId, tabId, path, anchor) => ipcRenderer.invoke(IpcChannels.htmlOpen, handleId, tabId, path, anchor),
+  htmlOpen: (handleId, tabId, path, start) => ipcRenderer.invoke(IpcChannels.htmlOpen, handleId, tabId, path, start),
   htmlSetBounds: (viewId, b) => ipcRenderer.send(IpcChannels.htmlSetBounds, viewId, b),
   htmlSetVisible: (viewId, visible) => ipcRenderer.invoke(IpcChannels.htmlSetVisible, viewId, visible),
   htmlReload: (viewId) => ipcRenderer.invoke(IpcChannels.htmlReload, viewId),

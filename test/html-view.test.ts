@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createFileAccess, readText, TEXT_MAX } from '../src/main/surfaces/files.ts'
 import { capPath, climbOf, cspFor, createCaps, pageHref, pageUrlPath, rangeOf } from '../src/main/surfaces/protocol.ts'
-import { claudeRecord, gesture, holdsClaudes, isClaudes, movedOf, refusalOf, superseding } from '../src/main/surfaces/html-view.ts'
+import { claudeRecord, gesture, holdsClaudes, isClaudes, movedOf, placeFrom, placeOf, refusalOf, startOf, superseding } from '../src/main/surfaces/html-view.ts'
 import { isHtml } from '../src/shared/html-view.ts'
 import type { TextRead } from '../src/shared/files.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -49,6 +49,27 @@ import { equal, ok } from './support/harness.mjs'
   const both = cspFor({ artifact: true, remote: true, data: true })
   ok(both.includes('https:;') && both.includes("connect-src 'self' https:"), 'csp: both on')
   for (const remote of [false, true]) for (const data of [false, true]) ok(!cspFor({ artifact: true, remote, data }).includes('unsafe-eval'), `csp: never unsafe-eval (remote ${remote}, data ${data})`)
+}
+
+// Where a page starts
+{
+  const same = (a: unknown, b: unknown, m: string): void => equal(JSON.stringify(a), JSON.stringify(b), m)
+  same(startOf({ anchor: 'setup', x: 1, y: 2 }), { anchor: 'setup' }, 'start: an anchor wins over a place')
+  same(startOf({ x: 0.4, y: 3200.6 }), { x: 0, y: 3201 }, 'start: a place, whole px')
+  same(startOf({ anchor: '' }), null, 'start: an empty anchor is none')
+  same(startOf({ anchor: 'a'.repeat(1001) }), null, 'start: an overlong anchor is refused')
+  same(startOf({ x: -1, y: 0 }), null, 'start: a negative place is refused')
+  same(startOf({ x: 1, y: Infinity }), null, 'start: a non-finite place is refused')
+  same(startOf('3200'), null, 'start: not an object')
+  same(placeOf([3, 4, 5]), null, 'place: a read is exactly two numbers')
+  const ran = { loaded: true, failed: false, hold: null, holdUntil: 0 }
+  equal(placeFrom(ran, 10), 'read', 'place from: a running page is read')
+  equal(placeFrom({ ...ran, loaded: false }, 10), 'none', 'place from: a page behind the changed-since gate keeps the saved place')
+  equal(placeFrom({ ...ran, failed: true }, 10), 'none', 'place from: a failed or crashed load keeps the saved place')
+  equal(placeFrom({ ...ran, failed: true, hold: { x: 0, y: 9 } }, 10), 'none', 'place from: failure wins over a pending hold')
+  equal(placeFrom({ ...ran, hold: { x: 0, y: 9 } }, 10), 'held', 'place from: before dom-ready, the held place')
+  equal(placeFrom({ ...ran, holdUntil: 11 }, 10), 'held', 'place from: inside the hold, the held place')
+  equal(placeFrom({ ...ran, holdUntil: 10 }, 10), 'read', 'place from: once the hold is over, read')
 }
 
 // Gestures

@@ -172,8 +172,8 @@ export function openFileAt(handleId: string, path: string, at: Pick<FileRef, 'li
     return revealInTree(path, via, true)
   }
   const location = at.line ? { line: at.line, ...(at.endLine ? { endLine: at.endLine } : {}) } : at.anchor ? { anchor: at.anchor } : undefined
-  requestSurfaceFocus(`file:${path}`, via)
-  st.openSurface(handleId, { kind: 'file', key: path, title: path.slice(path.lastIndexOf('/') + 1), ...(location ? { location } : {}) }, 'open', 'user', 'link')
+  // The tab that opens may be the path's artifact tab, so focus goes to the id the store picked.
+  requestSurfaceFocus(st.openSurface(handleId, { kind: 'file', key: path, title: path.slice(path.lastIndexOf('/') + 1), ...(location ? { location } : {}) }, 'open', 'user', 'link'), via)
 }
 
 /** Plain text with its http(s) URLs as links. A URL cut off by truncation stays text, since it would lead nowhere. */

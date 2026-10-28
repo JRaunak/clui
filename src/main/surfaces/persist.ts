@@ -83,7 +83,11 @@ function fileView(v: unknown): Extract<SurfaceViewState, { kind: 'file' }> {
     offsetPx: num(o.offsetPx),
     scrollLeft: num(o.scrollLeft),
     previewScrollTop: num(o.previewScrollTop),
-    ...some('find', o.find, (x) => str(x, TEXT_MAX))
+    ...some('find', o.find, (x) => str(x, TEXT_MAX)),
+    ...some('page', o.page, (x) => {
+      const p = obj(x)
+      return { x: num(p.x), y: num(p.y) }
+    })
   }
 }
 
@@ -106,7 +110,7 @@ function viewOf(v: unknown, kind: SavedTab['kind']): SurfaceViewState {
     case 'sheet':
       return { kind, ...some('sheet', o.sheet, (x) => str(x, TEXT_MAX)), topRow: num(o.topRow), leftCol: num(o.leftCol), rowOffset: num(o.rowOffset), colOffset: num(o.colOffset) }
     case 'artifact':
-      return { kind, scrollX: num(o.scrollX), scrollY: num(o.scrollY) }
+      return fail()
   }
 }
 

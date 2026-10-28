@@ -23,6 +23,14 @@ export interface HtmlBlocked {
 
 export type LinkVia = 'pointer' | 'keyboard'
 
+/** The page document's scroll, in CSS px. */
+export interface PagePlace {
+  x: number
+  y: number
+}
+/** Where a fresh load starts: an element id, or a saved place. */
+export type PageStart = { anchor: string } | PagePlace
+
 /** Every event names its view; one from a view the renderer no longer holds is stale. */
 export type HtmlViewEvent =
   /** The document is parsed: the view can be shown. A new generation starts with every main-frame load. */
@@ -39,6 +47,8 @@ export type HtmlViewEvent =
   /** The page file is gone; main has destroyed the view and revoked its cap. */
   | { type: 'missing'; viewId: string }
   | { type: 'still'; viewId: string; still: string }
+  /** The document's scroll after the user's input settled, when it moved. */
+  | ({ type: 'place'; viewId: string } & PagePlace)
   /** A user's link activation in the page, already checked as http(s); the renderer routes it like any link. `meta`: ⌘ was held. */
   | { type: 'link'; viewId: string; url: string; meta: boolean }
   /** A user's activation of a link to a file: `href` is relative to the page's folder with any climb above it kept, or a `file:` URL as written. */
