@@ -31,6 +31,12 @@ export interface FileStat {
   revision: string
 }
 
+/** A Markdown preview's image: a `clui-file:` URL for exactly that file, or why there's none. `outside`: not a file
+ *  this session may read, so no request is made. */
+export type ImageCap = { ok: true; url: string } | { ok: false; outside: boolean }
+/** Per mint, so one document can't hold an unbounded number of caps. */
+export const IMAGE_PATHS_MAX = 1000
+
 /** A watched file may have changed; the consumer re-reads to find out. */
 export interface FileChangedEvent {
   handleId: string

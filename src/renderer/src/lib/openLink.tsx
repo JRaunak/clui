@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import type { FileLinkTarget, LinkTarget } from '../../../shared/settings'
 import { activeSlice, useActive, useSession } from '../store'
 import { useSettings } from './settings'
-import { openEditor } from '../components/surfaces/FileSurface'
+import { openEditor } from '../components/surfaces/fileDoc'
 import { revealInTree } from '../components/surfaces/TreeSurface'
 import { lineReaches, workspaceOf, type FileRef, type Workspace } from './fileLinks'
 import { requestSurfaceFocus } from './surfaceFocus'
@@ -148,7 +148,7 @@ export function fileLinkTitle(rel: string, at: Pick<FileRef, 'line' | 'endLine'>
 
 /** A file link's open: the File surface (or the tree for a folder) under the setting, the editor with ⌘. ⌃-click
  *  is the macOS context-menu gesture, so only ⌘ inverts. */
-export function openFileLink(handleId: string, path: string, at: Pick<FileRef, 'line' | 'endLine'>, dir: boolean, e: MouseEvent): void {
+export function openFileLink(handleId: string, path: string, at: Pick<FileRef, 'line' | 'endLine' | 'anchor'>, dir: boolean, e: MouseEvent): void {
   e.preventDefault()
   if ((useLinkTarget.getState().file === 'clui') === e.metaKey) return void openEditor(handleId, path, dir ? undefined : at.line)
   openFileAt(handleId, path, at, dir, viaOf(e))
@@ -158,7 +158,7 @@ export function openFileLink(handleId: string, path: string, at: Pick<FileRef, '
 export const listedDir = (handleId: string, rel: string): boolean => !!useWorkspaces.getState().sets[handleId]?.dirs.has(rel)
 
 /** A file in the File surface, or a folder revealed in the tree. */
-export function openFileAt(handleId: string, path: string, at: Pick<FileRef, 'line' | 'endLine'>, dir: boolean, via: Via): void {
+export function openFileAt(handleId: string, path: string, at: Pick<FileRef, 'line' | 'endLine' | 'anchor'>, dir: boolean, via: Via): void {
   const st = useSession.getState()
   if (dir) {
     const cwd = st.sessions[handleId]?.cwd ?? path
@@ -166,7 +166,7 @@ export function openFileAt(handleId: string, path: string, at: Pick<FileRef, 'li
     st.openSurface(handleId, { kind: 'tree', key: '', title: cwd.slice(cwd.lastIndexOf('/') + 1) || cwd }, 'open', 'user', 'link')
     return revealInTree(path, via, true)
   }
-  const location = at.line ? { line: at.line, ...(at.endLine ? { endLine: at.endLine } : {}) } : undefined
+  const location = at.line ? { line: at.line, ...(at.endLine ? { endLine: at.endLine } : {}) } : at.anchor ? { anchor: at.anchor } : undefined
   requestSurfaceFocus(`file:${path}`, via)
   st.openSurface(handleId, { kind: 'file', key: path, title: path.slice(path.lastIndexOf('/') + 1), ...(location ? { location } : {}) }, 'open', 'user', 'link')
 }

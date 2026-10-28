@@ -112,6 +112,7 @@ export const BUDGET_NOTE = `${CHANGE_TEXT_BUDGET / 1024} KB of changes max per m
 export const noteTitle = (note: string): string => `Note: ${note.length > 200 ? `${note.slice(0, 200)}…` : note}`
 
 export const POINT_HINT = 'Click line numbers, or press Shift and an arrow key.'
+export const POINT_BLOCK_HINT = "Click a block's line number, or press Shift and an arrow key."
 export const POINT_OFF = 'Pointing off.'
 
 const kb = (bytes: number): number => Math.ceil(bytes / 1024)

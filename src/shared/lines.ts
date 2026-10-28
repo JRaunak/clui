@@ -12,3 +12,10 @@ export function survivingLines(changes: ChangeObject<string>[], oldLines: number
   }
   return map
 }
+
+/** Where old line `n` sits in the new text: itself if it survived, else just past the nearest survivor above it. */
+export function movedLine(map: Int32Array | null, n: number): number {
+  if (!map) return n
+  for (let k = Math.min(n, map.length) - 1; k >= 0; k--) if (map[k] >= 0) return map[k] + 1 + (n - 1 - k)
+  return n
+}

@@ -4,7 +4,7 @@
  * Owns the CLI subprocesses (via SessionManager), the native window, and the IPC
  * handlers that back the preload `window.clui` API. The renderer is pure UI.
  */
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Menu, shell, systemPreferences, webContents } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Menu, session, shell, systemPreferences, webContents } from 'electron'
 import type { MenuItemConstructorOptions, WebContents } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -44,7 +44,7 @@ import { readGitStatus } from './workspace/git-status'
 import { createFileAccess, readText, statFile, type FileResource, type Refusal } from './surfaces/files'
 import { listTree, treeTarget } from './surfaces/tree'
 import { HtmlViews } from './surfaces/html-view'
-import { registerScheme } from './surfaces/protocol'
+import { createImageCaps, registerScheme, SCHEME } from './surfaces/protocol'
 import { bindSession, deleteSurfaces, flushSurfaces, forgetSession, loadSurfaces, saveSession, trackSession } from './surfaces/persist'
 import type { SurfacesRestore } from '../shared/surfaces'
 import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
@@ -79,6 +79,7 @@ let mainWindow: BrowserWindow | null = null
 let sessionManager: SessionManager | null = null
 let browserManager: BrowserManager | null = null
 let htmlViews: HtmlViews | null = null
+let imageCaps: ReturnType<typeof createImageCaps> | null = null
 let diffs: ReturnType<typeof diffSnapshots> | null = null
 let presentation: ReturnType<typeof surfaceBridge> | null = null
 const LAUNCHERS = /\.(app|command|terminal|tool|fileloc|webloc|inetloc|workflow|action|jar|pkg|mpkg|scpt|applescript)$/i
@@ -309,13 +310,20 @@ function createWindow(): void {
 
   // Commands sent to an earlier window or renderer can't be answered by this one.
   presentation?.renew()
-  mainWindow.on('closed', () => presentation?.renew())
+  mainWindow.on('closed', () => {
+    presentation?.renew()
+    imageCaps?.clear()
+  })
   mainWindow.webContents.on('render-process-gone', () => {
     presentation?.renew()
     htmlViews?.disposeAll()
+    imageCaps?.clear()
   })
-  // A reloaded renderer knows none of the HTML views, which would otherwise sit over it with live caps.
-  mainWindow.webContents.on('did-navigate', () => htmlViews?.disposeAll())
+  // A reloaded renderer knows none of the HTML views or image caps, which would otherwise stay live.
+  mainWindow.webContents.on('did-navigate', () => {
+    htmlViews?.disposeAll()
+    imageCaps?.clear()
+  })
 
   // Probe runs set CLUI_TEST_INACTIVE so the window opens behind whatever the user is working in.
   mainWindow.on('ready-to-show', () => (process.env.CLUI_TEST_INACTIVE === '1' ? mainWindow?.showInactive() : mainWindow?.show()))
@@ -402,6 +410,7 @@ function registerIpc(): void {
     changeRefs.dispose(handleId)
     refWatches.dispose(handleId)
     html.dispose(handleId)
+    images.dispose(handleId)
     files.dispose(handleId)
     forgetSession(handleId)
     for (const [id, owner] of watchOwners) if (owner === handleId) watchOwners.delete(id)
@@ -522,6 +531,10 @@ function registerIpc(): void {
     alive: (h) => manager.cwd(h) !== null
   })
   htmlViews = html
+  const images = createImageCaps((h, p) => files.resolveAllowed(h, p, { consumer: 'file', operation: 'read-file' }))
+  imageCaps = images
+  // The window's own session; HTML views handle the scheme on their partitions with caps of their own.
+  session.defaultSession.protocol.handle(SCHEME, (req) => images.serve(req))
   const diffSource: DiffSource = {
     segments: (h, p) => manager.segments(h, p),
     current: async (h, p) => {
@@ -993,6 +1006,8 @@ function registerIpc(): void {
     const r = await fileFor(handleId, path, 'read-file')
     return r.ok ? statFile(r) : r
   })
+  handle(IpcChannels.imageCaps, (_e, handleId: unknown, owner: unknown, paths: unknown) => images.mint(handleId, owner, paths))
+  handle(IpcChannels.imageCapsRevoke, (_e, handleId: unknown, owner: unknown) => images.revoke(handleId, owner))
   const watchFor = async (handleId: string, r: FileResource | Refusal): Promise<{ ok: true; id: string } | Refusal> => {
     if (!r.ok) return r
     let id = ''

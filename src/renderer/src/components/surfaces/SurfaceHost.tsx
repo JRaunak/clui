@@ -8,8 +8,9 @@ import { TreeSurface, treeExternal } from './TreeSurface'
 import { PanePicker } from './PanePicker'
 import { PointButton } from './PointButton'
 import { HtmlSurface } from './HtmlSurface'
+import { MarkdownSurface } from './MarkdownSurface'
 import { PresentationButton } from './PresentationButton'
-import { fileLike, presentationOf, useNoPreview } from '../../lib/presentation'
+import { fileLike, isMarkdown, presentationOf, useNoPreview } from '../../lib/presentation'
 
 /** The Surfaces pane: one header whose tab strip outlives a switch between kinds, over the active
  *  surface's body, or the picker when there are no tabs. Only the active surface is mounted, so the
@@ -53,7 +54,11 @@ export function SurfaceHost(): JSX.Element | null {
       {fileTab &&
         activeId &&
         (shown === 'preview' ? (
-          <HtmlSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} explicit={mode === 'preview'} />
+          filePath && isMarkdown(filePath) ? (
+            <MarkdownSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
+          ) : (
+            <HtmlSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} explicit={mode === 'preview'} />
+          )
         ) : (
           <FileSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
         ))}

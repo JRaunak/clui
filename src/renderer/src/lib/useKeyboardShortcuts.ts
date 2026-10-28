@@ -22,9 +22,10 @@ import { activeSlice, anyTabIn, browserTabOf, surfaceKindOf, useSession } from '
 import { closeTab } from '../components/surfaces/SurfaceTabs'
 import { point } from '../components/surfaces/PointButton'
 import { OPEN_FILE_EVENT, type PaletteMode } from '../components/CommandPalette'
-import { FILE_FIND_EVENT, FILE_GOTO_EVENT } from '../components/surfaces/FileSurface'
+import { FILE_GOTO_EVENT } from '../components/surfaces/FileSurface'
+import { FILE_FIND_EVENT } from '../components/surfaces/fileDoc'
 import { TRANSCRIPT_FIND_EVENT } from '../components/FindBar'
-import { fileLike, showsSource } from './presentation'
+import { fileLike, hasFind } from './presentation'
 
 /** Focus is in the Surfaces pane: its DOM, or a native page in it, which only main can report. */
 function inPane(page: boolean): boolean {
@@ -33,8 +34,8 @@ function inPane(page: boolean): boolean {
 }
 
 /**
- * Find, Find Next and Find Previous go to one target. A file tab showing Source owns them while focus is in
- * the pane showing it, and a Preview there takes none. Anywhere else, a native page included, they search the
+ * Find, Find Next and Find Previous go to one target. A file tab with a find, Source or a Markdown Preview, owns
+ * them while focus is in the pane showing it, and an HTML Preview there takes none. Anywhere else, a native page included, they search the
  * conversation, matching the menu's labels. Only one find is open at a time, so ⌘G never steps two.
  */
 function routeFind(what: 'open' | 'next' | 'prev', page: boolean): void {
@@ -42,7 +43,7 @@ function routeFind(what: 'open' | 'next' | 'prev', page: boolean): void {
   const slice = activeSlice(store)
   const tab = slice?.surfaces.active ? slice.surfaces.tabs[slice.surfaces.active] : undefined
   if (inPane(page) && fileLike(tab?.kind)) {
-    if (!showsSource(store.activeHandleId, tab)) return
+    if (!hasFind(store.activeHandleId, tab)) return
     if (store.findOpen) store.setFindOpen(false)
     window.dispatchEvent(new CustomEvent(FILE_FIND_EVENT, { detail: what }))
     return

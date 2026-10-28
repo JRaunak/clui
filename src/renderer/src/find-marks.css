@@ -1,0 +1,10 @@
+/* Find in a Markdown Preview marks the rendered text with the Custom Highlight API, so it never touches the DOM;
+   the same pair as File's marks. Kept out of styles.css because Tailwind's CSS optimizer drops ::highlight(). */
+::highlight(md-find) {
+  background-color: var(--color-border-strong);
+  color: var(--color-content);
+}
+::highlight(md-find-active) {
+  background-color: var(--color-content);
+  color: var(--color-bg);
+}

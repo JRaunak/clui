@@ -21,7 +21,7 @@ equal(href('src/store.ts#L142'), '{"kind":"file","ref":{"rel":"src/store.ts","li
 equal(href('/tmp/ws/src/store.ts'), '{"kind":"file","ref":{"rel":"src/store.ts"}}', 'href: absolute inside cwd')
 equal(href('file:///tmp/ws/src/store.ts:3'), '{"kind":"file","ref":{"rel":"src/store.ts","line":3}}', 'href: file:// inside cwd')
 equal(href('file://localhost/tmp/ws/a%20b.md'), '{"kind":"file","ref":{"rel":"a b.md"}}', 'href: file://localhost, percent-decoded')
-equal(href('docs/guide.md#install'), '{"kind":"file","ref":{"rel":"docs/guide.md"}}', 'href: a non-line fragment is dropped')
+equal(href('docs/guide.md#install'), '{"kind":"file","ref":{"rel":"docs/guide.md","anchor":"install"}}', 'href: a non-line fragment is the anchor')
 equal(href('file:///etc/passwd'), '{"kind":"outside","path":"/etc/passwd"}', 'href: file:// outside cwd is outside')
 equal(href('../secrets.txt'), '{"kind":"outside","path":"../secrets.txt"}', 'href: .. above cwd is outside')
 equal(href('%2e%2e/%2e%2e/etc/passwd'), '{"kind":"outside","path":"../../etc/passwd"}', 'href: encoded traversal is outside')

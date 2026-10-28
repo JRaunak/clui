@@ -4,21 +4,27 @@ import type { SurfaceKind, SurfaceTab } from '../../../shared/surfaces'
 
 export type Presentation = 'source' | 'preview'
 
-/** Tabs that show a file's text, and for HTML a Preview beside it. */
+export const isMarkdown = (p: string): boolean => /\.(md|markdown)$/i.test(p)
+export const hasPreview = (p: string): boolean => isHtml(p) || isMarkdown(p)
+
+/** Tabs that show a file's text, and a Preview beside it for the kinds that have one. */
 export const fileLike = (kind: SurfaceKind | null | undefined): kind is 'file' | 'artifact' => kind === 'file' || kind === 'artifact'
 
 /** What a pane tab shows: an explicit choice wins, and `auto` previews unless this file's preview is unavailable.
  *  Null for a tab with no Preview. */
 export function presentationOf(tab: Pick<SurfaceTab, 'kind' | 'key' | 'mode'> | undefined, unavailable: boolean): Presentation | null {
-  if (!tab || !fileLike(tab.kind) || !isHtml(tab.key)) return null
+  if (!tab || !fileLike(tab.kind) || !hasPreview(tab.key)) return null
   if (tab.mode === 'source' || tab.mode === 'preview') return tab.mode
   return unavailable ? 'source' : 'preview'
 }
 
-/** Why main won't run a page: outside the session's folder, or a session folder at or above home. */
-export type NoPreview = 'denied' | 'too-broad'
+/** Why `auto` shows Source: main won't run a page outside the session's folder or in a session folder at or above
+ *  home, and a Markdown file was over 1 MB when its tab first read it. */
+export type NoPreview = 'denied' | 'too-broad' | 'too-large'
 
-// Neither cause changes while Clui runs: a page's path and its session's folder stay put.
+// A page's refusal holds while Clui runs, since its path and its session's folder stay put. A big Markdown file stays in
+// Source for the life of the mounted tab, so it never flips under the reader if it shrinks; the Source that showed its
+// banner clears it on unmount, and the next open measures again.
 const refused = new Map<string, NoPreview>()
 const listeners = new Set<() => void>()
 const subscribe = (cb: () => void): (() => void) => {
@@ -33,11 +39,16 @@ export function markNoPreview(handleId: string, path: string, why: NoPreview): v
   for (const l of listeners) l()
 }
 
+export function clearNoPreview(handleId: string, path: string): void {
+  if (!refused.delete(`${handleId}\0${path}`)) return
+  for (const l of listeners) l()
+}
+
 const noPreview = (handleId: string | null, path: string | null | undefined): NoPreview | null =>
   (!!handleId && !!path && refused.get(`${handleId}\0${path}`)) || null
 
 export const useNoPreview = (handleId: string | null, path: string | null | undefined): NoPreview | null => useSyncExternalStore(subscribe, () => noPreview(handleId, path))
 
-/** The tab takes the file actions (Find, Point): a file-like tab showing Source. A Preview takes none of them. */
-export const showsSource = (handleId: string | null, tab: Pick<SurfaceTab, 'kind' | 'key' | 'mode'> | undefined): boolean =>
-  !!tab && fileLike(tab.kind) && presentationOf(tab, !!noPreview(handleId, tab.key)) !== 'preview'
+/** The tab takes Find: Source, or a Markdown Preview, which is DOM text. An HTML Preview is a native page and takes none. */
+export const hasFind = (handleId: string | null, tab: Pick<SurfaceTab, 'kind' | 'key' | 'mode'> | undefined): boolean =>
+  !!tab && fileLike(tab.kind) && (isMarkdown(tab.key) || presentationOf(tab, !!noPreview(handleId, tab.key)) !== 'preview')

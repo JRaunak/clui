@@ -11,7 +11,7 @@ import { Button } from '../Button'
 import { STRIP_BTN } from '../BrowserToolbar'
 import { IconFolderOpen, IconRefresh } from '../Icon'
 import { PANE_BTN } from './PaneHeader'
-import { cleanError, FileMissing, openDefault, REASON, RETRY, setStatus, STATE_BODY } from './FileSurface'
+import { cleanError, FileMissing, openDefault, REASON, RETRY, setStatus, STATE_BODY } from './fileDoc'
 import type { HtmlBlocked, HtmlPolicy } from '../../../../shared/html-view'
 import type { PaneBounds } from '../../../../shared/browser'
 import type { Refusal } from '../../../../shared/files'
@@ -21,7 +21,7 @@ const MISSING_POLL_MS = 2000
 
 type Opened =
   | { t: 'opening' }
-  | { t: 'outside'; why: NoPreview }
+  | { t: 'outside'; why: PageRefusal }
   | { t: 'missing' }
   | { t: 'refused'; reason: Refusal['reason']; message: string }
   | { t: 'open'; viewId: string; policy: HtmlPolicy }
@@ -66,7 +66,9 @@ const BLOCKED_DETAIL = {
 } as const
 const OFFLINE_SELF = "Local pages run offline and can't fetch data, even from their own folder."
 const NO_POINT = "Point isn't available on page previews yet."
-const OUTSIDE: Record<NoPreview, { title: (name: string) => string; body: string }> = {
+/** Main's refusals of a page; size never sends a page to Source. */
+type PageRefusal = Exclude<NoPreview, 'too-large'>
+const OUTSIDE: Record<PageRefusal, { title: (name: string) => string; body: string }> = {
   denied: { title: (name) => `${name} is outside this session's folder`, body: "Clui runs pages only from the session's folder, so this one can't preview here." },
   'too-broad': {
     title: (name) => `${name} can't preview from this folder`,

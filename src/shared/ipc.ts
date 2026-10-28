@@ -19,7 +19,7 @@ import type { AnnotateEvent } from './annotate'
 import type { ChangeSide, DraftReference, LineRange, RefInput, RefInvalid, SourceVersion } from './context'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff, HunkRows } from './changes'
 import type { HtmlOpenResult, HtmlViewEvent } from './html-view'
-import type { ContextMenuItem, FileChangedEvent, FileStat, Refusal, TextRead, TreeListing } from './files'
+import type { ContextMenuItem, FileChangedEvent, FileStat, ImageCap, Refusal, TextRead, TreeListing } from './files'
 import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
 import type { SurfaceCommand, SurfaceReply } from './surface-tools'
 import type {
@@ -305,6 +305,10 @@ export interface CluiApi {
   /** A file the session may see, as text (5 MiB head at most). */
   readText: (handleId: string, path: string) => Promise<TextRead | Refusal>
   statFile: (handleId: string, path: string) => Promise<FileStat | Refusal>
+  /** One cap per absolute image path, in order, for one preview (`owner`). Minting again for that owner revokes its
+   *  earlier caps, as does imageCapsRevoke. */
+  imageCaps: (handleId: string, owner: string, paths: string[]) => Promise<ImageCap[]>
+  imageCapsRevoke: (handleId: string, owner: string) => Promise<void>
   /** Watch a file while a surface shows it; changes arrive through onFileChanged with the returned id. */
   watchFile: (handleId: string, path: string) => Promise<{ ok: true; id: string } | Refusal>
   unwatchFile: (handleId: string, id: string) => Promise<void>
@@ -533,6 +537,8 @@ export const IpcChannels = {
   getChangeMarks: 'clui:getChangeMarks',
   readText: 'clui:readText',
   statFile: 'clui:statFile',
+  imageCaps: 'clui:imageCaps',
+  imageCapsRevoke: 'clui:imageCapsRevoke',
   watchFile: 'clui:watchFile',
   unwatchFile: 'clui:unwatchFile',
   /** main → renderer push channel for watched-file changes */
@@ -612,7 +618,7 @@ export interface MenuState {
   close: 'session' | 'tab' | 'none'
   /** The active surface's Open externally target, and whether it can open now. */
   external: { kind: 'file' | 'diff' | 'browser' | 'tree' | 'page' | 'none'; enabled: boolean }
-  /** A text file tab shows, so Go to Line has lines to go to. */
+  /** A text file tab shows its Source, so Go to Line has lines to go to. */
   fileLines: boolean
   /** The active tab's presentation switch: 'source' while Preview shows, 'preview' while Source does. */
   presentation: 'source' | 'preview' | 'none'

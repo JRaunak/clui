@@ -1,5 +1,5 @@
 // The HTML view's renderer rules: which presentation a tab shows, the policy line, and which strip wins.
-import { markNoPreview, presentationOf, showsSource } from '../src/renderer/src/lib/presentation.ts'
+import { markNoPreview, presentationOf, hasFind } from '../src/renderer/src/lib/presentation.ts'
 import { blockedRow, hostLabel, hostsOf, noticeOf, policyParts } from '../src/renderer/src/lib/htmlView.ts'
 import { equal } from './support/harness.mjs'
 
@@ -22,14 +22,14 @@ const same = (a: unknown, b: unknown, m: string): void => equal(JSON.stringify(a
 // File actions
 {
   const tab = (kind: 'file' | 'artifact' | 'tree', key: string, mode?: 'auto' | 'source' | 'preview') => ({ kind, key, ...(mode ? { mode } : {}) })
-  equal(showsSource('h', tab('file', '/w/a.ts')), true, 'actions: a file tab')
-  equal(showsSource('h', tab('artifact', '/w/a.html', 'source')), true, 'actions: an artifact showing Source is a file tab')
-  equal(showsSource('h', tab('artifact', '/w/a.html')), false, 'actions: an artifact showing Preview takes none')
-  equal(showsSource('h', tab('file', '/w/a.html', 'preview')), false, 'actions: a file showing Preview takes none')
-  equal(showsSource('h', tab('tree', '')), false, 'actions: the tree is no file')
-  equal(showsSource('h', undefined), false, 'actions: no tab')
+  equal(hasFind('h', tab('file', '/w/a.ts')), true, 'actions: a file tab')
+  equal(hasFind('h', tab('artifact', '/w/a.html', 'source')), true, 'actions: an artifact showing Source is a file tab')
+  equal(hasFind('h', tab('artifact', '/w/a.html')), false, 'find: an artifact showing Preview takes none')
+  equal(hasFind('h', tab('file', '/w/a.html', 'preview')), false, 'find: an HTML Preview takes none')
+  equal(hasFind('h', tab('tree', '')), false, 'actions: the tree is no file')
+  equal(hasFind('h', undefined), false, 'actions: no tab')
   markNoPreview('h', '/w/out.html', 'denied')
-  equal(showsSource('h', tab('file', '/w/out.html')), true, 'actions: a page that cannot preview falls back to Source')
+  equal(hasFind('h', tab('file', '/w/out.html')), true, 'actions: a page that cannot preview falls back to Source')
 }
 
 // Policy line

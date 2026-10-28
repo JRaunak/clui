@@ -19,13 +19,13 @@ import { SurfacePane } from './surfaces/SurfacePane'
 import { SurfaceHost } from './surfaces/SurfaceHost'
 import { browserExternalBlock } from './surfaces/BrowserSurface'
 import { selectedChange } from './surfaces/DiffSurface'
-import { useFileStatus } from './surfaces/FileSurface'
+import { useFileStatus } from './surfaces/fileDoc'
 import { TopBand } from './TopBand'
 import { StatusBar } from './StatusBar'
 import { Notice } from './Notice'
 import { SPLIT_MIN, getStage } from '../lib/stage'
 import { focusPaneTitle } from '../lib/dive'
-import { fileLike, presentationOf, useNoPreview } from '../lib/presentation'
+import { fileLike, isMarkdown, presentationOf, useNoPreview } from '../lib/presentation'
 
 export type PaneState = 'collapsed' | 'half' | 'full'
 
@@ -158,10 +158,10 @@ export function Stage({
             : onTree
               ? { kind: 'tree', enabled: true }
               : { kind: 'none', enabled: false },
-      fileLines: fileStatus === 'text',
+      fileLines: fileStatus === 'text' && shown !== 'preview',
       presentation: !shown ? 'none' : shown === 'preview' ? 'source' : 'preview',
       // A focused page is main's to report, so this covers only focus in the pane's own DOM.
-      reload: shown === 'preview' && focusInSecondary
+      reload: shown === 'preview' && !!filePath && !isMarkdown(filePath) && focusInSecondary
     })
   }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, shown, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary])
 

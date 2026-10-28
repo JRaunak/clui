@@ -11,6 +11,8 @@ export interface FileRef {
   rel: string
   line?: number
   endLine?: number
+  /** A fragment that isn't a line, for a Markdown Preview to scroll to. */
+  anchor?: string
 }
 
 export type HrefRef = { kind: 'file'; ref: FileRef } | { kind: 'outside'; path: string }
@@ -60,23 +62,31 @@ export function relativeTo(cwd: string, p: string): string | null {
 export const isLocalHref = (url: string): boolean => /^file:\/\//i.test(url) || /^[^:]*[./][^:]*:\d+(?::\d+)?(?:#.*)?$/.test(url)
 
 /** A Markdown href as a place in the folder, a local path outside it, or null for anything else (web, mail,
- *  other schemes, same-document anchors), which goes to the web link handler. */
-export function resolveHref(href: string, cwd: string): HrefRef | null {
+ *  other schemes, same-document anchors), which goes to the web link handler. A relative href is relative to `base`,
+ *  the linking document's folder, when there is one, else to the session's folder. */
+export function resolveHref(href: string, cwd: string, base?: string): HrefRef | null {
   if (!href || href.startsWith('#') || href.startsWith('?') || href.startsWith('//')) return null
   const file = /^file:\/\/([^/]*)(\/.*)?$/i.exec(href)
   if (file && ((file[1] && file[1].toLowerCase() !== 'localhost') || !file[2])) return null
   const { path, line, endLine } = splitLineSuffix(file ? file[2] : href)
+  const frag = line ? undefined : /#(.+)$/.exec(path)?.[1]
   let decoded: string
+  let anchor: string | undefined
   try {
     decoded = decodeURIComponent(path.replace(/[?#].*$/, ''))
+    anchor = frag && decodeURIComponent(frag)
   } catch {
     return null
   }
   if (!decoded || decoded.includes('\0') || (!file && SCHEME.test(path.replace(/%[\da-f]{2}/gi, 'x')))) return null
-  const rel = relativeTo(cwd, decoded)
-  if (rel === null) return { kind: 'outside', path: decoded }
+  const abs = base && !decoded.startsWith('/') ? `${base}/${decoded}` : decoded
+  const rel = relativeTo(cwd, abs)
+  if (rel === null) {
+    const norm = base ? segments(abs) : null
+    return { kind: 'outside', path: norm ? `/${norm.join('/')}` : decoded }
+  }
   if (!rel) return null
-  return { kind: 'file', ref: { rel, ...(line ? { line } : {}), ...(endLine ? { endLine } : {}) } }
+  return { kind: 'file', ref: { rel, ...(line ? { line } : {}), ...(endLine ? { endLine } : {}), ...(anchor ? { anchor } : {}) } }
 }
 
 /** Inline code that is exactly a path in the folder's file set, never a basename guess. A folder links only when

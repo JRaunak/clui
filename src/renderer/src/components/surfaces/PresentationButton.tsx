@@ -6,11 +6,12 @@ import { PANE_BTN } from './PaneHeader'
 
 const WHY: Record<NoPreview, string> = {
   denied: "Pages outside this session's folder don't preview in Clui.",
-  'too-broad': "Pages don't preview in Clui while the session's folder is your home folder or above it."
+  'too-broad': "Pages don't preview in Clui while the session's folder is your home folder or above it.",
+  'too-large': 'Files over 1 MB preview their first 1 MB.'
 }
 
 /** Swaps a tab between Source and Preview. It names the action, so the label changes instead of a pressed state.
- *  `noPreview`: why the page can't preview here, which the title says before the user asks for it. */
+ *  `noPreview`: why `auto` shows Source, which the title says before the user asks for a Preview. */
 export function PresentationButton({ handleId, tabId, shown, noPreview }: { handleId: string; tabId: string; shown: Presentation; noPreview: NoPreview | null }): JSX.Element {
   const setView = useSession((s) => s.setSurfaceView)
   const [said, setSaid] = useState('')

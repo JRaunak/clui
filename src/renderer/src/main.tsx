@@ -5,6 +5,7 @@ import { useSession, activeSlice, type PerSessionState } from './store'
 import { trackReducedTransparency } from './lib/theme'
 import { resetHeroForTests } from './components/Hero'
 import './styles.css'
+import './find-marks.css'
 
 // E2E hook: lets the Playwright driver drive the store directly (the workspace
 // picker is a native dialog that automation can't click). Harmless in prod: it
