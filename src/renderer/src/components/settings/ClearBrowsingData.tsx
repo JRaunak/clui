@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import type { BrowsingDataInfo, ClearBrowsingData as ClearWhat } from '../../../../shared/browser'
 import { anyTabIn, useSession } from '../../store'
 import { FieldError } from '../LoginFields'
 import { CheckBox } from './shared'
 import { DANGER_BTN } from './BrowserSection'
+import { useSay } from '../../lib/useSay'
 
 const MB = 1024 * 1024
 const NONE: ClearWhat = { cookies: false, cache: false, history: false }
@@ -26,8 +27,7 @@ export function ClearBrowsingData(): JSX.Element {
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const [cleared, setCleared] = useState(false)
-  const [announce, setAnnounce] = useState('')
-  const seq = useRef(0)
+  const [announce, say] = useSay()
   const blocked = useSession((s) =>
     Object.values(s.sessions).some((x) => anyTabIn(x.browser, 'driving', 'user'))
   )
@@ -37,7 +37,6 @@ export function ClearBrowsingData(): JSX.Element {
     void recount()
   }, [recount])
 
-  const say = (text: string): void => setAnnounce(`${text}${'\u200b'.repeat(++seq.current % 2)}`)
   const empty = !!info && info.cookieSites === 0 && info.cacheBytes === 0 && info.openPages === 0
   const unavailable = blocked || (empty && !cleared)
   const description = blocked

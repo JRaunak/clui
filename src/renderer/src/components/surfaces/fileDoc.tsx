@@ -12,6 +12,7 @@ import { noteRead } from '../../lib/blockedFiles'
 import { closeTab } from './SurfaceTabs'
 import { ANNOUNCE_MS } from './SelectionBar'
 import { addFromSurface } from '../ContextChips'
+import { useSay } from '../../lib/useSay'
 
 // What the File tab's two presentations share: the read and re-read of one file, its line selection, and the
 // states shown when there's no text to show.
@@ -125,10 +126,7 @@ export function useFileDoc(handleId: string, tabId: string, keep: (moved: (line:
   /** `removed`: the selection was in a message too, and left it. */
   const [notice, setNotice] = useState<'cleared' | 'removed' | null>(null)
   const [watchGen, setWatchGen] = useState(0)
-  const [said, setSaid] = useState('')
-  const sayCount = useRef(0)
-  // A zero-width space toggles so an identical announcement still changes the live region.
-  const say = (t: string): void => setSaid(`${t}${'\u200B'.repeat(++sayCount.current % 2)}`)
+  const [said, say] = useSay()
 
   // Whether the selection, at this revision, is a reference in the draft or a queued message.
   const attachKey = selection && doc.t === 'text' ? `${selection.start}-${selection.end}\0sha256:${doc.revision}` : null

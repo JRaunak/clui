@@ -10,6 +10,7 @@ import { LINK, LINK_MOD } from '../../lib/openLink'
 import type { LinkTarget } from '../../../../shared/settings'
 import { LoginForm } from './LoginForm'
 import { ClearBrowsingData } from './ClearBrowsingData'
+import { useSay } from '../../lib/useSay'
 
 // A list turns into a scrolling window with a filter at the row count where it would start to scroll.
 const WINDOW_AT = 7
@@ -70,8 +71,7 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   const pendingRef = useRef<PendingRemoval[]>([])
   const undoRef = useRef<(id: string) => void>(() => {})
   const announceSeq = useRef(0)
-  const [filterSay, setFilterSay] = useState('')
-  const filterSeq = useRef(0)
+  const [filterSay, sayFilter] = useSay()
   const [siteQuery, setSiteQuery] = useState('')
   const [loginQuery, setLoginQuery] = useState('')
   const [focus, setFocus] = useState<FocusRequest | null>(null)
@@ -122,7 +122,6 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
     if (focus.reveal) el.scrollIntoView({ block: 'nearest' })
   }, [focus])
 
-  const sayFilter = useCallback((text: string) => setFilterSay(`${text}${'\u200b'.repeat(++filterSeq.current % 2)}`), [])
 
   // Closing Settings is not an undo: whatever is still waiting commits now.
   useEffect(() => {

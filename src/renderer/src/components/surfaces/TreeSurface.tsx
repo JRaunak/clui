@@ -14,6 +14,7 @@ import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { reducedMotion, viaOf, type Via } from '../../lib/motion'
 import { closeTab } from './SurfaceTabs'
 import { addFromSurface } from '../ContextChips'
+import { useSay } from '../../lib/useSay'
 
 const TAB = 'tree'
 const SKELETON_MS = 400
@@ -94,9 +95,7 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
   const [dirs, setDirs] = useState<Record<string, DirState>>({})
   const [focused, setFocused] = useState<string | null>(null)
   const [wash, setWash] = useState<{ key: string; via: Via } | null>(null)
-  const [said, setSaid] = useState('')
-  const sayCount = useRef(0)
-  const say = (t: string): void => setSaid(`${t}${'\u200B'.repeat(++sayCount.current % 2)}`)
+  const [said, say] = useSay()
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
   const treeEl = useRef<HTMLDivElement | null>(null)
   const treeRef = useCallback((el: HTMLDivElement | null) => {

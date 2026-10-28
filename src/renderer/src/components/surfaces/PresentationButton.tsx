@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react'
 import { useSession } from '../../store'
 import type { NoPreview, Presentation } from '../../lib/presentation'
 import { IconCode, IconEye } from '../Icon'
 import { PANE_BTN } from './PaneHeader'
+import { useSay } from '../../lib/useSay'
 
 const WHY: Record<NoPreview, string> = {
   denied: "Pages outside this session's folder don't preview in Clui.",
@@ -14,13 +14,12 @@ const WHY: Record<NoPreview, string> = {
  *  `noPreview`: why `auto` shows Source, which the title says before the user asks for a Preview. */
 export function PresentationButton({ handleId, tabId, shown, noPreview }: { handleId: string; tabId: string; shown: Presentation; noPreview: NoPreview | null }): JSX.Element {
   const setView = useSession((s) => s.setSurfaceView)
-  const [said, setSaid] = useState('')
-  const seq = useRef(0)
+  const [said, say] = useSay()
   const preview = shown === 'preview'
   const label = preview ? 'Show source' : 'Show preview'
   const swap = (): void => {
     setView(handleId, tabId, { mode: preview ? 'source' : 'preview' })
-    setSaid(`${preview ? 'Showing source' : 'Showing preview'}${'\u200B'.repeat(++seq.current % 2)}`)
+    say(preview ? 'Showing source' : 'Showing preview')
   }
   return (
     <>

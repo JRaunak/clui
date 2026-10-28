@@ -6,6 +6,7 @@ import { CAP_NOTE, MAX_REFS } from '../../../shared/context'
 import { IconChevron, IconClose, IconRefresh, IconStop } from './Icon'
 import { PANE_BTN } from './surfaces/PaneHeader'
 import { listedDir, openFileAt } from '../lib/openLink'
+import { useSay } from '../lib/useSay'
 
 // The toolbar sits over the pane's flat floor, where the solid form is pixel-identical and skips a filter.
 const SOLID = { ['--control-material' as string]: 'solid' } as CSSProperties
@@ -302,9 +303,8 @@ export function BrowserDriveStrip(): JSX.Element {
   }, [view, busy])
   const shown = view ?? (busy ? held : null)
 
-  const [announce, setAnnounce] = useState('')
+  const [announce, say] = useSay()
   const prev = useRef({ viewed, drive, mode })
-  const seq = useRef(0)
   useEffect(() => {
     const p = prev.current
     prev.current = { viewed, drive, mode }
@@ -314,7 +314,7 @@ export function BrowserDriveStrip(): JSX.Element {
     if (mode === 'elsewhere' && p.mode !== 'elsewhere') text = `Claude is driving in tab ${recent}.`
     else if (p.drive !== drive)
       text = drive === 'driving' ? (p.drive === 'user' ? 'Claude is driving again.' : 'Claude is driving the browser.') : ANNOUNCE[drive]
-    if (text) setAnnounce(`${text}${'\u200b'.repeat(++seq.current % 2)}`)
+    if (text) say(text)
   }, [viewed, drive, mode, recent])
 
   // The pressed button unmounts once main answers, so focus that was in the strip goes to the next

@@ -27,6 +27,7 @@ import {
   SIDE_TITLE,
   tooLargeText
 } from '../../lib/refCopy'
+import { useSay } from '../../lib/useSay'
 
 const TAB = 'diff'
 export const NO_CHANGES = 'No changes to point at.'
@@ -261,10 +262,7 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
   const [busy, setBusy] = useState(false)
   /** Main's too-large answer for a selection the preview thought fit, keyed to that selection and side. */
   const [refused, setRefused] = useState<{ key: string; lines: number; bytes: number } | null>(null)
-  const [said, setSaid] = useState('')
-  const sayCount = useRef(0)
-  // A zero-width space toggles so an identical announcement still changes the live region.
-  const say = (t: string): void => setSaid(`${t}${'\u200B'.repeat(++sayCount.current % 2)}`)
+  const [said, say] = useSay()
   const selSay = useRef<ReturnType<typeof setTimeout>>()
   const setChange = (change: DiffSelection | undefined): void => setView(handleId, TAB, { selection: change ? { change } : undefined })
 

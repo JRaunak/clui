@@ -15,6 +15,7 @@ import { cleanError, FileMissing, openDefault, REASON, RETRY, setStatus, STATE_B
 import type { HtmlBlocked, HtmlPolicy } from '../../../../shared/html-view'
 import type { PaneBounds } from '../../../../shared/browser'
 import type { Refusal } from '../../../../shared/files'
+import { useSay } from '../../lib/useSay'
 
 const LOADING_MS = 400
 const MISSING_POLL_MS = 2000
@@ -179,9 +180,7 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
   const policyRef = useRef<HTMLButtonElement | null>(null)
   const setPolicyRef = useCallback((el: HTMLButtonElement | null) => void (policyRef.current = el), [])
 
-  const [said, setSaid] = useState('')
-  const sayCount = useRef(0)
-  const say = useCallback((t: string) => setSaid(`${t}${'\u200B'.repeat(++sayCount.current % 2)}`), [])
+  const [said, say] = useSay()
 
   useEffect(() => {
     if (!path) return
