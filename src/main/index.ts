@@ -64,6 +64,7 @@ import { BrowserManager } from './browser/manager'
 import { BrowserMcpServer } from './browser/mcp'
 import { mcpListener } from './lib/mcp-route'
 import { Annotator } from './browser/annotate'
+import { isPoint, type PointAt } from '../shared/annotate'
 import { changeRefStatus, classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from './cli/packet'
 import { contextWatches } from './surfaces/context-watch'
 import { CHANGE_READ_TOOL, CHANGE_REF, isRefInput, MAX_REFS, relativeTo, type DraftReference } from '../shared/context'
@@ -118,6 +119,8 @@ function resolveTheme(): 'dark' | 'light' {
 /** The native page holding keyboard focus. Focus in it leaves the renderer's document, so the
  *  renderer can't tell a focused page from a window in the background. */
 let focusedPage: WebContents | null = null
+/** The test hooks name a browser tab by number and an HTML view by its id. */
+const pointOf = (at: number | string): PointAt => (typeof at === 'number' ? { kind: 'browser', tab: at } : { kind: 'html', viewId: at })
 const isPage = (wc: WebContents | null): boolean => !!wc && !BrowserWindow.getAllWindows().some((w) => w.webContents === wc)
 app.on('web-contents-created', (_e, wc) => {
   const mark = (on: boolean): void => {
@@ -397,7 +400,10 @@ function registerIpc(): void {
     request: (h, op) => bridge.request(h, op)
   })
   const surfaceRoute = listener.route('mcp-surface', surface)
-  const annotator = new Annotator(browser, () => mainWindow)
+  const annotator = new Annotator(browser, () => mainWindow, {
+    page: (h, viewId) => html.point(h, viewId),
+    viewOf: (h, tabId) => html.viewOf(h, tabId)
+  })
   browser.onLeave = (handleId, tab, why) => annotator.leave(handleId, tab, why)
   browser.onDocumentGone = (handleId, tab, reason) => annotator.gone(handleId, tab, reason)
   browser.holdsPins = (handleId, tab) => annotator.holds(handleId, tab)
@@ -450,8 +456,8 @@ function registerIpc(): void {
           wc?.sendInputEvent({ type: 'keyDown', keyCode: key })
           wc?.sendInputEvent({ type: 'keyUp', keyCode: key })
         },
-        annotated: (handleId: string, tab: number) => annotator.count(handleId, tab),
-        annotationOrder: (handleId: string, tab: number) => annotator.order(handleId, tab),
+        annotated: (handleId: string, at: number | string) => annotator.count(handleId, pointOf(at)),
+        annotationOrder: (handleId: string, at: number | string) => annotator.order(handleId, pointOf(at)),
         suspend: (handleId: string, tab: number) => browser.suspendTab(handleId, tab),
         tabs: (handleId: string) =>
           browser.tabsOf(handleId)?.tabs.map(({ id, url, title, drive, suspended, attached, parked }) => ({ id, url, title, drive, suspended, attached, parked })) ?? null,
@@ -530,7 +536,9 @@ function registerIpc(): void {
       const s = getSettingsSync()
       return { remote: s.artifactRemoteResources, data: s.artifactNetworkRequests }
     },
-    alive: (h) => manager.cwd(h) !== null
+    alive: (h) => manager.cwd(h) !== null,
+    loaded: (h, tabId) => void annotator.redraw(h, tabId),
+    revision: (h, p) => packetDeps.readRevision(h, p).then((r) => (r.ok ? r.version : null))
   })
   htmlViews = html
   const images = createImageCaps((h, p) => files.resolveAllowed(h, p, { consumer: 'file', operation: 'read-file' }))
@@ -802,9 +810,10 @@ function registerIpc(): void {
   handle(IpcChannels.browserDrive, (_e, handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset', tab?: number) =>
     browser.drive(handleId, action, tab)
   )
-  handle(IpcChannels.browserAnnotate, (_e, handleId: string, tab: number, on: boolean) =>
-    on === true ? annotator.start(handleId, tab) : annotator.stop(handleId, 'user')
-  )
+  handle(IpcChannels.annotate, (_e, handleId: unknown, at: unknown, on: unknown) => {
+    if (typeof handleId !== 'string' || !isPoint(at)) return
+    return on === true ? annotator.start(handleId, at) : annotator.stop(handleId, 'user', at)
+  })
   handle(IpcChannels.browserSiteVerdict, (_e, handleId: string, requestId: string, allow: boolean) =>
     browser.siteVerdict(handleId, requestId, allow)
   )

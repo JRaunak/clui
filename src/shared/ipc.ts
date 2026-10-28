@@ -15,7 +15,7 @@ import type {
 } from './sessions'
 import type { ConfigBundle } from './config'
 import type { ApprovedSite, BrowserEvent, BrowsingDataInfo, ClearBrowsingData, LocalNetSite, PaneBounds, SavedLoginInfo } from './browser'
-import type { AnnotateEvent } from './annotate'
+import type { AnnotateEvent, PointAt } from './annotate'
 import type { ChangeSide, DraftReference, LineRange, RefInput, RefInvalid, SourceVersion } from './context'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff, HunkRows } from './changes'
 import type { HtmlOpenResult, HtmlViewEvent, PagePlace, PageStart } from './html-view'
@@ -401,8 +401,8 @@ export interface CluiApi {
   browserNav: (handleId: string, tab: number, action: 'back' | 'forward' | 'reload' | 'stop') => Promise<void>
   /** stop and reset apply to every tab; handback and takeover to `tab`, which they require. */
   browserDrive: (handleId: string, action: 'stop' | 'handback' | 'takeover' | 'reset', tab?: number) => Promise<void>
-  /** Starts or ends annotate in `tab`; main answers with annotate events. */
-  browserAnnotate: (handleId: string, tab: number, on: boolean) => Promise<void>
+  /** Starts or stops pointing on a browser tab or an HTML page Preview; main answers with annotate events. */
+  annotate: (handleId: string, at: PointAt, on: boolean) => Promise<void>
   onAnnotateEvent: (cb: (handleId: string, e: AnnotateEvent) => void) => () => void
   browserSiteVerdict: (handleId: string, requestId: string, allow: boolean) => Promise<void>
   /** choose: `loginId`; save: the user's fields (the password crosses IPC only here); decline: neither. */
@@ -583,7 +583,7 @@ export const IpcChannels = {
   browserNavigate: 'clui:browserNavigate',
   browserNav: 'clui:browserNav',
   browserDrive: 'clui:browserDrive',
-  browserAnnotate: 'clui:browserAnnotate',
+  annotate: 'clui:annotate',
   annotateEvent: 'clui:annotateEvent',
   browserSiteVerdict: 'clui:browserSiteVerdict',
   browserLoginVerdict: 'clui:browserLoginVerdict',

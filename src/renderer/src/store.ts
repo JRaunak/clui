@@ -24,7 +24,7 @@ import type { CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, Permiss
 import { loadFailureOf, siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
 import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, setLiveEfforts, supportsUltracodeToggle, contextWindowForModel, contextSizeLabel, latestModelInFamily, deriveModelInfo, modelCheckReason, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
-import { pinWords, clipName, type AnnotateEvent } from '../../shared/annotate'
+import { pinWords, clipName, type AnnotateEvent, type PointAt } from '../../shared/annotate'
 import {
   CAP_NOTE,
   CHANGE_READ_TOOL,
@@ -489,14 +489,14 @@ export interface EvictedTab {
   at: number
 }
 
-/** Elements pinned for the next message. `tab` is the tab being annotated now; `note` replaces the status
- *  line's hint after a refused pick, until the next pick. */
+/** Elements pinned for the next message. `at` is the browser tab or HTML page being pointed at now; `note` replaces
+ *  the status line's hint after a refused pick, until the next pick. */
 export interface AnnotateDraft {
-  tab: number | null
+  at: PointAt | null
   note: string | null
 }
 
-const IDLE_ANNOTATE: AnnotateDraft = { tab: null, note: null }
+const IDLE_ANNOTATE: AnnotateDraft = { at: null, note: null }
 export const EMPTY_REFS: DraftReference[] = []
 export const EMPTY_NOTICES: Record<string, ReferenceInvalidation> = {}
 
@@ -1443,7 +1443,9 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
     if (event.type === 'result') void useSession.getState().refreshChanges(handleId)
   })
   window.clui.onRefSourceChanged(({ handleId, path, reason, version }) => {
-    useSession.getState().invalidateSource(handleId, `file:${path}`, { reason, ...(version ? { version } : {}) })
+    const cause = { reason, ...(version ? { version } : {}) }
+    useSession.getState().invalidateSource(handleId, `file:${path}`, cause)
+    useSession.getState().invalidateSource(handleId, `page:${path}`, cause)
   })
   window.clui.onChangesEvent(({ handleId, summaries }) => {
     const prev = useSession.getState().sessions[handleId]
@@ -1943,7 +1945,7 @@ function invalidations(lost: readonly { ref: ContextReference; reason: RefFailur
     const rec = by.get(id) ?? {
       resourceId: id,
       label: change ? 'changes' : resourceLabel(ref),
-      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'file' ? (ref.sourceVersion ?? '') : '',
+      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'page' ? ref.revision : ref.kind === 'file' ? (ref.sourceVersion ?? '') : '',
       at: Date.now(),
       reason,
       removed: []
@@ -2059,7 +2061,9 @@ function flushRefs(handleId: string): void {
   const order = { keep: [...new Set(all.flatMap((d) => (d.pinId === undefined ? [] : [d.pinId])))], shown, room: Math.max(0, MAX_REFS - target.length) }
   const seen = new Set<string>()
   const watches = all
-    .flatMap((d) => (d.ref.kind === 'file' && d.ref.lines ? [{ path: d.ref.path, version: d.ref.sourceVersion }] : []))
+    .flatMap((d) =>
+      d.ref.kind === 'file' && d.ref.lines ? [{ path: d.ref.path, version: d.ref.sourceVersion }] : d.ref.kind === 'page' ? [{ path: d.ref.path, version: d.ref.revision }] : []
+    )
     .filter((w) => !seen.has(`${w.path}\0${w.version}`) && !!seen.add(`${w.path}\0${w.version}`))
     .slice(0, MAX_REFS)
   const prev = lastSync.get(handleId)
@@ -4014,7 +4018,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       const held =
         (viewed && (!!s.viewingSubagent || s.settingsSection !== null)) ||
         cur.pendingPermissions.length > 0 ||
-        cur.annotate.tab !== null ||
+        cur.annotate.at !== null ||
         (showing && focusInPane(onBrowser))
       const recent = showing && set0.active !== id && now - paneInputAt < PANE_RECENT_MS
       if (held || recent) eff = 'prepare'
@@ -4084,8 +4088,9 @@ export const useSession = create<SessionStore>((set, get) => ({
       set(patchSlice(s, handleId, { browser, surfaces: { ...set0, active: next }, ...emptied }))
       void window.clui.browserCloseTab(handleId, tab)
     } else {
-      const { [id]: _gone, ...tabs } = set0.tabs
+      const { [id]: gone, ...tabs } = set0.tabs
       set(patchSlice(s, handleId, { surfaces: { ...set0, order, active: next, tabs }, ...emptied }))
+      if (gone && fileLike(gone.kind)) get().invalidateSource(handleId, `page:${gone.key}`, { reason: 'closed' })
     }
     const st = get()
     const now = st.sessions[handleId]
@@ -4140,26 +4145,30 @@ export const useSession = create<SessionStore>((set, get) => ({
   applyAnnotateEvent: (handleId, e) => {
     const a = get().sessions[handleId]?.annotate
     if (!a) return
+    // The browser toolbar's live region isn't mounted under a page Preview, so a page's pointing speaks in the status one.
     const put = (next: Partial<AnnotateDraft>, say: string): void =>
       set((s) => {
         const cur = s.sessions[handleId]?.annotate
-        return cur ? { ...patchSlice(s, handleId, { annotate: { ...cur, ...next } }), browserAnnounce: toggled(say) } : {}
+        if (!cur) return {}
+        // 'on' arrives with nothing pointed at yet, and 'off' while the old target is still set.
+        const page = (cur.at ?? next.at)?.kind === 'html'
+        return page ? patchSlice(s, handleId, { annotate: { ...cur, ...next }, ...said(say) }) : { ...patchSlice(s, handleId, { annotate: { ...cur, ...next } }), browserAnnounce: toggled(say) }
       })
     switch (e.type) {
       case 'on':
-        return put({ tab: e.tab, note: null }, 'Pointing on.')
+        return put({ at: e.at, note: null }, 'Pointing on.')
       case 'off': {
-        const n = get().sessions[handleId]?.contextRefs.filter((d) => d.ref.kind === 'browser').length ?? 0
+        const n = get().sessions[handleId]?.contextRefs.filter((d) => d.ref.kind === 'browser' || d.ref.kind === 'page').length ?? 0
         const say =
           e.why === 'driving' ? 'Pointing off, Claude is using this tab.' : n ? `Pointing off. ${n} element${n === 1 ? '' : 's'} in the message.` : 'Pointing off.'
-        return put({ tab: null, note: null }, say)
+        return put({ at: null, note: null }, say)
       }
       case 'pinned': {
-        const r = get().addRef(handleId, { kind: 'browser', pin: e.pin }, { visual: e.crop ?? undefined, pinId: e.pinId })
+        const r = get().addRef(handleId, e.ref, { visual: e.crop ?? undefined, pinId: e.pinId })
         if (r.status === 'added') {
           const slice = get().sessions[handleId]
           const n = (slice && refsOf(slice, slice.referenceEditTarget)?.findIndex((d) => d.ref.id === r.id)) ?? -1
-          const { kind, name } = pinWords(e.pin.target)
+          const { kind, name } = pinWords(e.ref.kind === 'browser' ? e.ref.pin.target : e.ref.target)
           return put({ note: null }, `Pinned ${n + 1}: ${kind}${name ? ` ${clipName(name)}` : ''}.`)
         }
         // Main drew the outline before asking; the forced sync takes it down again.
@@ -4208,7 +4217,8 @@ export const useSession = create<SessionStore>((set, get) => ({
       }, 3000)
       return
     }
-    void window.clui.browserAnnotate(active.handleId, tab.id, active.annotate.tab !== tab.id)
+    const at = active.annotate.at
+    void window.clui.annotate(active.handleId, { kind: 'browser', tab: tab.id }, !(at?.kind === 'browser' && at.tab === tab.id))
   },
 
   addRef: (handleId, input, opts) => {
@@ -4309,6 +4319,8 @@ export const useSession = create<SessionStore>((set, get) => ({
       if (resourceOf(r) !== resourceId) return false
       if (r.kind === 'browser') return true
       if (r.kind === 'file' && r.lines) return cause.reason !== 'changed' || r.sourceVersion !== cause.version
+      // A change with no version is an asset's, seen by the page's watcher.
+      if (r.kind === 'page') return cause.reason !== 'changed' || !cause.version || r.revision !== cause.version
       // Whole files and folders point at current content, so only losing access removes them.
       return cause.reason === 'denied' || cause.reason === 'session'
     }

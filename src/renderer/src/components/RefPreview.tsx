@@ -157,6 +157,17 @@ export function RefPreview({ r, legacy, crop, alt, peek, stateId }: {
     )
   if (!r) return null
   if (r.kind === 'folder') return <p className={`mt-3 ${NOTE}`}>Folder. Claude lists it with its own tools.</p>
+  // The selector is a hint for Claude, so a page pin's card shows only the picture and the element's text.
+  if (r.kind === 'page') {
+    const text = r.target.text && r.target.text !== pinWords(r.target).name ? r.target.text : ''
+    if (!img && !text) return null
+    return (
+      <div className="mt-3 flex flex-col gap-2">
+        {img}
+        {text && <Facts rows={[['Text', text, 'line-clamp-2 break-words text-content']]} />}
+      </div>
+    )
+  }
   if (r.kind === 'browser') {
     const t = r.pin.target
     let page = ''

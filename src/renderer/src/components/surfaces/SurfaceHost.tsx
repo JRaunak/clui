@@ -12,6 +12,7 @@ import { MarkdownSurface } from './MarkdownSurface'
 import { MermaidSurface } from './MermaidSurface'
 import { PresentationButton } from './PresentationButton'
 import { fileLike, isMarkdown, isMermaid, presentationOf, useNoPreview } from '../../lib/presentation'
+import { isHtml } from '../../../../shared/html-view'
 
 /** The Surfaces pane: one header whose tab strip outlives a switch between kinds, over the active
  *  surface's body, or the picker when there are no tabs. Only the active surface is mounted, so the
@@ -40,7 +41,11 @@ export function SurfaceHost(): JSX.Element | null {
       <BrowserSettingsButton />
     </>
   ) : shown && activeId ? (
-    <PresentationButton handleId={handleId} tabId={activeId} shown={shown} noPreview={noPreview} />
+    <>
+      <PresentationButton handleId={handleId} tabId={activeId} shown={shown} noPreview={noPreview} />
+      {/* After the presentation button, so swapping to Source, which has no Point, never moves it under the pointer. */}
+      {shown === 'preview' && filePath && isHtml(filePath) && <PointButton kind="html" id={activeId} />}
+    </>
   ) : (
     pointer
   )

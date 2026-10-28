@@ -50,3 +50,15 @@ export function setPointing(id: string, on: boolean): void {
 }
 
 export const usePointing = (id: string | null): boolean => useSyncExternalStore(subscribe, () => !!id && pointing === id)
+
+// Why a mounted surface can't point now, for the pane button to show while it stays focusable.
+const blocked = new Map<string, string>()
+
+export function setPointBlocked(id: string, reason: string | null): void {
+  if ((blocked.get(id) ?? null) === reason) return
+  if (reason) blocked.set(id, reason)
+  else blocked.delete(id)
+  emit()
+}
+
+export const usePointBlocked = (id: string): string | null => useSyncExternalStore(subscribe, () => blocked.get(id) ?? null)

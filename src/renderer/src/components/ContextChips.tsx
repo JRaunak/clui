@@ -77,6 +77,8 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
     case 'browser':
       if (handleId === st.activeHandleId && !st.sessions[handleId]?.paneOpen) st.setPane('half')
       return st.activateSurface(handleId, placement(r.pin.source.tabId))
+    case 'page':
+      return openFileAt(handleId, r.path, {}, false, via)
     case 'change': {
       const req = mintedRequest(handleId, r.changeRef)
       requestSurfaceFocus('diff', via)

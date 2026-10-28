@@ -55,8 +55,9 @@ export function spokenRef(r: RefInput): string {
       return r.lines ? `${baseOf(r.path)}, ${spokenRange(r.lines)}` : baseOf(r.path)
     case 'folder':
       return `${baseOf(r.path)} folder`
-    case 'browser': {
-      const { kind, name } = pinWords(r.pin.target)
+    case 'browser':
+    case 'page': {
+      const { kind, name } = pinWords(r.kind === 'browser' ? r.pin.target : r.target)
       return name ? `${kind} ${clipName(name)}` : kind
     }
     case 'change':
@@ -163,6 +164,7 @@ export function changeRefusedText(reason: 'changed' | 'empty' | 'too-large' | 'd
 }
 
 const isChangeNotice = (n: ReferenceInvalidation): boolean => n.resourceId.startsWith('change:')
+const isPinNotice = (n: ReferenceInvalidation): boolean => /^(browser|page):/.test(n.resourceId)
 
 /** Change refs lose access as a set, never per file: Claude's tool went, or the draft moved to another session. */
 const changeLead = (reason: Reason): string => (reason === 'session' ? "Changes can't move to a new session" : CHANGE_DENIED)
@@ -202,7 +204,7 @@ function leadOf(label: string, reason: Reason): string {
 export function removalSpoken(lost: readonly ContextReference[], reason: Reason): string {
   const first = lost[0]
   if (first.kind === 'change') return `${changeLead(reason)}. ${lost.length > 1 ? `${lost.length} changes were` : `${changeWhat(first)} was`} removed from the message.`
-  const page = first.kind === 'browser'
+  const page = first.kind === 'browser' || first.kind === 'page'
   const what =
     lost.length > 1
       ? `${lost.length} ${page ? 'elements' : 'selections'} were`
@@ -215,7 +217,7 @@ export function removalSpoken(lost: readonly ContextReference[], reason: Reason)
 /** `Removed L142–158 and L200–210.` */
 export function removedText(n: ReferenceInvalidation): string {
   const labels = n.removed.map((r) => r.label)
-  const many = n.resourceId.startsWith('browser:') ? 'elements' : isChangeNotice(n) ? 'changes' : 'selections'
+  const many = isPinNotice(n) ? 'elements' : isChangeNotice(n) ? 'changes' : 'selections'
   const list = labels.length > 2 ? `${labels.length} ${many}` : labels.join(' and ')
   return `Removed ${list}.${n.removed.some((r) => r.note) ? ' Your note is kept.' : ''}`
 }
@@ -225,13 +227,13 @@ export function noticeLead(n: ReferenceInvalidation): string {
   if (isChangeNotice(n)) return `${changeLead(n.reason)}.`
   const lead = `${leadOf(n.label, n.reason)}.`
   if (!canReopen(n.reason)) return lead
-  return `${lead} ${n.resourceId.startsWith('browser:') ? 'Pick it again.' : 'Select it again.'}`
+  return `${lead} ${isPinNotice(n) ? 'Pick it again.' : 'Select it again.'}`
 }
 
 /** A paused queued row's sentence: `manager.ts changed, so L142–158 was removed.` */
 export function pausedText(n: ReferenceInvalidation): string {
   const labels = n.removed.map((r) => r.label)
-  const many = n.resourceId.startsWith('browser:') ? 'elements' : isChangeNotice(n) ? 'changes' : 'selections'
+  const many = isPinNotice(n) ? 'elements' : isChangeNotice(n) ? 'changes' : 'selections'
   const what = labels.length > 2 ? `${labels.length} ${many} were` : `${labels.join(' and ')} ${labels.length > 1 ? 'were' : 'was'}`
   return `${isChangeNotice(n) ? changeLead(n.reason) : leadOf(n.label, n.reason)}, so ${what} removed.`
 }

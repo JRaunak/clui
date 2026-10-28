@@ -1,7 +1,7 @@
 // The composer's `@` picks and drops: the token a chip replaces leaves no fragment or double space, the Open in pane
 // rows preview the chip they add, and a drop splits into chips and @ text the way main authorized it.
 import { paneRows, removeToken, routeDrop } from '../src/renderer/src/lib/composerRefs.ts'
-import { dropText, skippedNote } from '../src/renderer/src/lib/refCopy.ts'
+import { dropText, noticeLead, removalSpoken, removedText, skippedNote } from '../src/renderer/src/lib/refCopy.ts'
 import { equal, ok } from './support/harness.mjs'
 
 const cut = (marked: string, start: number): string => {
@@ -77,3 +77,13 @@ equal(dropText([], { inside: 0, outside: 1 }, [], 0), '1 file outside this folde
 equal(dropText([], { inside: 0, outside: 0 }, [f('/w/c.ts')], 0), 'Already attached: c.ts', 'drop text: a lone duplicate names it')
 equal(dropText([f('/w/a.ts')], { inside: 0, outside: 0 }, [], 2), `Added a.ts to the message. ${skippedNote(2)}`, 'drop text: the cap')
 equal(skippedNote(1), '20 references max. 1 file was not added.', 'drop text: one skipped')
+
+// A page pin's removal reads like a browser pin's, named by the file's basename.
+{
+  const t = { tag: 'button', role: 'button', name: 'Sign in', text: 'Sign in', selector: 'body > form > button', bbox: { x: 0, y: 0, width: 9, height: 9 }, styles: {}, html: '' }
+  const ref = { id: 'r2', kind: 'page', path: '/w/docs/report.html', revision: V, target: t } as const
+  equal(removalSpoken([ref, { ...ref, id: 'r3' }], 'changed'), 'report.html changed. 2 elements were removed from the message.', 'page removal: the basename and elements')
+  equal(removalSpoken([ref], 'closed'), 'The report.html tab was closed. Button Sign in was removed from the message.', 'page removal: a closed tab')
+  const n = { resourceId: 'page:/w/docs/report.html', label: 'report.html', oldVersion: V, at: 0, reason: 'changed' as const, removed: [{ id: 'r2', label: 'a' }, { id: 'r3', label: 'b' }, { id: 'r4', label: 'c' }] }
+  ok(noticeLead(n) === 'report.html changed. Pick it again.' && removedText(n) === 'Removed 3 elements.', 'page notice: picked again, counted as elements')
+}

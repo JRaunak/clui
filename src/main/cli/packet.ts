@@ -79,7 +79,7 @@ export function parseOutgoing(raw: unknown): OutgoingPacket | null {
     keys.add(key)
     if (d.pinId !== undefined && !Number.isSafeInteger(d.pinId)) return null
     if (d.visual === undefined) refs.push({ ref })
-    else if (ref.kind === 'browser' && isDraftVisual(d.visual)) refs.push({ ref, visual: d.visual })
+    else if ((ref.kind === 'browser' || ref.kind === 'page') && isDraftVisual(d.visual)) refs.push({ ref, visual: d.visual })
     else return null
   }
   const attachments: WireAttachment[] = []
@@ -140,6 +140,12 @@ export async function validateRefs(deps: PacketDeps, handleId: string, refs: rea
         const { tabId, docId } = ref.pin.source
         const doc = await once(`b\0${tabId}`, () => deps.docOf(handleId, tabId))
         return doc === null ? 'closed' : doc !== docId ? 'navigated' : null
+      }
+      // ponytail: only the page file is checked. An asset changed while no view is mounted goes unseen; record asset identities at pick if that must count
+      case 'page': {
+        const r = await once(`r\0${ref.path}`, () => deps.readRevision(handleId, ref.path))
+        if (!r.ok) return readFailure(r.reason)
+        return r.version === ref.revision ? null : 'changed'
       }
       case 'change': {
         const r = deps.change(handleId, ref.changeRef)

@@ -167,3 +167,29 @@ ok((await reasons([pin()], deps({ docOf: async () => null }))) === 'r3:closed', 
   const over: any = await preparePacket(d, 'h', pkt([a, b]), UUID)
   ok(!over.ok && over.reason === 'invalid' && !('onWritten' in over), "change: past 128 KiB by main's own count is invalid, whatever the renderer said")
 }
+
+// Page refs stay valid while the file has the revision they were picked at.
+{
+  const page = (id: string, over: Record<string, unknown> = {}): any => {
+    const { url: _url, ...t } = target({ name: 'Sign in' })
+    return { ref: { id, kind: 'page', path: '/w/docs/report.html', revision: V, target: t, ...over }, pinId: 4 }
+  }
+  const pkt = (refs: any[]) => parseOutgoing({ text: 'q', refs, attachments: [], now: false })
+  files['/w/docs/report.html'] = { version: V, lineCount: 40 }
+  ok(!!pkt([{ ...page('r1'), visual: pin().visual }]), 'page: a pin may carry its crop')
+  ok(!pkt([page('r1', { target: { ...page('r1').ref.target, url: 'clui-file://cap/report.html' } })]), 'page: a target with a url is refused')
+  ok(!pkt([page('r1', { revision: 'v1' })]), 'page: a revision not sha256 is refused')
+  ok(!pkt([page('r1', { creatingEditId: '' })]), 'page: an empty creatingEditId is refused')
+  const r: any = await preparePacket(deps(), 'h', pkt([page('r1', { creatingEditId: 'toolu_01' })])!, UUID)
+  const rec = r.ok && parseRefs(r.text).refs[0]
+  const ref = rec?.kind === 'current' ? rec.value.ref : null
+  ok(ref?.kind === 'page' && ref.path === 'docs/report.html' && ref.revision === V && ref.creatingEditId === 'toolu_01', 'page: the record carries kind, a cwd-relative path, the revision and its creating edit')
+  ok(r.ok && !r.text.includes('"url"') && !r.text.includes('clui-file'), 'page: no url and no cap host on the wire')
+  ok(r.ok && r.text.includes('A page reference is an element of a local HTML file'), 'page: the context says how to read a page reference')
+  const plain: any = await preparePacket(deps(), 'h', pkt([lines('r2')])!, UUID)
+  ok(plain.ok && !plain.text.includes('A page reference'), 'page: the sentence only comes with a page ref')
+  files['/w/docs/report.html'] = { version: V2, lineCount: 40 }
+  ok((await reasons([page('r1')])) === 'r1:changed', 'page: a new revision of the file is changed')
+  delete files['/w/docs/report.html']
+  ok((await reasons([page('r1')])) === 'r1:missing', 'page: a deleted file is missing')
+}

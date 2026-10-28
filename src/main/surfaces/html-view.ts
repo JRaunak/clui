@@ -10,8 +10,10 @@ import { stat } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import type { PaneBounds } from '../../shared/browser'
 import type { Refusal, TextRead } from '../../shared/files'
+import type { SourceVersion } from '../../shared/context'
 import { isHtml, type HtmlBlocked, type HtmlOpenResult, type HtmlPolicy, type HtmlViewEvent, type LinkVia, type PagePlace } from '../../shared/html-view'
 import { WORLD } from '../browser/cursor'
+import type { HtmlPage, Pointable } from '../browser/annotate'
 import { IpcChannels } from '../../shared/ipc'
 import { CHUNK_MAX, readBytes, readText, revisionOf, statFile, type createFileAccess, type FileAccess, type FileResource } from './files'
 import { NativeViewSlot, stillOf } from './native-slot'
@@ -151,6 +153,11 @@ export function superseding(): (key: string) => () => boolean {
 /** The served paths whose identity moved off `seen`, the identities when the paths were last served or settled. */
 export const movedOf = (seen: ReadonlyMap<string, string>, now: ReadonlyMap<string, string>): string[] => [...seen].flatMap(([p, id]) => (now.get(p) === id ? [] : [p]))
 
+/** A pick may carry the file's revision only while the page shows that file: no change settled since the run, and the
+ *  file's identity on both sides of the read is the one it was served at. */
+export const pickable = (stale: boolean, served: string | undefined, before: string, after: string): boolean =>
+  !stale && !!served && before === served && after === served
+
 /** A file's identity, '' while it's gone, so a deleted asset counts as changed and one put back does too. */
 const identity = (p: string): Promise<string> => stat(p, { bigint: true }).then(revisionOf, () => '')
 
@@ -185,10 +192,14 @@ export interface HtmlDeps {
   window: () => BrowserWindow | null
   files: Files
   /** The session ledger's segments for a canonical path, null when Claude never changed it. */
-  segments: (handleId: string, path: string) => Promise<readonly { created: boolean; after?: string }[] | null>
+  segments: (handleId: string, path: string) => Promise<readonly { created: boolean; after?: string; editIds: readonly string[] }[] | null>
   settings: () => { remote: boolean; data: boolean }
   /** The session is still running; its disposal may land while an open awaits. */
   alive: (handleId: string) => boolean
+  /** A page tab's document finished loading, so its pinned outlines can be drawn again. */
+  loaded: (handleId: string, tabId: string) => void
+  /** The file's content revision, null when it can't be read. */
+  revision: (handleId: string, path: string) => Promise<SourceVersion | null>
 }
 
 interface View {
@@ -197,6 +208,10 @@ interface View {
   tabId: string
   /** Canonical. */
   path: string
+  /** As the tab names it, which is what a reference to the page carries. */
+  given: string
+  /** The ledger edit that created the page, when it's Claude's artifact. */
+  creatingEditId?: string
   root: string
   /** `#id` or '': where the next fresh load starts, once. A reload keeps the page where it is. */
   anchor: string
@@ -226,9 +241,23 @@ interface View {
   served: Map<string, string>
   /** Changed paths last settled as not all Claude's; the ledger can record Claude's edit after the watcher fires. */
   unattributed: string[]
+  /** A served file changed since the last run, so the page shows files the disk no longer holds. */
+  stale: boolean
   /** A recreated view stays parked until its first dom-ready, so the pane keeps the still instead of a blank page. */
   held: boolean
   timers: { blocked?: ReturnType<typeof setTimeout>; still?: ReturnType<typeof setTimeout>; settle?: ReturnType<typeof setTimeout>; place?: ReturnType<typeof setTimeout> }
+}
+
+/** A view's DevTools channel, attached on first use. The cap origin is the page's own location, so it's a secret kept
+ *  out of every read. */
+function channel(wc: WebContents, host: string): Pointable['cdp'] {
+  return {
+    secrets: new Set([`${SCHEME}://${host}`, host]),
+    command: async <T>(method: string, params?: Record<string, unknown>): Promise<T> => {
+      if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
+      return (await wc.debugger.sendCommand(method, params)) as T
+    }
+  }
 }
 
 const refuse = (reason: Refusal['reason']): Refusal => ({ ok: false, reason })
@@ -276,7 +305,8 @@ export class HtmlViews {
     const r = await this.deps.files.resolveAllowed(handleId, path, READ)
     if (!r.ok) return r
     if (!isHtml(r.path)) return refuse('wrong-type')
-    const { artifact, after } = claudeRecord(r.path, await this.deps.segments(handleId, r.path))
+    const segs = await this.deps.segments(handleId, r.path)
+    const { artifact, after } = claudeRecord(r.path, segs)
     const read = artifact ? await readText(r) : null
     if (read && !read.ok) return read
     const changedSince = !!read && !(await holdsClaudes(r, after, read))
@@ -294,6 +324,8 @@ export class HtmlViews {
       handleId,
       tabId,
       path: r.path,
+      given: path,
+      ...(artifact && segs?.[0]?.editIds[0] ? { creatingEditId: segs[0].editIds[0] } : {}),
       root,
       anchor: at && 'anchor' in at ? `#${encodeURIComponent(at.anchor)}` : '',
       place: at && 'x' in at ? at : null,
@@ -314,6 +346,7 @@ export class HtmlViews {
       watches: [],
       served,
       unattributed: [],
+      stale: false,
       held: false,
       timers: {}
     }
@@ -402,6 +435,7 @@ export class HtmlViews {
     wc.on('did-finish-load', () => {
       if (!this.mine(v, wc)) return
       v.finished = true
+      this.deps.loaded(v.handleId, v.tabId)
       if (v.blocked.remote || v.blocked.data || v.blocked.eval) this.blockedSoon(v)
     })
     wc.on('did-stop-loading', () => this.mine(v, wc) && this.stillSoon(v))
@@ -444,6 +478,7 @@ export class HtmlViews {
     if (!live(wc)) return
     v.parked = true
     v.unattributed = []
+    v.stale = false
     this.sync(v)
     if (v.loaded && wc.getURL().startsWith(`${SCHEME}://${v.host}/`)) wc.reload()
     else {
@@ -494,6 +529,44 @@ export class HtmlViews {
     this.sync(v)
     if (hadFocus) this.deps.window()?.webContents.focus()
     return this.refreshStill(v)
+  }
+
+  // --- pointing ---
+
+  /** The running page, for pointing; null while it hasn't run, failed or crashed. */
+  point(handleId: string, viewId: string): HtmlPage | null {
+    const v = this.views.get(viewId)
+    const wc = v?.view.webContents
+    if (!v || !wc || v.handleId !== handleId || !v.loaded || v.failed || !live(wc)) return null
+    return {
+      wc,
+      cdp: channel(wc, v.host),
+      path: v.given,
+      tabId: v.tabId,
+      ...(v.creatingEditId ? { creatingEditId: v.creatingEditId } : {}),
+      revision: () => this.shownRevision(v)
+    }
+  }
+
+  /** The disk's revision of the page file, read between two identity checks against what the view was served. A
+   *  mismatch goes out as the page's change, which ends pointing and drops its pins, instead of minting a pin. */
+  private async shownRevision(v: View): Promise<SourceVersion | null> {
+    const before = await identity(v.path)
+    const revision = await this.deps.revision(v.handleId, v.given)
+    const after = await identity(v.path)
+    if (this.views.get(v.id) !== v) return null
+    if (revision && pickable(v.stale, v.served.get(v.path), before, after)) return revision
+    if (v.stale) this.emit({ type: 'changed', viewId: v.id, byClaude: !v.unattributed.length })
+    else {
+      clearTimeout(v.timers.settle)
+      void this.settle(v)
+    }
+    return null
+  }
+
+  viewOf(handleId: string, tabId: string): string | null {
+    for (const v of this.views.values()) if (v.handleId === handleId && v.tabId === tabId) return v.id
+    return null
   }
 
   owns(wc: WebContents): boolean {
@@ -592,6 +665,7 @@ export class HtmlViews {
     // A reload may have served a newer identity meanwhile; that one stays.
     for (const p of moved) if (v.served.get(p) === seen.get(p)) v.served.set(p, now.get(p) ?? '')
     if (!moved.length) return
+    v.stale = true
     const paths = [...new Set([...v.unattributed, ...moved])]
     const byClaude = await this.allClaudes(v, paths)
     if (this.views.get(v.id) !== v) return

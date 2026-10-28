@@ -1,5 +1,5 @@
 import { activeSlice, DRIVING_NOTE, surfaceKindOf, useActive, useSession, viewedTabOf } from '../../store'
-import { requestPoint, usePointing } from '../../lib/surfaceFocus'
+import { requestPoint, usePointBlocked, usePointing } from '../../lib/surfaceFocus'
 import { IconTarget } from '../Icon'
 import { DISABLED_BTN, PANE_BTN } from './PaneHeader'
 import { NO_CHANGES } from './DiffSurface'
@@ -23,14 +23,16 @@ export function point(): void {
   st.announceStatus(s.handleId, NO_TARGET)
 }
 
-export function PointButton({ kind, id }: { kind: 'browser' | 'diff'; id: string }): JSX.Element {
-  const annotating = useActive((s) => !!s && s.annotate.tab === s.browser?.viewed)
+/** `html`: a page Preview, whose surface says when it can't point. */
+export function PointButton({ kind, id }: { kind: 'browser' | 'diff' | 'html'; id: string }): JSX.Element {
+  const annotating = useActive((s) => s?.annotate.at?.kind === 'browser' && s.annotate.at.tab === s.browser?.viewed)
   const driving = useActive((s) => viewedTabOf(s?.browser)?.drive === 'driving')
   const noChanges = useActive((s) => !s?.changes.length)
   const pointing = usePointing(kind === 'browser' ? null : id)
+  const blocked = usePointBlocked(id)
   const pressed = kind === 'browser' ? annotating : pointing
   const reason =
-    kind === 'browser' ? (driving ? `Claude is using this tab. ${DRIVING_NOTE}` : undefined) : noChanges ? NO_CHANGES : undefined
+    kind === 'browser' ? (driving ? `Claude is using this tab. ${DRIVING_NOTE}` : undefined) : kind === 'html' ? (blocked ?? undefined) : noChanges ? NO_CHANGES : undefined
   return (
     <button
       type="button"

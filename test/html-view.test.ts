@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createFileAccess, readText, TEXT_MAX } from '../src/main/surfaces/files.ts'
 import { capPath, climbOf, cspFor, createCaps, pageHref, pageUrlPath, rangeOf } from '../src/main/surfaces/protocol.ts'
-import { claudeRecord, gesture, holdsClaudes, isClaudes, movedOf, placeFrom, placeOf, refusalOf, startOf, superseding } from '../src/main/surfaces/html-view.ts'
+import { claudeRecord, gesture, holdsClaudes, isClaudes, movedOf, pickable, placeFrom, placeOf, refusalOf, startOf, superseding } from '../src/main/surfaces/html-view.ts'
 import { isHtml } from '../src/shared/html-view.ts'
 import type { TextRead } from '../src/shared/files.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -236,3 +236,10 @@ import { equal, ok } from './support/harness.mjs'
   equal((await fa.resolveAllowed('home', inHome, { consumer: 'file', operation: 'read-file' }) as { reason?: string }).reason, 'denied', 'cap: other consumers there stay denied')
   rmSync(fx, { recursive: true, force: true })
 }
+
+// A pick carries the file's revision only while the page shows that file.
+ok(pickable(false, 'i1', 'i1', 'i1'), 'pick: unchanged since served')
+ok(!pickable(true, 'i2', 'i2', 'i2'), 'pick: a change settled since the run, before any reload')
+ok(!pickable(false, 'i1', 'i2', 'i2'), 'pick: an edit the watcher has not settled yet')
+ok(!pickable(false, 'i1', 'i1', 'i2'), 'pick: an edit during the read')
+ok(!pickable(false, undefined, 'i1', 'i1') && !pickable(false, '', '', ''), 'pick: a page never served, or gone')

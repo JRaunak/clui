@@ -1,7 +1,7 @@
 // Boundary: a pin's chip label, from the element's role and accessible name. What Claude reads about a pin is
 // the <clui-context> record, tested in context.test.ts and packet.test.ts.
-import { clipName, pinWords, type AnnotateTarget } from '../src/shared/annotate.ts'
-import { equal } from './support/harness.mjs'
+import { clipName, isPoint, pinWords, samePoint, type AnnotateTarget } from '../src/shared/annotate.ts'
+import { equal, ok } from './support/harness.mjs'
 
 const target = (over: Partial<AnnotateTarget> = {}): AnnotateTarget => ({
   tag: 'button',
@@ -21,3 +21,8 @@ equal(words({}), JSON.stringify({ kind: 'button', name: 'Sign in' }), 'label: ro
 equal(words({ role: null, name: '', tag: 'div', text: 'Total' }), JSON.stringify({ kind: 'div', name: 'Total' }), 'label: no name falls back to the tag and its text')
 equal(words({ role: null, name: '', tag: 'hr', text: '' }), JSON.stringify({ kind: 'hr', name: '' }), 'label: nothing to quote')
 equal(clipName('A very long accessible name that goes past the chip'), 'A very long accessible name tha…', 'label: name cut to 32 characters')
+
+// Pointing's target crosses IPC from the renderer, so its shape is checked there.
+ok(isPoint({ kind: 'browser', tab: 2 }) && isPoint({ kind: 'html', viewId: 'a1b2' }), 'point: a browser tab or an HTML view')
+ok(!isPoint({ kind: 'browser', tab: 0 }) && !isPoint({ kind: 'html', viewId: '' }) && !isPoint({ kind: 'file', path: '/x' }) && !isPoint(null), 'point: anything else is refused')
+ok(samePoint({ kind: 'html', viewId: 'v' }, { kind: 'html', viewId: 'v' }) && !samePoint({ kind: 'browser', tab: 1 }, { kind: 'html', viewId: '1' }) && !samePoint(null, null), 'point: same only for the same tab or view')

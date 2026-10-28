@@ -33,6 +33,8 @@ function headOf(r: ContextReference, cwd: string | null): { main: string; tail: 
       return { main: relativeTo(cwd, r.path), tail: '' }
     case 'browser':
       return { main: refLabel(r), tail: hostOf(r.pin.target.url) }
+    case 'page':
+      return { main: refLabel(r), tail: relativeTo(cwd, r.path) }
     case 'change':
       return { main: relativeTo(cwd, r.path), tail: changeTail(r.side, r.old, r.new) }
     default:
@@ -100,6 +102,7 @@ export function RefCard({ pop, handleId, shown, n, cwd, onOpen }: {
           ? null
           : { kind: 'change', changeRef: r.changeRef, path: abs, side: r.side, ...(r.old ? { old: r.old } : {}), ...(r.new ? { new: r.new } : {}) }
       case 'browser':
+      case 'page':
         return null
       default:
         return r satisfies never

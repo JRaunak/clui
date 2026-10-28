@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { useActive, useSession } from '../../store'
 import { useNativeSlot } from '../../lib/useNativeSlot'
-import { requestSurfaceFocus, takePoint, takeSurfaceFocus, usePointRequest } from '../../lib/surfaceFocus'
+import { requestSurfaceFocus, setPointBlocked, setPointing, takePoint, takeSurfaceFocus, usePointRequest } from '../../lib/surfaceFocus'
 import { markNoPreview, type NoPreview } from '../../lib/presentation'
 import { blockedRow, hostLabel, hostsOf, noticeOf, pageLinkOf, policyParts, SELF_HOST } from '../../lib/htmlView'
 import { followFileLink, openLink } from '../../lib/openLink'
@@ -9,7 +9,7 @@ import { tilde } from '../../lib/tree'
 import { viaOf, type Via } from '../../lib/motion'
 import { usePopover } from '../Popover'
 import { Button } from '../Button'
-import { STRIP_BTN } from '../BrowserToolbar'
+import { AnnotateStrip, STRIP_BTN } from '../BrowserToolbar'
 import { IconFolderOpen, IconRefresh } from '../Icon'
 import { PANE_BTN } from './PaneHeader'
 import { cleanError, FileMissing, openDefault, REASON, RETRY, setStatus, STATE_BODY } from './fileDoc'
@@ -68,7 +68,6 @@ const BLOCKED_DETAIL = {
   offline: 'Local pages run offline. Pages Claude makes can load from the web.'
 } as const
 const OFFLINE_SELF = "Local pages run offline and can't fetch data, even from their own folder."
-const NO_POINT = "Point isn't available on page previews yet."
 /** Main's refusals of a page; size never sends a page to Source. */
 type PageRefusal = Exclude<NoPreview, 'too-large'>
 const OUTSIDE: Record<PageRefusal, { title: (name: string) => string; body: string }> = {
@@ -299,6 +298,9 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
           if (e.generation >= generation.current && e.generation !== dismissed.current) setBlocked(e)
           break
         case 'changed':
+          // A pin is the page as the old files rendered it, so any change ends pointing and drops the pins.
+          void window.clui.annotate(handleId, { kind: 'html', viewId }, false)
+          useSession.getState().invalidateSource(handleId, `page:${path}`, { reason: 'changed' })
           if (e.byClaude) {
             setOutsideEdit(false)
             setChangedSince(false)
@@ -312,6 +314,7 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
           }
           break
         case 'missing':
+          useSession.getState().invalidateSource(handleId, `page:${path}`, { reason: 'missing' })
           setStatus(statusKey, 'missing')
           setOpened({ t: 'missing' })
           break
@@ -390,18 +393,42 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
             ? { node: EVAL_MESSAGE, text: EVAL_MESSAGE, title: undefined }
             : blockedMessage(row.cause, row.count, blocked?.hosts ?? [])
           : null
-  // Said once as a strip appears, not again as a later block in the same load updates its counts.
+  const pointing = useActive((s) => s?.annotate.at?.kind === 'html' && s.annotate.at.viewId === viewId)
+  const pointReason = gate ? 'Run the page to point at it.' : stuck ? "This page isn't responding." : !shown ? 'This page has nothing to point at.' : null
+  const pointAt = useCallback(
+    (on: boolean): void => {
+      if (viewId) void window.clui.annotate(handleId, { kind: 'html', viewId }, on)
+    },
+    [handleId, viewId]
+  )
+  useEffect(() => setPointBlocked(tabId, pointReason), [tabId, pointReason])
+  useEffect(() => setPointing(tabId, pointing), [tabId, pointing])
+  useEffect(
+    () => () => {
+      setPointBlocked(tabId, null)
+      setPointing(tabId, false)
+    },
+    [tabId]
+  )
+  useEffect(() => {
+    if (pointing && (pointReason || occluded)) pointAt(false)
+  }, [pointing, pointReason, occluded, pointAt])
+  useEffect(() => () => pointAt(false), [pointAt])
+  const asked = usePointRequest(tabId)
+  useEffect(() => {
+    if (!asked || !takePoint(tabId)) return
+    if (pointReason) say(pointReason)
+    else pointAt(!pointing)
+  }, [asked, tabId, pointReason, pointing, pointAt, say])
+
+  // Said once as a strip appears, not again as a later block in the same load updates its counts. Pointing takes the
+  // strip's place, so a notice it held back is said when pointing ends.
   const spoken = useRef('')
   spoken.current = message?.text ?? ''
   const noticeKey = notice === 'blocked' ? `blocked:${row?.cause}:${blocked?.generation}` : notice
   useEffect(() => {
-    if (noticeKey) say(spoken.current)
-  }, [noticeKey, say])
-
-  const asked = usePointRequest(tabId)
-  useEffect(() => {
-    if (asked && takePoint(tabId)) say(NO_POINT)
-  }, [asked, tabId, say])
+    if (noticeKey && !pointing) say(spoken.current)
+  }, [noticeKey, pointing, say])
 
   if (opened.t === 'outside' && !explicit) return null
 
@@ -499,81 +526,86 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
           </button>
         </div>
       )}
-      {notice && message && (
-        <div
-          role="region"
-          aria-label={notice === 'changed' ? 'Page changed' : notice === 'stuck' ? 'Page not responding' : 'Blocked content'}
-          data-ui="html-strip"
-          data-notice={notice === 'blocked' ? row?.cause : notice}
-          className="flex shrink-0 items-center gap-2 border-b border-border bg-tool px-3 py-1.5"
-        >
-          <div className="flex min-w-0 flex-1 flex-col">
-            <p className="break-words text-label text-content" title={message.title}>
-              {message.node}
-            </p>
-            <p className="text-label text-dim">
-              {notice === 'changed' ? 'Reload to run the changed page.' : notice === 'stuck' ? 'A script may be stuck in a loop.' : row?.cause === 'offline' && blocked?.hosts.includes('self') ? OFFLINE_SELF : row && BLOCKED_DETAIL[row.cause]}
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-            {notice === 'changed' ? (
-              <>
-                <button
-                  type="button"
-                  className={STRIP_BTN}
-                  onClick={() => {
-                    reload()
-                    reloadRef.current?.focus()
-                  }}
-                >
-                  Reload
-                </button>
-                <button
-                  type="button"
-                  className={STRIP_BTN}
-                  onClick={() => {
-                    setOutsideEdit(false)
-                    policyRef.current?.focus()
-                  }}
-                >
-                  Dismiss
-                </button>
-              </>
-            ) : notice === 'stuck' ? (
-              <>
-                <button type="button" className={STRIP_BTN} onClick={reload}>
-                  Reload
-                </button>
-                <button type="button" className={STRIP_BTN} onClick={showSource}>
-                  Show source
-                </button>
-              </>
-            ) : (
-              <>
-                {row?.cause === 'remote' || row?.cause === 'data' ? (
-                  <button type="button" className={STRIP_BTN} onClick={toSettings}>
-                    Change in settings
+      {pointing ? (
+        <AnnotateStrip />
+      ) : (
+        notice &&
+        message && (
+          <div
+            role="region"
+            aria-label={notice === 'changed' ? 'Page changed' : notice === 'stuck' ? 'Page not responding' : 'Blocked content'}
+            data-ui="html-strip"
+            data-notice={notice === 'blocked' ? row?.cause : notice}
+            className="flex shrink-0 items-center gap-2 border-b border-border bg-tool px-3 py-1.5"
+          >
+            <div className="flex min-w-0 flex-1 flex-col">
+              <p className="break-words text-label text-content" title={message.title}>
+                {message.node}
+              </p>
+              <p className="text-label text-dim">
+                {notice === 'changed' ? 'Reload to run the changed page.' : notice === 'stuck' ? 'A script may be stuck in a loop.' : row?.cause === 'offline' && blocked?.hosts.includes('self') ? OFFLINE_SELF : row && BLOCKED_DETAIL[row.cause]}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              {notice === 'changed' ? (
+                <>
+                  <button
+                    type="button"
+                    className={STRIP_BTN}
+                    onClick={() => {
+                      reload()
+                      reloadRef.current?.focus()
+                    }}
+                  >
+                    Reload
                   </button>
-                ) : (
-                  <button type="button" className={STRIP_BTN} onClick={() => void openDefault(handleId, path)}>
-                    Open in default app
+                  <button
+                    type="button"
+                    className={STRIP_BTN}
+                    onClick={() => {
+                      setOutsideEdit(false)
+                      policyRef.current?.focus()
+                    }}
+                  >
+                    Dismiss
                   </button>
-                )}
-                <button
-                  type="button"
-                  className={STRIP_BTN}
-                  onClick={() => {
-                    dismissed.current = blocked?.generation ?? -1
-                    setBlocked(null)
-                    policyRef.current?.focus()
-                  }}
-                >
-                  Dismiss
-                </button>
-              </>
-            )}
+                </>
+              ) : notice === 'stuck' ? (
+                <>
+                  <button type="button" className={STRIP_BTN} onClick={reload}>
+                    Reload
+                  </button>
+                  <button type="button" className={STRIP_BTN} onClick={showSource}>
+                    Show source
+                  </button>
+                </>
+              ) : (
+                <>
+                  {row?.cause === 'remote' || row?.cause === 'data' ? (
+                    <button type="button" className={STRIP_BTN} onClick={toSettings}>
+                      Change in settings
+                    </button>
+                  ) : (
+                    <button type="button" className={STRIP_BTN} onClick={() => void openDefault(handleId, path)}>
+                      Open in default app
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={STRIP_BTN}
+                    onClick={() => {
+                      dismissed.current = blocked?.generation ?? -1
+                      setBlocked(null)
+                      policyRef.current?.focus()
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </>
+              )}
+            </div>
           </div>
-        </div>
+        )
       )}
       <div
         ref={areaRef}

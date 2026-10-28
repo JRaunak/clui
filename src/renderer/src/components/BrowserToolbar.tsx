@@ -288,7 +288,7 @@ export function BrowserDriveStrip(): JSX.Element {
   const recent = useActive((s) => recentOf(s?.browser))
   const several = useActive((s) => (s?.browser?.tabs.length ?? 0) > 1)
   const busy = useActive((s) => !!s?.busy)
-  const annotating = useActive((s) => !!s && s.annotate.tab === s.browser?.viewed)
+  const annotating = useActive((s) => s?.annotate.at?.kind === 'browser' && s.annotate.at.tab === s.browser?.viewed)
   const browserDrive = useSession((s) => s.browserDrive)
   const viewTab = useSession((s) => s.viewBrowserTab)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -433,8 +433,9 @@ export function BrowserDriveStrip(): JSX.Element {
   )
 }
 
-/** Takes the drive strip's place while the user annotates the viewed tab, which Claude isn't driving. */
-function AnnotateStrip(): JSX.Element {
+/** Takes the drive strip's place while the user annotates the viewed tab, which Claude isn't driving, and the notice
+ *  strip's place while they point at a page Preview. */
+export function AnnotateStrip(): JSX.Element {
   const refs = useActive((s) => (s ? refsOf(s, s.referenceEditTarget) : null))
   const pinned = refs?.filter((d) => d.pinId !== undefined).length ?? 0
   const full = (refs?.length ?? 0) >= MAX_REFS

@@ -180,7 +180,7 @@ const api: CluiApi = {
   browserNavigate: (handleId, tab, url) => ipcRenderer.invoke(IpcChannels.browserNavigate, handleId, tab, url),
   browserNav: (handleId, tab, action) => ipcRenderer.invoke(IpcChannels.browserNav, handleId, tab, action),
   browserDrive: (handleId, action, tab) => ipcRenderer.invoke(IpcChannels.browserDrive, handleId, action, tab),
-  browserAnnotate: (handleId, tab, on) => ipcRenderer.invoke(IpcChannels.browserAnnotate, handleId, tab, on),
+  annotate: (handleId, at, on) => ipcRenderer.invoke(IpcChannels.annotate, handleId, at, on),
   onAnnotateEvent: (cb) => {
     const listener = (_e: unknown, handleId: string, ev: AnnotateEvent): void => cb(handleId, ev)
     ipcRenderer.on(IpcChannels.annotateEvent, listener)

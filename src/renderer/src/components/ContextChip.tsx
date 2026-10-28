@@ -52,20 +52,21 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
       const where = dir === './' ? '' : `, in ${dir.slice(0, -1)}`
       return { key, n, glyph: 'folder', line1: refLabel(ref), line2: dir, title: rel, label: `Reference ${n}: ${spokenRef(ref)}${where}`, spoken: spokenRef(ref) }
     }
-    case 'browser': {
-      const t = ref.pin.target
-      const host = hostOf(t.url)
-      const { kind, name } = pinWords(t)
+    case 'browser':
+    case 'page': {
+      const { kind, name } = pinWords(ref.kind === 'browser' ? ref.pin.target : ref.target)
+      const where = ref.kind === 'browser' ? hostOf(ref.pin.target.url) : baseOf(ref.path)
+      const titled = ref.kind === 'browser' ? where : relTo(cwd, ref.path)
       return {
         key,
         n,
         glyph: 'target',
         thumb,
         line1: refLabel(ref),
-        line2: host,
+        line2: where,
         ...(thumb ? { disclose: 'with picture' } : {}),
-        title: `${name ? `${kind} "${name}"` : kind}${host ? ` on ${host}` : ''}${thumb ? ' · with picture' : ''}`,
-        label: `Reference ${n}: ${spokenRef(ref)}${host ? `, on ${host}` : ''}${thumb ? ', with picture' : ''}`,
+        title: `${name ? `${kind} "${name}"` : kind}${titled ? ` on ${titled}` : ''}${thumb ? ' · with picture' : ''}`,
+        label: `Reference ${n}: ${spokenRef(ref)}${where ? `, on ${where}` : ''}${thumb ? ', with picture' : ''}`,
         spoken: spokenRef(ref)
       }
     }

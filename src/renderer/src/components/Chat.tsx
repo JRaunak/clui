@@ -695,10 +695,10 @@ function QueuedAttachments({ atts, refs }: { atts: SendAttachment[]; refs: Draft
           key={r.id}
           data-ui="queued-ref"
           className="inline-flex h-6 max-w-60 items-center gap-1 rounded border border-border bg-bg-raised px-1.5 font-mono text-meta text-dim"
-          title={`${r.kind === 'browser' ? refLabel(r) : r.kind === 'change' ? `Claude's change to ${relativeTo(cwd, r.path)} · ${changeTail(r.side, r.old, r.new)}` : r.path}${r.note ? `\n${noteTitle(r.note)}` : ''}`}
+          title={`${r.kind === 'browser' ? refLabel(r) : r.kind === 'page' ? `${refLabel(r)} on ${relativeTo(cwd, r.path)}` : r.kind === 'change' ? `Claude's change to ${relativeTo(cwd, r.path)} · ${changeTail(r.side, r.old, r.new)}` : r.path}${r.note ? `\n${noteTitle(r.note)}` : ''}`}
         >
           <span className="text-content">{i + 1}</span>
-          {r.kind === 'browser' ? (
+          {r.kind === 'browser' || r.kind === 'page' ? (
             <IconTarget className="h-3 w-3 shrink-0" />
           ) : r.kind === 'change' ? (
             <IconDiff className="h-3 w-3 shrink-0" />

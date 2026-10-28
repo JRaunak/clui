@@ -42,7 +42,7 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   endedTasks: [],
   monitors: {},
   turnStartMs: null,
-  annotate: { tab: null, note: null },
+  annotate: { at: null, note: null },
   contextRefs: [],
   referenceNotices: {},
   changeRead: null,
@@ -240,7 +240,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   const pane = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
     browser,
     surfaces,
-    annotate: { tab: null, note: null },
+    annotate: { at: null, note: null },
     paneOpen: false,
     surfacePaneFull: true,
     paneAutoOpen: false,
@@ -337,7 +337,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   const browserOf = (ids: number[], viewed = ids[0]): any => ({ tabs: ids.map((id) => tab(id)), viewed, multi: ids.length > 1, toolTabs: {}, enter: [], announce: '' })
   const empty = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
   const fresh = (over: Record<string, unknown> = {}): void => {
-    reset({ browser: null, surfaces: empty, paneOpen: false, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, note: null }, ...over })
+    reset({ browser: null, surfaces: empty, paneOpen: false, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { at: null, note: null }, ...over })
     useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [], paneOpenedQuietly: false, settingsSection: null })
     notePaneInput(0)
   }
@@ -395,7 +395,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
   ok(sur().active === id && !cur().paneOpen, 'intent: a manual hide keeps the pane closed')
   fresh()
-  useSession.setState({ sessions: { ...st().sessions, h2: slice({ handleId: 'h2', browser: null, surfaces: empty, paneOpen: false, annotate: { tab: null, note: null } }) } })
+  useSession.setState({ sessions: { ...st().sessions, h2: slice({ handleId: 'h2', browser: null, surfaces: empty, paneOpen: false, annotate: { at: null, note: null } }) } })
   st().openSurface('h2', FILE, 'focus', 'claude', 'claude')
   ok(st().sessions.h2.surfaces.active === id && !st().sessions.h2.paneOpen && st().sessions.h2.paneAutoOpen, 'intent: a background session opens on its next visit')
 
@@ -792,7 +792,7 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
 
   // The note goes with the first tab and doesn't come back.
   const empty = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
-  reset({ browser: null, surfaces: empty, restoreNote: 'corrupt', paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, note: null }, tabsEvicted: false })
+  reset({ browser: null, surfaces: empty, restoreNote: 'corrupt', paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { at: null, note: null }, tabsEvicted: false })
   useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [], settingsSection: null, evictedTabs: [] })
   st().openSurface('h1', { kind: 'diff', key: '', title: 'Claude changes' }, 'open', 'user', 'user')
   st().closeSurface('h1', 'diff')
@@ -807,7 +807,7 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   }
   equal(evictionVictim(full(), 'file:/w/new.ts'), 'file:/w/1.ts', 'evict: the active tab is skipped even when it is the oldest')
   equal(evictionVictim({ ...full(), tabs: { ...singles } }, 'x'), null, 'evict: under the cap nothing goes')
-  reset({ browser: null, surfaces: full(), paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, note: null }, tabsEvicted: false, restoreNote: null })
+  reset({ browser: null, surfaces: full(), paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { at: null, note: null }, tabsEvicted: false, restoreNote: null })
   st().setSurfaceView('h1', 'file:/w/1.ts', { viewState: { kind: 'file', topLine: 77, offsetPx: 0, scrollLeft: 0 } })
   st().openSurface('h1', { kind: 'file', key: '/w/new.ts', title: 'new.ts' }, 'open', 'user', 'user')
   const sur = (): any => cur().surfaces
@@ -922,12 +922,31 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   ok(cur().queuedMessages[0]?.text === 'later' && cur().queuedMessages[0].refs.length === 1 && !cur().contextRefs.length, 'queue: typed text and structured refs, nothing serialized')
   ok(!orders().some((o) => !o.keep.includes(7)), 'queue: the pin survives the move from draft to queue')
 
+  // A page pin goes with any change to its page: a new revision of the file, or an asset its view saw change.
+  reset({ busy: false })
+  const { url: _u, ...pageTarget } = target
+  const page = (sel = '#s'): any => ({ kind: 'page', path: '/tmp/w/r.html', revision: V, target: { ...pageTarget, selector: sel } })
+  st().applyAnnotateEvent('h1', { type: 'pinned', pinId: 11, ref: page(), crop: null })
+  st().addRef('h1', lines())
+  await tick()
+  ok(cur().contextRefs[0]?.pinId === 11 && JSON.stringify(calls.filter((c) => c.name === 'syncRefWatches').at(-1)?.args[1]).includes('"path":"/tmp/w/r.html"'), 'page: a pick lands as a pinned ref and its file is watched')
+  st().invalidateSource('h1', 'page:/tmp/w/r.html', { reason: 'changed', version: V })
+  ok(cur().contextRefs.length === 2, 'page: its own revision keeps it')
+  st().invalidateSource('h1', 'page:/tmp/w/r.html', { reason: 'changed' })
+  ok(cur().contextRefs.length === 1 && cur().contextRefs[0].ref.kind === 'file' && cur().referenceNotices['page:/tmp/w/r.html']?.label === 'r.html', "page: an asset's change removes it, with the file's notice, and leaves the file's lines")
+  st().applyAnnotateEvent('h1', { type: 'pinned', pinId: 12, ref: page('#t'), crop: null })
+  ok(!cur().referenceNotices['page:/tmp/w/r.html'], 'page: pointing again clears the notice')
+  const htmlTab = { id: 'file:/tmp/w/r.html', kind: 'file', key: '/tmp/w/r.html', title: 'r.html', openedBy: 'user', mode: 'auto', openedAt: 0, lastViewedAt: 0 }
+  useSession.setState((x) => ({ sessions: { ...x.sessions, h1: { ...x.sessions.h1, surfaces: { order: [htmlTab.id], active: htmlTab.id, tabs: { [htmlTab.id]: htmlTab }, browserLastViewedAt: {}, browserUnseen: {} } } as any } }))
+  st().closeSurface('h1', htmlTab.id)
+  ok(cur().contextRefs.length === 1 && cur().referenceNotices['page:/tmp/w/r.html']?.reason === 'closed', "page: closing the page's tab removes it")
+
   // A pick the store refuses has its outline taken down.
   reset({ busy: false })
   for (let i = 1; i <= 20; i++) st().addRef('h1', lines(i, i))
   await tick()
   calls.length = 0
-  st().applyAnnotateEvent('h1', { type: 'pinned', pinId: 9, pin: pin().pin, crop: null })
+  st().applyAnnotateEvent('h1', { type: 'pinned', pinId: 9, ref: pin(), crop: null })
   await tick()
   ok(cur().contextRefs.length === 20 && orders().length === 1 && !orders()[0].keep.includes(9), 'pinned at cap: not added, and the forced sync drops the outline')
   ok(cur().annotate.note === '20 references max. Remove one to add another.', 'pinned at cap: the strip says why')
