@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createFileAccess, readText, TEXT_MAX } from '../src/main/surfaces/files.ts'
-import { capPath, cspFor, createCaps, rangeOf } from '../src/main/surfaces/protocol.ts'
+import { capPath, climbOf, cspFor, createCaps, pageHref, pageUrlPath, rangeOf } from '../src/main/surfaces/protocol.ts'
 import { claudeRecord, gesture, holdsClaudes, isClaudes, movedOf, refusalOf, superseding } from '../src/main/surfaces/html-view.ts'
 import { isHtml } from '../src/shared/html-view.ts'
 import type { TextRead } from '../src/shared/files.ts'
@@ -19,6 +19,19 @@ import { equal, ok } from './support/harness.mjs'
   equal(capPath('/.git/config'), null, 'cap path: dot directory')
   equal(capPath('/'), null, 'cap path: the root lists nothing')
   equal(capPath('/%E0%A4%A'), null, 'cap path: malformed escape')
+  const root = '/w/proj/site'
+  equal(pageUrlPath(root, 'm', 'a b.html'), '/m/m/m/a%20b.html', 'page url: a mask per folder, then the name')
+  const climb = (p: string) => JSON.stringify(climbOf(p, 'm', root))
+  equal(climb('/m/m/m/docs/x.html'), '{"up":0,"segs":["docs","x.html"]}', 'climb: below the page')
+  equal(climb('/m/m/up.html'), '{"up":1,"segs":["up.html"]}', 'climb: one folder up survives the URL')
+  equal(climb('/up.html'), '{"up":0,"segs":["up.html"]}', 'climb: no mask is rooted at the page, as a site root')
+  equal(climb('/m/m/m/m/x'), '{"up":0,"segs":["m","x"]}', 'climb: a mask below the page is a name')
+  equal(pageHref('clui-file://other/h/h/h/x.html', 'h', root), null, 'href: another host is not this page')
+  equal(pageHref('clui-file://h/h/h/h/docs/x.html?q=1#setup', 'h', root), './docs/x.html#setup', 'href: query dropped, fragment kept')
+  equal(pageHref('clui-file://h/h/up.html', 'h', root), '../../up.html', 'href: climb kept')
+  equal(pageHref('clui-file://h/h/h/h/a%20b.html', 'h', root), './a%20b.html', 'href: stays encoded for resolveHref')
+  equal(pageHref('file:///etc/hosts', 'h', root), 'file:///etc/hosts', 'href: file URL as written')
+  equal(pageHref('mailto:a@b.c', 'h', root), null, 'href: other schemes are no file link')
 }
 
 // Policies
@@ -42,17 +55,18 @@ import { equal, ok } from './support/harness.mjs'
 {
   let t = 0
   const g = gesture(() => t)
-  equal(g.take(), false, 'gesture: none before any input')
-  g.mark()
+  const key = { via: 'keyboard', meta: true, middle: false } as const
+  equal(g.take(), null, 'gesture: none before any input')
+  g.mark(key)
   t = 900
-  equal(g.take(), true, 'gesture: a navigation within the second counts')
-  equal(g.take(), false, 'gesture: consumed by the first navigation')
-  g.mark()
+  equal(g.take(), key, 'gesture: a navigation within the second counts, with how it was made')
+  equal(g.take(), null, 'gesture: consumed by the first navigation')
+  g.mark(key)
   t = 1900
-  equal(g.take(), true, 'gesture: exactly one second still counts')
-  g.mark()
+  equal(g.take(), key, 'gesture: exactly one second still counts')
+  g.mark(key)
   t = 2901
-  equal(g.take(), false, 'gesture: expires after one second')
+  equal(g.take(), null, 'gesture: expires after one second')
 }
 
 // The artifact rule and changed-since
@@ -151,6 +165,11 @@ import { equal, ok } from './support/harness.mjs'
   equal((await get('/%2e%2e%2fother%2ff.txt')).status, 404, 'cap: sibling folder through encoded traversal')
   equal((await get('/escape.txt')).status, 404, 'cap: a symlink out of the root')
   equal((await get('/index.html', 'POST')).status, 405, 'cap: reads only')
+  const masked = pageUrlPath(page, host, 'index.html')
+  equal(await (await get(masked)).text(), '<p>hi</p>', 'cap: the page at its masked path')
+  equal((await get(masked.replace('index.html', 'assets/a.css'))).status, 200, 'cap: an asset beside the masked page')
+  equal((await get(masked.replace(`${host}/index.html`, 'other/f.txt'))).status, 404, "cap: a climb out of the page's folder")
+  equal((await get(masked.replace(`${host}/index.html`, 'site/index.html'))).status, 200, "cap: a climb back into the page's folder")
   equal(JSON.stringify([...served.keys()].sort()), JSON.stringify([join(page, 'assets', 'a.css'), join(page, 'index.html')]), 'cap: records what it served, never a refused path')
   const ranged = (range: string) => caps.serve(new Request(`clui-file://${host}/index.html`, { headers: { range } }))
   const part = await ranged('bytes=3-5')

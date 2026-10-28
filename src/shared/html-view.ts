@@ -21,6 +21,8 @@ export interface HtmlBlocked {
   hosts: string[]
 }
 
+export type LinkVia = 'pointer' | 'keyboard'
+
 /** Every event names its view; one from a view the renderer no longer holds is stale. */
 export type HtmlViewEvent =
   /** The document is parsed: the view can be shown. A new generation starts with every main-frame load. */
@@ -37,7 +39,9 @@ export type HtmlViewEvent =
   /** The page file is gone; main has destroyed the view and revoked its cap. */
   | { type: 'missing'; viewId: string }
   | { type: 'still'; viewId: string; still: string }
-  /** A user's link activation in the page, already checked as http(s); the renderer routes it like any link. */
-  | { type: 'link'; viewId: string; url: string }
+  /** A user's link activation in the page, already checked as http(s); the renderer routes it like any link. `meta`: ⌘ was held. */
+  | { type: 'link'; viewId: string; url: string; meta: boolean }
+  /** A user's activation of a link to a file: `href` is relative to the page's folder with any climb above it kept, or a `file:` URL as written. */
+  | { type: 'file-link'; viewId: string; href: string; meta: boolean; via: LinkVia }
   /** The artifact settings changed and main recreated the view under `policy`, loading it again if it had run. */
   | { type: 'recreated'; viewId: string; policy: HtmlPolicy }

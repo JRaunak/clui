@@ -16,7 +16,7 @@ export interface SurfaceLocation {
   file?: string
   /** A Claude changes hunk id, with `file`. */
   hunk?: string
-  /** A heading id or footnote id a Markdown Preview scrolls to; Source ignores it. */
+  /** An element id a Preview scrolls to: a Markdown heading or footnote, or a page's own id; Source ignores it. */
   anchor?: string
 }
 export interface SurfaceSelection {

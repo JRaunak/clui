@@ -434,7 +434,7 @@ export interface CluiApi {
   onBrowserEvent: (cb: (handleId: string, e: BrowserEvent) => void) => () => void
   /** A Preview of `path` for the pane tab `tabId`, replacing that tab's earlier view. Loads at once unless
    *  `changedSince`. The view is hidden until htmlSetVisible. */
-  htmlOpen: (handleId: string, tabId: string, path: string) => Promise<HtmlOpenResult>
+  htmlOpen: (handleId: string, tabId: string, path: string, anchor?: string) => Promise<HtmlOpenResult>
   /** Fire-and-forget: sent at most once per animation frame. */
   htmlSetBounds: (viewId: string, b: PaneBounds | null) => void
   /** Resolves to a fresh still captured just before hiding, or null. Showing one native view hides every other. */

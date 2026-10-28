@@ -778,7 +778,7 @@ function registerIpc(): void {
     if (fromTrustedFrame(e)) browser.setBounds(handleId, b)
   })
   handle(IpcChannels.browserSetVisible, (_e, handleId: string, visible: boolean) => browser.setVisible(handleId, visible))
-  handle(IpcChannels.htmlOpen, (_e, handleId: string, tabId: string, path: string) => html.open(handleId, tabId, path))
+  handle(IpcChannels.htmlOpen, (_e, handleId: string, tabId: string, path: string, anchor: unknown) => html.open(handleId, tabId, path, anchor))
   ipcMain.on(IpcChannels.htmlSetBounds, (e, viewId: string, b: PaneBounds | null) => {
     if (fromTrustedFrame(e)) html.setBounds(viewId, b)
   })

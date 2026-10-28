@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { useActive, useSession } from '../../store'
 import { useNativeSlot } from '../../lib/useNativeSlot'
-import { requestSurfaceFocus, takePoint, usePointRequest } from '../../lib/surfaceFocus'
+import { requestSurfaceFocus, takePoint, takeSurfaceFocus, usePointRequest } from '../../lib/surfaceFocus'
 import { markNoPreview, type NoPreview } from '../../lib/presentation'
-import { blockedRow, hostLabel, hostsOf, noticeOf, policyParts, SELF_HOST } from '../../lib/htmlView'
-import { openLink } from '../../lib/openLink'
-import { viaOf } from '../../lib/motion'
+import { blockedRow, hostLabel, hostsOf, noticeOf, pageLinkOf, policyParts, SELF_HOST } from '../../lib/htmlView'
+import { followFileLink, openLink } from '../../lib/openLink'
+import { tilde } from '../../lib/tree'
+import { viaOf, type Via } from '../../lib/motion'
 import { usePopover } from '../Popover'
 import { Button } from '../Button'
 import { STRIP_BTN } from '../BrowserToolbar'
@@ -77,6 +78,21 @@ const OUTSIDE: Record<PageRefusal, { title: (name: string) => string; body: stri
   }
 }
 const EVAL_MESSAGE = "A script on this page needs eval, which pages in Clui can't use."
+
+/** A file link the user followed in the page at `page`. One that can't open says why and opens no tab. */
+async function openPageLink(handleId: string, page: string, href: string, meta: boolean, via: Via): Promise<void> {
+  const cwd = useSession.getState().sessions[handleId]?.cwd
+  const link = cwd ? pageLinkOf(href, cwd, page) : null
+  if (!cwd || !link) return
+  const warn = (message: string): void => useSession.getState().setNotice(message, 'warn')
+  if (link.t === 'outside') return warn(`${tilde(link.path, window.clui.homeDir)} is outside this session's folder, so the preview can't open it.`)
+  if (link.t === 'hidden') return warn(`${link.rel} is a hidden file. Open it with ⌘P if you meant to.`)
+  const { ref } = link
+  const abs = `${cwd}/${ref.rel}`
+  const dir = !(await window.clui.statFile(handleId, abs)).ok
+  if (dir && !(await window.clui.listDir(handleId, ref.rel)).ok) return warn(`${ref.rel} doesn't exist in this session's folder.`)
+  followFileLink(handleId, abs, ref, dir, meta, via)
+}
 
 function PolicyButton({ policy, changedSince, paneTitle, buttonRef }: { policy: HtmlPolicy; changedSince: boolean; paneTitle: boolean; buttonRef: (el: HTMLButtonElement | null) => void }): JSX.Element {
   const openSettings = useSession((s) => s.openSettings)
@@ -155,6 +171,7 @@ function PolicyButton({ policy, changedSince, paneTitle, buttonRef }: { policy: 
  */
 export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; tabId: string; explicit: boolean }): JSX.Element | null {
   const path = useActive((s) => s?.surfaces.tabs[tabId]?.key ?? '')
+  const anchor = useActive((s) => s?.surfaces.tabs[tabId]?.location?.anchor)
   const setView = useSession((s) => s.setSurfaceView)
   const openSettings = useSession((s) => s.openSettings)
   const name = baseOf(path)
@@ -193,7 +210,7 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
     setBlocked(null)
     setOutsideEdit(false)
     const slowTimer = setTimeout(() => setSlow(true), LOADING_MS)
-    window.clui.htmlOpen(handleId, tabId, path).then(
+    window.clui.htmlOpen(handleId, tabId, path, anchor).then(
       (r) => {
         if (!live) return void (r.ok && window.clui.htmlClose(r.viewId))
         if (!r.ok) {
@@ -220,7 +237,7 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
       clearTimeout(slowTimer)
       if (id) void window.clui.htmlClose(id)
     }
-  }, [handleId, tabId, path, statusKey, reopen])
+  }, [handleId, tabId, path, anchor, statusKey, reopen])
   useEffect(() => () => setStatus(statusKey, null), [statusKey])
 
   // A deleted page comes back on its own, as a missing File tab does.
@@ -282,7 +299,10 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
           setStill(e.still)
           break
         case 'link':
-          void openLink(e.url, false)
+          void openLink(e.url, e.meta)
+          break
+        case 'file-link':
+          void openPageLink(handleId, path, e.href, e.meta, e.via)
           break
         case 'recreated':
           setOpened((o) => (o.t === 'open' && o.viewId === e.viewId ? { ...o, policy: e.policy } : o))
@@ -291,7 +311,7 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
           break
       }
     })
-  }, [viewId, artifact, gate, statusKey, say])
+  }, [viewId, artifact, gate, statusKey, say, handleId, path])
 
   const areaRef = useRef<HTMLDivElement>(null)
   const report = useCallback((b: PaneBounds) => viewId && window.clui.htmlSetBounds(viewId, b), [viewId])
@@ -300,6 +320,10 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
   useLayoutEffect(() => {
     if (viewId) void window.clui.htmlSetVisible(viewId, shown && !occluded)
   }, [viewId, shown, occluded])
+  // A user open lands on the page's region once there's a page, so its label is what a screen reader says.
+  useEffect(() => {
+    if (shown && takeSurfaceFocus(tabId)) areaRef.current?.focus({ preventScroll: true })
+  }, [shown, tabId])
 
   // Under the changed-since gate any reload is Run, so it clears the gate.
   const reload = (): void => {

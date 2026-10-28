@@ -1,6 +1,6 @@
 // The HTML view's renderer rules: which presentation a tab shows, the policy line, and which strip wins.
 import { markNoPreview, presentationOf, hasFind } from '../src/renderer/src/lib/presentation.ts'
-import { blockedRow, hostLabel, hostsOf, noticeOf, policyParts } from '../src/renderer/src/lib/htmlView.ts'
+import { blockedRow, hostLabel, hostsOf, noticeOf, pageLinkOf, policyParts } from '../src/renderer/src/lib/htmlView.ts'
 import { equal } from './support/harness.mjs'
 
 const same = (a: unknown, b: unknown, m: string): void => equal(JSON.stringify(a), JSON.stringify(b), m)
@@ -78,4 +78,20 @@ const same = (a: unknown, b: unknown, m: string): void => equal(JSON.stringify(a
   equal(noticeOf({ changed: false, stuck: true, blocked: true }), 'stuck', 'notice: N2 outranks N3')
   equal(noticeOf({ changed: false, stuck: false, blocked: true }), 'blocked', 'notice: N3 alone')
   equal(noticeOf({ changed: false, stuck: false, blocked: false }), null, 'notice: none')
+}
+
+// Page links
+{
+  const page = '/w/site/index.html'
+  const link = (href: string) => pageLinkOf(href, '/w', page)
+  same(link('./other.html'), { t: 'file', ref: { rel: 'site/other.html' } }, 'page link: beside the page')
+  same(link('./docs/x.html#setup'), { t: 'file', ref: { rel: 'site/docs/x.html', anchor: 'setup' } }, 'page link: the fragment is the anchor')
+  same(link('../up.html'), { t: 'file', ref: { rel: 'up.html' } }, "page link: a climb stays in the session's folder")
+  same(link('../../x.html'), { t: 'outside', path: '/x.html' }, 'page link: a climb out of it')
+  same(link('file:///etc/hosts'), { t: 'outside', path: '/etc/hosts' }, 'page link: a file URL outside')
+  same(link('file:///w/a.ts#L4'), { t: 'file', ref: { rel: 'a.ts', line: 4 } }, 'page link: a file URL inside, with its line')
+  same(link('./.env'), { t: 'hidden', rel: 'site/.env' }, 'page link: a dotfile')
+  same(link('../.git/config'), { t: 'hidden', rel: '.git/config' }, 'page link: a dot folder')
+  equal(link('./index.html'), null, 'page link: the page itself')
+  equal(link('../'), null, "page link: the session's folder")
 }

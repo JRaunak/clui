@@ -10,11 +10,11 @@ import { stat } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import type { PaneBounds } from '../../shared/browser'
 import type { Refusal, TextRead } from '../../shared/files'
-import { isHtml, type HtmlBlocked, type HtmlOpenResult, type HtmlPolicy, type HtmlViewEvent } from '../../shared/html-view'
+import { isHtml, type HtmlBlocked, type HtmlOpenResult, type HtmlPolicy, type HtmlViewEvent, type LinkVia } from '../../shared/html-view'
 import { IpcChannels } from '../../shared/ipc'
 import { CHUNK_MAX, readBytes, readText, revisionOf, statFile, type createFileAccess, type FileAccess, type FileResource } from './files'
 import { NativeViewSlot, stillOf } from './native-slot'
-import { createCaps, SCHEME } from './protocol'
+import { createCaps, pageHref, pageUrlPath, SCHEME } from './protocol'
 
 const PARTITION = 'clui-artifact'
 /** Pages that may load nothing from the network. CSP doesn't cover WebRTC or DNS prefetch, so this partition's
@@ -28,19 +28,31 @@ const STILL_MS = 500
 const READ: FileAccess = { consumer: 'web', operation: 'read-file' }
 const USER_INPUT = new Set(['mouseDown', 'mouseUp', 'rawKeyDown', 'keyDown', 'mouseWheel'])
 
+/** `meta`: ⌘ held on a key. A mouse event carries no modifiers, so a ⌘-click shows only as a background-tab open. */
+export interface Gesture {
+  via: LinkVia
+  meta: boolean
+  middle: boolean
+}
+
 /**
  * Electron gives navigations no gesture flag, but real input reaches `input-event` and `before-input-event`
  * a few ms before the link activation it causes, and script-made navigation brings none. So a navigation
  * counts as the user's only within a second of a mouseUp or Enter, and one gesture allows one navigation.
  */
-export function gesture(now: () => number = Date.now): { mark(): void; take(): boolean } {
+export function gesture(now: () => number = Date.now): { mark(g: Gesture): void; take(): Gesture | null } {
   let at = -Infinity
+  let last: Gesture | null = null
   return {
-    mark: () => void (at = now()),
+    mark: (g) => {
+      at = now()
+      last = g
+    },
     take: () => {
-      const ok = now() - at <= GESTURE_MS
+      const g = now() - at <= GESTURE_MS ? last : null
       at = -Infinity
-      return ok
+      last = null
+      return g
     }
   }
 }
@@ -134,6 +146,8 @@ interface View {
   /** Canonical. */
   path: string
   root: string
+  /** `#id` or '': where a fresh load of the page starts. A reload keeps the page where it is. */
+  anchor: string
   policy: HtmlPolicy
   host: string
   view: WebContentsView
@@ -195,8 +209,9 @@ export class HtmlViews {
     return this.views.get(v.id) === v && v.view.webContents === wc
   }
 
-  async open(handleId: string, tabId: string, path: string): Promise<HtmlOpenResult> {
-    if (typeof tabId !== 'string' || !tabId || tabId.length > 1000) return refuse('invalid')
+  /** `anchor`: an element id the first load scrolls to. */
+  async open(handleId: string, tabId: string, path: string, anchor?: unknown): Promise<HtmlOpenResult> {
+    if (typeof tabId !== 'string' || !tabId || tabId.length > 1000 || (anchor !== undefined && (typeof anchor !== 'string' || anchor.length > 1000))) return refuse('invalid')
     const leads = this.opening(`${handleId}\0${tabId}`)
     const r = await this.deps.files.resolveAllowed(handleId, path, READ)
     if (!r.ok) return r
@@ -220,6 +235,7 @@ export class HtmlViews {
       tabId,
       path: r.path,
       root,
+      anchor: anchor ? `#${encodeURIComponent(anchor)}` : '',
       policy,
       host: this.caps.issue({ handleId, root, policy, served }),
       view: this.create(policy),
@@ -257,11 +273,16 @@ export class HtmlViews {
   }
 
   private wire(v: View, wc: WebContents): void {
-    const link = (url: string): void => {
-      if (this.mine(v, wc) && v.gesture.take() && /^https?:\/\//i.test(url)) this.emit({ type: 'link', viewId: v.id, url })
+    const link = (url: string, tab = false): void => {
+      const g = this.mine(v, wc) ? v.gesture.take() : null
+      if (!g) return
+      const meta = g.meta || (tab && !g.middle)
+      if (/^https?:\/\//i.test(url)) return this.emit({ type: 'link', viewId: v.id, url, meta })
+      const href = pageHref(url, v.host, v.root)
+      if (href) this.emit({ type: 'file-link', viewId: v.id, href, meta, via: g.via })
     }
     wc.setWindowOpenHandler((d) => {
-      link(d.url)
+      link(d.url, d.disposition === 'background-tab')
       return { action: 'deny' }
     })
     wc.on('will-navigate', (e) => {
@@ -271,12 +292,12 @@ export class HtmlViews {
     wc.on('will-redirect', (e) => e.preventDefault())
     wc.on('input-event', (_e, input) => {
       if (!USER_INPUT.has(input.type) || !this.mine(v, wc)) return
-      if (input.type === 'mouseUp') v.gesture.mark()
+      if (input.type === 'mouseUp') v.gesture.mark({ via: 'pointer', meta: false, middle: 'button' in input && input.button === 'middle' })
       this.stillSoon(v)
     })
     wc.on('before-input-event', (e, input) => {
       if (input.type !== 'keyDown' || !this.mine(v, wc)) return
-      if (input.key === 'Enter') v.gesture.mark()
+      if (input.key === 'Enter') v.gesture.mark({ via: 'keyboard', meta: input.meta, middle: false })
       // A focused page swallows F6, so the region cycle is handed back to the renderer's own.
       if (input.key !== 'F6' || input.meta || input.control || input.alt) return
       e.preventDefault()
@@ -285,7 +306,13 @@ export class HtmlViews {
       win.webContents.focus()
       win.webContents.send(IpcChannels.menuAction, input.shift ? 'region-prev' : 'region-next', true)
     })
-    wc.on('console-message', (e) => this.mine(v, wc) && this.refused(v, e.message))
+    wc.on('console-message', (e) => {
+      if (!this.mine(v, wc)) return
+      // Chromium refuses a page's file: link before any navigation event, so its console is the only place it shows.
+      const file = /^Not allowed to load local resource: (file:\/\/\S+)$/.exec(e.message)
+      if (file) link(file[1])
+      else this.refused(v, e.message)
+    })
     wc.on('did-start-navigation', (e) => {
       if (!e.isMainFrame || e.isSameDocument || !this.mine(v, wc)) return
       v.generation++
@@ -341,7 +368,7 @@ export class HtmlViews {
     v.unattributed = []
     this.sync(v)
     if (v.loaded && wc.getURL().startsWith(`${SCHEME}://${v.host}/`)) wc.reload()
-    else void wc.loadURL(`${SCHEME}://${v.host}/${encodeURIComponent(basename(v.path))}`).catch(() => {})
+    else void wc.loadURL(`${SCHEME}://${v.host}${pageUrlPath(v.root, v.host, basename(v.path))}${v.anchor}`).catch(() => {})
     v.loaded = true
   }
 

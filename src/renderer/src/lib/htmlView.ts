@@ -1,4 +1,5 @@
 import type { HtmlBlocked, HtmlPolicy } from '../../../shared/html-view'
+import { resolveHref, type FileRef } from './fileLinks'
 
 /** The policy line's parts, shown joined by `·`. */
 export function policyParts(p: HtmlPolicy, changedSince: boolean): string[] {
@@ -34,4 +35,19 @@ export type NoticeKind = 'changed' | 'stuck' | 'blocked'
 /** One strip at a time: an outside change outranks a stuck page, which outranks blocked content. */
 export function noticeOf(s: { changed: boolean; stuck: boolean; blocked: boolean }): NoticeKind | null {
   return s.changed ? 'changed' : s.stuck ? 'stuck' : s.blocked ? 'blocked' : null
+}
+
+export type PageLink = { t: 'file'; ref: FileRef } | { t: 'hidden'; rel: string } | { t: 'outside'; path: string }
+
+/**
+ * What a link in the page at `page` leads to, or null for nothing: the page itself, or the session's folder. Link
+ * text is the page's to write, so a dot path is refused rather than shown under a label the page chose.
+ */
+export function pageLinkOf(href: string, cwd: string, page: string): PageLink | null {
+  const hit = resolveHref(href, cwd, page.slice(0, page.lastIndexOf('/')))
+  if (!hit) return null
+  if (hit.kind === 'outside') return { t: 'outside', path: hit.path }
+  const { rel } = hit.ref
+  if (rel.split('/').some((s) => s.startsWith('.'))) return { t: 'hidden', rel }
+  return `${cwd}/${rel}` === page ? null : { t: 'file', ref: hit.ref }
 }

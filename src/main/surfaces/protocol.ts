@@ -55,6 +55,42 @@ export function capPath(pathname: string): string[] | null {
   return segs.length && !segs.some((s) => s.startsWith('.')) ? segs : null
 }
 
+const depthOf = (root: string): number => root.split(sep).filter(Boolean).length
+
+/**
+ * A page's URL path: one `mask` segment per folder above it, then its name. Chromium clamps `..` at the URL root,
+ * so a page loaded at the root would turn `../up.html` into its own folder's `up.html`; under the masks the climb
+ * survives, and they show the page only how deep its folder is.
+ */
+export const pageUrlPath = (root: string, mask: string, name: string): string => `/${[...Array<string>(depthOf(root)).fill(mask), encodeURIComponent(name)].join('/')}`
+
+/**
+ * A cap URL path as how many folders it climbs above the page's and the segments below that, still encoded. A path
+ * with no masks left is rooted at the page's folder, as a site's `/x` is, so a climb past the filesystem root reads
+ * the same way.
+ */
+export function climbOf(pathname: string, mask: string, root: string): { up: number; segs: string[] } {
+  const all = pathname.split('/').filter(Boolean)
+  const depth = depthOf(root)
+  let n = 0
+  while (n < depth && all[n] === mask) n++
+  return { up: n ? depth - n : 0, segs: all.slice(n) }
+}
+
+/** A navigation as an href relative to the page's folder with its climb kept, a `file:` URL as written, or null when it's no file link. */
+export function pageHref(url: string, host: string, root: string): string | null {
+  if (/^file:\/\//i.test(url)) return url
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    return null
+  }
+  if (u.protocol !== `${SCHEME}:` || u.hostname !== host) return null
+  const { up, segs } = climbOf(u.pathname, host, root)
+  return `${up ? '../'.repeat(up) : './'}${segs.join('/')}${u.hash}`
+}
+
 const MIME: Record<string, string> = {
   '.html': 'text/html',
   '.htm': 'text/html',
@@ -117,9 +153,10 @@ export function createCaps(resolve: (handleId: string, path: string) => Promise<
     const cap = caps.get(host)
     if (!cap) return status(403)
     if (req.method !== 'GET' && req.method !== 'HEAD') return status(405)
-    const segs = capPath(url.pathname)
+    const at = climbOf(url.pathname, host, cap.root)
+    const segs = capPath(`/${at.segs.join('/')}`)
     if (!segs) return status(404)
-    const r = await resolve(cap.handleId, join(cap.root, ...segs))
+    const r = await resolve(cap.handleId, join(cap.root, ...Array<string>(at.up).fill('..'), ...segs))
     // The canonical path, so a symlink beside the page can't reach the rest of the workspace, or a dotfile.
     if (!r.ok || !within(cap.root, r.path) || relative(cap.root, r.path).split(sep).some((x) => x.startsWith('.'))) return status(caps.get(host) === cap ? 404 : 403)
     const s = await statFile(r)

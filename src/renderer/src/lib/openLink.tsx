@@ -150,8 +150,13 @@ export function fileLinkTitle(rel: string, at: Pick<FileRef, 'line' | 'endLine'>
  *  is the macOS context-menu gesture, so only ⌘ inverts. */
 export function openFileLink(handleId: string, path: string, at: Pick<FileRef, 'line' | 'endLine' | 'anchor'>, dir: boolean, e: MouseEvent): void {
   e.preventDefault()
-  if ((useLinkTarget.getState().file === 'clui') === e.metaKey) return void openEditor(handleId, path, dir ? undefined : at.line)
-  openFileAt(handleId, path, at, dir, viaOf(e))
+  followFileLink(handleId, path, at, dir, e.metaKey, viaOf(e))
+}
+
+/** `openFileLink` for a gesture that arrived without a DOM event, as one in a native page does. */
+export function followFileLink(handleId: string, path: string, at: Pick<FileRef, 'line' | 'endLine' | 'anchor'>, dir: boolean, meta: boolean, via: Via): void {
+  if ((useLinkTarget.getState().file === 'clui') === meta) return void openEditor(handleId, path, dir ? undefined : at.line)
+  openFileAt(handleId, path, at, dir, via)
 }
 
 /** Whether `rel` is a folder in the session's listed workspace, for a path that doesn't say so with a slash. */
