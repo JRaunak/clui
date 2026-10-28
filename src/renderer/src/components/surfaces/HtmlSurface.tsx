@@ -90,7 +90,7 @@ function keepPlace(handleId: string, tabId: string, page: PagePlace | null): voi
   if (!tab || !page) return
   const key = fileViewKey(tab.kind)
   const v = tab[key]
-  st.setSurfaceView(handleId, tabId, { [key]: { ...(v?.kind === 'file' ? v : { kind: 'file', topLine: 1, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 }), page } })
+  st.setSurfaceView(handleId, tabId, { [key]: { ...(v?.kind === 'file' ? v : { kind: 'file', topLine: 1, offsetPx: 0, scrollLeft: 0 }), page } })
 }
 
 /** A file link the user followed in the page at `page`. One that can't open says why and opens no tab. */

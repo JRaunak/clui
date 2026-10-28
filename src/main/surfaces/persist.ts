@@ -82,7 +82,6 @@ function fileView(v: unknown): Extract<SurfaceViewState, { kind: 'file' }> {
     topLine: int(o.topLine),
     offsetPx: num(o.offsetPx),
     scrollLeft: num(o.scrollLeft),
-    previewScrollTop: num(o.previewScrollTop),
     ...some('find', o.find, (x) => str(x, TEXT_MAX)),
     ...some('page', o.page, (x) => {
       const p = obj(x)

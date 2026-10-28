@@ -28,7 +28,7 @@ const file = (key: string, over: Record<string, unknown> = {}): any => ({
   openedBy: 'user',
   openedAt: 10,
   lastViewedAt: 20,
-  viewState: { kind: 'file', topLine: 40, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 },
+  viewState: { kind: 'file', topLine: 40, offsetPx: 0, scrollLeft: 0 },
   ...over
 })
 const tree = { id: 'tree', kind: 'tree', key: '', title: 'w', openedBy: 'user', openedAt: 1, lastViewedAt: 2, viewState: { kind: 'tree', expanded: ['src', 'src/lib'], scrollTop: 30 } }
@@ -54,9 +54,12 @@ const withSet = (patch: Record<string, unknown>): any => {
   ok(parsed?.set.tabs['file:/w/a.ts'].viewState?.kind === 'file' && (parsed.set.tabs['file:/w/a.ts'].viewState as any).topLine === 40, 'persist: typed view state kept')
   ok(!('selection' in (parsed?.set.tabs['file:/w/a.ts'] ?? {})) && !('location' in (parsed?.set.tabs['file:/w/a.ts'] ?? {})), 'persist: selections and destinations are dropped')
   ok(parseEntry(entry({ browserTabs: null }))?.browserTabs === null, 'persist: no browser records is valid')
-  const page = { kind: 'file', topLine: 1, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0, page: { x: 0, y: 3200 } }
+  const page = { kind: 'file', topLine: 1, offsetPx: 0, scrollLeft: 0, page: { x: 0, y: 3200 } }
   const html = parseEntry(withSet({ tabs: { tree, 'file:/w/a.ts': file('/w/a.ts', { viewState: page }) } }))
   ok((html?.set.tabs['file:/w/a.ts'].viewState as any)?.page?.y === 3200, "persist: an HTML Preview's place is kept")
+  const old = parseEntry(withSet({ tabs: { tree, 'file:/w/a.ts': file('/w/a.ts', { viewState: { kind: 'file', topLine: 7, offsetPx: 0, scrollLeft: 0, previewScrollTop: 120 } }) } }))
+  const oldView = old?.set.tabs['file:/w/a.ts'].viewState as any
+  ok(oldView?.topLine === 7 && !('previewScrollTop' in oldView), 'persist: an older file with previewScrollTop loads without it')
 }
 {
   const bad: [string, unknown][] = [
@@ -64,7 +67,7 @@ const withSet = (patch: Record<string, unknown>): any => {
     ['id not its resource', withSet({ tabs: { tree, 'file:/w/a.ts': file('/w/a.ts', { id: 'file:/w/b.ts' }) } })],
     ['relative key', withSet({ order: ['file:w/a.ts'], active: null, tabs: { 'file:w/a.ts': file('w/a.ts') } })],
     ['view state of another kind', withSet({ tabs: { tree, 'file:/w/a.ts': file('/w/a.ts', { viewState: { kind: 'tree', expanded: [], scrollTop: 0 } }) } })],
-    ['a page place that is no number', withSet({ tabs: { tree, 'file:/w/a.ts': file('/w/a.ts', { viewState: { kind: 'file', topLine: 1, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0, page: { x: 0, y: '9' } } }) } })],
+    ['a page place that is no number', withSet({ tabs: { tree, 'file:/w/a.ts': file('/w/a.ts', { viewState: { kind: 'file', topLine: 1, offsetPx: 0, scrollLeft: 0, page: { x: 0, y: '9' } } }) } })],
     ['an artifact view state', withSet({ order: ['tree', 'artifact:/w/a.html'], active: null, tabs: { tree, 'artifact:/w/a.html': { ...file('/w/a.html'), id: 'artifact:/w/a.html', kind: 'artifact', viewState: { kind: 'artifact', scrollX: 0, scrollY: 0 } } } })],
     ['non-finite scroll', withSet({ tabs: { tree: { ...tree, viewState: { kind: 'tree', expanded: [], scrollTop: null } }, 'file:/w/a.ts': file('/w/a.ts') } })],
     ['tab missing from order', withSet({ order: ['tree'], active: 'tree' })],

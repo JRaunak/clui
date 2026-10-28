@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
 import { useSession } from '../../store'
 import { IMAGE_PATHS_MAX, type ImageCap } from '../../../../shared/files'
-import type { SurfaceLocation } from '../../../../shared/surfaces'
+import type { BackPlace, SurfaceLocation } from '../../../../shared/surfaces'
 import { CodeBlock, DocContext, docRow, FileLinkContext, GutterNum, PointedRow, type DocLinks } from '../Markdown'
 import { FindField } from '../FindField'
 import { SelectionBar } from './SelectionBar'
@@ -27,6 +27,7 @@ const SYNC_MAX = 8 * 1024
 // Elements per render: a paragraph row measured ~26 µs to render, a linked list item more, so this keeps a commit
 // near 10–20 ms with room for slower machines.
 const CHUNK = 400
+const BACK_MAX = 50
 const NOT_FOUND: { ranges: Range[]; more: boolean } = { ranges: [], more: false }
 
 type Band = { kind: 'pointed' | 'sel' | 'wash'; top: number; height: number }
@@ -337,16 +338,65 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
     return () => clearTimeout(t)
   }, [flash])
 
-  const jump = (frag: string, via: Via, focus = true): void => {
+  // Back: the link a click or Enter activated in the column, for the jump it starts.
+  const followed = useRef<HTMLAnchorElement | null>(null)
+  const backOf = (): { revision: string; places: BackPlace[] } | undefined => useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]?.back
+  const placeOf = (a: HTMLAnchorElement): BackPlace | null => {
+    const href = a.getAttribute('href')
+    const body = bodyEl.current
+    if (!href || !body || !colEl.current) return null
+    const nth = Array.from(colEl.current.querySelectorAll(`a[href="${CSS.escape(href)}"]`)).indexOf(a)
+    return { line: body.scrollTop > 0 ? topLine() : 0, link: { line: spanAt(a)?.start ?? 0, href, nth } }
+  }
+  const goBack = (): void => {
+    const b = backOf()
+    const p = b?.places.at(-1)
+    if (!p || !base || b?.revision !== revision) return
+    setView(handleId, tabId, { back: b.places.length > 1 ? { revision: b.revision, places: b.places.slice(0, -1) } : undefined })
+    reach(Math.max(rowOf(base.rows, p.line), rowOf(base.rows, p.link.line)), () => {
+      const body = bodyEl.current
+      if (!body) return
+      const el = p.line ? blockForLine(p.line) : null
+      if (el) pin(el)
+      else {
+        unpin()
+        body.scrollTop = 0
+      }
+      const a = colEl.current?.querySelectorAll<HTMLElement>(`a[href="${CSS.escape(p.link.href)}"]`)[p.link.nth]
+      ;(a ?? body).focus({ preventScroll: true })
+    })
+  }
+  const backRef = useRef(goBack)
+  backRef.current = goBack
+  useEffect(
+    () =>
+      window.clui.onMenuAction((a) => {
+        if (a === 'pane-back') backRef.current()
+      }),
+    []
+  )
+  // Entries are source lines, which a change can move, so Back never outlives the revision it was made in.
+  const back = tab?.back
+  useEffect(() => {
+    if (back && revision !== null && back.revision !== revision) setView(handleId, tabId, { back: undefined })
+  }, [back, revision, handleId, tabId, setView])
+
+  const jump = (frag: string, via: Via, focus: boolean, from: HTMLAnchorElement | null): void => {
     const col = colEl.current
     const t = col?.querySelector<HTMLElement>(`[id="${CSS.escape(frag)}"]`) ?? col?.querySelector<HTMLElement>(`[id="${CSS.escape(`user-content-${frag}`)}"]`)
     if (!t) {
       const at = base ? rowWithId(base.rows, frag) : -1
       const row = at >= 0 || !base ? at : rowWithId(base.rows, `user-content-${frag}`)
-      if (row >= shown) return reach(row, () => jumpRef.current(frag, via, focus))
+      if (row >= shown) return reach(row, () => jumpRef.current(frag, via, focus, from))
       return say(`There's no heading "${frag}" in this file.`)
     }
+    const place = from?.isConnected ? placeOf(from) : null
+    const before = bodyEl.current?.scrollTop
     pin(t)
+    if (place && revision !== null && bodyEl.current?.scrollTop !== before) {
+      const b = backOf()
+      setView(handleId, tabId, { back: { revision, places: [...(b?.revision === revision ? b.places : []), place].slice(-BACK_MAX) } })
+    }
     if (focus) {
       if (!t.hasAttribute('tabindex') && t.tabIndex < 0) t.tabIndex = -1
       t.focus({ preventScroll: true })
@@ -356,7 +406,7 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
   const jumpRef = useRef(jump)
   jumpRef.current = jump
   const links = useMemo<DocLinks | null>(
-    () => (path ? { base: path.slice(0, path.lastIndexOf('/')) || '/', images: images0, jump: (frag, via) => jumpRef.current(frag, via) } : null),
+    () => (path ? { base: path.slice(0, path.lastIndexOf('/')) || '/', images: images0, jump: (frag, via) => jumpRef.current(frag, via, true, followed.current) } : null),
     [path, images0]
   )
 
@@ -393,7 +443,7 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
       applied.current = location
       const via = openVia.current
       openVia.current = 'keyboard'
-      if (location.anchor) return jump(location.anchor, via, false)
+      if (location.anchor) return jump(location.anchor, via, false, followed.current)
       const { line, endLine } = location
       if (line) {
         return reach(rowOf(base.rows, line), () => {
@@ -424,7 +474,7 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
     const n = topLine()
     const v = useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]?.viewState
     if (v?.kind === 'file' && v.topLine === n) return
-    setView(handleId, tabId, { viewState: { kind: 'file', topLine: n, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
+    setView(handleId, tabId, { viewState: { kind: 'file', topLine: n, offsetPx: 0, scrollLeft: 0 } })
   }
   const saveRef = useRef(saveTop)
   saveRef.current = saveTop
@@ -660,6 +710,11 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
         data-pointing={pointing ? '' : undefined}
         className={COLUMN}
         onClick={onColumnClick}
+        onClickCapture={(e) => {
+          followed.current = e.target instanceof Element ? e.target.closest('a') : null
+          // A self-link's anchor reaches the location effect within this task; no later jump may claim the link.
+          setTimeout(() => (followed.current = null))
+        }}
         onMouseDown={(e) => {
           // A gutter click picks lines, so a text selection left from earlier would claim different ones and ⌘C copy it.
           if (!(e.target instanceof Element && e.target.closest('[data-num]'))) return
@@ -733,7 +788,7 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
         data-ui="markdown-body"
         data-beside-header=""
         {...(doc.t === 'loading' ? {} : { 'data-pane-title': '' })}
-        aria-keyshortcuts="Meta+Shift+A Meta+F"
+        aria-keyshortcuts="Meta+Shift+A Meta+F Meta+["
         onKeyDown={onRegionKey}
         onWheel={unpin}
         onMouseDown={(e) => {

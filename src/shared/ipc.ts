@@ -474,6 +474,7 @@ export type MenuAction =
   | 'pane-reload'
   /** Swaps the active tab between Source and Preview. */
   | 'pane-presentation'
+  | 'pane-back'
   /** F6 / ⇧F6 pressed inside a native page, handed back to the renderer's region cycle. */
   | 'region-next'
   | 'region-prev'
@@ -624,4 +625,6 @@ export interface MenuState {
   presentation: 'source' | 'preview' | 'none'
   /** An HTML Preview is the active tab and focus is in the pane, so ⌘R reloads it. Main adds a focused HTML page itself. */
   reload: boolean
+  /** Focus is in a Markdown Preview whose anchor jumps have a place to go back to. */
+  back: boolean
 }

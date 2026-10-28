@@ -47,7 +47,7 @@ export interface SurfaceSelection {
 export type SurfaceViewState =
   | { kind: 'tree'; expanded: string[]; scrollTop: number }
   /** `page`: an HTML Preview's document scroll, kept beside Source's place. */
-  | { kind: 'file'; topLine: number; offsetPx: number; scrollLeft: number; previewScrollTop: number; find?: string; page?: PagePlace }
+  | { kind: 'file'; topLine: number; offsetPx: number; scrollLeft: number; find?: string; page?: PagePlace }
   | { kind: 'diff'; path?: string; segmentId?: string; revision?: string; topHunk?: string; offsetPx: number; find?: string }
   | { kind: 'image'; zoom: number | 'fit'; panX: number; panY: number }
   | { kind: 'doc'; page: number; zoom: number | 'fit-width' | 'fit-page'; offsetPx: number; find?: string }
@@ -75,6 +75,14 @@ export interface SurfaceTab {
   unseen?: boolean
   /** Tree only: the file whose tab was active when the tree took over, revealed once on mount. Never saved. */
   reveal?: string
+  /** Markdown Preview only: the places its anchor jumps left, newest last, in the revision they were made in. Never saved. */
+  back?: { revision: string; places: BackPlace[] }
+}
+
+/** Where an anchor jump left the reader: the top block's start line, 0 at the document's top, and the link followed. */
+export interface BackPlace {
+  line: number
+  link: { line: number; href: string; nth: number }
 }
 
 /** Browser content and identity stay in BrowserManager and slice.browser; this only places them. */

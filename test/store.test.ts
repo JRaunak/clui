@@ -528,7 +528,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   ok(!cur().paneAutoOpenSuppressed, 'suppression: cleared on the next prompt')
 
   // setSurfaceView refuses a viewState of another kind.
-  st().setSurfaceView('h1', 'diff', { viewState: { kind: 'file', topLine: 1, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
+  st().setSurfaceView('h1', 'diff', { viewState: { kind: 'file', topLine: 1, offsetPx: 0, scrollLeft: 0 } })
   ok(!sur().tabs.diff.viewState, 'view state: a mismatched kind is refused')
   st().setSurfaceView('h1', 'diff', { viewState: { kind: 'diff', offsetPx: 12 } })
   ok(sur().tabs.diff.viewState?.offsetPx === 12, 'view state: a matching kind is kept')
@@ -808,7 +808,7 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   equal(evictionVictim(full(), 'file:/w/new.ts'), 'file:/w/1.ts', 'evict: the active tab is skipped even when it is the oldest')
   equal(evictionVictim({ ...full(), tabs: { ...singles } }, 'x'), null, 'evict: under the cap nothing goes')
   reset({ browser: null, surfaces: full(), paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { tab: null, note: null }, tabsEvicted: false, restoreNote: null })
-  st().setSurfaceView('h1', 'file:/w/1.ts', { viewState: { kind: 'file', topLine: 77, offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 } })
+  st().setSurfaceView('h1', 'file:/w/1.ts', { viewState: { kind: 'file', topLine: 77, offsetPx: 0, scrollLeft: 0 } })
   st().openSurface('h1', { kind: 'file', key: '/w/new.ts', title: 'new.ts' }, 'open', 'user', 'user')
   const sur = (): any => cur().surfaces
   ok(Object.keys(sur().tabs).length === 24 && !sur().tabs['file:/w/1.ts'] && sur().active === 'file:/w/new.ts', 'evict: opening a 25th tab closes the oldest eligible one first')

@@ -281,7 +281,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     const v = useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]?.[viewKey]
     if (v?.kind === 'file' && v.topLine === n) return
     // The same state holds an HTML Preview's place, which this mustn't drop.
-    setView(handleId, tabId, { [viewKey]: { ...(v?.kind === 'file' ? v : { kind: 'file', offsetPx: 0, scrollLeft: 0, previewScrollTop: 0 }), topLine: n } })
+    setView(handleId, tabId, { [viewKey]: { ...(v?.kind === 'file' ? v : { kind: 'file', offsetPx: 0, scrollLeft: 0 }), topLine: n } })
   }
   useEffect(
     () => () => {

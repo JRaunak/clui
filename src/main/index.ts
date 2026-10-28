@@ -140,7 +140,7 @@ app.on('web-contents-created', (_e, wc) => {
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
 const TAKES_TYPING = new Set<MenuAction>(['find-in-conversation', 'find-next', 'find-prev', 'open-file', 'file-goto', 'open-palette', 'open-command-palette', 'search-global'])
-let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false }, fileLines: false, presentation: 'none', reload: false }
+let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false }, fileLines: false, presentation: 'none', reload: false, back: false }
 const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = {
   file: 'Open in Editor',
   diff: 'Open Diff in Editor',
@@ -264,7 +264,9 @@ function buildMenu(): void {
           enabled: menuState.presentation !== 'none',
           click: () => send('pane-presentation')
         },
-        { label: 'Reload Page', accelerator: 'CmdOrCtrl+R', enabled: menuState.reload || (!!focusedPage && !!htmlViews?.owns(focusedPage)), click: () => send('pane-reload') }
+        { label: 'Reload Page', accelerator: 'CmdOrCtrl+R', enabled: menuState.reload || (!!focusedPage && !!htmlViews?.owns(focusedPage)), click: () => send('pane-reload') },
+        { type: 'separator' },
+        { label: 'Back', accelerator: 'CmdOrCtrl+[', enabled: menuState.back, click: () => send('pane-back') }
       ]
     },
     {

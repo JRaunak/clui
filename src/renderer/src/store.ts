@@ -869,7 +869,7 @@ interface SessionStore {
 
 export type SurfaceSpec = Pick<SurfaceTab, 'kind' | 'key' | 'title'> &
   Partial<Pick<SurfaceTab, 'mode' | 'location' | 'highlight' | 'provenance'>>
-export type SurfaceViewPatch = Partial<Pick<SurfaceTab, 'mode' | 'location' | 'selection' | 'highlight' | 'viewState' | 'sourceView' | 'reveal'>>
+export type SurfaceViewPatch = Partial<Pick<SurfaceTab, 'mode' | 'location' | 'selection' | 'highlight' | 'viewState' | 'sourceView' | 'reveal' | 'back'>>
 
 /**
  * The effort ceiling the CLI will enforce for a model, or undefined when none is set. A

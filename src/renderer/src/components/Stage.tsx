@@ -25,7 +25,7 @@ import { StatusBar } from './StatusBar'
 import { Notice } from './Notice'
 import { SPLIT_MIN, getStage } from '../lib/stage'
 import { focusPaneTitle } from '../lib/dive'
-import { fileLike, presentationOf, useNoPreview } from '../lib/presentation'
+import { fileLike, isMarkdown, presentationOf, useNoPreview } from '../lib/presentation'
 import { isHtml } from '../../../shared/html-view'
 
 export type PaneState = 'collapsed' | 'half' | 'full'
@@ -141,6 +141,7 @@ export function Stage({
   const fileStatus = useFileStatus(handleId, filePath)
   const noPreview = !!useNoPreview(handleId, filePath)
   const shown = presentationOf(fileKind && filePath !== null ? { kind: fileKind, key: filePath, mode: fileMode } : undefined, noPreview)
+  const hasBack = useActive((s) => !!(fileKind && s?.surfaces.active && s.surfaces.tabs[s.surfaces.active]?.back?.places.length))
   const externalBlocked = useActive((s) => !!browserExternalBlock(viewedTabOf(s?.browser)?.url ?? ''))
   // The native menu can't read the renderer, so its pane, browser and Open externally items follow what this Stage shows.
   useEffect(() => {
@@ -162,9 +163,10 @@ export function Stage({
       fileLines: fileStatus === 'text' && shown !== 'preview',
       presentation: !shown ? 'none' : shown === 'preview' ? 'source' : 'preview',
       // A focused page is main's to report, so this covers only focus in the pane's own DOM.
-      reload: shown === 'preview' && !!filePath && isHtml(filePath) && focusInSecondary
+      reload: shown === 'preview' && !!filePath && isHtml(filePath) && focusInSecondary,
+      back: shown === 'preview' && !!filePath && isMarkdown(filePath) && hasBack && focusInSecondary
     })
-  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, shown, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary])
+  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, shown, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary, hasBack])
 
   const pane = useMemo<PaneApi>(
     () => ({
