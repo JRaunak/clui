@@ -2,12 +2,24 @@
  * The pane's place in the window for native views. A view sits in the pane, parked, or out of the
  * window. Only one slot is shown at a time across the window: showing one hides every other.
  */
-import type { BrowserWindow, WebContentsView } from 'electron'
+import type { BrowserWindow, WebContents, WebContentsView } from 'electron'
 import type { PaneBounds } from '../../shared/browser'
+import { capture } from '../browser/cdp'
 
 const PARK_SIZE = { width: 800, height: 600 }
 
 const shown = new Set<NativeViewSlot>()
+
+/** The page's current frame at device pixels, since the still stands in for the live page on screen. */
+export async function stillOf(wc: WebContents | undefined): Promise<string | null> {
+  if (!wc || wc.isDestroyed()) return null
+  try {
+    const img = await capture(wc, { format: 'png' })
+    return img && `data:image/png;base64,${img.data.toString('base64')}`
+  } catch {
+    return null
+  }
+}
 
 export class NativeViewSlot {
   /** The pane in CSS px as the renderer reports it, or null while it isn't laid out. */

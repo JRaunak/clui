@@ -20,12 +20,12 @@ import {
 } from '../../shared/browser'
 import type { DomainEvent } from '../../shared/events'
 import type { SavedBrowser } from '../../shared/surfaces'
-import { Cdp, capture } from './cdp'
+import { Cdp } from './cdp'
 import { hideCursor, injectCursor, restCursor } from './cursor'
 import { approve, decideLocalNet, forgetLocalNet, isApproved, isApprovedCached, listSites, localNetCached } from './sites'
 import { IpcChannels, type CluiApi } from '../../shared/ipc'
 import { saveLogin } from './vault'
-import { NativeViewSlot } from '../surfaces/native-slot'
+import { NativeViewSlot, stillOf } from '../surfaces/native-slot'
 
 type LoginVerdict = Parameters<CluiApi['browserLoginVerdict']>[2]
 
@@ -296,7 +296,7 @@ export class BrowserManager {
   private async suspend(handleId: string, e: Entry, t: Tab): Promise<void> {
     const view = t.view
     if (!view) return
-    const still = await this.still(t)
+    const still = await stillOf(t.view?.webContents)
     // The capture yields, and the tab may have been viewed, driven or closed meanwhile.
     if (t.view !== view || this.busy(handleId, e, t)) return
     e.slot.place(view, null)
@@ -565,22 +565,10 @@ export class BrowserManager {
     return this.refreshStill(handleId, t)
   }
 
-  /** At device pixels, since the still stands in for the live page on screen. */
-  private async still(t: Tab): Promise<string | null> {
-    const wc = t.view?.webContents
-    if (!wc || wc.isDestroyed()) return null
-    try {
-      const img = await capture(wc, { format: 'png' })
-      return img && `data:image/png;base64,${img.data.toString('base64')}`
-    } catch {
-      return null
-    }
-  }
-
   private async refreshStill(handleId: string, t: Tab): Promise<string | null> {
     if (t.stillTimer) clearTimeout(t.stillTimer)
     t.stillTimer = null
-    const still = await this.still(t)
+    const still = await stillOf(t.view?.webContents)
     if (still && this.find(handleId, t.id)?.[1] === t) this.patch(handleId, t, { still })
     return still ?? t.state.still
   }

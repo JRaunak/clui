@@ -12,9 +12,8 @@ import type { PaneBounds } from '../../shared/browser'
 import type { Refusal, TextRead } from '../../shared/files'
 import { isHtml, type HtmlBlocked, type HtmlOpenResult, type HtmlPolicy, type HtmlViewEvent } from '../../shared/html-view'
 import { IpcChannels } from '../../shared/ipc'
-import { capture } from '../browser/cdp'
 import { readText, revisionOf, type createFileAccess, type FileAccess } from './files'
-import { NativeViewSlot } from './native-slot'
+import { NativeViewSlot, stillOf } from './native-slot'
 import { createCaps, SCHEME } from './protocol'
 
 const PARTITION = 'clui-artifact'
@@ -394,13 +393,7 @@ export class HtmlViews {
   private async refreshStill(v: View): Promise<string | null> {
     clearTimeout(v.timers.still)
     const view = v.view
-    let still: string | null = null
-    try {
-      const img = live(view.webContents) ? await capture(view.webContents, { format: 'png' }) : null
-      still = img && `data:image/png;base64,${img.data.toString('base64')}`
-    } catch {
-      /* no frame to capture */
-    }
+    const still = await stillOf(view.webContents)
     if (this.views.get(v.id) !== v || v.view !== view) return v.still
     if (still) {
       v.still = still
