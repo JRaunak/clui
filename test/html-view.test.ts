@@ -2,9 +2,9 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { createFileAccess } from '../src/main/surfaces/files.ts'
+import { createFileAccess, readText, TEXT_MAX } from '../src/main/surfaces/files.ts'
 import { capPath, cspFor, createCaps, rangeOf } from '../src/main/surfaces/protocol.ts'
-import { claudeRecord, gesture, isClaudes, movedOf, refusalOf, superseding } from '../src/main/surfaces/html-view.ts'
+import { claudeRecord, gesture, holdsClaudes, isClaudes, movedOf, refusalOf, superseding } from '../src/main/surfaces/html-view.ts'
 import { isHtml } from '../src/shared/html-view.ts'
 import type { TextRead } from '../src/shared/files.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -173,6 +173,18 @@ import { equal, ok } from './support/harness.mjs'
 
   const other = caps.issue({ handleId: 'h1', root: join(ws, 'other'), policy, served: new Map() })
   ok(other !== host && (await get('/f.txt', 'GET', other)).status === 200, 'cap: each view its own host')
+  // Past TEXT_MAX the read is partial, so the whole file is compared with Claude's write.
+  const big = `<p>${'é'.repeat(TEXT_MAX / 2)}</p>`
+  writeFileSync(join(page, 'big.html'), big)
+  const bigR = await fa.resolveAllowed('h1', join(page, 'big.html'), { consumer: 'file', operation: 'read-file' })
+  ok(bigR.ok, 'changed-since: the big page resolves')
+  if (bigR.ok) {
+    const bigRead = await readText(bigR)
+    ok(bigRead.ok && bigRead.truncated, 'changed-since: the big page reads partial')
+    equal(await holdsClaudes(bigR, big, bigRead), true, "changed-since: a big page holding Claude's bytes")
+    equal(await holdsClaudes(bigR, big.replace('</p>', '</b>'), bigRead), false, 'changed-since: a big page whose tail differs')
+    equal(await holdsClaudes(bigR, `${big}\n`, bigRead), false, 'changed-since: a big page of another size')
+  }
   caps.revoke(host)
   equal((await get('/index.html')).status, 403, 'cap: revoked, a late request fails')
   equal((await get('/f.txt', 'GET', other)).status, 200, 'cap: revoking one leaves another')

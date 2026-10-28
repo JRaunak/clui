@@ -12,7 +12,7 @@ import type { PaneBounds } from '../../shared/browser'
 import type { Refusal, TextRead } from '../../shared/files'
 import { isHtml, type HtmlBlocked, type HtmlOpenResult, type HtmlPolicy, type HtmlViewEvent } from '../../shared/html-view'
 import { IpcChannels } from '../../shared/ipc'
-import { readText, revisionOf, type createFileAccess, type FileAccess } from './files'
+import { CHUNK_MAX, readBytes, readText, revisionOf, statFile, type createFileAccess, type FileAccess, type FileResource } from './files'
 import { NativeViewSlot, stillOf } from './native-slot'
 import { createCaps, SCHEME } from './protocol'
 
@@ -53,6 +53,21 @@ export function claudeRecord(path: string, segs: readonly { created: boolean; af
 /** The file holds exactly Claude's last write. A partial or undecodable read can't show that, so it never does. */
 export const isClaudes = (after: string | null, read: TextRead | Refusal): boolean =>
   after !== null && read.ok && !read.truncated && !read.binary && !read.unsupportedEncoding && read.text === after
+
+/** As `isClaudes`, but a read cut short at TEXT_MAX is settled by comparing the whole file's bytes with Claude's write. */
+export async function holdsClaudes(r: FileResource, after: string | null, read: TextRead | Refusal): Promise<boolean> {
+  if (isClaudes(after, read)) return true
+  if (after === null || !read.ok || !read.truncated) return false
+  const want = Buffer.from(after)
+  const s = await statFile(r)
+  if (!s.ok || s.size !== want.length) return false
+  for (let offset = 0; offset < s.size; ) {
+    const c = await readBytes(r, { revision: s.revision, offset, length: Math.min(CHUNK_MAX, s.size - offset) })
+    if (!c.ok || !c.bytes.length || !c.bytes.equals(want.subarray(offset, offset + c.bytes.length))) return false
+    offset += c.bytes.length
+  }
+  return true
+}
 
 /** Opens per key where a newer one supersedes any still in flight. The check says, once, whether this one still leads. */
 export function superseding(): (key: string) => () => boolean {
@@ -189,6 +204,7 @@ export class HtmlViews {
     const { artifact, after } = claudeRecord(r.path, await this.deps.segments(handleId, r.path))
     const read = artifact ? await readText(r) : null
     if (read && !read.ok) return read
+    const changedSince = !!read && !(await holdsClaudes(r, after, read))
     await this.sealed
     const win = this.deps.window()
     // A newer open of this tab, StrictMode's second mount among them, owns it now.
@@ -224,7 +240,6 @@ export class HtmlViews {
     this.views.set(id, v)
     this.wire(v, v.view.webContents)
     void this.watch(v)
-    const changedSince = !!read && !isClaudes(after, read)
     if (!changedSince) this.load(v)
     return { ok: true, viewId: id, policy, changedSince }
   }
@@ -470,7 +485,7 @@ export class HtmlViews {
         const { after } = claudeRecord(path, await this.deps.segments(v.handleId, path))
         if (after === null) return false
         const r = await this.deps.files.resolveAllowed(v.handleId, path, READ)
-        return r.ok && isClaudes(after, await readText(r))
+        return r.ok && holdsClaudes(r, after, await readText(r))
       })
     )
     return checks.every(Boolean)
