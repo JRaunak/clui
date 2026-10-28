@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useSession } from '../../store'
 import type { NoPreview, Presentation } from '../../lib/presentation'
 import { IconCode, IconEye } from '../Icon'
@@ -10,11 +11,21 @@ const WHY: Record<NoPreview, string> = {
   'too-large': 'Files over 1 MB preview their first 1 MB.'
 }
 
+let sayHere: ((text: string) => void) | null = null
+/** Speaks through the pane header's live region, which survives the Preview-to-Source swap that unmounts the caller. */
+export const sayInHeader = (text: string): void => sayHere?.(text)
+
 /** Swaps a tab between Source and Preview. It names the action, so the label changes instead of a pressed state.
  *  `noPreview`: why `auto` shows Source, which the title says before the user asks for a Preview. */
 export function PresentationButton({ handleId, tabId, shown, noPreview }: { handleId: string; tabId: string; shown: Presentation; noPreview: NoPreview | null }): JSX.Element {
   const setView = useSession((s) => s.setSurfaceView)
   const [said, say] = useSay()
+  useEffect(() => {
+    sayHere = say
+    return () => {
+      if (sayHere === say) sayHere = null
+    }
+  }, [say])
   const preview = shown === 'preview'
   const label = preview ? 'Show source' : 'Show preview'
   const swap = (): void => {

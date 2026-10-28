@@ -21,11 +21,12 @@ import hljs from '../lib/hljs'
 import { IconCopy, IconCheck, IconImage, IconTarget } from './Icon'
 import { fileLinkTitle, LINK, linkHandlers, linkTitle, openFileLink, useLinkTarget, type LinkRoot } from '../lib/openLink'
 import { isLocalHref, listedIn, resolveCode, resolveHref, type FileRef } from '../lib/fileLinks'
-import { spanAttr, textOf } from '../lib/markdownDoc'
+import { spanAttr, textOf, type Span } from '../lib/markdownDoc'
 import { viaOf, type Via } from '../lib/motion'
 import { useActive } from '../store'
 import { IMAGE_PATHS_MAX, type ImageCap } from '../../../shared/files'
 import { parseUsageReport, UsageCard, parseContextReport, ContextCard } from './CommandOutput'
+import { MermaidDiagram } from './Mermaid'
 
 type Highlighted = { html: string; used: string | null }
 
@@ -417,8 +418,11 @@ function DocLink({ node, href, children, className: _class, ...rest }: JSX.Intri
   )
 }
 
-/** The fence languages that render as something other than code. */
-const FENCES: Partial<Record<string, (code: string) => JSX.Element>> = {}
+/** Fence languages that render as something other than code; `span` includes both fence lines, and null falls back
+ *  to the code. */
+const FENCES: Partial<Record<string, (code: string, span: Span) => JSX.Element | null>> = {
+  mermaid: (code, span) => (code.trim() ? <MermaidDiagram code={code} firstLine={span.start + 1} lastLine={span.start + code.split('\n').length} /> : null)
+}
 
 const heading = (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6', className: string): Components['h1'] =>
   function Heading({ node, id, className: given, children }) {
@@ -446,11 +450,12 @@ const DOCUMENT: Components = {
     const code = node?.children.find((c): c is Element => c.type === 'element' && c.tagName === 'code')
     const text = code ? textOf(code).replace(/\n$/, '') : ''
     const lang = /language-(\S+)/.exec(String((code?.properties.className as string[] | undefined)?.join(' ') ?? ''))?.[1] ?? null
-    const custom = lang ? FENCES[lang] : undefined
+    const p = node?.position
+    const custom = lang && p ? FENCES[lang]?.(text, { start: p.start.line, end: p.end.line }) : null
     return (
-      <div data-src={spanAttr(node?.position)} className="my-4">
+      <div data-src={spanAttr(p)} className="my-4">
         <Num node={node} />
-        {custom ? custom(text) : <CodeBlock code={text} lang={lang} />}
+        {custom ?? <CodeBlock code={text} lang={lang} />}
       </div>
     )
   },

@@ -4,6 +4,7 @@ import { App } from './App'
 import { useSession, activeSlice, type PerSessionState } from './store'
 import { trackReducedTransparency } from './lib/theme'
 import { resetHeroForTests } from './components/Hero'
+import { mermaidTestHooks } from './lib/mermaid'
 import './styles.css'
 import './find-marks.css'
 
@@ -14,12 +15,15 @@ const w = window as unknown as {
   __cluiStore?: typeof useSession
   __cluiActive?: () => PerSessionState | null
   __cluiResetHero?: () => void
+  __cluiMermaid?: typeof mermaidTestHooks
 }
 w.__cluiStore = useSession
 // Lets the screenshot harness replay the once-per-launch hero.
 w.__cluiResetHero = resetHeroForTests
 // The active session's slice (state is keyed per session under keep-sessions-alive).
 w.__cluiActive = () => activeSlice(useSession.getState())
+// Lets a probe slow or fail the diagram renderer's chunk, which no Playwright route reaches.
+w.__cluiMermaid = mermaidTestHooks
 
 trackReducedTransparency()
 

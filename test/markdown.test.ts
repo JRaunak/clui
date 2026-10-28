@@ -90,7 +90,7 @@ const same = (a: unknown, b: unknown, m: string): void => equal(JSON.stringify(a
 // Which tabs preview
 {
   const tab = (key: string, mode?: 'auto' | 'source' | 'preview') => ({ kind: 'file' as const, key, ...(mode ? { mode } : {}) })
-  ok(hasPreview('/w/a.md') && hasPreview('/w/A.MARKDOWN') && !hasPreview('/w/a.mmd'), 'preview: Markdown has one, Mermaid not yet')
+  ok(hasPreview('/w/a.md') && hasPreview('/w/A.MARKDOWN') && !hasPreview('/w/a.txt'), 'preview: Markdown has one, plain text none')
   equal(presentationOf(tab('/w/a.md'), false), 'preview', 'preview: a Markdown tab previews')
   markNoPreview('h', '/w/big.md', 'too-large')
   equal(hasFind('h', tab('/w/big.md')), true, 'find: a big file in Source finds')

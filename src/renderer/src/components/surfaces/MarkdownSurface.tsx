@@ -5,7 +5,8 @@ import type { SurfaceLocation } from '../../../../shared/surfaces'
 import { CodeBlock, DocContext, docRow, FileLinkContext, GutterNum, PointedRow, type DocLinks } from '../Markdown'
 import { FindField } from '../FindField'
 import { SelectionBar } from './SelectionBar'
-import { BANNER, baseOf, DocState, FIND_MAX, FLASH_MS, rangeText, SelectionNotice, STATE_BODY, TEXT_BTN, useFileDoc, useFind, VIEW_SETTLE_MS } from './fileDoc'
+import { BANNER, baseOf, DocState, FIND_MAX, FLASH_MS, rangeText, SelectionNotice, STATE_BODY, TEXT_BTN, useFileDoc, useFind, VIEW_SETTLE_MS, viewSourceAt } from './fileDoc'
+import { DiagramContext, type DiagramHost } from '../Mermaid'
 import { blockFor, docTree, frontMatter, joinSpans, meets, nextChunk, parseSpan, pointAt, previewEnd, rowOf, rowWithId, type DocTree, type Span } from '../../lib/markdownDoc'
 import { findRe } from '../../lib/find'
 import { latestParse } from '../../lib/markdownParse'
@@ -35,6 +36,9 @@ interface Blocks {
 }
 
 const numOf = (el: HTMLElement | null): HTMLElement | null => el?.querySelector<HTMLElement>('[data-num]') ?? null
+/** A selection inside a drawn diagram marks its nodes instead; only one that covers the diagram marks its block. */
+const marksBlock = (el: HTMLElement, block: Span, sel: Span): boolean =>
+  meets(block, sel) && ((sel.start <= block.start && block.end <= sel.end) || !el.querySelector(':scope > [data-ui="mermaid"] svg'))
 
 /**
  * The rows covered by the blocks in `els` that meet `span`, relative to the column. Consecutive blocks in the span
@@ -44,7 +48,7 @@ function bandsOf(kind: Band['kind'], b: Blocks, span: Span, top: number): Band[]
   const out: Band[] = []
   let joined = false
   for (let i = 0; i < b.els.length; i++) {
-    if (!meets(b.spans[i], span)) {
+    if (kind === 'sel' ? !marksBlock(b.els[i], b.spans[i], span) : !meets(b.spans[i], span)) {
       joined = false
       continue
     }
@@ -260,7 +264,7 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
     marked.current = []
     if (selection) {
       for (let i = 0; i < b.els.length; i++) {
-        const n = meets(b.spans[i], selection) ? numOf(b.els[i]) : null
+        const n = marksBlock(b.els[i], b.spans[i], selection) ? numOf(b.els[i]) : null
         if (!n) continue
         n.setAttribute('data-sel', '')
         marked.current.push(n)
@@ -475,6 +479,13 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
     anchor.current = active.current = b
     setSelection(b)
   }
+  const pickRef = useRef(pick)
+  pickRef.current = pick
+  const [held] = useState((): DiagramHost['held'] => new Map())
+  const diagrams = useMemo<DiagramHost>(
+    () => ({ selection, pointed: highlight, pick: (l, shift) => pickRef.current(l, shift), viewSource: (line, via) => viewSourceAt(handleId, tabId, line, via), held }),
+    [selection, highlight, handleId, tabId, held]
+  )
   const spanAt = (node: Node | null): Span | null => {
     const el = node instanceof Element ? node : node?.parentElement
     const b = el?.closest<HTMLElement>('[data-src]')
@@ -528,7 +539,8 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
 
   const onRegionKey = (e: KeyboardEvent): void => {
     unpin()
-    if (e.target !== e.currentTarget) return
+    // A click on a wide diagram focuses its scroller, and Enter after it still adds.
+    if (e.target !== e.currentTarget && !(e.target instanceof Element && e.target.matches('[data-ui="mermaid-scroll"]'))) return
     if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && selection) {
       e.preventDefault()
       return addSelection()
@@ -669,7 +681,7 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
         )}
         <DocContext.Provider value={links}>
           <FileLinkContext.Provider value={root}>
-            {rendered}
+            <DiagramContext.Provider value={diagrams}>{rendered}</DiagramContext.Provider>
           </FileLinkContext.Provider>
         </DocContext.Provider>
         <div aria-hidden="true" data-bands="" className="pointer-events-none absolute inset-0 -z-10">

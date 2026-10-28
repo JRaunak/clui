@@ -13,6 +13,7 @@ import { closeTab } from './SurfaceTabs'
 import { ANNOUNCE_MS } from './SelectionBar'
 import { addFromSurface } from '../ContextChips'
 import { useSay } from '../../lib/useSay'
+import { sayInHeader } from './PresentationButton'
 
 // What the File tab's two presentations share: the read and re-read of one file, its line selection, and the
 // states shown when there's no text to show.
@@ -324,6 +325,13 @@ export function useFind(open: boolean, setOpen: (on: boolean) => void, canFind: 
     return () => window.removeEventListener(FILE_FIND_EVENT, onFind)
   }, [show])
   return { query, setQuery, deferred, current, setCurrent, input }
+}
+
+/** Source at `line`, focused and washed as any open is. */
+export function viewSourceAt(handleId: string, tabId: string, line: number, via: Via): void {
+  requestSurfaceFocus(tabId, via)
+  useSession.getState().setSurfaceView(handleId, tabId, { mode: 'source', location: { line } })
+  sayInHeader(`Showing source, line ${line}`)
 }
 
 /** The notice a selection leaves when an outside change clears it. */

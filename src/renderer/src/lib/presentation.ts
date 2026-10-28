@@ -5,7 +5,8 @@ import type { SurfaceKind, SurfaceTab } from '../../../shared/surfaces'
 export type Presentation = 'source' | 'preview'
 
 export const isMarkdown = (p: string): boolean => /\.(md|markdown)$/i.test(p)
-export const hasPreview = (p: string): boolean => isHtml(p) || isMarkdown(p)
+export const isMermaid = (p: string): boolean => /\.(mmd|mermaid)$/i.test(p)
+export const hasPreview = (p: string): boolean => isHtml(p) || isMarkdown(p) || isMermaid(p)
 
 /** Tabs that show a file's text, and a Preview beside it for the kinds that have one. */
 export const fileLike = (kind: SurfaceKind | null | undefined): kind is 'file' | 'artifact' => kind === 'file' || kind === 'artifact'

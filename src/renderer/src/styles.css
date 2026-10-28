@@ -1395,3 +1395,48 @@ body {
     animation: none !important;
   }
 }
+
+/* Mermaid diagram node marks. Mermaid's own <style> is scoped to the diagram's id and outranks these, so they need
+   !important. Token vars, so a theme change restyles them without a redraw. */
+[data-ui='mermaid'] g.node[data-pointed] :is(rect, circle, ellipse, polygon, path):not(.label *) {
+  fill: var(--color-bg-raised) !important;
+  stroke: var(--color-dim) !important;
+  stroke-width: 2px !important;
+}
+[data-ui='mermaid'] g.node[data-hot] {
+  cursor: pointer;
+}
+[data-ui='mermaid'] g.node[data-hot] :is(rect, circle, ellipse, polygon, path):not(.label *) {
+  stroke: var(--color-content) !important;
+}
+[data-ui='mermaid'] g.node[data-sel] :is(rect, circle, ellipse, polygon, path):not(.label *) {
+  fill: var(--color-line-selected) !important;
+  stroke: var(--color-content) !important;
+  stroke-width: 2px !important;
+}
+/* An author's inline !important fill and stroke outrank the marks above, so their nodes take an outline instead,
+   which authors don't set. */
+[data-ui='mermaid'] g.node[data-authored][data-hot] {
+  outline: 1px solid var(--color-faint);
+  outline-offset: 3px;
+}
+[data-ui='mermaid'] g.node[data-authored][data-pointed] {
+  outline: 2px dashed var(--color-dim);
+  outline-offset: 3px;
+}
+[data-ui='mermaid'] g.node[data-authored][data-sel] {
+  outline: 2px solid var(--color-content);
+  outline-offset: 3px;
+}
+/* A label on an author's fill that the theme's ink can't be read on. */
+[data-ui='mermaid'] g[data-ink] :is(text, tspan) {
+  fill: var(--color-bg) !important;
+}
+/* The base theme's shadows put a grey halo under nodes, clusters and actors, and some diagram types add their own. */
+[data-ui='mermaid'] svg * {
+  filter: none !important;
+}
+/* Mermaid draws a timeline's axis in its section label colour, which is the page's. */
+[data-ui='mermaid'] .lineWrapper line {
+  stroke: var(--color-faint) !important;
+}
