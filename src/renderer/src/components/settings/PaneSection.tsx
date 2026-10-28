@@ -49,7 +49,7 @@ export function PaneSection({ active }: { active: boolean }): JSX.Element {
           setting="annotateScreenshots"
           ui="annotate-screenshots"
           label="Point"
-          hint="Off sends only the text of what you point at, and its HTML on pages."
+          hint="Off sends only the text of what you point at, its HTML on web pages, and its position on images."
           text="Include a picture with what you point at"
         />
       </SubPane>

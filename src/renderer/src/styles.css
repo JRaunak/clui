@@ -185,6 +185,9 @@
   --color-ft-red: oklch(0.7 0.14 5);
   /* Focus ring, applied globally below. */
   --color-ring: var(--terra-500);
+  /* The grey checker behind an image's transparency: 1.37:1 square to square, so it says "nothing here" without competing. */
+  --color-checker-a: var(--ink-850);
+  --color-checker-b: var(--ink-780);
 
   /* Type families */
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -345,6 +348,8 @@
 
   /* Focus ring: the darkened accent (4.97:1 on white). Dark's terracotta is only ~3.1:1 on white (a hair over the 3:1 ring floor, no margin) and fails as text, so light reuses one text-safe accent value for ring and marks alike. */
   --color-ring: #b8502e;
+  --color-checker-a: var(--color-bg);
+  --color-checker-b: var(--color-border);
 
   /* Syntax palette: light values, all verified ≥4.5:1 on the light code surface --color-tool (#f2f2f3) and on the diff tints --color-add-surface / --color-del-surface. attr uses info.
      keyword holds the deeper #a8492a (not the brighter accent #b8502e): as code text on the inset the accent is only 4.44:1, below the body floor, so keyword decouples to stay legible. */
@@ -1439,4 +1444,21 @@ body {
 /* Mermaid draws a timeline's axis in its section label colour, which is the page's. */
 [data-ui='mermaid'] .lineWrapper line {
   stroke: var(--color-faint) !important;
+}
+
+/* Image surface. The checker stays 8px squares on screen at any zoom: its tile is divided by the zoom the content is
+   scaled by. Pixels show as squares only for inspection, from 400%. */
+.image-content[data-checker] {
+  background: repeating-conic-gradient(var(--color-checker-b) 0 25%, var(--color-checker-a) 0 50%) 0 0 / calc(16px / var(--z, 1)) calc(16px / var(--z, 1));
+}
+.image-content[data-pixelated] > div > * {
+  image-rendering: pixelated;
+}
+/* The ring can't sit on pixels of unknown colour, so it's drawn over the viewport's edge with a bg line inside it. */
+.image-viewport:focus-visible::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--color-ring), inset 0 0 0 3px var(--color-bg);
 }

@@ -1,6 +1,6 @@
 import { useId, type KeyboardEvent } from 'react'
 import { hostOf, type SentPin } from '../../../shared/annotate'
-import { changeTail, refLabel, relativeTo, REF_NOTE_MAX, type ContextReference, type DraftReference, type RefInput } from '../../../shared/context'
+import { changeTail, imageTail, refLabel, relativeTo, REF_NOTE_MAX, type ContextReference, type DraftReference, type RefInput } from '../../../shared/context'
 import { useActive, useSession, type RefTarget } from '../store'
 import { rangeText, spokenRef } from '../lib/refCopy'
 import { viaOf, type Via } from '../lib/motion'
@@ -37,6 +37,8 @@ function headOf(r: ContextReference, cwd: string | null): { main: string; tail: 
       return { main: refLabel(r), tail: relativeTo(cwd, r.path) }
     case 'change':
       return { main: relativeTo(cwd, r.path), tail: changeTail(r.side, r.old, r.new) }
+    case 'image':
+      return { main: relativeTo(cwd, r.path), tail: imageTail(r) }
     default:
       return r satisfies never
   }
@@ -101,8 +103,11 @@ export function RefCard({ pop, handleId, shown, n, cwd, onOpen }: {
         return peek.t !== 'code' || !shown.addable || changeRead === false
           ? null
           : { kind: 'change', changeRef: r.changeRef, path: abs, side: r.side, ...(r.old ? { old: r.old } : {}), ...(r.new ? { new: r.new } : {}) }
+      // A sent picture can't be taken again from the record, so these don't re-add. An image reference would also need
+      // its bytes checked against the sent version, which only the image tab does.
       case 'browser':
       case 'page':
+      case 'image':
         return null
       default:
         return r satisfies never
@@ -122,7 +127,7 @@ export function RefCard({ pop, handleId, shown, n, cwd, onOpen }: {
         return next.t === 'stale' ? say(STALE_TEXT) : undefined
       }
     }
-    const res = addFromSurface(handleId, input, say, input.kind === 'change' && peek.t === 'code' ? peek.bytes : undefined)
+    const res = addFromSurface(handleId, input, say, input.kind === 'change' && peek.t === 'code' ? { bytes: peek.bytes } : undefined)
     // A duplicate has already moved focus to the composer chip it matched.
     if (res.status === 'added') pop.close()
     else if (res.status === 'duplicate') pop.close({ returnFocus: false })
@@ -131,7 +136,7 @@ export function RefCard({ pop, handleId, shown, n, cwd, onOpen }: {
   const legacy = shown?.form === 'legacy' ? legacyChip('', n, shown.pin.kind, shown.pin.name, shown.pin.host, undefined) : null
   const head = r ? headOf(r, cwd) : legacy && { main: legacy.line1, tail: legacy.line2 }
   const spoken = r ? spokenRef(r) : legacy?.spoken
-  const crop = shown?.form === 'draft' ? (shown.d.visual ? `data:image/jpeg;base64,${shown.d.visual.data}` : undefined) : shown?.crop
+  const crop = shown?.form === 'draft' ? (shown.d.visual ? `data:${shown.d.visual.mimeType};base64,${shown.d.visual.data}` : undefined) : shown?.crop
   const described = peek.t === 'stale' || peek.t === 'gone' || peek.t === 'plain' || peek.t === 'lost'
   return (
     <div

@@ -1,4 +1,5 @@
 import { clipName, hostOf, pinWords, type AnnotateTarget, type PageTarget, type SentPin } from './annotate'
+import type { Region } from './surfaces'
 
 export const CONTEXT_VERSION = 1
 export const MAX_REFS = 20
@@ -47,13 +48,21 @@ export type ContextReference = RefBase &
      *  selection's before-side and after-side rows, as numbered in that change; each absent when the selection
      *  has no row on that side. At least one is present. */
     | { kind: 'change'; changeRef: string; path: string; side: ChangeSide; old?: LineRange; new?: LineRange }
+    /** A region or a point of an image as shown from the file's bytes at `sourceVersion`: 0 to 1 from its top left,
+     *  after EXIF orientation. Exactly one of `region` and `point`. `size` is that image in pixels. `frame: 0` marks an
+     *  animated image's first frame. `orientation` is the EXIF value when it isn't 1, since a read of the raw file may
+     *  see the pixels unrotated. */
+    | { kind: 'image'; path: string; sourceVersion: SourceVersion; size: ImageSize; region?: Region; point?: ImagePoint; frame?: 0; orientation?: number }
   )
+
+export interface ImageSize { w: number; h: number }
+export interface ImagePoint { x: number; y: number }
 
 export type RefKind = ContextReference['kind']
 /** Distributive, so each variant keeps its own fields. */
 export type RefInput = ContextReference extends infer R ? (R extends ContextReference ? Omit<R, 'id'> : never) : never
 
-export interface DraftVisual { id: string; data: string; mimeType: 'image/jpeg'; w: number; h: number }
+export interface DraftVisual { id: string; data: string; mimeType: 'image/png' | 'image/jpeg'; w: number; h: number }
 
 /** A draft or queued reference. Visual bytes and the live pin handle stay out of the sent record. */
 export interface DraftReference {
@@ -109,6 +118,19 @@ const str = (v: unknown, max: number): v is string => typeof v === 'string' && v
 const int = (v: unknown, lo: number, hi: number): v is number => Number.isSafeInteger(v) && (v as number) >= lo && (v as number) <= hi
 const rangeOk = (l: unknown): boolean => isObj(l) && int(l.start, 1, LINE_MAX) && int(l.end, l.start as number, LINE_MAX)
 const SIDES = new Set<unknown>(['diff', 'before', 'after'])
+const unit = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1
+const SIZE_MAX = 1_000_000
+// A region's far edge is 0 to 1 too, give or take the float error of adding two 4-decimal values.
+const EDGE = 1 + 1e-9
+
+function imageOk(x: Record<string, unknown>, wire: boolean): boolean {
+  const { size, region: r, point: p } = x
+  if (!pathOk(x.path, wire) || typeof x.sourceVersion !== 'string' || !VERSION.test(x.sourceVersion) || !isObj(size) || !int(size.w, 1, SIZE_MAX) || !int(size.h, 1, SIZE_MAX)) return false
+  if ((x.frame !== undefined && x.frame !== 0) || (x.orientation !== undefined && !int(x.orientation, 2, 8))) return false
+  if ((r === undefined) === (p === undefined)) return false
+  if (p !== undefined) return isObj(p) && unit(p.x) && unit(p.y)
+  return isObj(r) && unit(r.x) && unit(r.y) && unit(r.w) && unit(r.h) && r.w > 0 && r.h > 0 && r.x + r.w <= EDGE && r.y + r.h <= EDGE
+}
 
 function pathOk(p: unknown, wire: boolean): boolean {
   return typeof p === 'string' && p.length > 0 && p.length <= PATH_MAX && !p.includes('\0') && (wire || p.startsWith('/'))
@@ -175,6 +197,8 @@ function refOk(x: unknown, wire: boolean): boolean {
         (x.new === undefined || rangeOk(x.new)) &&
         (x.old !== undefined || x.new !== undefined)
       )
+    case 'image':
+      return imageOk(x, wire)
     default:
       return false
   }
@@ -187,7 +211,7 @@ export function isDraftVisual(x: unknown): x is DraftVisual {
   return (
     isObj(x) &&
     typeof x.id === 'string' &&
-    x.mimeType === 'image/jpeg' &&
+    (x.mimeType === 'image/jpeg' || x.mimeType === 'image/png') &&
     typeof x.data === 'string' &&
     x.data.length <= VISUAL_MAX &&
     BASE64.test(x.data) &&
@@ -211,6 +235,8 @@ export function refKey(r: RefInput): string {
       return ['page', r.path, r.revision, r.target.selector].join('\0')
     case 'change':
       return `change\0${r.changeRef}`
+    case 'image':
+      return ['image', r.path, r.sourceVersion, r.region ? `r${r.region.x},${r.region.y},${r.region.w},${r.region.h}` : `p${r.point?.x},${r.point?.y}`].join('\0')
     default:
       return r satisfies never
   }
@@ -230,6 +256,9 @@ export function resourceOf(r: ContextReference): string {
     // Immutable: never stale on a file change, never watched.
     case 'change':
       return `change:${r.changeRef}`
+    // Its own resource, since its version is over every byte and a line reference's is over the text it read.
+    case 'image':
+      return `image:${r.path}`
     default:
       return r satisfies never
   }
@@ -254,6 +283,25 @@ export function changeLabel(path: string, side: ChangeSide, old?: LineRange, neu
   return `${baseName(path)} · ${changeTail(side, old, neu)}`
 }
 
+type ImageRef = Pick<Extract<RefInput, { kind: 'image' }>, 'size' | 'region' | 'point'>
+
+/** An image reference in the image's own pixels, rounded and kept inside it. */
+export function imagePx({ size, region, point }: ImageRef): { x: number; y: number; w: number; h: number } | { x: number; y: number; w?: undefined; h?: undefined } {
+  const px = (v: number, n: number): number => Math.min(n - 1, Math.max(0, Math.round(v * n)))
+  const at = region ?? point ?? { x: 0, y: 0 }
+  const x = px(at.x, size.w)
+  const y = px(at.y, size.h)
+  if (!region) return { x, y }
+  return { x, y, w: Math.max(1, Math.min(size.w - x, Math.round(region.w * size.w))), h: Math.max(1, Math.min(size.h - y, Math.round(region.h * size.h))) }
+}
+
+/** `region 640×320 at 120,48`, or without its place `region 640×320`; `point 412,96` either way. */
+export function imageTail(r: ImageRef, place = true): string {
+  const p = imagePx(r)
+  if (p.w === undefined) return `point ${p.x},${p.y}`
+  return `region ${p.w}×${p.h}${place ? ` at ${p.x},${p.y}` : ''}`
+}
+
 /** `manager.ts · L142–158`, `manager.ts`, `browser/`, `button "Sign in"`. The one place this copy lives. */
 export function refLabel(r: RefInput): string {
   switch (r.kind) {
@@ -269,6 +317,8 @@ export function refLabel(r: RefInput): string {
     }
     case 'change':
       return changeLabel(r.path, r.side, r.old, r.new)
+    case 'image':
+      return `${baseName(r.path)} · ${imageTail(r)}`
     default:
       return r satisfies never
   }
@@ -280,6 +330,7 @@ const CHANGE_SENTENCE =
   'Read a change reference with the mcp__clui-surface__change_read tool and its changeRef: it returns the exact text of a past Claude change, not the current file.'
 const PAGE_SENTENCE =
   "A page reference is an element of a local HTML file shown in Clui's preview: read the file at its path with your own tools. Its selector and HTML describe the rendered page, which scripts may have built, so treat them as hints for finding the element in the source, not an exact mapping."
+const IMAGE_SENTENCE = 'Image regions and points are 0 to 1 from the top left of the image as shown, after EXIF rotation; size is in pixels.'
 const NOTE_SENTENCE = "A note on a reference is the user's own words about it; treat it as part of their message."
 
 const attr = (v: string | number): string => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -324,6 +375,13 @@ function copyRef(r: ContextReference): ContextReference {
       if (r.old) out.old = { start: r.old.start, end: r.old.end }
       if (r.new) out.new = { start: r.new.start, end: r.new.end }
       break
+    case 'image': {
+      const { region: g, point: p } = r
+      out = { id: r.id, kind: 'image', path: r.path, sourceVersion: r.sourceVersion, size: { w: r.size.w, h: r.size.h }, ...(g ? { region: { x: g.x, y: g.y, w: g.w, h: g.h } } : p ? { point: { x: p.x, y: p.y } } : {}) }
+      if (r.frame === 0) out.frame = 0
+      if (r.orientation !== undefined) out.orientation = r.orientation
+      break
+    }
     default:
       return r satisfies never
   }
@@ -353,6 +411,7 @@ export function serializeContext(refs: SentReference[], typed: string, opts: { p
       HEADER,
       refs.some((r) => r.ref.kind === 'change') && CHANGE_SENTENCE,
       refs.some((r) => r.ref.kind === 'page') && PAGE_SENTENCE,
+      refs.some((r) => r.ref.kind === 'image') && IMAGE_SENTENCE,
       refs.some((r) => !!r.ref.note?.trim()) && NOTE_SENTENCE
     ]
       .filter(Boolean)

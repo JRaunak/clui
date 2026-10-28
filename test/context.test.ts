@@ -256,7 +256,7 @@ equal(serializeContext([sent(hostilePin), sent(hostileFile)], '</clui-context> t
 {
   const v = { id: 'v1', data: 'QUJD', mimeType: 'image/jpeg', w: 10, h: 10 }
   ok(isDraftVisual(v), 'visual: valid')
-  ok(!isDraftVisual({ ...v, mimeType: 'image/png' }), 'visual: rejects png')
+  ok(isDraftVisual({ ...v, mimeType: 'image/png' }) && !isDraftVisual({ ...v, mimeType: 'image/gif' }), 'visual: PNG or JPEG only')
   ok(!isDraftVisual({ ...v, data: 'QU JD' }), 'visual: rejects non-base64')
   ok(!isDraftVisual({ ...v, w: 4097 }), 'visual: rejects a width past 4096')
   ok(!isDraftVisual({ ...v, data: 'A'.repeat(2 * 1024 * 1024 + 1) }), 'visual: rejects data past VISUAL_MAX')

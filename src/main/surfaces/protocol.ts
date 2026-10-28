@@ -9,15 +9,17 @@ import { protocol } from 'electron'
 import { randomBytes } from 'node:crypto'
 import { basename, extname, join, relative, sep } from 'node:path'
 import type { HtmlPolicy } from '../../shared/html-view'
-import { IMAGE_PATHS_MAX, type FileStat, type ImageCap } from '../../shared/files'
-import { readBytes, statFile, within, type FileResource, type Refusal } from './files'
+import { IMAGE_PATHS_MAX, type FileStat, type ImageCap, type ImageOpen } from '../../shared/files'
+import { imageInfo, readBytes, statFile, within, type FileResource, type Refusal } from './files'
 
 export const SCHEME = 'clui-file'
 const CHUNK = 1024 * 1024
 
-/** Before app ready. Same-origin fetch() needs supportFetchAPI; connect-src still decides per page whether it may. */
+/** Before app ready. Same-origin fetch() needs supportFetchAPI; connect-src still decides per page whether it may.
+ *  corsEnabled lets the renderer read an image cap's pixels, which only image caps allow; a page's caps send no
+ *  CORS header, so another origin still can't read them. */
 export function registerScheme(): void {
-  protocol.registerSchemesAsPrivileged([{ scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }])
+  protocol.registerSchemesAsPrivileged([{ scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
 }
 
 const LOCAL = 'http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*'
@@ -232,6 +234,8 @@ interface ImageGrant {
   owner: string
   /** Canonical, as authorized. */
   path: string
+  /** An image tab's cap serves only the bytes its version was hashed from. */
+  revision?: string
 }
 
 /**
@@ -254,11 +258,22 @@ export function createImageCaps(resolve: (handleId: string, path: string) => Pro
     drop((g) => g.owner === key)
   }
 
-  async function mint(handleId: unknown, owner: unknown, paths: unknown): Promise<ImageCap[]> {
-    if (typeof handleId !== 'string' || typeof owner !== 'string' || !owner || owner.length > 200 || !Array.isArray(paths) || paths.length > IMAGE_PATHS_MAX) return []
+  function issue(g: ImageGrant): string {
+    const host = randomBytes(16).toString('hex')
+    caps.set(host, g)
+    return `${SCHEME}://${host}/${encodeURIComponent(basename(g.path))}`
+  }
+
+  function begin(handleId: string, owner: string): { key: string; current: () => boolean } {
     const key = `${handleId}\0${owner}`
     const gen = ++seq
     latest.set(key, gen)
+    return { key, current: () => latest.get(key) === gen }
+  }
+
+  async function mint(handleId: unknown, owner: unknown, paths: unknown): Promise<ImageCap[]> {
+    if (typeof handleId !== 'string' || typeof owner !== 'string' || !owner || owner.length > 200 || !Array.isArray(paths) || paths.length > IMAGE_PATHS_MAX) return []
+    const { key, current } = begin(handleId, owner)
     const found = await Promise.all(
       paths.map(async (p): Promise<string | ImageCap> => {
         const r = typeof p === 'string' ? await resolve(handleId, p) : ({ ok: false, reason: 'invalid' } as const)
@@ -267,14 +282,25 @@ export function createImageCaps(resolve: (handleId: string, path: string) => Pro
         return isImagePath(r.path) ? r.path : { ok: false, outside: false }
       })
     )
-    if (latest.get(key) !== gen) return paths.map(() => ({ ok: false, outside: false }))
+    if (!current()) return paths.map(() => ({ ok: false, outside: false }))
     drop((g) => g.owner === key)
-    return found.map((f) => {
-      if (typeof f !== 'string') return f
-      const host = randomBytes(16).toString('hex')
-      caps.set(host, { handleId, owner: key, path: f })
-      return { ok: true, url: `${SCHEME}://${host}/${encodeURIComponent(basename(f))}` }
-    })
+    return found.map((f) => (typeof f === 'string' ? { ok: true, url: issue({ handleId, owner: key, path: f }) } : f))
+  }
+
+  /** An image tab's file: what its header says and, when Clui shows it, the one cap that replaces the owner's last. */
+  async function open(handleId: unknown, owner: unknown, path: unknown): Promise<ImageOpen> {
+    if (typeof handleId !== 'string' || typeof owner !== 'string' || !owner || owner.length > 200 || typeof path !== 'string') return { ok: false, reason: 'invalid' }
+    const { key, current } = begin(handleId, owner)
+    const r = await resolve(handleId, path)
+    if (!r.ok) return r
+    if (!isImagePath(r.path)) return { ok: false, reason: 'wrong-type' }
+    const info = await imageInfo(r)
+    if (!current()) return { ok: false, reason: 'changed' }
+    if (!info.ok) return info
+    const { size, head, version, revision } = info
+    drop((g) => g.owner === key)
+    if (!version) return { ok: true, size, head }
+    return { ok: true, size, head, cap: { url: issue({ handleId, owner: key, path: r.path, revision }), version: `sha256:${version}` } }
   }
 
   async function serve(req: Request): Promise<Response> {
@@ -289,14 +315,16 @@ export function createImageCaps(resolve: (handleId: string, path: string) => Pro
     if (!r.ok || r.path !== g.path) return status(404)
     const s = await statFile(r)
     if (caps.get(host) !== g) return status(403)
-    if (!s.ok) return status(404)
-    const headers = { 'content-type': MIME[extname(r.path).toLowerCase()]!, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' }
+    if (!s.ok || (g.revision && s.revision !== g.revision)) return status(404)
+    // Any origin, since only the app's own session handles these and the random host is the capability.
+    const headers = { 'content-type': MIME[extname(r.path).toLowerCase()]!, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }
     if (req.method === 'HEAD') return new Response(null, { headers })
     return new Response(bytesOf(r, s, () => caps.get(host) === g), { headers })
   }
 
   return {
     mint,
+    open,
     revoke,
     serve,
     /** A session's caps, when it's disposed. */

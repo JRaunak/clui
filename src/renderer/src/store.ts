@@ -49,7 +49,7 @@ import {
 import { removalSpoken, pausedText, resourceLabel, shortLabel } from './lib/refCopy'
 import type { Via } from './lib/motion'
 import { CHANGE_BYTES_MAX, CHANGE_TEXT_BUDGET, type ChangeGitStatus, type FileChangeSummary, type GitPathStatus } from '../../shared/changes'
-import { SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
+import { kindForPath, restoreKinds, SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
 import { clean, type SurfaceCommand, type SurfaceReply, type SurfaceTarget, type TabFact } from '../../shared/surface-tools'
 import { turnEndLine } from './lib/turnEnd'
 import { suffixes } from './lib/tree'
@@ -1039,7 +1039,7 @@ function activation(slice: PerSessionState, id: string, now: number, located = f
   const from = set.active ? set.tabs[set.active] : undefined
   // An unseen tree holds a destination Claude placed behind; that wins like a pending or just-sent one.
   const sent = located || !!pendingShow?.location || !!unseen
-  const reveal = cur.kind === 'tree' && from?.kind === 'file' && !!slice.cwd && from.key.startsWith(`${slice.cwd}/`) && !sent ? from.key : null
+  const reveal = cur.kind === 'tree' && (from?.kind === 'file' || from?.kind === 'image') && !!slice.cwd && from.key.startsWith(`${slice.cwd}/`) && !sent ? from.key : null
   const next: SurfaceTab = { ...rest, ...pendingShow, ...(reveal ? { reveal } : {}), lastViewedAt: now }
   return { surfaces: { ...set, active: id, tabs: { ...set.tabs, [id]: next } } }
 }
@@ -1116,7 +1116,8 @@ export function restoredPane(restore: SurfacesRestore, browser: boolean): Pick<P
       restoreNote: restore.status === 'none' ? null : restore.status
     }
   }
-  const { set, open, full } = restore.entry
+  const { open, full } = restore.entry
+  const set = restoreKinds(restore.entry.set)
   const lastViewed = Object.fromEntries((tabs?.tabs ?? []).map((t) => [placement(t.id), t.lastViewedAt]))
   const surfaces: SurfaceSet = { order: set.order, active: set.active, tabs: set.tabs, browserLastViewedAt: lastViewed, browserUnseen: {} }
   return { ...placeBrowser({ browser: b, surfaces }), paneOpen: open, surfacePaneFull: full, restoreNote: null }
@@ -1442,8 +1443,9 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
     // end re-checks which files are still on disk.
     if (event.type === 'result') void useSession.getState().refreshChanges(handleId)
   })
-  window.clui.onRefSourceChanged(({ handleId, path, reason, version }) => {
+  window.clui.onRefSourceChanged(({ handleId, path, reason, version, bytes }) => {
     const cause = { reason, ...(version ? { version } : {}) }
+    if (bytes) return void useSession.getState().invalidateSource(handleId, `image:${path}`, cause)
     useSession.getState().invalidateSource(handleId, `file:${path}`, cause)
     useSession.getState().invalidateSource(handleId, `page:${path}`, cause)
   })
@@ -1929,7 +1931,7 @@ function userBubble(handleId: string, text: string, attachments: SendAttachment[
     // Main refuses the same packet as invalid and says so.
   }
   const crops: MessageAttachment[] = refs.flatMap((d) =>
-    d.visual ? [{ kind: 'image', previewUrl: `data:image/jpeg;base64,${d.visual.data}`, w: d.visual.w, h: d.visual.h, blockIndex: visualIndex.get(d.ref.id) }] : []
+    d.visual ? [{ kind: 'image', previewUrl: `data:${d.visual.mimeType};base64,${d.visual.data}`, w: d.visual.w, h: d.visual.h, blockIndex: visualIndex.get(d.ref.id) }] : []
   )
   const atts = [...crops, ...(attachments ?? []).map((a, i) => ({ ...a.display, blockIndex: attachmentBase + i }))]
   return { id: `u-${crypto.randomUUID()}`, role: 'user', text: shown, thinking: '', tools: [], blocks: [], attachments: atts.length ? atts : undefined }
@@ -1945,7 +1947,7 @@ function invalidations(lost: readonly { ref: ContextReference; reason: RefFailur
     const rec = by.get(id) ?? {
       resourceId: id,
       label: change ? 'changes' : resourceLabel(ref),
-      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'page' ? ref.revision : ref.kind === 'file' ? (ref.sourceVersion ?? '') : '',
+      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'page' ? ref.revision : ref.kind === 'file' || ref.kind === 'image' ? (ref.sourceVersion ?? '') : '',
       at: Date.now(),
       reason,
       removed: []
@@ -2062,9 +2064,18 @@ function flushRefs(handleId: string): void {
   const seen = new Set<string>()
   const watches = all
     .flatMap((d) =>
-      d.ref.kind === 'file' && d.ref.lines ? [{ path: d.ref.path, version: d.ref.sourceVersion }] : d.ref.kind === 'page' ? [{ path: d.ref.path, version: d.ref.revision }] : []
+      d.ref.kind === 'file' && d.ref.lines
+        ? [{ path: d.ref.path, version: d.ref.sourceVersion }]
+        : d.ref.kind === 'page'
+          ? [{ path: d.ref.path, version: d.ref.revision }]
+          : d.ref.kind === 'image'
+            ? [{ path: d.ref.path, version: d.ref.sourceVersion, bytes: true as const }]
+            : []
     )
-    .filter((w) => !seen.has(`${w.path}\0${w.version}`) && !!seen.add(`${w.path}\0${w.version}`))
+    .filter((w) => {
+      const k = `${'bytes' in w ? 'b' : 't'}\0${w.path}\0${w.version}`
+      return !seen.has(k) && !!seen.add(k)
+    })
     .slice(0, MAX_REFS)
   const prev = lastSync.get(handleId)
   const next = { order: JSON.stringify(order), watches: JSON.stringify(watches) }
@@ -3997,7 +4008,9 @@ export const useSession = create<SessionStore>((set, get) => ({
     return true
   },
 
-  openSurface: (handleId, spec, intent, actor, openedBy) => {
+  openSurface: (handleId, asked, intent, actor, openedBy) => {
+    // Openers ask for a file by path; the path decides whether it opens as an image.
+    const spec = asked.kind === 'file' ? { ...asked, kind: kindForPath(asked.key) } : asked
     const browserTab = spec.kind === 'browser' ? spec.tab : null
     // One resource gets one tab, so a page Claude made opens as its artifact tab, never a second file tab.
     const made = spec.kind === 'file' ? Object.values(get().sessions[handleId]?.surfaces.tabs ?? {}).find((t) => t.kind === 'artifact' && t.key === spec.key) : undefined
@@ -4318,7 +4331,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       if (r.kind === 'change') return resourceId === CHANGE_REFS && (cause.reason === 'denied' || cause.reason === 'session')
       if (resourceOf(r) !== resourceId) return false
       if (r.kind === 'browser') return true
-      if (r.kind === 'file' && r.lines) return cause.reason !== 'changed' || r.sourceVersion !== cause.version
+      if ((r.kind === 'file' && r.lines) || r.kind === 'image') return cause.reason !== 'changed' || r.sourceVersion !== cause.version
       // A change with no version is an asset's, seen by the page's watcher.
       if (r.kind === 'page') return cause.reason !== 'changed' || !cause.version || r.revision !== cause.version
       // Whole files and folders point at current content, so only losing access removes them.
@@ -4348,10 +4361,20 @@ export const useSession = create<SessionStore>((set, get) => ({
     const gone = new Set(
       [lostDraft, ...slice.queuedMessages.map((q) => q.refs.filter((d) => stale(d.ref)))]
         .flat()
-        .flatMap((d) => (d.ref.kind === 'file' && d.ref.lines ? [`${d.ref.path}\0${d.ref.lines.start}-${d.ref.lines.end}`] : []))
+        .flatMap((d) =>
+          d.ref.kind === 'file' && d.ref.lines
+            ? [`${d.ref.path}\0${d.ref.lines.start}-${d.ref.lines.end}`]
+            : d.ref.kind === 'image'
+              ? [`${d.ref.path}\0${JSON.stringify(d.ref.region ?? d.ref.point)}`]
+              : []
+        )
     )
     const tabs = slice.surfaces.tabs
-    const sel = (t: SurfaceTab): string | null => (t.kind === 'file' && t.selection?.lines ? `${t.key}\0${t.selection.lines.start}-${t.selection.lines.end}` : null)
+    const sel = (t: SurfaceTab): string | null => {
+      const { lines, region, point } = t.selection ?? {}
+      if (t.kind === 'file' && lines) return `${t.key}\0${lines.start}-${lines.end}`
+      return t.kind === 'image' && (region || point) ? `${t.key}\0${JSON.stringify(region ?? point)}` : null
+    }
     const cleared = Object.values(tabs).filter((t) => gone.has(sel(t) ?? ''))
     if (cleared.length) patch.surfaces = { ...slice.surfaces, tabs: { ...tabs, ...Object.fromEntries(cleared.map((t) => [t.id, { ...t, selection: undefined }])) } }
     patch.refAnnounce = toggled(said.join(' '))

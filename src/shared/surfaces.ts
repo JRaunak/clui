@@ -98,8 +98,14 @@ export interface SurfaceSet {
 /** `prepare` places a tab unseen without activating it; a Claude `focus` falls back to it while the user is busy in the pane or a Gate is up. */
 export type OpenIntent = 'focus' | 'open' | 'prepare'
 
-/** Where a tab keeps its `kind: 'file'` view state. A viewState must be of the tab's own kind, so an artifact's goes in sourceView. */
-export const fileViewKey = (kind: SurfaceTab['kind']): 'viewState' | 'sourceView' => (kind === 'artifact' ? 'sourceView' : 'viewState')
+/** Where a tab keeps its `kind: 'file'` view state. A viewState must be of the tab's own kind, so an artifact's or an
+ *  SVG's Source goes in sourceView. */
+export const fileViewKey = (kind: SurfaceTab['kind']): 'viewState' | 'sourceView' => (kind === 'artifact' || kind === 'image' ? 'sourceView' : 'viewState')
+
+const IMAGE = /\.(png|jpe?g|webp|gif|avif|svg)$/i
+
+/** The tab kind a path opens as. `.ico` and `.icns` stay files: the image surface reads neither format. */
+export const kindForPath = (p: string): 'file' | 'image' => (IMAGE.test(p) ? 'image' : 'file')
 
 /** Tree and diff are session singletons; a path resource is one tab whatever its presentation. */
 export const surfaceIdOf = (t: Pick<SurfaceTab, 'kind' | 'key' | 'provenance'>): string =>
@@ -116,6 +122,27 @@ export interface SavedSet {
   active: string | null
   tabs: Record<string, SavedTab>
 }
+/** A set saved before images had their own kind: an image's `file:` tab comes back as its `image:` tab, without the
+ *  file view state it can't use. A set already holding that image tab keeps that one. */
+export function restoreKinds(set: SavedSet): SavedSet {
+  const ids = new Map<string, string>()
+  const tabs: Record<string, SavedTab> = {}
+  for (const [id, t] of Object.entries(set.tabs)) {
+    if (t.kind !== 'file' || kindForPath(t.key) !== 'image') {
+      tabs[id] = t
+      continue
+    }
+    const { viewState: _v, ...rest } = t
+    const next: SavedTab = { ...rest, kind: 'image' }
+    next.id = surfaceIdOf(next)
+    ids.set(id, next.id)
+    if (!set.tabs[next.id]) tabs[next.id] = next
+  }
+  if (!ids.size) return set
+  const order = [...new Set(set.order.map((id) => ids.get(id) ?? id))]
+  return { order, active: set.active === null ? null : (ids.get(set.active) ?? set.active), tabs }
+}
+
 /** A session's browser tabs by id and address. No content, history or cookies. */
 export interface SavedBrowser {
   tabs: { id: number; url: string; lastViewedAt: number }[]

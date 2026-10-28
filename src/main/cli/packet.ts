@@ -28,6 +28,8 @@ export interface PacketDeps {
   cwd(handleId: string): string | null
   /** The file's content version and line count, as the File surface reads them. */
   readRevision(handleId: string, path: string): Promise<{ ok: true; version: SourceVersion; lineCount: number } | { ok: false; reason: Refusal['reason'] }>
+  /** The hash of every byte, as an image reference records it. */
+  byteVersion(handleId: string, path: string): Promise<{ ok: true; version: SourceVersion } | { ok: false; reason: Refusal['reason'] }>
   authorize(handleId: string, path: string, kind: 'file' | 'folder'): Promise<'ok' | 'missing' | 'denied'>
   /** The tab's current top-frame loaderId; null when the tab or its page is gone. */
   docOf(handleId: string, tab: number): Promise<string | null>
@@ -79,7 +81,8 @@ export function parseOutgoing(raw: unknown): OutgoingPacket | null {
     keys.add(key)
     if (d.pinId !== undefined && !Number.isSafeInteger(d.pinId)) return null
     if (d.visual === undefined) refs.push({ ref })
-    else if ((ref.kind === 'browser' || ref.kind === 'page') && isDraftVisual(d.visual)) refs.push({ ref, visual: d.visual })
+    // A point carries no picture: a crop can't show which pixel was meant.
+    else if ((ref.kind === 'browser' || ref.kind === 'page' || (ref.kind === 'image' && !!ref.region)) && isDraftVisual(d.visual)) refs.push({ ref, visual: d.visual })
     else return null
   }
   const attachments: WireAttachment[] = []
@@ -150,6 +153,11 @@ export async function validateRefs(deps: PacketDeps, handleId: string, refs: rea
       case 'change': {
         const r = deps.change(handleId, ref.changeRef)
         return r === 'ok' ? null : r
+      }
+      case 'image': {
+        const r = await once(`b\0${ref.path}`, () => deps.byteVersion(handleId, ref.path))
+        if (!r.ok) return readFailure(r.reason)
+        return r.version === ref.sourceVersion ? null : 'changed'
       }
       default:
         return ref satisfies never

@@ -1,6 +1,6 @@
 import type { CSSProperties, KeyboardEvent, MouseEvent, Ref } from 'react'
 import { hostOf, pinWords, clipName } from '../../../shared/annotate'
-import { changeTail, refLabel, type ContextReference } from '../../../shared/context'
+import { changeTail, imageTail, refLabel, type ContextReference } from '../../../shared/context'
 import type { ProcessedAttachment } from '../lib/images'
 import type { ShownAttachment } from '../store'
 import { baseOf, CHANGE_UNAVAILABLE, noteTitle, rangeText, spokenRef } from '../lib/refCopy'
@@ -83,6 +83,22 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
         line2: `${dupe ? `${baseOf(dir.slice(0, -1) || './')}/ · ` : ''}${tail}`,
         title: `Claude's change to ${rel} · ${tail}`,
         label: `Reference ${n}: ${spokenRef(ref)}${where}`,
+        spoken: spokenRef(ref)
+      }
+    }
+    // With a picture, line 2 drops the size: the thumbnail is the region, and the disclosure never truncates.
+    case 'image': {
+      const pic = thumb ? ' · with picture' : ''
+      return {
+        key,
+        n,
+        glyph: 'file',
+        thumb,
+        line1: baseOf(ref.path),
+        line2: thumb ? 'region' : imageTail(ref, false),
+        ...(thumb ? { disclose: 'with picture' } : {}),
+        title: `${refLabel(ref)}${pic}`,
+        label: `Reference ${n}: ${spokenRef(ref)}${thumb ? ', with picture' : ''}`,
         spoken: spokenRef(ref)
       }
     }

@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { CAP_NOTE, type DraftReference, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
+import { CAP_NOTE, type DraftReference, type DraftVisual, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 import { surfaceIdOf } from '../../../shared/surfaces'
 import { placement, refsOf, useActive, useSession, type AddRefResult, type RefTarget } from '../store'
 import { openFileAt } from '../lib/openLink'
@@ -26,11 +26,12 @@ export function signalRefs(handleId: string, target: RefTarget, s: Signal): void
 }
 
 /** A surface's Add to message. `say` is the source's live region, where focus stays; a duplicate moves focus to
- *  the existing chip, so it's announced from the composer. `bytes` is a change ref's mint size. */
-export function addFromSurface(handleId: string, input: RefInput, say: (t: string) => void, bytes?: number): AddRefResult {
+ *  the existing chip, so it's announced from the composer. `bytes` is a change ref's mint size; `visual` an image
+ *  region's picture. */
+export function addFromSurface(handleId: string, input: RefInput, say: (t: string) => void, extra?: { bytes?: number; visual?: DraftVisual }): AddRefResult {
   const st = useSession.getState()
   const target = st.sessions[handleId]?.referenceEditTarget ?? null
-  const r = st.addRef(handleId, input, bytes === undefined ? undefined : { bytes })
+  const r = st.addRef(handleId, input, extra)
   if (r.status === 'added') say(addedText(input, target !== null))
   else if (r.status === 'duplicate') {
     signalRefs(handleId, target, { focus: r.id, note: 'Already attached.' })
@@ -79,6 +80,13 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
       return st.activateSurface(handleId, placement(r.pin.source.tabId))
     case 'page':
       return openFileAt(handleId, r.path, {}, false, via)
+    case 'image': {
+      const { region, point, sourceVersion } = r
+      openFileAt(handleId, r.path, {}, false, via)
+      // ImageSurface goes back to Fit when its saved view would hide this selection.
+      st.setSurfaceView(handleId, surfaceIdOf({ kind: 'image', key: r.path }), { selection: { ...(region ? { region } : { point }), sourceVersion } })
+      return
+    }
     case 'change': {
       const req = mintedRequest(handleId, r.changeRef)
       requestSurfaceFocus('diff', via)
@@ -151,7 +159,7 @@ export function ContextChips({
   const names = new Map<string, number>()
   for (const d of refs) if (d.ref.kind === 'file' || d.ref.kind === 'change') names.set(baseOf(d.ref.path), (names.get(baseOf(d.ref.path)) ?? 0) + 1)
   const views = refs.map((d, i) => {
-    const thumb = d.visual ? `data:image/jpeg;base64,${d.visual.data}` : undefined
+    const thumb = d.visual ? `data:${d.visual.mimeType};base64,${d.visual.data}` : undefined
     return notedChip(refChip(d.ref, i + 1, cwd, thumb, (d.ref.kind === 'file' || d.ref.kind === 'change') && (names.get(baseOf(d.ref.path)) ?? 0) > 1), d.ref.note)
   })
   // A change to a file no longer in the session's changes has nothing to show: the Diff tab would show another file.

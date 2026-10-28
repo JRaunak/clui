@@ -41,7 +41,7 @@ import { readConfig } from './config/reader'
 import { openInEditor, openDiff } from './ide/open'
 import { listWorkspaceFiles } from './workspace/files'
 import { readGitStatus } from './workspace/git-status'
-import { createFileAccess, readText, statFile, type FileResource, type Refusal } from './surfaces/files'
+import { createFileAccess, hashFile, readText, statFile, type FileResource, type Refusal } from './surfaces/files'
 import { listTree, treeTarget } from './surfaces/tree'
 import { HtmlViews } from './surfaces/html-view'
 import { createImageCaps, registerScheme, SCHEME } from './surfaces/protocol'
@@ -143,7 +143,7 @@ app.on('web-contents-created', (_e, wc) => {
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
 const TAKES_TYPING = new Set<MenuAction>(['find-in-conversation', 'find-next', 'find-prev', 'open-file', 'file-goto', 'open-palette', 'open-command-palette', 'search-global'])
-let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false }, fileLines: false, presentation: 'none', reload: false, back: false }
+let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false }, fileLines: false, presentation: 'none', reload: false, back: false, zoom: false }
 const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = {
   file: 'Open in Editor',
   diff: 'Open Diff in Editor',
@@ -269,7 +269,12 @@ function buildMenu(): void {
         },
         { label: 'Reload Page', accelerator: 'CmdOrCtrl+R', enabled: menuState.reload || (!!focusedPage && !!htmlViews?.owns(focusedPage)), click: () => send('pane-reload') },
         { type: 'separator' },
-        { label: 'Back', accelerator: 'CmdOrCtrl+[', enabled: menuState.back, click: () => send('pane-back') }
+        { label: 'Back', accelerator: 'CmdOrCtrl+[', enabled: menuState.back, click: () => send('pane-back') },
+        { type: 'separator' },
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', enabled: menuState.zoom, click: () => send('image-zoom-in') },
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', enabled: menuState.zoom, visible: false, click: () => send('image-zoom-in') },
+        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', enabled: menuState.zoom, click: () => send('image-zoom-out') },
+        { label: 'Fit or Actual Size', accelerator: 'CmdOrCtrl+0', enabled: menuState.zoom, click: () => send('image-zoom-toggle') }
       ]
     },
     {
@@ -565,6 +570,11 @@ function registerIpc(): void {
       const n = t.text.split('\n').length
       return { ok: true, version: `sha256:${t.revision}`, lineCount: n > 1 && t.text.endsWith('\n') ? n - 1 : n }
     },
+    byteVersion: async (h, p) => {
+      const r = await files.resolveAllowed(h, p, { consumer: 'file', operation: 'read-file' })
+      const v = r.ok ? await hashFile(r) : r
+      return v.ok ? { ok: true, version: `sha256:${v.version}` } : v
+    },
     authorize: async (h, p, kind) => {
       const r = await files.resolveAllowed(h, p, kind === 'file' ? { consumer: 'file', operation: 'read-file' } : { consumer: 'tree', operation: 'list-directory' })
       return r.ok ? 'ok' : r.reason === 'missing' ? 'missing' : 'denied'
@@ -597,6 +607,7 @@ function registerIpc(): void {
     watch: (r, onChange, pool) => files.watch(r, onChange, pool),
     unwatch: (id) => files.unwatch(id),
     readRevision: packetDeps.readRevision,
+    byteVersion: packetDeps.byteVersion,
     push: (e) => push(IpcChannels.refSourceChanged, e)
   })
 
@@ -722,8 +733,16 @@ function registerIpc(): void {
 
   handle(IpcChannels.syncRefWatches, async (_e, handleId: unknown, entries: unknown) => {
     const ok = (x: unknown): boolean => {
-      const { path, version } = (x ?? {}) as Record<string, unknown>
-      return typeof path === 'string' && isAbsolute(path) && path.length <= 4096 && !path.includes('\0') && typeof version === 'string' && /^sha256:[0-9a-f]{32}$/.test(version)
+      const { path, version, bytes } = (x ?? {}) as Record<string, unknown>
+      return (
+        typeof path === 'string' &&
+        isAbsolute(path) &&
+        path.length <= 4096 &&
+        !path.includes('\0') &&
+        typeof version === 'string' &&
+        /^sha256:[0-9a-f]{32}$/.test(version) &&
+        (bytes === undefined || bytes === true)
+      )
     }
     if (typeof handleId !== 'string' || manager.cwd(handleId) === null || !Array.isArray(entries) || entries.length > MAX_REFS || !entries.every(ok)) return
     refWatches.sync(handleId, entries)
@@ -1019,6 +1038,10 @@ function registerIpc(): void {
   })
   handle(IpcChannels.imageCaps, (_e, handleId: unknown, owner: unknown, paths: unknown) => images.mint(handleId, owner, paths))
   handle(IpcChannels.imageCapsRevoke, (_e, handleId: unknown, owner: unknown) => images.revoke(handleId, owner))
+  handle(IpcChannels.imageOpen, (_e, handleId: unknown, owner: unknown, path: unknown) => images.open(handleId, owner, path))
+  handle(IpcChannels.imageVersion, (_e, handleId: unknown, path: unknown) =>
+    typeof handleId === 'string' && typeof path === 'string' ? packetDeps.byteVersion(handleId, path) : { ok: false, reason: 'invalid' }
+  )
   const watchFor = async (handleId: string, r: FileResource | Refusal): Promise<{ ok: true; id: string } | Refusal> => {
     if (!r.ok) return r
     let id = ''

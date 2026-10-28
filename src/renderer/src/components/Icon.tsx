@@ -84,6 +84,14 @@ export function IconPlus(p: IconProps): JSX.Element {
   )
 }
 
+export function IconMinus(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M5 12h14" />
+    </Svg>
+  )
+}
+
 export function IconArrowUp(p: IconProps): JSX.Element {
   return (
     <Svg {...p}>
@@ -116,6 +124,15 @@ export function IconStop(p: IconProps): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" className={p.className ?? 'h-4 w-4'} fill="currentColor" aria-hidden="true">
       <rect x="6" y="6" width="12" height="12" rx="2.5" />
+    </svg>
+  )
+}
+
+/** Filled, as IconStop is, so the two read as one control's states. */
+export function IconPlay(p: IconProps): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" className={p.className ?? 'h-4 w-4'} fill="currentColor" aria-hidden="true">
+      <path d="M8 5.6v12.8a1.1 1.1 0 0 0 1.66.95l10.4-6.4a1.1 1.1 0 0 0 0-1.9L9.66 4.65A1.1 1.1 0 0 0 8 5.6Z" />
     </svg>
   )
 }

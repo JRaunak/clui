@@ -5,7 +5,7 @@
  * agent cursor's world 1001.
  */
 import type { BrowserWindow, Event as ElectronEvent, Input, WebContents } from 'electron'
-import { samePoint, type AnnotateEvent, type AnnotateTarget, type PinInput, type PointAt } from '../../shared/annotate'
+import { CROP_MAX_EDGE, samePoint, type AnnotateEvent, type AnnotateTarget, type PinInput, type PointAt } from '../../shared/annotate'
 import { MAX_REFS, type DraftVisual, type SourceVersion } from '../../shared/context'
 import type { AnnotationOrder } from '../../shared/ipc'
 import { IpcChannels } from '../../shared/ipc'
@@ -14,7 +14,6 @@ import type { BrowserManager } from './manager'
 import { getSettingsSync } from '../settings/store'
 
 const MARGIN = 24
-const CROP_MAX_EDGE = 800
 const GROUP = 'clui-annotate'
 const DOC_TIMEOUT_MS = 2000
 const HIGHLIGHT = {

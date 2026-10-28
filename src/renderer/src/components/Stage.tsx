@@ -25,7 +25,7 @@ import { StatusBar } from './StatusBar'
 import { Notice } from './Notice'
 import { SPLIT_MIN, getStage } from '../lib/stage'
 import { focusPaneTitle } from '../lib/dive'
-import { fileLike, isMarkdown, presentationOf, useNoPreview } from '../lib/presentation'
+import { fileLike, isMarkdown, opensDefault, presentationOf, useNoPreview } from '../lib/presentation'
 import { isHtml } from '../../../shared/html-view'
 
 export type PaneState = 'collapsed' | 'half' | 'full'
@@ -156,7 +156,7 @@ export function Stage({
         : onDiff
           ? { kind: 'diff', enabled: diffOpenable }
           : filePath
-            ? { kind: shown === 'preview' ? 'page' : 'file', enabled: fileStatus !== 'missing' }
+            ? { kind: opensDefault(fileKind, shown) ? 'page' : 'file', enabled: fileStatus !== 'missing' }
             : onTree
               ? { kind: 'tree', enabled: true }
               : { kind: 'none', enabled: false },
@@ -164,9 +164,10 @@ export function Stage({
       presentation: !shown ? 'none' : shown === 'preview' ? 'source' : 'preview',
       // A focused page is main's to report, so this covers only focus in the pane's own DOM.
       reload: shown === 'preview' && !!filePath && isHtml(filePath) && focusInSecondary,
-      back: shown === 'preview' && !!filePath && isMarkdown(filePath) && hasBack && focusInSecondary
+      back: shown === 'preview' && !!filePath && isMarkdown(filePath) && hasBack && focusInSecondary,
+      zoom: fileKind === 'image' && shown !== 'source'
     })
-  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, shown, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary, hasBack])
+  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, shown, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary, hasBack, fileKind])
 
   const pane = useMemo<PaneApi>(
     () => ({

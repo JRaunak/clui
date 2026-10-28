@@ -10,8 +10,9 @@ import { PointButton } from './PointButton'
 import { HtmlSurface } from './HtmlSurface'
 import { MarkdownSurface } from './MarkdownSurface'
 import { MermaidSurface } from './MermaidSurface'
+import { ImageSurface } from './ImageSurface'
 import { PresentationButton } from './PresentationButton'
-import { fileLike, isMarkdown, isMermaid, presentationOf, useNoPreview } from '../../lib/presentation'
+import { fileLike, isMarkdown, isMermaid, opensDefault, presentationOf, useNoPreview } from '../../lib/presentation'
 import { isHtml } from '../../../../shared/html-view'
 
 /** The Surfaces pane: one header whose tab strip outlives a switch between kinds, over the active
@@ -28,17 +29,23 @@ export function SurfaceHost(): JSX.Element | null {
   const mode = useActive((s) => (fileTab && activeId ? s?.surfaces.tabs[activeId]?.mode : undefined))
   const noPreview = useNoPreview(handleId, filePath)
   const shown = presentationOf(fileTab && filePath !== null ? { kind, key: filePath, mode } : undefined, !!noPreview)
-  const fileExternal = useFileExternal(handleId, filePath, shown === 'preview')
+  const fileExternal = useFileExternal(handleId, filePath, opensDefault(kind, shown))
   const cwd = useActive((s) => s?.cwd ?? null)
   if (!handleId) return null
   const browser = kind === 'browser'
   const external =
     browser ? browserExternal : kind === 'diff' ? diffExternal : fileTab ? fileExternal : kind === 'tree' ? treeExternal(handleId, cwd) : undefined
   const pointer = (browser || kind === 'diff') && activeId && <PointButton kind={kind} id={activeId} />
+  const image = kind === 'image'
   const actions = browser ? (
     <>
       {pointer}
       <BrowserSettingsButton />
+    </>
+  ) : image && activeId ? (
+    <>
+      {shown !== 'source' && <PointButton kind="image" id={activeId} />}
+      {shown && <PresentationButton handleId={handleId} tabId={activeId} shown={shown} noPreview={noPreview} />}
     </>
   ) : shown && activeId ? (
     <>
@@ -59,7 +66,9 @@ export function SurfaceHost(): JSX.Element | null {
       {kind === 'tree' && cwd && <TreeSurface key={handleId} handleId={handleId} cwd={cwd} />}
       {fileTab &&
         activeId &&
-        (shown === 'preview' ? (
+        (image && shown !== 'source' ? (
+          <ImageSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
+        ) : shown === 'preview' ? (
           filePath && isMarkdown(filePath) ? (
             <MarkdownSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
           ) : filePath && isMermaid(filePath) ? (

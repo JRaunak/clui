@@ -19,7 +19,7 @@ import type { AnnotateEvent, PointAt } from './annotate'
 import type { ChangeSide, DraftReference, LineRange, RefInput, RefInvalid, SourceVersion } from './context'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff, HunkRows } from './changes'
 import type { HtmlOpenResult, HtmlViewEvent, PagePlace, PageStart } from './html-view'
-import type { ContextMenuItem, FileChangedEvent, FileStat, ImageCap, Refusal, TextRead, TreeListing } from './files'
+import type { ContextMenuItem, FileChangedEvent, FileStat, ImageCap, ImageOpen, Refusal, TextRead, TreeListing } from './files'
 import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
 import type { SurfaceCommand, SurfaceReply } from './surface-tools'
 import type {
@@ -134,8 +134,9 @@ export type ChangeRefResult =
 export type ChangeRefPeek = { ok: true; text: string; side: ChangeSide; old?: LineRange; new?: LineRange; bytes: number } | { ok: false }
 
 export interface AnnotationOrder { keep: number[]; shown: [pinId: number, n: number][]; room: number }
-export interface RefWatchEntry { path: string; version: SourceVersion }
-export interface RefSourceChanged { handleId: string; path: string; reason: 'changed' | 'missing' | 'denied'; version?: SourceVersion }
+/** `bytes`: an image reference's, whose version is over every byte rather than the text a read returns. */
+export interface RefWatchEntry { path: string; version: SourceVersion; bytes?: true }
+export interface RefSourceChanged { handleId: string; path: string; reason: 'changed' | 'missing' | 'denied'; version?: SourceVersion; bytes?: true }
 
 /** A user's answer to a permission request. */
 export type PermissionVerdict =
@@ -309,6 +310,10 @@ export interface CluiApi {
    *  earlier caps, as does imageCapsRevoke. */
   imageCaps: (handleId: string, owner: string, paths: string[]) => Promise<ImageCap[]>
   imageCapsRevoke: (handleId: string, owner: string) => Promise<void>
+  /** An image tab's file and, when Clui shows it, its cap; replaces the owner's earlier caps, as imageCaps does. */
+  imageOpen: (handleId: string, owner: string, path: string) => Promise<ImageOpen>
+  /** The hash of an image's bytes now, to check a selection against before its picture is taken. */
+  imageVersion: (handleId: string, path: string) => Promise<{ ok: true; version: SourceVersion } | Refusal>
   /** Watch a file while a surface shows it; changes arrive through onFileChanged with the returned id. */
   watchFile: (handleId: string, path: string) => Promise<{ ok: true; id: string } | Refusal>
   unwatchFile: (handleId: string, id: string) => Promise<void>
@@ -475,6 +480,10 @@ export type MenuAction =
   /** Swaps the active tab between Source and Preview. */
   | 'pane-presentation'
   | 'pane-back'
+  | 'image-zoom-in'
+  | 'image-zoom-out'
+  /** Fit from anywhere but Fit, where it goes to Actual size. */
+  | 'image-zoom-toggle'
   /** F6 / ⇧F6 pressed inside a native page, handed back to the renderer's region cycle. */
   | 'region-next'
   | 'region-prev'
@@ -540,6 +549,8 @@ export const IpcChannels = {
   statFile: 'clui:statFile',
   imageCaps: 'clui:imageCaps',
   imageCapsRevoke: 'clui:imageCapsRevoke',
+  imageOpen: 'clui:imageOpen',
+  imageVersion: 'clui:imageVersion',
   watchFile: 'clui:watchFile',
   unwatchFile: 'clui:unwatchFile',
   /** main → renderer push channel for watched-file changes */
@@ -627,4 +638,6 @@ export interface MenuState {
   reload: boolean
   /** Focus is in a Markdown Preview whose anchor jumps have a place to go back to. */
   back: boolean
+  /** An image Preview is the active tab, so the View menu's zoom items work. */
+  zoom: boolean
 }

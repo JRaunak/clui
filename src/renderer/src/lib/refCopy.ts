@@ -1,5 +1,5 @@
 import { clipName, hostOf, pinWords } from '../../../shared/annotate'
-import { changeLabel, changeTail, MAX_REFS, refLabel, type ChangeSide, type ContextReference, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
+import { changeLabel, changeTail, imagePx, imageTail, MAX_REFS, refLabel, type ChangeSide, type ContextReference, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 import { CHANGE_BYTES_MAX, CHANGE_LINES_MAX, CHANGE_TEXT_BUDGET } from '../../../shared/changes'
 import { WORKSPACE_FILE_CAP } from '../../../shared/files'
 
@@ -40,6 +40,7 @@ export function changeWords(r: Pick<ChangeInput, 'side' | 'old' | 'new'>): strin
 export function shortLabel(r: ContextReference): string {
   // A change notice gathers every file's removed refs, so each names its file.
   if (r.kind === 'change') return changeLabel(r.path, r.side, r.old, r.new)
+  if (r.kind === 'image') return imageTail(r, false)
   return r.kind === 'file' && r.lines ? rangeText(r.lines) : refLabel(r)
 }
 
@@ -62,9 +63,17 @@ export function spokenRef(r: RefInput): string {
     }
     case 'change':
       return spokenChange(r)
+    case 'image':
+      return `${baseOf(r.path)}, ${spokenImage(r)}`
     default:
       return r satisfies never
   }
+}
+
+/** `region 640 by 320 at 120, 48`, `point at 412, 96`. */
+export function spokenImage(r: Parameters<typeof imagePx>[0]): string {
+  const p = imagePx(r)
+  return p.w === undefined ? `point at ${p.x}, ${p.y}` : `region ${p.w} by ${p.h} at ${p.x}, ${p.y}`
 }
 
 const capital = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)

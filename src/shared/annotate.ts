@@ -42,6 +42,9 @@ export type AnnotateEvent =
   /** The tab's document is gone: cross-document navigation, close, suspend or renderer crash. */
   | { type: 'gone'; tab: number; reason: 'navigated' | 'closed' }
 
+/** The longest edge of any picture Point sends: a page element's crop and an image region's. */
+export const CROP_MAX_EDGE = 800
+
 const NAME_MAX = 32
 
 /** The chip's words: the role and accessible name, else the tag and its text. */

@@ -11,7 +11,8 @@ import { lstat, mkdir, mkdtemp, open, opendir, realpath, rm, symlink, writeFile,
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { MAX_REFS } from '../../shared/context'
-import type { FileStat, Refusal, TextRead } from '../../shared/files'
+import type { FileStat, ImageInfo, Refusal, TextRead } from '../../shared/files'
+import { HEAD_BYTES, readImageHead, tooLarge } from '../../shared/imageHead'
 
 export type FileOperation = 'read-file' | 'list-directory' | 'watch-file' | 'watch-directory' | 'open-external'
 /** `web` is an HTML view's own page and assets: workspace files only, never a grant or a ledger path. */
@@ -205,6 +206,43 @@ export function readText(r: FileResource): Promise<TextRead | Refusal> {
       return { ok: true as const, text, size, mtimeMs: Number(after.mtimeMs), binary, truncated, unsupportedEncoding, revision }
     }
     throw new Refused('changed')
+  })
+}
+
+/** sha256 over every byte, in readText's 32-hex form, read in chunks at one revision. */
+async function hashAt(fh: FileHandle, size: number): Promise<string> {
+  const h = createHash('sha256')
+  for (let off = 0; off < size; off += CHUNK_MAX) h.update(await readAt(fh, off, Math.min(CHUNK_MAX, size - off)))
+  return h.digest('hex').slice(0, 32)
+}
+
+/** A whole file's content version, as an image reference records it, up to the size a cap serves. */
+export function hashFile(r: FileResource): Promise<{ ok: true; version: string } | Refusal> {
+  if (!genuine(r) || r.operation !== 'read-file' || r.type !== 'file') return Promise.resolve(refuse('invalid'))
+  return guarded(r, async (fh) => {
+    const before = await fh.stat({ bigint: true })
+    if (Number(before.size) > BYTES_MAX) throw new Refused('too-large')
+    const version = await hashAt(fh, Number(before.size))
+    if (revisionOf(await fh.stat({ bigint: true })) !== revisionOf(before)) throw new Refused('changed')
+    return { ok: true as const, version }
+  })
+}
+
+/** An image's header, read before anything decodes it, and its content version when it's one Clui shows. */
+export function imageInfo(r: FileResource): Promise<ImageInfo | Refusal> {
+  if (!genuine(r) || r.operation !== 'read-file' || r.type !== 'file') return Promise.resolve(refuse('invalid'))
+  return guarded(r, async (fh) => {
+    const before = await fh.stat({ bigint: true })
+    const size = Number(before.size)
+    // Past this a cap couldn't serve it anyway.
+    if (size > BYTES_MAX) throw new Refused('too-large')
+    const revision = revisionOf(before)
+    if (!size) return { ok: true as const, size, revision, head: null }
+    const head = await readImageHead(await readAt(fh, 0, Math.min(size, HEAD_BYTES)), size, (offset, length) => readAt(fh, offset, Math.max(0, Math.min(length, size - offset))))
+    const shown = !!head.format && head.complete && !tooLarge(head)
+    const version = shown ? await hashAt(fh, size) : undefined
+    if (revisionOf(await fh.stat({ bigint: true })) !== revision) throw new Refused('changed')
+    return { ok: true as const, size, revision, head, ...(version ? { version } : {}) }
   })
 }
 

@@ -1,4 +1,6 @@
 // What the guarded file reads return, in main and across IPC.
+import type { SourceVersion } from './context'
+import type { ImageHead } from './imageHead'
 
 /** The most workspace files listed, so a huge repo can't flood the pickers or the IPC. */
 export const WORKSPACE_FILE_CAP = 3000
@@ -34,6 +36,12 @@ export interface FileStat {
 /** A Markdown preview's image: a `clui-file:` URL for exactly that file, or why there's none. `outside`: not a file
  *  this session may read, so no request is made. */
 export type ImageCap = { ok: true; url: string } | { ok: false; outside: boolean }
+/** What main reads of an image before it's shown. `head` is null for an empty file; `version` is the hash of every byte,
+ *  present only when the head says Clui shows it. */
+export interface ImageInfo { ok: true; size: number; revision: string; head: ImageHead | null; version?: string }
+/** An image tab's open: its info and, when it's shown, an exact-file cap bound to the bytes `version` hashed. */
+export type ImageOpen = (Omit<ImageInfo, 'revision' | 'version'> & { cap?: { url: string; version: SourceVersion } }) | Refusal
+
 /** Per mint, so one document can't hold an unbounded number of caps. */
 export const IMAGE_PATHS_MAX = 1000
 

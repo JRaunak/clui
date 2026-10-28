@@ -99,6 +99,7 @@ function survivors(a: string, b: string): Int32Array | null {
 
 const CLEARED = 'The lines you selected changed on disk, so the selection was cleared.'
 const REMOVED = 'The lines you selected changed on disk, so the selection was cleared and removed from the message.'
+const LINES_NOTICE = { cleared: CLEARED, removed: REMOVED }
 
 /**
  * One file tab's text, read on mount and again when it changes on disk, and its line selection, carried onto new
@@ -334,11 +335,11 @@ export function viewSourceAt(handleId: string, tabId: string, line: number, via:
   sayInHeader(`Showing source, line ${line}`)
 }
 
-/** The notice a selection leaves when an outside change clears it. */
-export function SelectionNotice({ notice, onDismiss }: { notice: 'cleared' | 'removed'; onDismiss: () => void }): JSX.Element {
+/** The notice a selection leaves when an outside change clears it. `copy` names what changed, lines by default. */
+export function SelectionNotice({ notice, onDismiss, copy = LINES_NOTICE }: { notice: 'cleared' | 'removed'; onDismiss: () => void; copy?: Record<'cleared' | 'removed', string> }): JSX.Element {
   return (
     <div className="flex h-8 items-center gap-2 px-3 text-meta text-dim">
-      {notice === 'removed' ? REMOVED : CLEARED}
+      {copy[notice]}
       <button type="button" className={TEXT_BTN} onClick={onDismiss}>
         Dismiss
       </button>
