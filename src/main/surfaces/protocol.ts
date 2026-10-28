@@ -126,25 +126,50 @@ export function createCaps(resolve: (handleId: string, path: string) => Promise<
     if (caps.get(host) !== cap) return status(403)
     if (!s.ok) return status(404)
     cap.served.set(r.path, s.revision)
-    const headers = {
+    const headers: Record<string, string> = {
       'content-type': MIME[extname(r.path).toLowerCase()] ?? 'application/octet-stream',
       'x-content-type-options': 'nosniff',
       'content-security-policy': cspFor(cap.policy),
-      'cache-control': 'no-store'
+      'cache-control': 'no-store',
+      'accept-ranges': 'bytes'
     }
+    const want = rangeOf(req.headers.get('range'), s.size)
+    if (want === 'unsatisfiable') return new Response(null, { status: 416, headers: { ...headers, 'content-range': `bytes */${s.size}` } })
     if (req.method === 'HEAD') return new Response(null, { headers })
-    return new Response(bytesOf(r, s, () => caps.get(host) === cap), { headers })
+    const live = (): boolean => caps.get(host) === cap
+    if (!want) return new Response(bytesOf(r, s, live), { headers })
+    const [start, end] = want
+    headers['content-range'] = `bytes ${start}-${end - 1}/${s.size}`
+    headers['content-length'] = String(end - start)
+    return new Response(bytesOf(r, s, live, start, end), { status: 206, headers })
   }
 
   return { issue, revoke, serve }
 }
 
-function bytesOf(r: FileResource, s: FileStat, live: () => boolean): ReadableStream<Uint8Array> {
-  let offset = 0
+/**
+ * A single `bytes=` range as [start, end), so media can seek. A header this doesn't read, multiple ranges included,
+ * gets the whole file, which a range request allows.
+ */
+export function rangeOf(header: string | null, size: number): [number, number] | 'unsatisfiable' | null {
+  const m = header && /^bytes=(\d*)-(\d*)$/.exec(header.trim())
+  if (!m || (!m[1] && !m[2])) return null
+  if (!m[1]) {
+    const n = Number(m[2])
+    return n ? [Math.max(0, size - n), size] : 'unsatisfiable'
+  }
+  const start = Number(m[1])
+  if (start >= size) return 'unsatisfiable'
+  const last = m[2] ? Number(m[2]) : size - 1
+  return last < start ? null : [start, Math.min(last + 1, size)]
+}
+
+function bytesOf(r: FileResource, s: FileStat, live: () => boolean, start = 0, end = s.size): ReadableStream<Uint8Array> {
+  let offset = start
   return new ReadableStream<Uint8Array>({
     async pull(c) {
-      if (offset >= s.size) return c.close()
-      const chunk = await readBytes(r, { revision: s.revision, offset, length: Math.min(CHUNK, s.size - offset) })
+      if (offset >= end) return c.close()
+      const chunk = await readBytes(r, { revision: s.revision, offset, length: Math.min(CHUNK, end - offset) })
       // Revoked mid-stream, or the file changed under the read: never finish it with another version's bytes.
       if (!live()) return c.error(new Error('revoked'))
       if (!chunk.ok) return c.error(new Error(chunk.reason))

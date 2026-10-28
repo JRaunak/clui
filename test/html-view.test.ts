@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createFileAccess } from '../src/main/surfaces/files.ts'
-import { capPath, cspFor, createCaps } from '../src/main/surfaces/protocol.ts'
+import { capPath, cspFor, createCaps, rangeOf } from '../src/main/surfaces/protocol.ts'
 import { claudeRecord, gesture, isClaudes, movedOf, refusalOf, superseding } from '../src/main/surfaces/html-view.ts'
 import { isHtml } from '../src/shared/html-view.ts'
 import type { TextRead } from '../src/shared/files.ts'
@@ -152,6 +152,19 @@ import { equal, ok } from './support/harness.mjs'
   equal((await get('/escape.txt')).status, 404, 'cap: a symlink out of the root')
   equal((await get('/index.html', 'POST')).status, 405, 'cap: reads only')
   equal(JSON.stringify([...served.keys()].sort()), JSON.stringify([join(page, 'assets', 'a.css'), join(page, 'index.html')]), 'cap: records what it served, never a refused path')
+  const ranged = (range: string) => caps.serve(new Request(`clui-file://${host}/index.html`, { headers: { range } }))
+  const part = await ranged('bytes=3-5')
+  equal(`${part.status} ${part.headers.get('content-range')} ${await part.text()}`, '206 bytes 3-5/9 hi<', 'cap: a byte range')
+  equal(await (await ranged('bytes=-4')).text(), '</p>', 'cap: a suffix range')
+  equal(await (await ranged('bytes=6-')).text(), '/p>', 'cap: an open range')
+  const past = await ranged('bytes=9-')
+  equal(`${past.status} ${past.headers.get('content-range')}`, '416 bytes */9', 'cap: a range past the end')
+  equal((await ranged('bytes=0-1,4-5')).status, 200, 'cap: multiple ranges get the whole file')
+  equal((await get('/index.html')).headers.get('accept-ranges'), 'bytes', 'cap: says it takes ranges')
+  equal(JSON.stringify(rangeOf('bytes=0-99', 10)), '[0,10]', 'range: clamped to the size')
+  equal(rangeOf('bytes=5-2', 10), null, 'range: reversed is ignored')
+  equal(rangeOf('bytes=-0', 10), 'unsatisfiable', 'range: an empty suffix')
+  equal(rangeOf('items=0-1', 10), null, 'range: another unit is ignored')
   const head = await get('/index.html', 'HEAD')
   equal(head.status === 200 && head.body === null, true, 'cap: HEAD has headers only')
   equal((await get('/index.html', 'GET', 'cd'.repeat(16))).status, 403, 'cap: unknown cap')
