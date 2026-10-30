@@ -482,6 +482,12 @@ export class ClaudeSession extends EventEmitter {
       this.emitEvent({ type: 'error', severity: 'info', message: text })
       return
     }
+    // A Bedrock model newer than the CLI still runs with a guessed context window. The docs link is for gateway ids;
+    // Clui's come from Bedrock, where updating the CLI is the fix.
+    if (/^Claude Code doesn't recognize the model\b/i.test(text)) {
+      this.emitEvent({ type: 'error', severity: 'info', message: text.replace(/, or see \S+ to set the window\.$/, '.') })
+      return
+    }
     this.emitEvent({ type: 'error', message: text })
   }
 
