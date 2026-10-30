@@ -329,9 +329,9 @@ export function useFind(open: boolean, setOpen: (on: boolean) => void, canFind: 
 }
 
 /** Source at `line`, focused and washed as any open is. */
-export function viewSourceAt(handleId: string, tabId: string, line: number, via: Via): void {
+export function viewSourceAt(handleId: string, tabId: string, line: number, via: Via, endLine?: number): void {
   requestSurfaceFocus(tabId, via)
-  useSession.getState().setSurfaceView(handleId, tabId, { mode: 'source', location: { line } })
+  useSession.getState().setSurfaceView(handleId, tabId, { mode: 'source', location: { line, ...(endLine ? { endLine } : {}) } })
   sayInHeader(`Showing source, line ${line}`)
 }
 

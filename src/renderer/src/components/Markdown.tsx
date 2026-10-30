@@ -317,12 +317,13 @@ export function GutterNum({ line }: { line: number }): JSX.Element {
 
 const Num = ({ node }: { node?: Element }): JSX.Element | null => (node?.position ? <GutterNum line={node.position.start.line} /> : null)
 
-export function PointedRow({ label, list = false }: { label: string; list?: boolean }): JSX.Element {
+export function PointedRow({ label, list = false, children }: { label: string; list?: boolean; children?: ReactNode }): JSX.Element {
   const Tag = list ? 'li' : 'div'
   return (
     <Tag data-pointed="" className="flex h-6 select-none items-center gap-1.5 text-meta text-dim">
       <IconTarget className="h-3 w-3" />
       {label}
+      {children}
     </Tag>
   )
 }

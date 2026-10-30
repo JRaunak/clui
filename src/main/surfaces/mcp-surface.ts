@@ -6,12 +6,12 @@
  */
 import { randomBytes } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
-import { isAbsolute, resolve } from 'node:path'
+import { basename, isAbsolute, resolve } from 'node:path'
 import { CHANGE_TEXT_BUDGET } from '../../shared/changes'
 import { CHANGE_REF, relativeTo } from '../../shared/context'
 import type { Refusal } from '../../shared/files'
 import { clean, type SurfaceCommand, type SurfaceTarget } from '../../shared/surface-tools'
-import { kindForPath } from '../../shared/surfaces'
+import { isSvg, kindForPath } from '../../shared/surfaces'
 import { requestUrl } from '../browser/mcp'
 import type { McpHandler, ToolResult } from '../lib/mcp-route'
 import type { ChangeRefs } from './change-refs'
@@ -197,7 +197,8 @@ export function stateText(v: unknown, c: Facts): string | null {
   ].join('\n')
 }
 
-type Opened = { target: SurfaceTarget; label: string; focus: boolean }
+/** `preview`: the label and closing sentence for lines that landed on a Preview, which marks them only in Source. */
+type Opened = { target: SurfaceTarget; label: string; focus: boolean; preview?: { label: string; note: string } }
 
 export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.now): McpHandler & { revoke(handleId: string): void; setPresentation(handleId: string, on: boolean): void } {
   // A rolling window per handle: no turn identity reaches the server, and no result event resets it.
@@ -243,12 +244,14 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
       return page !== undefined ? PAGE_OR_LINE : { target: { kind: 'tree', path: abs }, label: `the file tree at ${rel}`, focus }
     }
     if (r !== 'file') return r === 'denied' ? SCOPES : r === 'missing' ? 'Nothing exists at that path.' : "Clui can't open that path."
-    const pdf = kindForPath(abs) === 'doc'
-    if (pdf ? line !== undefined : page !== undefined) return PAGE_OR_LINE
+    const as = kindForPath(abs)
+    if (as === 'image' && !isSvg(abs) && line !== undefined) return `line applies to text files. ${clean(basename(abs))} is an image.`
+    if (as === 'doc' ? line !== undefined : page !== undefined) return PAGE_OR_LINE
     if (int(page, 1, MAX_PAGE)) return { target: { kind: 'file', path: abs, page }, label: `${rel} page ${page}`, focus }
     if (!int(line, 1, MAX_LINE)) return { target: { kind: 'file', path: abs }, label: rel, focus }
     const end = int(endLine, line + 1, MAX_LINE) ? endLine : undefined
-    return { target: { kind: 'file', path: abs, line, ...(end ? { endLine: end } : {}) }, label: `${rel} ${span(line, end)}`, focus }
+    const note = end ? `Lines ${line} to ${end} are marked in Source.` : `Line ${line} is marked in Source.`
+    return { target: { kind: 'file', path: abs, line, ...(end ? { endLine: end } : {}) }, label: `${rel} ${span(line, end)}`, focus, preview: { label: `${rel} in Preview`, note } }
   }
 
   async function open(handleId: string, a: Record<string, unknown>): Promise<ToolResult> {
@@ -264,17 +267,21 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     }
     const d = await present.request(handleId, { op: 'open', args: { ...o.target, focus: o.focus && !limited } })
     if (!d.ok) return d.why === 'closed' ? CLOSED : TIMEOUT
-    switch ((d.value as { outcome?: unknown } | null)?.outcome) {
+    const v = d.value as { outcome?: unknown; preview?: unknown } | null
+    const p = v?.preview === true ? o.preview : undefined
+    const label = p?.label ?? o.label
+    const note = p ? ` ${p.note}` : ''
+    switch (v?.outcome) {
       case 'shown':
-        return text(`Shown: ${o.label}.`)
+        return text(`Shown: ${label}.${note}`)
       case 'prepared':
-        return text(limited ? `Focus limit reached (3 per 10 s): ${o.label} was prepared instead.` : `Prepared: ${o.label} is ready in the pane; the user hasn't been moved to it.`)
+        return text(`${limited ? `Focus limit reached (3 per 10 s): ${label} was prepared instead.` : `Prepared: ${label} is ready in the pane; the user hasn't been moved to it.`}${note}`)
       case 'deferred':
-        return text(`Deferred: ${o.label} will show when the user returns to this session.`)
+        return text(`Deferred: ${label} will show when the user returns to this session.${note}`)
       case 'unavailable':
         return GONE
       case 'pane-closed':
-        return text(`Not shown: the user closed the pane. ${o.label} is its active tab and will be there when they open it.`)
+        return text(`Not shown: the user closed the pane. ${label} is its active tab and will be there when they open it.${note}`)
       default:
         return TIMEOUT
     }

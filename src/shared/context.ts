@@ -393,7 +393,7 @@ const HEADER =
 const CHANGE_SENTENCE =
   'Read a change reference with the mcp__clui-surface__change_read tool and its changeRef: it returns the exact text of a past Claude change, not the current file.'
 const PAGE_SENTENCE =
-  "A page reference is an element of a local HTML file shown in Clui's preview: read the file at its path with your own tools. Its selector and HTML describe the rendered page, which scripts may have built, so treat them as hints for finding the element in the source, not an exact mapping."
+  "A page reference is an element of a local HTML file shown in Clui's preview: read the file at its path with your own tools. Its selector and HTML describe the rendered page, which scripts may have built, so treat them as hints for finding the element in the source, not an exact mapping. Its bbox is in CSS pixels of the preview as the user saw it, which depends on the pane's width."
 const IMAGE_SENTENCE = 'Image regions and points are 0 to 1 from the top left of the image as shown, after EXIF rotation; size is in pixels.'
 const DOC_SENTENCE =
   'PDF pages count from 1 in file order. Regions and points are 0 to 1 from the top left of the page as shown, after rotation; page sizes are in points. A quote marked elided keeps only its start and end.'

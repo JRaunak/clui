@@ -46,7 +46,8 @@ export interface PaneFacts {
 }
 /** `pane-closed`: the tab is active, but the user closed the pane and nothing reopens it on its own. */
 export type OpenOutcome = 'shown' | 'prepared' | 'deferred' | 'pane-closed' | 'unavailable'
-export type SurfaceReply = PaneFacts | { outcome: OpenOutcome }
+/** `preview`: Claude's lines landed on a tab showing an HTML or SVG Preview, which marks them only in Source. */
+export type SurfaceReply = PaneFacts | { outcome: OpenOutcome; preview?: true }
 
 // Filenames and page titles are someone else's strings: no controls, no bidi overrides, one bounded line.
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g

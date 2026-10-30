@@ -115,6 +115,7 @@ export type OpenIntent = 'focus' | 'open' | 'prepare'
 export const fileViewKey = (kind: SurfaceTab['kind']): 'viewState' | 'sourceView' => (kind === 'artifact' || kind === 'image' ? 'sourceView' : 'viewState')
 
 const IMAGE = /\.(png|jpe?g|webp|gif|avif|svg)$/i
+export const isSvg = (p: string): boolean => /\.svg$/i.test(p)
 
 /** The tab kind a path opens as. `.ico` and `.icns` stay files: the image surface reads neither format. */
 export const kindForPath = (p: string): 'file' | 'image' | 'doc' => (IMAGE.test(p) ? 'image' : /\.pdf$/i.test(p) ? 'doc' : 'file')

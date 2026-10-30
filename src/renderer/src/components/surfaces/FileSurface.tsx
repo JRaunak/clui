@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react'
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
+import { Virtuoso, type FlatIndexLocationWithAlign, type VirtuosoHandle } from 'react-virtuoso'
 import { useActive, useSession } from '../../store'
 import type { ChangeMarks } from '../../../../shared/changes'
 import { fileViewKey, type SurfaceLocation } from '../../../../shared/surfaces'
@@ -215,6 +215,14 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     const index = lineIndex[Math.max(1, Math.min(count, n))]
     virtuoso.current?.scrollToIndex({ index, align })
   }
+  // A destination that fits is centred whole; a taller one starts at the row above its first line, which is Claude's
+  // "pointed to" row when it's Claude's.
+  const landing = (r: Lines): FlatIndexLocationWithAlign => {
+    const row = scroller?.querySelector<HTMLElement>('[data-line]')?.offsetHeight || 20
+    if ((r.end - r.start + 2) * row <= (scroller?.clientHeight ?? 0)) return { index: lineIndex[Math.max(1, Math.min(count, (r.start + r.end) >> 1))] ?? 0, align: 'center' }
+    return { index: Math.max(0, (lineIndex[Math.max(1, Math.min(count, r.start))] ?? 0) - 1), align: 'start' }
+  }
+  const rangeOf = (line: number, endLine = line): Lines => ({ start: line, end: Math.max(line, endLine) })
 
   // A re-read keeps the reader on the line they were at.
   useLayoutEffect(() => {
@@ -253,12 +261,18 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     bodyEl.current.focus({ preventScroll: true })
   }, [doc.t, location, tabId])
 
+  // The list mounts at its destination through initialTopMostItemIndex: a scrollToIndex in the commit that mounts it
+  // runs before Virtuoso has measured, and is dropped.
   const applied = useRef<SurfaceLocation | null>(null)
+  const listed = useRef(false)
   useEffect(() => {
-    if (doc.t !== 'text' || !location?.line || applied.current === location || !scroller) return
+    if (doc.t !== 'text' || !scroller) return void (listed.current = false)
+    const mounting = !listed.current
+    listed.current = true
+    if (!location?.line || applied.current === location) return
     applied.current = location
-    const r = { start: location.line, end: Math.max(location.line, location.endLine ?? location.line) }
-    toLine(r.start, 'center')
+    const r = rangeOf(location.line, location.endLine)
+    if (!mounting) virtuoso.current?.scrollToIndex(landing(r))
     // The Claude highlight already marks its own range.
     if (highlight && highlight.start === r.start && highlight.end === r.end) return
     setFlash({ range: r, via: openVia.current === 'pointer' && !reducedMotion() ? 'pointer' : 'keyboard' })
@@ -547,7 +561,9 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
         ref={virtuoso}
         customScrollParent={scroller}
         data={items}
-        initialTopMostItemIndex={restoreAt > 1 ? (lineIndex[Math.min(count, restoreAt)] ?? 0) : 0}
+        initialTopMostItemIndex={
+          location?.line ? landing(rangeOf(location.line, location.endLine)) : restoreAt > 1 ? (lineIndex[Math.min(count, restoreAt)] ?? 0) : 0
+        }
         computeItemKey={(_i, it) => (it.t === 'line' ? `l${it.n}` : it.t === 'chip' ? it.key : it.t === 'banner' ? `b${it.end}` : it.t)}
         rangeChanged={(r) => {
           range.current = { start: r.startIndex, end: r.endIndex }

@@ -7,6 +7,7 @@ import type { Refusal } from '../../../../shared/files'
 import { Button } from '../Button'
 import { IconMinus, IconPlay, IconPlus, IconStop } from '../Icon'
 import { DISABLED_BTN, PANE_BTN } from './PaneHeader'
+import { PreviewPointed } from './PreviewPointed'
 import { ANNOUNCE_MS, SelectionBar } from './SelectionBar'
 import { RegionPicker, type Picked, type PickerHandle } from './RegionPicker'
 import { baseOf, DocState, openDefault, REASON, SelectionNotice, SKELETON_MS, STATE_BODY, VIEW_SETTLE_MS, setStatus, type Doc } from './fileDoc'
@@ -16,8 +17,8 @@ import { useSay } from '../../lib/useSay'
 import { cssMs, cssVar, reducedMotion, viaOf, type Via } from '../../lib/motion'
 import { noteRead } from '../../lib/blockedFiles'
 import { POINT_OFF } from '../../lib/refCopy'
-import { isSvg } from '../../lib/presentation'
 import { setPointBlocked, setPointing, takePoint, takeSurfaceFocus, usePointing, usePointRequest } from '../../lib/surfaceFocus'
+import { isSvg } from '../../../../shared/surfaces'
 import {
   centreOf,
   clampScale,
@@ -849,6 +850,7 @@ export function ImageSurface({ handleId, tabId }: { handleId: string; tabId: str
           </div>
         )}
       </div>
+      <PreviewPointed handleId={handleId} tabId={tabId} />
       <div
         ref={viewportEl}
         role="region"

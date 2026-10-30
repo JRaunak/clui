@@ -12,6 +12,7 @@ import { Button } from '../Button'
 import { AnnotateStrip, STRIP_BTN } from '../BrowserToolbar'
 import { IconFolderOpen, IconRefresh } from '../Icon'
 import { PANE_BTN } from './PaneHeader'
+import { PreviewPointed } from './PreviewPointed'
 import { cleanError, FileMissing, openDefault, REASON, RETRY, setStatus, STATE_BODY } from './fileDoc'
 import type { HtmlBlocked, HtmlPolicy, PagePlace } from '../../../../shared/html-view'
 import { fileViewKey, type SurfaceLocation } from '../../../../shared/surfaces'
@@ -526,6 +527,7 @@ export function HtmlSurface({ handleId, tabId, explicit }: { handleId: string; t
           </button>
         </div>
       )}
+      {opened.t === 'open' && <PreviewPointed handleId={handleId} tabId={tabId} />}
       {pointing ? (
         <AnnotateStrip />
       ) : (

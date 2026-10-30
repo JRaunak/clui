@@ -50,11 +50,11 @@ import {
 import { removalSpoken, pausedText, resourceLabel, shortLabel } from './lib/refCopy'
 import type { Via } from './lib/motion'
 import { CHANGE_BYTES_MAX, CHANGE_TEXT_BUDGET, type ChangeGitStatus, type FileChangeSummary, type GitPathStatus } from '../../shared/changes'
-import { kindForPath, restoreKinds, SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
+import { isSvg, kindForPath, restoreKinds, SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
 import { clean, type SurfaceCommand, type SurfaceReply, type SurfaceTarget, type TabFact } from '../../shared/surface-tools'
 import { turnEndLine } from './lib/turnEnd'
 import { suffixes } from './lib/tree'
-import { fileLike } from './lib/presentation'
+import { fileLike, noPreview, presentationOf } from './lib/presentation'
 import { isHtml } from '../../shared/html-view'
 
 export type SettingsSection = 'general' | 'sessions' | 'pane' | 'advanced'
@@ -1434,9 +1434,10 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
   if (!after) return { outcome: 'unavailable' }
   if (!after.paneOpen && after.paneAutoOpenSuppressed && after.surfaces.active === id) return { outcome: 'pane-closed' }
   const visible = handleId === now.activeHandleId && !hidden()
-  const shown =
-    visible && after.paneOpen && !now.viewingSubagent && now.settingsSection === null && after.surfaces.active === id && !after.surfaces.tabs[id]?.pendingShow
-  return { outcome: shown ? 'shown' : a.focus && !visible ? 'deferred' : 'prepared' }
+  const tab = after.surfaces.tabs[id]
+  const shown = visible && after.paneOpen && !now.viewingSubagent && now.settingsSection === null && after.surfaces.active === id && !tab?.pendingShow
+  const preview = !!lines && !!tab && (isHtml(tab.key) || isSvg(tab.key)) && presentationOf(tab, !!noPreview(handleId, tab.key)) === 'preview'
+  return { outcome: shown ? 'shown' : a.focus && !visible ? 'deferred' : 'prepared', ...(preview ? { preview } : {}) }
 }
 
 const answered = new Set<string>()

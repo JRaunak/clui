@@ -1,12 +1,11 @@
 import { useSyncExternalStore } from 'react'
 import { isHtml } from '../../../shared/html-view'
-import type { SurfaceKind, SurfaceTab } from '../../../shared/surfaces'
+import { isSvg, type SurfaceKind, type SurfaceTab } from '../../../shared/surfaces'
 
 export type Presentation = 'source' | 'preview'
 
 export const isMarkdown = (p: string): boolean => /\.(md|markdown)$/i.test(p)
 export const isMermaid = (p: string): boolean => /\.(mmd|mermaid)$/i.test(p)
-export const isSvg = (p: string): boolean => /\.svg$/i.test(p)
 export const hasPreview = (p: string): boolean => isHtml(p) || isMarkdown(p) || isMermaid(p) || isSvg(p)
 
 /** Tabs that show one file: its text, a Preview beside it for the kinds that have one, an image or a PDF. */
@@ -47,7 +46,7 @@ export function clearNoPreview(handleId: string, path: string): void {
   for (const l of listeners) l()
 }
 
-const noPreview = (handleId: string | null, path: string | null | undefined): NoPreview | null =>
+export const noPreview = (handleId: string | null, path: string | null | undefined): NoPreview | null =>
   (!!handleId && !!path && refused.get(`${handleId}\0${path}`)) || null
 
 export const useNoPreview = (handleId: string | null, path: string | null | undefined): NoPreview | null => useSyncExternalStore(subscribe, () => noPreview(handleId, path))
