@@ -23,8 +23,8 @@ export function point(): void {
   st.announceStatus(s.handleId, NO_TARGET)
 }
 
-/** `html` and `image`: a page or image Preview, whose surface says when it can't point. */
-export function PointButton({ kind, id }: { kind: 'browser' | 'diff' | 'html' | 'image'; id: string }): JSX.Element {
+/** `html`, `image` and `doc`: a page or image Preview or a PDF, whose surface says when it can't point. */
+export function PointButton({ kind, id }: { kind: 'browser' | 'diff' | 'html' | 'image' | 'doc'; id: string }): JSX.Element {
   const annotating = useActive((s) => s?.annotate.at?.kind === 'browser' && s.annotate.at.tab === s.browser?.viewed)
   const driving = useActive((s) => viewedTabOf(s?.browser)?.drive === 'driving')
   const noChanges = useActive((s) => !s?.changes.length)
@@ -32,7 +32,7 @@ export function PointButton({ kind, id }: { kind: 'browser' | 'diff' | 'html' | 
   const blocked = usePointBlocked(id)
   const pressed = kind === 'browser' ? annotating : pointing
   const reason =
-    kind === 'browser' ? (driving ? `Claude is using this tab. ${DRIVING_NOTE}` : undefined) : kind === 'html' || kind === 'image' ? (blocked ?? undefined) : noChanges ? NO_CHANGES : undefined
+    kind === 'browser' ? (driving ? `Claude is using this tab. ${DRIVING_NOTE}` : undefined) : kind === 'html' || kind === 'image' || kind === 'doc' ? (blocked ?? undefined) : noChanges ? NO_CHANGES : undefined
   return (
     <button
       type="button"

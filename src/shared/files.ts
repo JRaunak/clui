@@ -42,6 +42,12 @@ export interface ImageInfo { ok: true; size: number; revision: string; head: Ima
 /** An image tab's open: its info and, when it's shown, an exact-file cap bound to the bytes `version` hashed. */
 export type ImageOpen = (Omit<ImageInfo, 'revision' | 'version'> & { cap?: { url: string; version: SourceVersion } }) | Refusal
 
+/** The most bytes one read returns, so a renderer read can't make main hold a whole file. */
+export const CHUNK_MAX = 4 * 1024 * 1024
+/** What main reads of a PDF before pdf.js asks for ranges: its size and stat revision, and its first bytes. `head`
+ *  is null for an empty file and one past the size Clui reads. */
+export interface DocHead { ok: true; size: number; revision: string; head: Uint8Array | null }
+
 /** Per mint, so one document can't hold an unbounded number of caps. */
 export const IMAGE_PATHS_MAX = 1000
 

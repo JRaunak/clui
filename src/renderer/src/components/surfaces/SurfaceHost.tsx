@@ -11,6 +11,7 @@ import { HtmlSurface } from './HtmlSurface'
 import { MarkdownSurface } from './MarkdownSurface'
 import { MermaidSurface } from './MermaidSurface'
 import { ImageSurface } from './ImageSurface'
+import { PdfSurface } from './PdfSurface'
 import { PresentationButton } from './PresentationButton'
 import { fileLike, isMarkdown, isMermaid, opensDefault, presentationOf, useNoPreview } from '../../lib/presentation'
 import { isHtml } from '../../../../shared/html-view'
@@ -42,6 +43,8 @@ export function SurfaceHost(): JSX.Element | null {
       {pointer}
       <BrowserSettingsButton />
     </>
+  ) : kind === 'doc' && activeId ? (
+    <PointButton kind="doc" id={activeId} />
   ) : image && activeId ? (
     <>
       {shown !== 'source' && <PointButton kind="image" id={activeId} />}
@@ -66,7 +69,9 @@ export function SurfaceHost(): JSX.Element | null {
       {kind === 'tree' && cwd && <TreeSurface key={handleId} handleId={handleId} cwd={cwd} />}
       {fileTab &&
         activeId &&
-        (image && shown !== 'source' ? (
+        (kind === 'doc' ? (
+          <PdfSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
+        ) : image && shown !== 'source' ? (
           <ImageSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
         ) : shown === 'preview' ? (
           filePath && isMarkdown(filePath) ? (

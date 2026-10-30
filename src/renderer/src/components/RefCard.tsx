@@ -1,6 +1,6 @@
 import { useId, type KeyboardEvent } from 'react'
 import { hostOf, type SentPin } from '../../../shared/annotate'
-import { changeTail, imageTail, refLabel, relativeTo, REF_NOTE_MAX, type ContextReference, type DraftReference, type RefInput } from '../../../shared/context'
+import { changeTail, docTail, imageTail, refLabel, relativeTo, REF_NOTE_MAX, type ContextReference, type DraftReference, type RefInput } from '../../../shared/context'
 import { useActive, useSession, type RefTarget } from '../store'
 import { rangeText, spokenRef } from '../lib/refCopy'
 import { viaOf, type Via } from '../lib/motion'
@@ -39,6 +39,8 @@ function headOf(r: ContextReference, cwd: string | null): { main: string; tail: 
       return { main: relativeTo(cwd, r.path), tail: changeTail(r.side, r.old, r.new) }
     case 'image':
       return { main: relativeTo(cwd, r.path), tail: imageTail(r) }
+    case 'doc':
+      return { main: relativeTo(cwd, r.path), tail: docTail(r) }
     default:
       return r satisfies never
   }
@@ -103,11 +105,12 @@ export function RefCard({ pop, handleId, shown, n, cwd, onOpen }: {
         return peek.t !== 'code' || !shown.addable || changeRead === false
           ? null
           : { kind: 'change', changeRef: r.changeRef, path: abs, side: r.side, ...(r.old ? { old: r.old } : {}), ...(r.new ? { new: r.new } : {}) }
-      // A sent picture can't be taken again from the record, so these don't re-add. An image reference would also need
-      // its bytes checked against the sent version, which only the image tab does.
+      // A sent picture can't be taken again from the record, so these don't re-add. An image or PDF reference would also
+      // need its bytes checked against the sent version, which only its tab does.
       case 'browser':
       case 'page':
       case 'image':
+      case 'doc':
         return null
       default:
         return r satisfies never

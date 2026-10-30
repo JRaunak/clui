@@ -1,9 +1,9 @@
 import type { CSSProperties, KeyboardEvent, MouseEvent, Ref } from 'react'
 import { hostOf, pinWords, clipName } from '../../../shared/annotate'
-import { changeTail, imageTail, refLabel, type ContextReference } from '../../../shared/context'
+import { changeTail, docPages, docPagesShort, docPt, imageTail, refLabel, type ContextReference } from '../../../shared/context'
 import type { ProcessedAttachment } from '../lib/images'
 import type { ShownAttachment } from '../store'
-import { baseOf, CHANGE_UNAVAILABLE, noteTitle, rangeText, spokenRef } from '../lib/refCopy'
+import { baseOf, CHANGE_UNAVAILABLE, noteTitle, quoteStart, rangeText, spokenRef } from '../lib/refCopy'
 import { FileIcon } from './FileIcon'
 import { IconClose, IconDiff, IconFile, IconTarget } from './Icon'
 
@@ -98,6 +98,24 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
         line2: thumb ? 'region' : imageTail(ref, false),
         ...(thumb ? { disclose: 'with picture' } : {}),
         title: `${refLabel(ref)}${pic}`,
+        label: `Reference ${n}: ${spokenRef(ref)}${thumb ? ', with picture' : ''}`,
+        spoken: spokenRef(ref)
+      }
+    }
+    case 'doc': {
+      const pages = docPagesShort(ref)
+      const p = docPt(ref)
+      const pic = thumb ? ' · with picture' : ''
+      const what = ref.text ? `"${quoteStart(ref.text.quote, 120)}"` : p.w === undefined ? `point at ${p.x}, ${p.y} pt` : `region ${p.w}×${p.h} pt at ${p.x}, ${p.y}`
+      return {
+        key,
+        n,
+        glyph: 'file',
+        thumb,
+        line1: baseOf(ref.path),
+        line2: ref.text ? `${pages} "${ref.text.quote}` : thumb ? pages : `${pages} ${p.w === undefined ? 'point' : `region ${p.w}×${p.h}`}`,
+        ...(thumb ? { disclose: 'with picture' } : {}),
+        title: `${baseOf(ref.path)} · ${docPages(ref)} · ${what}${pic}`,
         label: `Reference ${n}: ${spokenRef(ref)}${thumb ? ', with picture' : ''}`,
         spoken: spokenRef(ref)
       }

@@ -11,6 +11,7 @@ import { CHANGE_TEXT_BUDGET } from '../../shared/changes'
 import { CHANGE_REF, relativeTo } from '../../shared/context'
 import type { Refusal } from '../../shared/files'
 import { clean, type SurfaceCommand, type SurfaceTarget } from '../../shared/surface-tools'
+import { kindForPath } from '../../shared/surfaces'
 import { requestUrl } from '../browser/mcp'
 import type { McpHandler, ToolResult } from '../lib/mcp-route'
 import type { ChangeRefs } from './change-refs'
@@ -35,7 +36,7 @@ export const SURFACE_STATE = {
 export const SURFACE_OPEN = {
   name: 'surface_open',
   description:
-    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection). Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
+    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), or a PDF at a page. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -44,6 +45,7 @@ export const SURFACE_OPEN = {
       browserTab: { type: 'integer', minimum: 1 },
       line: { type: 'integer', minimum: 1, maximum: MAX_LINE },
       endLine: { type: 'integer', minimum: 1, maximum: MAX_LINE },
+      page: { type: 'integer', minimum: 1 },
       focus: { type: 'boolean' }
     },
     additionalProperties: false
@@ -114,7 +116,9 @@ const GONE_TEXT = 'This session is no longer open in Clui.'
 const GONE = text(GONE_TEXT, true)
 const TIMEOUT = text("Outcome unknown: Clui didn't confirm in time.", true)
 const CLOSED = text("Clui's window closed.", true)
-const OPEN_ARGS = 'surface_open takes path, kind, browserTab, line, endLine and focus.'
+const OPEN_ARGS = 'surface_open takes path, kind, browserTab, line, endLine, page and focus.'
+const PAGE_OR_LINE = 'surface_open takes page for a PDF and line for other files.'
+const MAX_PAGE = 1_000_000
 const SCOPES = "Clui can show files in this session's folder, files Claude changed, and files the user opened."
 
 const span = (start: number, end?: number): string => `L${start}${end !== undefined && end > start ? `-${end}` : ''}`
@@ -126,6 +130,14 @@ const at = (v: unknown): string | null => {
   const r = v as { line?: unknown; endLine?: unknown } | null
   if (!r || typeof r !== 'object' || !int(r.line, 1, MAX_LINE)) return null
   return span(r.line, int(r.endLine, r.line, MAX_LINE) ? r.endLine : undefined)
+}
+const WHAT = new Set(['text', 'region', 'point'])
+/** `text on pages 12 to 14`, `region on page 3`, or Claude's `page 40`. */
+const docSpan = (v: unknown): string | null => {
+  const r = v as { page?: unknown; endPage?: unknown; what?: unknown } | null
+  if (!r || typeof r !== 'object' || !int(r.page, 1, MAX_PAGE) || (r.what !== undefined && (typeof r.what !== 'string' || !WHAT.has(r.what)))) return null
+  const pages = int(r.endPage, r.page + 1, MAX_PAGE) ? `pages ${r.page} to ${r.endPage}` : `page ${r.page}`
+  return r.what ? `${r.what} on ${pages}` : pages
 }
 const KINDS = new Set(['browser', 'tree', 'file', 'diff', 'image', 'doc', 'sheet', 'artifact'])
 const VIEWS = new Set(['shown', 'background', 'minimized', 'covered'])
@@ -151,10 +163,13 @@ function tabLine(x: unknown, c: Facts): string | null {
     if (typeof f.path !== 'string' || !isAbsolute(f.path)) return null
     label = clean(c.rel(f.path))
   }
-  const loc = at(f.location)
-  const hl = lines(f.highlight)
-  const sel = lines(f.selection)
-  const pend = at(f.pending)
+  const doc = kind === 'doc'
+  const pages = int(f.pages, 1, MAX_PAGE) ? f.pages : null
+  const loc = doc ? (int(f.page, 1, pages ?? MAX_PAGE) ? `page ${f.page}${pages ? ` of ${pages}` : ''}` : null) : at(f.location)
+  const hl = doc ? docSpan(f.highlight) : lines(f.highlight)
+  const sel = doc ? docSpan(f.selection) : lines(f.selection)
+  const pending = f.pending as { page?: unknown } | undefined
+  const pend = doc ? (int(pending?.page, 1, MAX_PAGE) ? `page ${pending.page}` : null) : at(f.pending)
   const notes = [
     sel && `user selection ${sel}`,
     hl && (hl === loc ? 'Claude highlight' : `Claude highlight ${hl}`),
@@ -193,13 +208,17 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
 
   async function opened(handleId: string, a: Record<string, unknown>): Promise<Opened | string> {
     if (Object.keys(a).some((k) => !Object.hasOwn(SURFACE_OPEN.inputSchema.properties, k))) return OPEN_ARGS
-    const { path, kind, browserTab, line, endLine, focus = false } = a
+    const { path, kind, browserTab, line, endLine, page, focus = false } = a
     if (typeof focus !== 'boolean' || (kind !== undefined && kind !== 'diff')) return OPEN_ARGS
     if (path !== undefined && (typeof path !== 'string' || !path || path.length > 4096 || path.includes('\0'))) return 'path must be a file or folder path.'
     if ([kind === 'diff' || path !== undefined, browserTab !== undefined].filter(Boolean).length !== 1) return "Pass exactly one of path, browserTab or kind:'diff'."
     if (line !== undefined || endLine !== undefined) {
       if (!int(line, 1, MAX_LINE) || (endLine !== undefined && !int(endLine, line, MAX_LINE))) return `line and endLine are whole numbers from 1 to ${MAX_LINE}, endLine not before line.`
       if (path === undefined || kind === 'diff') return 'line and endLine apply to a file.'
+    }
+    if (page !== undefined) {
+      if (!int(page, 1, MAX_PAGE)) return `page is a whole number from 1 to ${MAX_PAGE}.`
+      if (path === undefined || kind === 'diff' || line !== undefined) return PAGE_OR_LINE
     }
     if (browserTab !== undefined) {
       if (!int(browserTab, 1, 1_000_000)) return 'browserTab is a tab number.'
@@ -219,8 +238,14 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
       return { target: { kind: 'diff', path: abs }, label: `Claude changes to ${rel}`, focus }
     }
     const r = await present.authorize(handleId, abs)
-    if (r === 'tree') return int(line, 1, MAX_LINE) ? 'line and endLine apply to a file.' : { target: { kind: 'tree', path: abs }, label: `the file tree at ${rel}`, focus }
+    if (r === 'tree') {
+      if (int(line, 1, MAX_LINE)) return 'line and endLine apply to a file.'
+      return page !== undefined ? PAGE_OR_LINE : { target: { kind: 'tree', path: abs }, label: `the file tree at ${rel}`, focus }
+    }
     if (r !== 'file') return r === 'denied' ? SCOPES : r === 'missing' ? 'Nothing exists at that path.' : "Clui can't open that path."
+    const pdf = kindForPath(abs) === 'doc'
+    if (pdf ? line !== undefined : page !== undefined) return PAGE_OR_LINE
+    if (int(page, 1, MAX_PAGE)) return { target: { kind: 'file', path: abs, page }, label: `${rel} page ${page}`, focus }
     if (!int(line, 1, MAX_LINE)) return { target: { kind: 'file', path: abs }, label: rel, focus }
     const end = int(endLine, line + 1, MAX_LINE) ? endLine : undefined
     return { target: { kind: 'file', path: abs, line, ...(end ? { endLine: end } : {}) }, label: `${rel} ${span(line, end)}`, focus }

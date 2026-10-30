@@ -6,7 +6,8 @@ export const SURFACE_OPEN_TOOL = 'mcp__clui-surface__surface_open'
 
 /** Validated in main: a path here is absolute and already authorized for its kind. */
 export type SurfaceTarget =
-  | { kind: 'file'; path: string; line?: number; endLine?: number }
+  /** `page` only for a PDF, `line` only for anything else. */
+  | { kind: 'file'; path: string; line?: number; endLine?: number; page?: number }
   | { kind: 'tree'; path: string }
   | { kind: 'diff'; path?: string }
   | { kind: 'browser'; tab: number }
@@ -15,6 +16,8 @@ interface CommandBase { reqId: string; handleId: string; generation: number; exp
 export type SurfaceCommand = CommandBase & ({ op: 'state' } | { op: 'open'; args: SurfaceTarget & { focus: boolean } })
 
 export interface Lines { start: number; end: number }
+/** A PDF selection by its pages and what it is, never its text; Claude's highlight is a page and has no `what`. */
+export interface DocSpan { page: number; endPage?: number; what?: 'text' | 'region' | 'point' }
 /** What a tab shows, never its content. Main formats the label: path tabs and the tree send `path`, browser tabs `tab`. */
 export interface TabFact {
   kind: SurfaceKind
@@ -25,9 +28,12 @@ export interface TabFact {
   claude: boolean
   unseen: boolean
   location?: { line: number; endLine?: number }
-  selection?: Lines
-  highlight?: Lines
-  pending?: { line?: number; endLine?: number }
+  /** A PDF's current page and its count. */
+  page?: number
+  pages?: number
+  selection?: Lines | DocSpan
+  highlight?: Lines | DocSpan
+  pending?: { line?: number; endLine?: number; page?: number }
 }
 export type SessionView = 'shown' | 'background' | 'minimized' | 'covered'
 export interface PaneFacts {
@@ -44,7 +50,8 @@ export type SurfaceReply = PaneFacts | { outcome: OpenOutcome }
 
 // Filenames and page titles are someone else's strings: no controls, no bidi overrides, one bounded line.
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g
+export const stripControls = (s: string): string => s.replace(CONTROL, '')
 export function clean(s: string): string {
-  const cp = [...s.replace(CONTROL, '')]
+  const cp = [...stripControls(s)]
   return cp.length > 120 ? `${cp.slice(0, 119).join('')}…` : cp.join('')
 }

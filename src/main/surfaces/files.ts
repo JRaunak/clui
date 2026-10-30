@@ -11,7 +11,7 @@ import { lstat, mkdir, mkdtemp, open, opendir, realpath, rm, symlink, writeFile,
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { MAX_REFS } from '../../shared/context'
-import type { FileStat, ImageInfo, Refusal, TextRead } from '../../shared/files'
+import { CHUNK_MAX, type DocHead, type FileStat, type ImageInfo, type Refusal, type TextRead } from '../../shared/files'
 import { HEAD_BYTES, readImageHead, tooLarge } from '../../shared/imageHead'
 
 export type FileOperation = 'read-file' | 'list-directory' | 'watch-file' | 'watch-directory' | 'open-external'
@@ -47,7 +47,7 @@ export interface FileSessions {
 
 export const TEXT_MAX = 5 * 1024 * 1024
 export const BYTES_MAX = 200 * 1024 * 1024
-export const CHUNK_MAX = 4 * 1024 * 1024
+export { CHUNK_MAX }
 export const LIST_MAX = 10_000
 /** How far a capped listing keeps counting, so a huge folder can't hold a listing open. */
 export const COUNT_MAX = 100_000
@@ -216,12 +216,14 @@ async function hashAt(fh: FileHandle, size: number): Promise<string> {
   return h.digest('hex').slice(0, 32)
 }
 
-/** A whole file's content version, as an image reference records it, up to the size a cap serves. */
-export function hashFile(r: FileResource): Promise<{ ok: true; version: string } | Refusal> {
+/** A whole file's content version, as an image or PDF reference records it, up to the size a cap serves. With
+ *  `revision`, only the bytes of that stat revision: a PDF hashes what it opened. */
+export function hashFile(r: FileResource, revision?: string): Promise<{ ok: true; version: string } | Refusal> {
   if (!genuine(r) || r.operation !== 'read-file' || r.type !== 'file') return Promise.resolve(refuse('invalid'))
   return guarded(r, async (fh) => {
     const before = await fh.stat({ bigint: true })
     if (Number(before.size) > BYTES_MAX) throw new Refused('too-large')
+    if (revision !== undefined && revisionOf(before) !== revision) throw new Refused('changed')
     const version = await hashAt(fh, Number(before.size))
     if (revisionOf(await fh.stat({ bigint: true })) !== revisionOf(before)) throw new Refused('changed')
     return { ok: true as const, version }
@@ -243,6 +245,20 @@ export function imageInfo(r: FileResource): Promise<ImageInfo | Refusal> {
     const version = shown ? await hashAt(fh, size) : undefined
     if (revisionOf(await fh.stat({ bigint: true })) !== revision) throw new Refused('changed')
     return { ok: true as const, size, revision, head, ...(version ? { version } : {}) }
+  })
+}
+
+/** A PDF's size, revision and first bytes, read before pdf.js asks for any range. Past BYTES_MAX nothing is read. */
+export function docHead(r: FileResource, bytes: number): Promise<DocHead | Refusal> {
+  if (!genuine(r) || r.operation !== 'read-file' || r.type !== 'file' || !isInt(bytes, 1, CHUNK_MAX)) return Promise.resolve(refuse('invalid'))
+  return guarded(r, async (fh) => {
+    const before = await fh.stat({ bigint: true })
+    const size = Number(before.size)
+    const revision = revisionOf(before)
+    if (!size || size > BYTES_MAX) return { ok: true as const, size, revision, head: null }
+    const head = await readAt(fh, 0, Math.min(size, bytes))
+    if (revisionOf(await fh.stat({ bigint: true })) !== revision) throw new Refused('changed')
+    return { ok: true as const, size, revision, head }
   })
 }
 

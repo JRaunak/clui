@@ -19,7 +19,7 @@ import type { AnnotateEvent, PointAt } from './annotate'
 import type { ChangeSide, DraftReference, LineRange, RefInput, RefInvalid, SourceVersion } from './context'
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff, HunkRows } from './changes'
 import type { HtmlOpenResult, HtmlViewEvent, PagePlace, PageStart } from './html-view'
-import type { ContextMenuItem, FileChangedEvent, FileStat, ImageCap, ImageOpen, Refusal, TextRead, TreeListing } from './files'
+import type { ContextMenuItem, DocHead, FileChangedEvent, FileStat, ImageCap, ImageOpen, Refusal, TextRead, TreeListing } from './files'
 import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
 import type { SurfaceCommand, SurfaceReply } from './surface-tools'
 import type {
@@ -314,6 +314,12 @@ export interface CluiApi {
   imageOpen: (handleId: string, owner: string, path: string) => Promise<ImageOpen>
   /** The hash of an image's bytes now, to check a selection against before its picture is taken. */
   imageVersion: (handleId: string, path: string) => Promise<{ ok: true; version: SourceVersion } | Refusal>
+  /** A PDF tab's file before pdf.js reads it: size, stat revision and its first `bytes`. */
+  docOpen: (handleId: string, path: string, bytes: number) => Promise<DocHead | Refusal>
+  /** One range of a PDF at the revision it opened at, CHUNK_MAX at most; another revision is refused. */
+  docRead: (handleId: string, path: string, revision: string, offset: number, length: number) => Promise<{ ok: true; bytes: Uint8Array } | Refusal>
+  /** The hash of every byte of a PDF at the revision it opened at, as its references record it. */
+  docVersion: (handleId: string, path: string, revision: string) => Promise<{ ok: true; version: SourceVersion } | Refusal>
   /** Watch a file while a surface shows it; changes arrive through onFileChanged with the returned id. */
   watchFile: (handleId: string, path: string) => Promise<{ ok: true; id: string } | Refusal>
   unwatchFile: (handleId: string, id: string) => Promise<void>
@@ -482,7 +488,7 @@ export type MenuAction =
   | 'pane-back'
   | 'image-zoom-in'
   | 'image-zoom-out'
-  /** Fit from anywhere but Fit, where it goes to Actual size. */
+  /** An image goes to Fit from anywhere but Fit, where it goes to Actual size; a PDF between Fit width and Fit page. */
   | 'image-zoom-toggle'
   /** F6 / ⇧F6 pressed inside a native page, handed back to the renderer's region cycle. */
   | 'region-next'
@@ -551,6 +557,9 @@ export const IpcChannels = {
   imageCapsRevoke: 'clui:imageCapsRevoke',
   imageOpen: 'clui:imageOpen',
   imageVersion: 'clui:imageVersion',
+  docOpen: 'clui:docOpen',
+  docRead: 'clui:docRead',
+  docVersion: 'clui:docVersion',
   watchFile: 'clui:watchFile',
   unwatchFile: 'clui:unwatchFile',
   /** main → renderer push channel for watched-file changes */
@@ -638,6 +647,8 @@ export interface MenuState {
   reload: boolean
   /** Focus is in a Markdown Preview whose anchor jumps have a place to go back to. */
   back: boolean
-  /** An image Preview is the active tab, so the View menu's zoom items work. */
-  zoom: boolean
+  /** An image Preview or a PDF is the active tab, so the View menu's zoom items work, and which names the fit item. */
+  zoom: 'none' | 'image' | 'doc'
+  /** A PDF is shown, so Go to Line goes to a page. */
+  pages: boolean
 }

@@ -87,6 +87,14 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
       st.setSurfaceView(handleId, surfaceIdOf({ kind: 'image', key: r.path }), { selection: { ...(region ? { region } : { point }), sourceVersion } })
       return
     }
+    // PdfSurface brings the selection's page into view.
+    case 'doc': {
+      const { page, endPage, text, region, point, sourceVersion } = r
+      openFileAt(handleId, r.path, {}, false, via)
+      const what = text ? { text: text.quote, nth: text.nth, ...(endPage ? { endPage } : {}) } : region ? { region } : { point }
+      st.setSurfaceView(handleId, surfaceIdOf({ kind: 'doc', key: r.path }), { selection: { page, ...what, sourceVersion } })
+      return
+    }
     case 'change': {
       const req = mintedRequest(handleId, r.changeRef)
       requestSurfaceFocus('diff', via)

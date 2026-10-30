@@ -82,7 +82,7 @@ export function parseOutgoing(raw: unknown): OutgoingPacket | null {
     if (d.pinId !== undefined && !Number.isSafeInteger(d.pinId)) return null
     if (d.visual === undefined) refs.push({ ref })
     // A point carries no picture: a crop can't show which pixel was meant.
-    else if ((ref.kind === 'browser' || ref.kind === 'page' || (ref.kind === 'image' && !!ref.region)) && isDraftVisual(d.visual)) refs.push({ ref, visual: d.visual })
+    else if ((ref.kind === 'browser' || ref.kind === 'page' || ((ref.kind === 'image' || ref.kind === 'doc') && !!ref.region)) && isDraftVisual(d.visual)) refs.push({ ref, visual: d.visual })
     else return null
   }
   const attachments: WireAttachment[] = []
@@ -154,7 +154,8 @@ export async function validateRefs(deps: PacketDeps, handleId: string, refs: rea
         const r = deps.change(handleId, ref.changeRef)
         return r === 'ok' ? null : r
       }
-      case 'image': {
+      case 'image':
+      case 'doc': {
         const r = await once(`b\0${ref.path}`, () => deps.byteVersion(handleId, ref.path))
         if (!r.ok) return readFailure(r.reason)
         return r.version === ref.sourceVersion ? null : 'changed'

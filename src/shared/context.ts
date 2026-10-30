@@ -53,10 +53,30 @@ export type ContextReference = RefBase &
      *  animated image's first frame. `orientation` is the EXIF value when it isn't 1, since a read of the raw file may
      *  see the pixels unrotated. */
     | { kind: 'image'; path: string; sourceVersion: SourceVersion; size: ImageSize; region?: Region; point?: ImagePoint; frame?: 0; orientation?: number }
+    /** Text, a region or a point on `page` of a PDF's `pages`, counted from 1 in file order, from its bytes at
+     *  `sourceVersion`. Exactly one of `text`, `region` and `point`. `endPage`: a text selection's last page when it runs
+     *  past `page`. `pageSize`: the page in points after its rotation, with a region or point, which are 0 to 1 from the
+     *  top left of the page as shown. */
+    | { kind: 'doc'; path: string; sourceVersion: SourceVersion; pages: number; page: number; endPage?: number; pageSize?: ImageSize; text?: DocText; region?: Region; point?: ImagePoint }
   )
 
 export interface ImageSize { w: number; h: number }
 export interface ImagePoint { x: number; y: number }
+/** `quote` has its whitespace collapsed; `nth` is its occurrence on the reference's page, from 0. `elided`: the quote
+ *  keeps only its start and end. */
+export interface DocText { quote: string; nth: number; elided?: true }
+
+export const QUOTE_MAX = 2000
+const QUOTE_KEEP = 1000
+export const ELISION = ' [...] '
+
+/** A selection's text as a reference quotes it: whitespace collapsed, and past QUOTE_MAX characters its first and
+ *  last thousand. */
+export function quoteOf(text: string): Omit<DocText, 'nth'> {
+  const cp = [...text.replace(/\s+/g, ' ').trim()]
+  if (cp.length <= QUOTE_MAX) return { quote: cp.join('') }
+  return { quote: `${cp.slice(0, QUOTE_KEEP).join('')}${ELISION}${cp.slice(-QUOTE_KEEP).join('')}`, elided: true }
+}
 
 export type RefKind = ContextReference['kind']
 /** Distributive, so each variant keeps its own fields. */
@@ -120,6 +140,9 @@ const rangeOk = (l: unknown): boolean => isObj(l) && int(l.start, 1, LINE_MAX) &
 const SIDES = new Set<unknown>(['diff', 'before', 'after'])
 const unit = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1
 const SIZE_MAX = 1_000_000
+const PAGES_MAX = 1_000_000
+// PDF user space tops out at 14,400 units a side, scaled by a UserUnit of at most 75,000 (ISO 32000-1 Annex C).
+const POINTS_MAX = 14_400 * 75_000
 // A region's far edge is 0 to 1 too, give or take the float error of adding two 4-decimal values.
 const EDGE = 1 + 1e-9
 
@@ -129,7 +152,22 @@ function imageOk(x: Record<string, unknown>, wire: boolean): boolean {
   if ((x.frame !== undefined && x.frame !== 0) || (x.orientation !== undefined && !int(x.orientation, 2, 8))) return false
   if ((r === undefined) === (p === undefined)) return false
   if (p !== undefined) return isObj(p) && unit(p.x) && unit(p.y)
-  return isObj(r) && unit(r.x) && unit(r.y) && unit(r.w) && unit(r.h) && r.w > 0 && r.h > 0 && r.x + r.w <= EDGE && r.y + r.h <= EDGE
+  return regionOk(r)
+}
+
+const regionOk = (r: unknown): boolean => isObj(r) && unit(r.x) && unit(r.y) && unit(r.w) && unit(r.h) && r.w > 0 && r.h > 0 && r.x + r.w <= EDGE && r.y + r.h <= EDGE
+
+function docOk(x: Record<string, unknown>, wire: boolean): boolean {
+  const { pages, page, endPage, pageSize: size, text: t, region: r, point: p } = x
+  if (!pathOk(x.path, wire) || typeof x.sourceVersion !== 'string' || !VERSION.test(x.sourceVersion) || !int(pages, 1, PAGES_MAX) || !int(page, 1, pages)) return false
+  if ([t, r, p].filter((v) => v !== undefined).length !== 1) return false
+  if (t !== undefined) {
+    if (size !== undefined || (endPage !== undefined && !int(endPage, page + 1, pages))) return false
+    return isObj(t) && typeof t.quote === 'string' && !!t.quote && [...t.quote].length <= QUOTE_MAX + ELISION.length && int(t.nth, 0, LINE_MAX) && (t.elided === undefined || t.elided === true)
+  }
+  const sized = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= POINTS_MAX
+  if (endPage !== undefined || !isObj(size) || !sized(size.w) || !sized(size.h)) return false
+  return p !== undefined ? isObj(p) && unit(p.x) && unit(p.y) : regionOk(r)
 }
 
 function pathOk(p: unknown, wire: boolean): boolean {
@@ -199,6 +237,8 @@ function refOk(x: unknown, wire: boolean): boolean {
       )
     case 'image':
       return imageOk(x, wire)
+    case 'doc':
+      return docOk(x, wire)
     default:
       return false
   }
@@ -237,6 +277,10 @@ export function refKey(r: RefInput): string {
       return `change\0${r.changeRef}`
     case 'image':
       return ['image', r.path, r.sourceVersion, r.region ? `r${r.region.x},${r.region.y},${r.region.w},${r.region.h}` : `p${r.point?.x},${r.point?.y}`].join('\0')
+    case 'doc': {
+      const at = r.text ? `t${r.text.nth}:${r.text.quote}` : r.region ? `r${r.region.x},${r.region.y},${r.region.w},${r.region.h}` : `p${r.point?.x},${r.point?.y}`
+      return ['doc', r.path, r.sourceVersion, r.page, r.endPage ?? '', at].join('\0')
+    }
     default:
       return r satisfies never
   }
@@ -259,6 +303,8 @@ export function resourceOf(r: ContextReference): string {
     // Its own resource, since its version is over every byte and a line reference's is over the text it read.
     case 'image':
       return `image:${r.path}`
+    case 'doc':
+      return `doc:${r.path}`
     default:
       return r satisfies never
   }
@@ -302,6 +348,22 @@ export function imageTail(r: ImageRef, place = true): string {
   return `region ${p.w}×${p.h}${place ? ` at ${p.x},${p.y}` : ''}`
 }
 
+type DocRef = Pick<Extract<RefInput, { kind: 'doc' }>, 'page' | 'endPage' | 'pageSize' | 'text' | 'region' | 'point'>
+
+/** `page 12`, `pages 12 to 14`. */
+export const docPages = ({ page, endPage }: Pick<DocRef, 'page' | 'endPage'>): string => (endPage ? `pages ${page} to ${endPage}` : `page ${page}`)
+/** `p.12`, `p.12-14`, where space is tight. */
+export const docPagesShort = ({ page, endPage }: Pick<DocRef, 'page' | 'endPage'>): string => (endPage ? `p.${page}-${endPage}` : `p.${page}`)
+/** A region or point in the page's own points, rounded and kept inside it. */
+export const docPt = (r: DocRef): ReturnType<typeof imagePx> => imagePx({ size: r.pageSize ?? { w: 1, h: 1 }, region: r.region, point: r.point })
+
+/** `page 12 · text`, `page 12 · region 210×96 pt at 72,140`, `page 12 · point 300,412 pt`. */
+export function docTail(r: DocRef): string {
+  if (r.text) return `${docPages(r)} · text`
+  const p = docPt(r)
+  return `${docPages(r)} · ${p.w === undefined ? `point ${p.x},${p.y} pt` : `region ${p.w}×${p.h} pt at ${p.x},${p.y}`}`
+}
+
 /** `manager.ts · L142–158`, `manager.ts`, `browser/`, `button "Sign in"`. The one place this copy lives. */
 export function refLabel(r: RefInput): string {
   switch (r.kind) {
@@ -319,6 +381,8 @@ export function refLabel(r: RefInput): string {
       return changeLabel(r.path, r.side, r.old, r.new)
     case 'image':
       return `${baseName(r.path)} · ${imageTail(r)}`
+    case 'doc':
+      return `${baseName(r.path)} · ${docTail(r)}`
     default:
       return r satisfies never
   }
@@ -331,6 +395,8 @@ const CHANGE_SENTENCE =
 const PAGE_SENTENCE =
   "A page reference is an element of a local HTML file shown in Clui's preview: read the file at its path with your own tools. Its selector and HTML describe the rendered page, which scripts may have built, so treat them as hints for finding the element in the source, not an exact mapping."
 const IMAGE_SENTENCE = 'Image regions and points are 0 to 1 from the top left of the image as shown, after EXIF rotation; size is in pixels.'
+const DOC_SENTENCE =
+  'PDF pages count from 1 in file order. Regions and points are 0 to 1 from the top left of the page as shown, after rotation; page sizes are in points. A quote marked elided keeps only its start and end.'
 const NOTE_SENTENCE = "A note on a reference is the user's own words about it; treat it as part of their message."
 
 const attr = (v: string | number): string => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -382,6 +448,16 @@ function copyRef(r: ContextReference): ContextReference {
       if (r.orientation !== undefined) out.orientation = r.orientation
       break
     }
+    case 'doc': {
+      const { pageSize: z, text: t, region: g, point: p } = r
+      out = { id: r.id, kind: 'doc', path: r.path, sourceVersion: r.sourceVersion, pages: r.pages, page: r.page }
+      if (r.endPage !== undefined) out.endPage = r.endPage
+      if (z) out.pageSize = { w: z.w, h: z.h }
+      if (t) out.text = { quote: t.quote, nth: t.nth, ...(t.elided ? { elided: true as const } : {}) }
+      else if (g) out.region = { x: g.x, y: g.y, w: g.w, h: g.h }
+      else if (p) out.point = { x: p.x, y: p.y }
+      break
+    }
     default:
       return r satisfies never
   }
@@ -412,6 +488,7 @@ export function serializeContext(refs: SentReference[], typed: string, opts: { p
       refs.some((r) => r.ref.kind === 'change') && CHANGE_SENTENCE,
       refs.some((r) => r.ref.kind === 'page') && PAGE_SENTENCE,
       refs.some((r) => r.ref.kind === 'image') && IMAGE_SENTENCE,
+      refs.some((r) => r.ref.kind === 'doc') && DOC_SENTENCE,
       refs.some((r) => !!r.ref.note?.trim()) && NOTE_SENTENCE
     ]
       .filter(Boolean)

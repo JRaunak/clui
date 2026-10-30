@@ -105,7 +105,7 @@ function viewOf(v: unknown, kind: SavedTab['kind']): SurfaceViewState {
     case 'image':
       return { kind, zoom: zoom(o.zoom, ['fit'] as const), panX: finite(o.panX), panY: finite(o.panY) }
     case 'doc':
-      return { kind, page: int(o.page), zoom: zoom(o.zoom, ['fit-width', 'fit-page'] as const), offsetPx: num(o.offsetPx), ...find }
+      return { kind, page: int(o.page), zoom: zoom(o.zoom, ['fit-width', 'fit-page'] as const), offset: Math.min(1, num(o.offset)), ...some('pages', o.pages, int), ...find }
     case 'sheet':
       return { kind, ...some('sheet', o.sheet, (x) => str(x, TEXT_MAX)), topRow: num(o.topRow), leftCol: num(o.leftCol), rowOffset: num(o.rowOffset), colOffset: num(o.colOffset) }
     case 'artifact':

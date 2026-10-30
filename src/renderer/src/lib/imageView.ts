@@ -18,14 +18,16 @@ export const densityOf = (name: string): number => Number(/@([23])x\.[^.]+$/i.ex
 export const fitScale = (box: Size, vp: Size): number =>
   Math.max(EPS, Math.min(1, (vp.w - 2 * FIT_MARGIN) / box.w, (vp.h - 2 * FIT_MARGIN) / box.h))
 
-export const minScale = (fit: number): number => Math.min(fit, STEPS[0])
+// `steps` is the list a surface zooms through, smallest first; its last stop is the largest zoom.
+export const minScale = (fit: number, steps = STEPS): number => Math.min(fit, steps[0])
 
-export const clampScale = (s: number, fit: number): number => Math.min(MAX_SCALE, Math.max(minScale(fit), s))
+export const clampScale = (s: number, fit: number, steps = STEPS): number => Math.min(steps.at(-1)!, Math.max(minScale(fit, steps), s))
 
 /** The next stop above `s`, so from Fit at 42% it's 50%. */
-export const stepUp = (s: number): number => STEPS.find((v) => v > s + EPS) ?? MAX_SCALE
+export const stepUp = (s: number, steps = STEPS): number => steps.find((v) => v > s + EPS) ?? steps.at(-1)!
 
-export const stepDown = (s: number, fit: number): number => Math.max(minScale(fit), [...STEPS].reverse().find((v) => v < s - EPS) ?? minScale(fit))
+export const stepDown = (s: number, fit: number, steps = STEPS): number =>
+  Math.max(minScale(fit, steps), [...steps].reverse().find((v) => v < s - EPS) ?? minScale(fit, steps))
 
 /** An axis that overflows stops at the viewport's edges; one that fits stays centred. */
 export function clampView(v: View, box: Size, vp: Size): View {

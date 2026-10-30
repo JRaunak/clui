@@ -266,12 +266,12 @@ equal((await call({ path: path(b1.url), token: b1.token, body: list })).status, 
   equal(JSON.stringify(srv.tools('p1')), JSON.stringify([CHANGE_READ, SURFACE_STATE, SURFACE_OPEN]), 'presentation: on adds the pair')
   equal(JSON.stringify(srv.tools('q1')), JSON.stringify([CHANGE_READ]), 'presentation: per handle (a Quick handle is never turned on)')
   const sizes = [SURFACE_STATE, SURFACE_OPEN].map((x) => JSON.stringify(x).length)
-  equal(sizes.join('+'), '280+788', 'presentation: the schema JSON lengths, recorded')
+  equal(sizes.join('+'), '280+846', 'presentation: the schema JSON lengths, recorded')
 
   const refusals: [Record<string, unknown>, string, string][] = [
-    [{ path: 'a.ts', mode: 'source' }, 'surface_open takes path, kind, browserTab, line, endLine and focus.', 'an unknown key'],
-    [{ path: 'a.ts', focus: 'yes' }, 'surface_open takes path, kind, browserTab, line, endLine and focus.', 'a non-boolean focus'],
-    [{ kind: 'tree', path: 'src' }, 'surface_open takes path, kind, browserTab, line, endLine and focus.', 'a kind other than diff'],
+    [{ path: 'a.ts', mode: 'source' }, 'surface_open takes path, kind, browserTab, line, endLine, page and focus.', 'an unknown key'],
+    [{ path: 'a.ts', focus: 'yes' }, 'surface_open takes path, kind, browserTab, line, endLine, page and focus.', 'a non-boolean focus'],
+    [{ kind: 'tree', path: 'src' }, 'surface_open takes path, kind, browserTab, line, endLine, page and focus.', 'a kind other than diff'],
     [{}, "Pass exactly one of path, browserTab or kind:'diff'.", 'no target'],
     [{ path: 'a.ts', browserTab: 2 }, "Pass exactly one of path, browserTab or kind:'diff'.", 'path and browserTab'],
     [{ kind: 'diff', browserTab: 2 }, "Pass exactly one of path, browserTab or kind:'diff'.", 'diff and browserTab'],

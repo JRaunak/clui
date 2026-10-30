@@ -141,7 +141,10 @@ export function Stage({
   const fileStatus = useFileStatus(handleId, filePath)
   const noPreview = !!useNoPreview(handleId, filePath)
   const shown = presentationOf(fileKind && filePath !== null ? { kind: fileKind, key: filePath, mode: fileMode } : undefined, noPreview)
-  const hasBack = useActive((s) => !!(fileKind && s?.surfaces.active && s.surfaces.tabs[s.surfaces.active]?.back?.places.length))
+  const hasBack = useActive((s) => {
+    const back = fileKind && s?.surfaces.active ? s.surfaces.tabs[s.surfaces.active]?.back : undefined
+    return !!(back?.places ?? back?.pages)?.length
+  })
   const externalBlocked = useActive((s) => !!browserExternalBlock(viewedTabOf(s?.browser)?.url ?? ''))
   // The native menu can't read the renderer, so its pane, browser and Open externally items follow what this Stage shows.
   useEffect(() => {
@@ -161,11 +164,12 @@ export function Stage({
               ? { kind: 'tree', enabled: true }
               : { kind: 'none', enabled: false },
       fileLines: fileStatus === 'text' && shown !== 'preview',
+      pages: fileKind === 'doc' && fileStatus === 'binary',
       presentation: !shown ? 'none' : shown === 'preview' ? 'source' : 'preview',
       // A focused page is main's to report, so this covers only focus in the pane's own DOM.
       reload: shown === 'preview' && !!filePath && isHtml(filePath) && focusInSecondary,
-      back: shown === 'preview' && !!filePath && isMarkdown(filePath) && hasBack && focusInSecondary,
-      zoom: fileKind === 'image' && shown !== 'source'
+      back: ((shown === 'preview' && !!filePath && isMarkdown(filePath)) || fileKind === 'doc') && hasBack && focusInSecondary,
+      zoom: fileKind === 'image' && shown !== 'source' ? 'image' : fileKind === 'doc' && fileStatus === 'binary' ? 'doc' : 'none'
     })
   }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, shown, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary, hasBack, fileKind])
 

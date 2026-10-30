@@ -112,7 +112,7 @@ export function SurfaceTabs(): JSX.Element {
   // A restored file that can't open keeps its look. Its name and tooltip say why, re-checked when the window regains focus.
   const restoredFiles = order.flatMap((id) => {
     const t = surfaceTabs[id]
-    return (t?.kind === 'file' || t?.kind === 'image') && restoredTab({ createdMs }, t) ? [t.key] : []
+    return (t?.kind === 'file' || t?.kind === 'image' || t?.kind === 'doc') && restoredTab({ createdMs }, t) ? [t.key] : []
   })
   const restoredKey = restoredFiles.join('\n')
   useEffect(() => {

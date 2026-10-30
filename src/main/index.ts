@@ -41,12 +41,12 @@ import { readConfig } from './config/reader'
 import { openInEditor, openDiff } from './ide/open'
 import { listWorkspaceFiles } from './workspace/files'
 import { readGitStatus } from './workspace/git-status'
-import { createFileAccess, hashFile, readText, statFile, type FileResource, type Refusal } from './surfaces/files'
+import { CHUNK_MAX, createFileAccess, docHead, hashFile, readBytes, readText, statFile, type FileResource, type Refusal } from './surfaces/files'
 import { listTree, treeTarget } from './surfaces/tree'
 import { HtmlViews } from './surfaces/html-view'
 import { createImageCaps, registerScheme, SCHEME } from './surfaces/protocol'
 import { bindSession, deleteSurfaces, flushSurfaces, forgetSession, loadSurfaces, saveSession, trackSession } from './surfaces/persist'
-import type { SurfacesRestore } from '../shared/surfaces'
+import { kindForPath, type SurfacesRestore } from '../shared/surfaces'
 import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
 import { changeMarks, diffSnapshots, editLine, getDiff, parseChangeRefRequest, parseDiffRequest, selectChange, type DiffSource } from './surfaces/diff'
 import { ChangeRefs } from './surfaces/change-refs'
@@ -143,7 +143,7 @@ app.on('web-contents-created', (_e, wc) => {
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
 const TAKES_TYPING = new Set<MenuAction>(['find-in-conversation', 'find-next', 'find-prev', 'open-file', 'file-goto', 'open-palette', 'open-command-palette', 'search-global'])
-let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false }, fileLines: false, presentation: 'none', reload: false, back: false, zoom: false }
+let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false }, fileLines: false, presentation: 'none', reload: false, back: false, zoom: 'none', pages: false }
 const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = {
   file: 'Open in Editor',
   diff: 'Open Diff in Editor',
@@ -234,7 +234,7 @@ function buildMenu(): void {
         { type: 'separator' },
         { label: 'Stop Browser Agent', accelerator: 'CmdOrCtrl+.', click: () => send('browser-stop') },
         { label: 'Point', accelerator: 'CmdOrCtrl+Shift+A', click: () => send('browser-annotate') },
-        { id: 'file-goto', label: 'Go to Line…', accelerator: 'CmdOrCtrl+L', enabled: menuState.fileLines, click: () => send('file-goto') },
+        { id: 'file-goto', label: menuState.pages ? 'Go to Page…' : 'Go to Line…', accelerator: 'CmdOrCtrl+L', enabled: menuState.fileLines || menuState.pages, click: () => send('file-goto') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
         { type: 'separator' },
         isMac ? closeWindow : { role: 'quit' }
@@ -271,10 +271,15 @@ function buildMenu(): void {
         { type: 'separator' },
         { label: 'Back', accelerator: 'CmdOrCtrl+[', enabled: menuState.back, click: () => send('pane-back') },
         { type: 'separator' },
-        { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', enabled: menuState.zoom, click: () => send('image-zoom-in') },
-        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', enabled: menuState.zoom, visible: false, click: () => send('image-zoom-in') },
-        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', enabled: menuState.zoom, click: () => send('image-zoom-out') },
-        { label: 'Fit or Actual Size', accelerator: 'CmdOrCtrl+0', enabled: menuState.zoom, click: () => send('image-zoom-toggle') }
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', enabled: menuState.zoom !== 'none', click: () => send('image-zoom-in') },
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', enabled: menuState.zoom !== 'none', visible: false, click: () => send('image-zoom-in') },
+        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', enabled: menuState.zoom !== 'none', click: () => send('image-zoom-out') },
+        {
+          label: menuState.zoom === 'doc' ? 'Fit Width or Page' : 'Fit or Actual Size',
+          accelerator: 'CmdOrCtrl+0',
+          enabled: menuState.zoom !== 'none',
+          click: () => send('image-zoom-toggle')
+        }
       ]
     },
     {
@@ -1042,6 +1047,27 @@ function registerIpc(): void {
   handle(IpcChannels.imageVersion, (_e, handleId: unknown, path: unknown) =>
     typeof handleId === 'string' && typeof path === 'string' ? packetDeps.byteVersion(handleId, path) : { ok: false, reason: 'invalid' }
   )
+  // pdf.js reads a PDF tab's file by range, bound to the stat revision it opened at; no other file is read this way.
+  const docFor = async (handleId: unknown, path: unknown): Promise<FileResource | Refusal> => {
+    const r = await fileFor(handleId, path, 'read-file')
+    return !r.ok || kindForPath(r.path) === 'doc' ? r : { ok: false, reason: 'wrong-type' }
+  }
+  handle(IpcChannels.docOpen, async (_e, handleId: unknown, path: unknown, bytes: unknown) => {
+    const r = await docFor(handleId, path)
+    return r.ok ? docHead(r, bytes as number) : r
+  })
+  handle(IpcChannels.docRead, async (_e, handleId: unknown, path: unknown, revision: unknown, offset: unknown, length: unknown) => {
+    if (!Number.isSafeInteger(length) || (length as number) > CHUNK_MAX) throw new Error(`A PDF read is at most ${CHUNK_MAX} bytes.`)
+    const r = await docFor(handleId, path)
+    if (!r.ok) return r
+    const b = await readBytes(r, { revision: revision as string, offset: offset as number, length: length as number })
+    return b.ok ? { ok: true, bytes: b.bytes } : b
+  })
+  handle(IpcChannels.docVersion, async (_e, handleId: unknown, path: unknown, revision: unknown) => {
+    const r = typeof revision === 'string' ? await docFor(handleId, path) : ({ ok: false, reason: 'invalid' } as const)
+    const v = r.ok ? await hashFile(r, revision as string) : r
+    return v.ok ? { ok: true, version: `sha256:${v.version}` } : v
+  })
   const watchFor = async (handleId: string, r: FileResource | Refusal): Promise<{ ok: true; id: string } | Refusal> => {
     if (!r.ok) return r
     let id = ''

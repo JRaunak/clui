@@ -340,7 +340,10 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
 
   // Back: the link a click or Enter activated in the column, for the jump it starts.
   const followed = useRef<HTMLAnchorElement | null>(null)
-  const backOf = (): { revision: string; places: BackPlace[] } | undefined => useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]?.back
+  const backOf = (): { revision: string; places: BackPlace[] } | undefined => {
+    const b = useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]?.back
+    return b?.places ? b : undefined
+  }
   const placeOf = (a: HTMLAnchorElement): BackPlace | null => {
     const href = a.getAttribute('href')
     const body = bodyEl.current

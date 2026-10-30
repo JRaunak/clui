@@ -42,7 +42,11 @@ export interface SurfaceSelection {
   region?: Region
   point?: { x: number; y: number }
   page?: number
+  /** A PDF text selection's last page, when it runs past `page`. */
+  endPage?: number
+  /** A PDF's selected text, whitespace collapsed, and which occurrence of it on `page` it is. */
   text?: string
+  nth?: number
 }
 export type SurfaceViewState =
   | { kind: 'tree'; expanded: string[]; scrollTop: number }
@@ -50,7 +54,8 @@ export type SurfaceViewState =
   | { kind: 'file'; topLine: number; offsetPx: number; scrollLeft: number; find?: string; page?: PagePlace }
   | { kind: 'diff'; path?: string; segmentId?: string; revision?: string; topHunk?: string; offsetPx: number; find?: string }
   | { kind: 'image'; zoom: number | 'fit'; panX: number; panY: number }
-  | { kind: 'doc'; page: number; zoom: number | 'fit-width' | 'fit-page'; offsetPx: number; find?: string }
+  /** `offset`: 0 to 1 down the current page's box, at the viewport's centre. `pages`: the count it was read with. */
+  | { kind: 'doc'; page: number; zoom: number | 'fit-width' | 'fit-page'; offset: number; pages?: number; find?: string }
   | { kind: 'sheet'; sheet?: string; topRow: number; leftCol: number; rowOffset: number; colOffset: number }
 
 export interface SurfaceTab {
@@ -75,8 +80,15 @@ export interface SurfaceTab {
   unseen?: boolean
   /** Tree only: the file whose tab was active when the tree took over, revealed once on mount. Never saved. */
   reveal?: string
-  /** Markdown Preview only: the places its anchor jumps left, newest last, in the revision they were made in. Never saved. */
-  back?: { revision: string; places: BackPlace[] }
+  /** The places a Markdown Preview's anchor jumps or a PDF's link and Contents jumps left, newest last, in the
+   *  revision they were made in. Never saved. */
+  back?: { revision: string; places: BackPlace[]; pages?: undefined } | { revision: string; pages: DocPlace[]; places?: undefined }
+}
+
+/** Where a PDF jump left the reader, as its view state keeps it. */
+export interface DocPlace {
+  page: number
+  offset: number
 }
 
 /** Where an anchor jump left the reader: the top block's start line, 0 at the document's top, and the link followed. */
@@ -105,7 +117,7 @@ export const fileViewKey = (kind: SurfaceTab['kind']): 'viewState' | 'sourceView
 const IMAGE = /\.(png|jpe?g|webp|gif|avif|svg)$/i
 
 /** The tab kind a path opens as. `.ico` and `.icns` stay files: the image surface reads neither format. */
-export const kindForPath = (p: string): 'file' | 'image' => (IMAGE.test(p) ? 'image' : 'file')
+export const kindForPath = (p: string): 'file' | 'image' | 'doc' => (IMAGE.test(p) ? 'image' : /\.pdf$/i.test(p) ? 'doc' : 'file')
 
 /** Tree and diff are session singletons; a path resource is one tab whatever its presentation. */
 export const surfaceIdOf = (t: Pick<SurfaceTab, 'kind' | 'key' | 'provenance'>): string =>
@@ -122,18 +134,19 @@ export interface SavedSet {
   active: string | null
   tabs: Record<string, SavedTab>
 }
-/** A set saved before images had their own kind: an image's `file:` tab comes back as its `image:` tab, without the
- *  file view state it can't use. A set already holding that image tab keeps that one. */
+/** A set saved before images and PDFs had their own kinds: such a `file:` tab comes back as its `image:` or `doc:`
+ *  tab, without the file view state it can't use. A set already holding that tab keeps that one. */
 export function restoreKinds(set: SavedSet): SavedSet {
   const ids = new Map<string, string>()
   const tabs: Record<string, SavedTab> = {}
   for (const [id, t] of Object.entries(set.tabs)) {
-    if (t.kind !== 'file' || kindForPath(t.key) !== 'image') {
+    const kind = kindForPath(t.key)
+    if (t.kind !== 'file' || kind === 'file') {
       tabs[id] = t
       continue
     }
     const { viewState: _v, ...rest } = t
-    const next: SavedTab = { ...rest, kind: 'image' }
+    const next: SavedTab = { ...rest, kind }
     next.id = surfaceIdOf(next)
     ids.set(id, next.id)
     if (!set.tabs[next.id]) tabs[next.id] = next

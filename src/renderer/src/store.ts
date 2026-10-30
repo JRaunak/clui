@@ -33,6 +33,7 @@ import {
   messageGist,
   REF_NOTE_MAX,
   packetLayout,
+  quoteOf,
   refKey,
   resourceOf,
   sentRefs,
@@ -1039,7 +1040,7 @@ function activation(slice: PerSessionState, id: string, now: number, located = f
   const from = set.active ? set.tabs[set.active] : undefined
   // An unseen tree holds a destination Claude placed behind; that wins like a pending or just-sent one.
   const sent = located || !!pendingShow?.location || !!unseen
-  const reveal = cur.kind === 'tree' && (from?.kind === 'file' || from?.kind === 'image') && !!slice.cwd && from.key.startsWith(`${slice.cwd}/`) && !sent ? from.key : null
+  const reveal = cur.kind === 'tree' && (from?.kind === 'file' || from?.kind === 'image' || from?.kind === 'doc') && !!slice.cwd && from.key.startsWith(`${slice.cwd}/`) && !sent ? from.key : null
   const next: SurfaceTab = { ...rest, ...pendingShow, ...(reveal ? { reveal } : {}), lastViewedAt: now }
   return { surfaces: { ...set, active: id, tabs: { ...set.tabs, [id]: next } } }
 }
@@ -1366,6 +1367,21 @@ export function paneFacts(handleId: string): SurfaceReply {
     if (!t) return null
     const at = t.location
     const pend = t.pendingShow?.location
+    if (t.kind === 'doc') {
+      const v = t.viewState?.kind === 'doc' ? t.viewState : undefined
+      const s = t.selection
+      const what = s?.text ? 'text' : s?.region ? 'region' : s?.point ? 'point' : null
+      return {
+        kind: t.kind,
+        path: t.key,
+        claude: t.openedBy === 'claude',
+        unseen: !!t.unseen,
+        ...(v ? { page: v.page, ...(v.pages ? { pages: v.pages } : {}) } : {}),
+        ...(s?.page && what ? { selection: { page: s.page, ...(s.endPage ? { endPage: s.endPage } : {}), what } } : {}),
+        ...(t.highlight?.page ? { highlight: { page: t.highlight.page } } : {}),
+        ...(pend?.page ? { pending: { page: pend.page } } : {})
+      }
+    }
     const sel = span(t.selection?.lines)
     const hl = span(t.highlight?.lines)
     return {
@@ -1403,11 +1419,12 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
   const slice = st.sessions[handleId]
   if (!slice) return { outcome: 'unavailable' }
   const lines = a.kind === 'file' && a.line ? { start: a.line, end: a.endLine ?? a.line } : null
+  const page = a.kind === 'file' && a.page ? { location: { page: a.page }, highlight: { page: a.page } } : {}
   const spec =
     a.kind === 'browser'
       ? { kind: a.kind, tab: a.tab }
       : a.kind === 'file'
-        ? { kind: a.kind, key: a.path, title: basename(a.path), ...(lines ? { location: { line: lines.start, ...(a.endLine ? { endLine: a.endLine } : {}) }, highlight: { lines } } : {}) }
+        ? { kind: a.kind, key: a.path, title: basename(a.path), ...page, ...(lines ? { location: { line: lines.start, ...(a.endLine ? { endLine: a.endLine } : {}) }, highlight: { lines } } : {}) }
         : a.kind === 'tree'
           ? { kind: a.kind, key: '', title: basename(slice.cwd), location: { file: a.path } }
           : { kind: a.kind, key: '', title: 'Claude changes', ...(a.path ? { location: { file: a.path } } : {}) }
@@ -1445,7 +1462,10 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
   })
   window.clui.onRefSourceChanged(({ handleId, path, reason, version, bytes }) => {
     const cause = { reason, ...(version ? { version } : {}) }
-    if (bytes) return void useSession.getState().invalidateSource(handleId, `image:${path}`, cause)
+    if (bytes) {
+      useSession.getState().invalidateSource(handleId, `image:${path}`, cause)
+      return void useSession.getState().invalidateSource(handleId, `doc:${path}`, cause)
+    }
     useSession.getState().invalidateSource(handleId, `file:${path}`, cause)
     useSession.getState().invalidateSource(handleId, `page:${path}`, cause)
   })
@@ -1947,7 +1967,7 @@ function invalidations(lost: readonly { ref: ContextReference; reason: RefFailur
     const rec = by.get(id) ?? {
       resourceId: id,
       label: change ? 'changes' : resourceLabel(ref),
-      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'page' ? ref.revision : ref.kind === 'file' || ref.kind === 'image' ? (ref.sourceVersion ?? '') : '',
+      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'page' ? ref.revision : ref.kind === 'file' || ref.kind === 'image' || ref.kind === 'doc' ? (ref.sourceVersion ?? '') : '',
       at: Date.now(),
       reason,
       removed: []
@@ -2068,7 +2088,7 @@ function flushRefs(handleId: string): void {
         ? [{ path: d.ref.path, version: d.ref.sourceVersion }]
         : d.ref.kind === 'page'
           ? [{ path: d.ref.path, version: d.ref.revision }]
-          : d.ref.kind === 'image'
+          : d.ref.kind === 'image' || d.ref.kind === 'doc'
             ? [{ path: d.ref.path, version: d.ref.sourceVersion, bytes: true as const }]
             : []
     )
@@ -4331,7 +4351,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       if (r.kind === 'change') return resourceId === CHANGE_REFS && (cause.reason === 'denied' || cause.reason === 'session')
       if (resourceOf(r) !== resourceId) return false
       if (r.kind === 'browser') return true
-      if ((r.kind === 'file' && r.lines) || r.kind === 'image') return cause.reason !== 'changed' || r.sourceVersion !== cause.version
+      if ((r.kind === 'file' && r.lines) || r.kind === 'image' || r.kind === 'doc') return cause.reason !== 'changed' || r.sourceVersion !== cause.version
       // A change with no version is an asset's, seen by the page's watcher.
       if (r.kind === 'page') return cause.reason !== 'changed' || !cause.version || r.revision !== cause.version
       // Whole files and folders point at current content, so only losing access removes them.
@@ -4366,13 +4386,16 @@ export const useSession = create<SessionStore>((set, get) => ({
             ? [`${d.ref.path}\0${d.ref.lines.start}-${d.ref.lines.end}`]
             : d.ref.kind === 'image'
               ? [`${d.ref.path}\0${JSON.stringify(d.ref.region ?? d.ref.point)}`]
-              : []
+              : d.ref.kind === 'doc'
+                ? [`${d.ref.path}\0${d.ref.page}\0${JSON.stringify(d.ref.region ?? d.ref.point ?? d.ref.text?.quote)}`]
+                : []
         )
     )
     const tabs = slice.surfaces.tabs
     const sel = (t: SurfaceTab): string | null => {
       const { lines, region, point } = t.selection ?? {}
       if (t.kind === 'file' && lines) return `${t.key}\0${lines.start}-${lines.end}`
+      if (t.kind === 'doc' && t.selection?.page) return `${t.key}\0${t.selection.page}\0${JSON.stringify(region ?? point ?? quoteOf(t.selection.text ?? '').quote)}`
       return t.kind === 'image' && (region || point) ? `${t.key}\0${JSON.stringify(region ?? point)}` : null
     }
     const cleared = Object.values(tabs).filter((t) => gone.has(sel(t) ?? ''))

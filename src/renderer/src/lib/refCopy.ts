@@ -1,5 +1,5 @@
 import { clipName, hostOf, pinWords } from '../../../shared/annotate'
-import { changeLabel, changeTail, imagePx, imageTail, MAX_REFS, refLabel, type ChangeSide, type ContextReference, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
+import { changeLabel, changeTail, docPages, imagePx, imageTail, MAX_REFS, refLabel, type ChangeSide, type ContextReference, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 import { CHANGE_BYTES_MAX, CHANGE_LINES_MAX, CHANGE_TEXT_BUDGET } from '../../../shared/changes'
 import { WORKSPACE_FILE_CAP } from '../../../shared/files'
 
@@ -41,7 +41,18 @@ export function shortLabel(r: ContextReference): string {
   // A change notice gathers every file's removed refs, so each names its file.
   if (r.kind === 'change') return changeLabel(r.path, r.side, r.old, r.new)
   if (r.kind === 'image') return imageTail(r, false)
+  if (r.kind === 'doc') return docWhat(r)
   return r.kind === 'file' && r.lines ? rangeText(r.lines) : refLabel(r)
+}
+
+type DocInput = Extract<RefInput, { kind: 'doc' }>
+
+/** `text on pages 12 to 14`, `a region on page 12`, `a point on page 12`. */
+export const docWhat = (r: Pick<DocInput, 'page' | 'endPage' | 'text' | 'region'>): string => `${r.text ? 'text' : r.region ? 'a region' : 'a point'} on ${docPages(r)}`
+
+export const quoteStart = (quote: string, n: number): string => {
+  const cp = [...quote]
+  return cp.length > n ? `${cp.slice(0, n).join('')}…` : quote
 }
 
 /** `manager.ts`, or the page's host. */
@@ -65,6 +76,8 @@ export function spokenRef(r: RefInput): string {
       return spokenChange(r)
     case 'image':
       return `${baseOf(r.path)}, ${spokenImage(r)}`
+    case 'doc':
+      return `${baseOf(r.path)}, ${docPages(r)}, ${r.text ? `text "${quoteStart(r.text.quote, 80)}"` : r.region ? 'region' : 'point'}`
     default:
       return r satisfies never
   }
@@ -83,7 +96,8 @@ export const selectedText = ({ start, end }: LineRange): string => `${end > star
 
 /** `Added lines 142 to 158 of manager.ts to the message.` */
 export function addedText(r: RefInput, queued = false): string {
-  const what = r.kind === 'file' && r.lines ? `${spokenRange(r.lines)} of ${baseOf(r.path)}` : r.kind === 'change' ? `${spokenRef(r)},` : spokenRef(r)
+  const what =
+    r.kind === 'file' && r.lines ? `${spokenRange(r.lines)} of ${baseOf(r.path)}` : r.kind === 'doc' ? `${docWhat(r)} of ${baseOf(r.path)}` : r.kind === 'change' ? `${spokenRef(r)},` : spokenRef(r)
   return `Added ${what} to the ${queued ? 'queued ' : ''}message.`
 }
 
@@ -219,7 +233,7 @@ export function removalSpoken(lost: readonly ContextReference[], reason: Reason)
       ? `${lost.length} ${page ? 'elements' : 'selections'} were`
       : first.kind === 'file' && first.lines
         ? `${capital(spokenRange(first.lines))} ${first.lines.end > first.lines.start ? 'were' : 'was'}`
-        : `${capital(spokenRef(first))} was`
+        : `${capital(first.kind === 'doc' ? docWhat(first) : spokenRef(first))} was`
   return `${leadOf(resourceLabel(first), reason)}. ${what} removed from the message.`
 }
 

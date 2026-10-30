@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { refsOf, useActive, useSession } from '../../store'
 import { CROP_MAX_EDGE } from '../../../../shared/annotate'
 import { imagePx, refKey, VISUAL_MAX, type DraftReference, type DraftVisual, type RefInput, type SourceVersion } from '../../../../shared/context'
@@ -45,7 +45,7 @@ const MISSING_POLL_MS = 2000
 const ARROW_PX = 40
 const GESTURE_IDLE_MS = 150
 const MIME: Record<Exclude<ImageFormat, 'svg'>, string> = { png: 'image/png', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif' }
-const TEXT_BUTTON =
+export const TEXT_BUTTON =
   'h-7 shrink-0 rounded-md px-2 text-label text-dim transition-colors pointer-fine:hover:bg-[var(--glass-row-hover)] pointer-fine:hover:text-content'
 const POINTING_SAID = 'Pointing. Drag across the image to select a region, or click a point. Shift and an arrow key also selects. Enter adds it.'
 const POINT_HINT = 'Drag across the image, or click a point.'
@@ -122,6 +122,41 @@ function cropOf(src: CanvasImageSource, natural: Size, r: NonNullable<Picked>['r
 }
 
 const sameSel = (a: Picked, b: Picked): boolean => JSON.stringify(a) === JSON.stringify(b)
+
+/** The toolbar's zoom controls: out, the readout, in, and the surface's fit button after them. `max` is the largest
+ *  zoom, which the disabled title names. */
+export function ZoomGroup({ s, atMin, atMax, max, onStep, children }: { s: number; atMin: boolean; atMax: boolean; max: number; onStep: (dir: 1 | -1) => void; children: ReactNode }): JSX.Element {
+  return (
+    <div role="group" aria-label="Zoom" className="flex items-center gap-0.5">
+      <button
+        type="button"
+        data-ui="image-zoom-out"
+        aria-label="Zoom out"
+        aria-disabled={atMin || undefined}
+        title={atMin ? `Zoom out. Already at ${percent(s)}, the smallest.` : 'Zoom out ⌘−'}
+        onClick={() => onStep(-1)}
+        className={`${PANE_BTN} ${DISABLED_BTN}`}
+      >
+        <IconMinus className="h-4 w-4" />
+      </button>
+      <span data-ui="image-zoom" aria-hidden="true" className="min-w-[5ch] text-center text-label tabular-nums text-dim">
+        {percent(s)}
+      </span>
+      <button
+        type="button"
+        data-ui="image-zoom-in"
+        aria-label="Zoom in"
+        aria-disabled={atMax || undefined}
+        title={atMax ? `Zoom in. Already at ${percent(max)}, the largest.` : 'Zoom in ⌘+'}
+        onClick={() => onStep(1)}
+        className={`${PANE_BTN} ${DISABLED_BTN}`}
+      >
+        <IconPlus className="h-4 w-4" />
+      </button>
+      {children}
+    </div>
+  )
+}
 
 /**
  * An image or an SVG's Preview: the picture in a viewport that zooms and pans by transform only, under a toolbar that
@@ -799,32 +834,7 @@ export function ImageSurface({ handleId, tabId }: { handleId: string; tabId: str
                 {playing ? <IconStop className="h-4 w-4" /> : <IconPlay className="h-4 w-4" />}
               </button>
             )}
-            <div role="group" aria-label="Zoom" className="flex items-center gap-0.5">
-              <button
-                type="button"
-                data-ui="image-zoom-out"
-                aria-label="Zoom out"
-                aria-disabled={atMin || undefined}
-                title={atMin ? `Zoom out. Already at ${percent(z.s)}, the smallest.` : 'Zoom out ⌘−'}
-                onClick={() => step(-1)}
-                className={`${PANE_BTN} ${DISABLED_BTN}`}
-              >
-                <IconMinus className="h-4 w-4" />
-              </button>
-              <span data-ui="image-zoom" aria-hidden="true" className="min-w-[5ch] text-center text-label tabular-nums text-dim">
-                {percent(z.s)}
-              </span>
-              <button
-                type="button"
-                data-ui="image-zoom-in"
-                aria-label="Zoom in"
-                aria-disabled={atMax || undefined}
-                title={atMax ? `Zoom in. Already at ${percent(MAX_SCALE)}, the largest.` : 'Zoom in ⌘+'}
-                onClick={() => step(1)}
-                className={`${PANE_BTN} ${DISABLED_BTN}`}
-              >
-                <IconPlus className="h-4 w-4" />
-              </button>
+            <ZoomGroup s={z.s} atMin={atMin} atMax={atMax} max={MAX_SCALE} onStep={step}>
               <button
                 type="button"
                 data-ui="image-fit"
@@ -835,7 +845,7 @@ export function ImageSurface({ handleId, tabId }: { handleId: string; tabId: str
               >
                 {toggleLabel}
               </button>
-            </div>
+            </ZoomGroup>
           </div>
         )}
       </div>

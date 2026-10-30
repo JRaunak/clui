@@ -158,6 +158,16 @@
   --color-tool: var(--ink-tool);
   /* An HTML view's page with no background of its own, as a browser draws it: white in both themes, matching main's view background. */
   --color-page-canvas: #ffffff;
+  /* A PDF's paper and what sits on it, the same in both themes: the error ink is on white either way (8.86:1), and the
+     two-tone edge marks a region or a find match on any pixel (one of them clears 4.58:1). */
+  --color-page-ink: #4a4a4a;
+  --color-edge-dark: #000000;
+  --color-edge-light: #ffffff;
+  /* The gutter between PDF pages. White paper on #161617 needs no edge. */
+  --color-page-gutter: var(--color-bg);
+  --color-page-edge: transparent;
+  /* The app's text selection, as ::selection and a PDF's kept selection paint it. */
+  --color-text-selected: color-mix(in oklab, var(--color-accent) 32%, transparent);
   --color-err: var(--red-400);
   --color-ok: var(--teal-400);
   --color-warn: var(--amber-400);
@@ -350,6 +360,9 @@
   --color-ring: #b8502e;
   --color-checker-a: var(--color-bg);
   --color-checker-b: var(--color-border);
+  /* White paper on white bg has no edge, so the gutter steps down and the page gets a hairline (1.56:1, decorative). */
+  --color-page-gutter: var(--color-bg-sidebar);
+  --color-page-edge: var(--color-border-strong);
 
   /* Syntax palette: light values, all verified ≥4.5:1 on the light code surface --color-tool (#f2f2f3) and on the diff tints --color-add-surface / --color-del-surface. attr uses info.
      keyword holds the deeper #a8492a (not the brighter accent #b8502e): as code text on the inset the accent is only 4.44:1, below the body floor, so keyword decouples to stay legible. */
@@ -677,7 +690,7 @@ body {
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--color-accent) 32%, transparent);
+  background: var(--color-text-selected);
 }
 
 /* Themed scrollbars: the default macOS overlay scrollbar renders as a heavy light bar that clashes with the dark palette.
@@ -1456,6 +1469,185 @@ body {
 }
 /* The ring can't sit on pixels of unknown colour, so it's drawn over the viewport's edge with a bg line inside it. */
 .image-viewport:focus-visible::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--color-ring), inset 0 0 0 3px var(--color-bg);
+}
+
+/* PDF surface. pdf.js lays out the pages and their text and link layers; these are its rules for those two layers,
+   without its viewer chrome, and each page as paper on Clui's gutter. Nothing here moves. */
+.pdf-column {
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  padding: 16px;
+}
+.pdf-column .page {
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  position: relative;
+  direction: ltr;
+  margin: 0 auto 12px;
+  background: var(--color-page-canvas);
+  box-shadow: 0 0 0 1px var(--color-page-edge);
+}
+.pdf-column .page:last-child {
+  margin-bottom: 0;
+}
+.pdf-column .page[data-pointed] {
+  outline: 2px solid var(--color-dim);
+  outline-offset: 2px;
+}
+.pdf-column .canvasWrapper {
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+.pdf-column .canvasWrapper canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  contain: content;
+}
+.pdf-column [data-main-rotation='90'] {
+  transform: rotate(90deg) translateY(-100%);
+}
+.pdf-column [data-main-rotation='180'] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+.pdf-column [data-main-rotation='270'] {
+  transform: rotate(270deg) translateX(-100%);
+}
+.pdf-column .textLayer {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+}
+.pdf-column .textLayer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.pdf-column .textLayer > :not(.markedContent),
+.pdf-column .textLayer .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.pdf-column .textLayer .markedContent {
+  display: contents;
+}
+.pdf-column .textLayer span[role='img'] {
+  user-select: none;
+  cursor: default;
+}
+.pdf-column .textLayer ::selection {
+  background: var(--color-text-selected);
+  color: transparent;
+}
+.pdf-column .textLayer br::selection {
+  background: transparent;
+}
+.pdf-column .textLayer .endOfContent {
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  display: block;
+  cursor: default;
+  user-select: none;
+}
+.pdf-column .textLayer.selecting .endOfContent {
+  top: 0;
+}
+/* Find marks are edge only: a page can be any colour, and a fill would tint the words under it. */
+.pdf-column .textLayer .highlight {
+  margin: -1px;
+  padding: 1px;
+  box-shadow: inset 0 0 0 1px var(--color-edge-light), 0 0 0 1px var(--color-edge-dark);
+}
+.pdf-column .textLayer .highlight.appended {
+  position: initial;
+}
+.pdf-column .textLayer .highlight.selected {
+  box-shadow: inset 0 0 0 1px var(--color-edge-light), 0 0 0 2px var(--color-edge-dark), 0 0 0 3px var(--color-edge-light);
+}
+/* The selection kept once focus leaves the page. */
+::highlight(pdf-selected) {
+  background-color: var(--color-text-selected);
+}
+.pdf-column .annotationLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+.pdf-column .annotationLayer section {
+  position: absolute;
+  box-sizing: border-box;
+  text-align: initial;
+  pointer-events: auto;
+  transform-origin: 0 0;
+  user-select: none;
+}
+.pdf-column .textLayer.selecting ~ .annotationLayer section {
+  pointer-events: none;
+}
+.pdf-column .annotationLayer .linkAnnotation > a {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  font-size: 1em;
+}
+.pdf-column .annotationLayer a:focus-visible {
+  outline-offset: 1px;
+}
+@media (pointer: fine) {
+  .pdf-column .annotationLayer .linkAnnotation > a[href] {
+    cursor: pointer;
+  }
+}
+/* A comment is its drawn appearance; pdf.js's popups and note icons are its own chrome over the page. */
+.pdf-column .annotationLayer :is(.popup, .popupAnnotation, .annotationCommentButton, .textAnnotation img) {
+  display: none;
+}
+[data-pointing] .pdf-column .textLayer :is(span, br) {
+  user-select: none;
+  cursor: crosshair;
+}
+[data-pointing] .pdf-column .annotationLayer section {
+  pointer-events: none;
+}
+/* The ring sits on the frame, since the viewport scrolls and a page can reach its edge. */
+.pdf-frame:has(> .pdf-viewport:focus-visible)::after {
   content: '';
   position: absolute;
   inset: 0;

@@ -46,12 +46,12 @@ export interface PaneState {
 }
 
 /** The `@` menu's Open in pane rows, newest tab first: per File tab its selection when its revision is known, then
- *  the whole file; an image tab only its whole file; the Diff tab only its selected change, never a whole file. A tab
- *  presenting a past revision of its file is left out. */
+ *  the whole file; an image or PDF tab only its whole file; the Diff tab only its selected change, never a whole file.
+ *  A tab presenting a past revision of its file is left out. */
 export function paneRows(tabs: readonly SurfaceTab[], cwd: string | null, home: string, st: PaneState): PaneRow[] {
   const out: PaneRow[] = []
   const open = tabs
-    .filter((t) => ((t.kind === 'file' || t.kind === 'image') && !t.provenance?.creatingEditId) || (t.kind === 'diff' && !!t.selection?.change))
+    .filter((t) => ((t.kind === 'file' || t.kind === 'image' || t.kind === 'doc') && !t.provenance?.creatingEditId) || (t.kind === 'diff' && !!t.selection?.change))
     .sort((a, b) => b.lastViewedAt - a.lastViewedAt)
   for (const t of open) {
     const change = t.kind === 'diff' ? t.selection?.change : undefined

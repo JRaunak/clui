@@ -9,8 +9,9 @@ export const isMermaid = (p: string): boolean => /\.(mmd|mermaid)$/i.test(p)
 export const isSvg = (p: string): boolean => /\.svg$/i.test(p)
 export const hasPreview = (p: string): boolean => isHtml(p) || isMarkdown(p) || isMermaid(p) || isSvg(p)
 
-/** Tabs that show one file: its text, a Preview beside it for the kinds that have one, or an image. */
-export const fileLike = (kind: SurfaceKind | null | undefined): kind is 'file' | 'artifact' | 'image' => kind === 'file' || kind === 'artifact' || kind === 'image'
+/** Tabs that show one file: its text, a Preview beside it for the kinds that have one, an image or a PDF. */
+export const fileLike = (kind: SurfaceKind | null | undefined): kind is 'file' | 'artifact' | 'image' | 'doc' =>
+  kind === 'file' || kind === 'artifact' || kind === 'image' || kind === 'doc'
 
 /** What a pane tab shows: an explicit choice wins, and `auto` previews unless this file's preview is unavailable.
  *  Null for a tab with no Source and Preview to swap between, a raster image included. */
@@ -51,13 +52,14 @@ const noPreview = (handleId: string | null, path: string | null | undefined): No
 
 export const useNoPreview = (handleId: string | null, path: string | null | undefined): NoPreview | null => useSyncExternalStore(subscribe, () => noPreview(handleId, path))
 
-/** The tab takes Find: Source, or a Markdown Preview, which is DOM text. An HTML Preview is a native page and takes
- *  none, nor does an image. */
+/** The tab takes Find: Source, a Markdown Preview, which is DOM text, or a PDF. An HTML Preview is a native page and
+ *  takes none, nor does an image. */
 export const hasFind = (handleId: string | null, tab: Pick<SurfaceTab, 'kind' | 'key' | 'mode'> | undefined): boolean => {
   if (!tab || !fileLike(tab.kind)) return false
+  if (tab.kind === 'doc') return true
   const shown = presentationOf(tab, !!noPreview(handleId, tab.key))
   return tab.kind === 'image' ? shown === 'source' : isMarkdown(tab.key) || shown !== 'preview'
 }
 
-/** Open externally takes the file to its default app rather than the editor: from a Preview, or from a raster image. */
-export const opensDefault = (kind: SurfaceKind | null | undefined, shown: Presentation | null): boolean => shown === 'preview' || (kind === 'image' && shown === null)
+/** Open externally takes the file to its default app rather than the editor: from a Preview, a raster image or a PDF. */
+export const opensDefault = (kind: SurfaceKind | null | undefined, shown: Presentation | null): boolean => shown === 'preview' || ((kind === 'image' || kind === 'doc') && shown === null)

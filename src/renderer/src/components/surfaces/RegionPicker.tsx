@@ -241,16 +241,16 @@ export const RegionPicker = forwardRef<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewport, redraw])
 
-  // The two-tone edge is literal black and white: against any pixel one of them clears 4.58:1.
+  // The two-tone edge is black and white: against any pixel one of them clears 4.58:1.
   return (
     <svg ref={svg} aria-hidden="true" data-ui="region-overlay" className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
       <path fill="var(--scrim)" fillRule="evenodd" visibility="hidden" />
-      <rect fill="none" stroke="#000" strokeWidth="1" visibility="hidden" />
-      <rect fill="none" stroke="#fff" strokeWidth="1" visibility="hidden" />
-      <circle r="6" fill="none" stroke="#000" strokeWidth="4" visibility="hidden" />
-      <circle r="6" fill="none" stroke="#fff" strokeWidth="2" visibility="hidden" />
-      <circle r="2" fill="#000" visibility="hidden" />
-      <circle r="1" fill="#fff" visibility="hidden" />
+      <rect fill="none" strokeWidth="1" visibility="hidden" className="stroke-edge-dark" />
+      <rect fill="none" strokeWidth="1" visibility="hidden" className="stroke-edge-light" />
+      <circle r="6" fill="none" strokeWidth="4" visibility="hidden" className="stroke-edge-dark" />
+      <circle r="6" fill="none" strokeWidth="2" visibility="hidden" className="stroke-edge-light" />
+      <circle r="2" visibility="hidden" className="fill-edge-dark" />
+      <circle r="1" visibility="hidden" className="fill-edge-light" />
     </svg>
   )
 })
