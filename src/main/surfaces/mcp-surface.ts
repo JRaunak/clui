@@ -7,12 +7,13 @@
 import { randomBytes } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { basename, isAbsolute, resolve } from 'node:path'
+import { inflateRawSync } from 'node:zlib'
 import { CHANGE_TEXT_BUDGET } from '../../shared/changes'
 import { CHANGE_REF, relativeTo } from '../../shared/context'
 import type { Refusal } from '../../shared/files'
 import { clean, type SurfaceCommand, type SurfaceTarget } from '../../shared/surface-tools'
 import { isSvg, kindForPath } from '../../shared/surfaces'
-import { a1Of, isDelimited, parseA1, qualified } from '../../shared/sheets'
+import { a1Of, isDelimited, isWorkbook, parseA1, qualified, unxml } from '../../shared/sheets'
 import { requestUrl } from '../browser/mcp'
 import type { McpHandler, ToolResult } from '../lib/mcp-route'
 import type { ChangeRefs } from './change-refs'
@@ -37,7 +38,7 @@ export const SURFACE_STATE = {
 export const SURFACE_OPEN = {
   name: 'surface_open',
   description:
-    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), a PDF at a page, or a CSV or TSV at a range of cells. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
+    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), a PDF at a page, or a CSV, TSV or workbook at a range of cells. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -109,6 +110,8 @@ export interface Presenter {
   authorize(handleId: string, abs: string): Promise<'file' | 'tree' | Refusal['reason']>
   changed(handleId: string, abs: string): Promise<boolean>
   browserTabs(handleId: string): { id: number; url: string; title: string }[] | null
+  /** A workbook's sheet names, or null when they can't be read. */
+  sheets(handleId: string, abs: string): Promise<string[] | null>
   request(handleId: string, op: Op): Promise<Delivery>
 }
 
@@ -126,6 +129,40 @@ const ONE_PLACE = 'Pass one of line, page and range.'
 const PAGE_OR_LINE = 'surface_open takes page for a PDF and line for other files.'
 const MAX_PAGE = 1_000_000
 const SCOPES = "Clui can show files in this session's folder, files Claude changed, and files the user opened."
+
+const SHEETS_LISTED = 20
+
+const EOCD = Buffer.from('504b0506', 'hex')
+
+/** The sheet names in a workbook's `xl/workbook.xml`, reached through the zip's central directory so nothing else is
+ *  read or inflated. Null for whatever it can't follow (not a zip, zip64, a damaged directory): the open path shows
+ *  that file's own state instead. */
+export async function sheetNames(size: number, read: (offset: number, length: number) => Promise<Buffer | null>): Promise<string[] | null> {
+  const from = Math.max(0, size - 22 - 0xffff)
+  const tail = await read(from, size - from)
+  const e = tail ? tail.lastIndexOf(EOCD) : -1
+  if (!tail || e < 0 || e + 22 > tail.length) return null
+  const cd = await read(tail.readUInt32LE(e + 16), tail.readUInt32LE(e + 12))
+  if (!cd) return null
+  for (let p = 0; p + 46 <= cd.length && cd.readUInt32LE(p) === 0x02014b50; p += 46 + cd.readUInt16LE(p + 28) + cd.readUInt16LE(p + 30) + cd.readUInt16LE(p + 32)) {
+    if (cd.toString('latin1', p + 46, p + 46 + cd.readUInt16LE(p + 28)) !== 'xl/workbook.xml') continue
+    const method = cd.readUInt16LE(p + 10)
+    const at = cd.readUInt32LE(p + 42)
+    const local = await read(at, 30)
+    if (!local || local.length < 30 || local.readUInt32LE(0) !== 0x04034b50 || (method !== 0 && method !== 8)) return null
+    const raw = await read(at + 30 + local.readUInt16LE(26) + local.readUInt16LE(28), cd.readUInt32LE(p + 20))
+    if (!raw) return null
+    let xml: string
+    try {
+      xml = (method === 8 ? inflateRawSync(raw, { maxOutputLength: 1 << 24 }) : raw).toString()
+    } catch {
+      return null
+    }
+    const names = [...xml.matchAll(/<sheet\b[^>]*>/g)].map((m) => unxml(/\bname="([^"]*)"/.exec(m[0])?.[1] ?? ''))
+    return names.length ? names : null
+  }
+  return null
+}
 
 const span = (start: number, end?: number): string => `L${start}${end !== undefined && end > start ? `-${end}` : ''}`
 const lines = (v: unknown): string | null => {
@@ -268,17 +305,26 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     const as = kindForPath(abs)
     const name = clean(basename(abs))
     const grid = isDelimited(abs)
+    const book = isWorkbook(abs)
     if (as === 'image' && !isSvg(abs) && line !== undefined) return `line applies to text files. ${name} is an image.`
-    // ponytail: no workbook reader yet, so sheet is always refused; the XLSX reader accepts it for .xlsx and .xlsm
-    if (sheet !== undefined) return `sheet applies to Excel workbooks, and ${name} isn't one.`
-    if (range !== undefined && !grid) return `range applies to CSV and TSV files, and ${name} isn't one.`
+    if (sheet !== undefined && !book) return `sheet applies to Excel workbooks, and ${name} isn't one.`
+    if (range !== undefined && !grid && !book) return `range applies to CSV, TSV and Excel files, and ${name} isn't one.`
     if (as === 'sheet' && !grid && line !== undefined) return `line applies to text files. ${name} is a workbook.`
     if (as === 'doc' ? line !== undefined : page !== undefined) return PAGE_OR_LINE
+    if (typeof sheet === 'string') {
+      const names = await present.sheets(handleId, abs)
+      if (names && !names.includes(sheet)) {
+        const more = names.length - SHEETS_LISTED
+        return `${name} has no sheet "${clean(sheet)}". Sheets: ${names.slice(0, SHEETS_LISTED).map((n) => `"${clean(n)}"`).join(', ')}${more > 0 ? `, and ${more} more` : ''}.`
+      }
+    }
     if (int(page, 1, MAX_PAGE)) return { target: { kind: 'file', path: abs, page }, label: `${rel} page ${page}`, focus }
+    const named = typeof sheet === 'string' ? { sheet } : {}
     if (typeof range === 'string') {
       const r = a1Of(parseA1(range)!)
-      return { target: { kind: 'file', path: abs, range: r }, label: `${rel} ${r}`, focus }
+      return { target: { kind: 'file', path: abs, range: r, ...named }, label: `${rel} ${qualified(r, typeof sheet === 'string' ? clean(sheet) : undefined)}`, focus }
     }
+    if (typeof sheet === 'string') return { target: { kind: 'file', path: abs, sheet }, label: `${rel} sheet ${clean(sheet)}`, focus }
     if (!int(line, 1, MAX_LINE)) return { target: { kind: 'file', path: abs }, label: rel, focus }
     const end = int(endLine, line + 1, MAX_LINE) ? endLine : undefined
     const preview = grid

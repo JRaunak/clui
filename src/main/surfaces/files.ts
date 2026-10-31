@@ -230,6 +230,20 @@ export function hashFile(r: FileResource, revision?: string): Promise<{ ok: true
   })
 }
 
+/** A whole file at one revision with the content version of those bytes, up to BYTES_MAX: a workbook's reader parses
+ *  exactly what its references hash. */
+export function readWhole(r: FileResource): Promise<{ ok: true; bytes: Buffer; revision: string; version: string } | Refusal> {
+  if (!genuine(r) || r.operation !== 'read-file' || r.type !== 'file') return Promise.resolve(refuse('invalid'))
+  return guarded(r, async (fh) => {
+    const before = await fh.stat({ bigint: true })
+    const size = Number(before.size)
+    if (size > BYTES_MAX) throw new Refused('too-large')
+    const bytes = await readAt(fh, 0, size)
+    if (bytes.length !== size || revisionOf(await fh.stat({ bigint: true })) !== revisionOf(before)) throw new Refused('changed')
+    return { ok: true as const, bytes, revision: revisionOf(before), version: createHash('sha256').update(bytes).digest('hex').slice(0, 32) }
+  })
+}
+
 /** An image's header, read before anything decodes it, and its content version when it's one Clui shows. */
 export function imageInfo(r: FileResource): Promise<ImageInfo | Refusal> {
   if (!genuine(r) || r.operation !== 'read-file' || r.type !== 'file') return Promise.resolve(refuse('invalid'))

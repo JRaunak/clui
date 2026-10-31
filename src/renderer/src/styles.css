@@ -1061,6 +1061,8 @@ body {
     background: transparent;
     color: inherit;
     overflow: visible;
+    /* A popover can open over the title bar, whose drag region takes the click whatever sits on top. */
+    -webkit-app-region: no-drag;
   }
 }
 .pop {

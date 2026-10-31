@@ -41,17 +41,18 @@ import { readConfig } from './config/reader'
 import { openInEditor, openDiff } from './ide/open'
 import { listWorkspaceFiles } from './workspace/files'
 import { readGitStatus } from './workspace/git-status'
-import { CHUNK_MAX, createFileAccess, docHead, hashFile, readBytes, readText, statFile, type FileResource, type Refusal } from './surfaces/files'
+import { CHUNK_MAX, createFileAccess, docHead, hashFile, readBytes, readText, readWhole, statFile, type FileResource, type Refusal } from './surfaces/files'
+import { sheetJobs } from './surfaces/sheet-jobs'
 import { listTree, treeTarget } from './surfaces/tree'
 import { HtmlViews } from './surfaces/html-view'
 import { createImageCaps, registerScheme, SCHEME } from './surfaces/protocol'
 import { bindSession, deleteSurfaces, flushSurfaces, forgetSession, loadSurfaces, saveSession, trackSession } from './surfaces/persist'
 import { kindForPath, type SurfacesRestore } from '../shared/surfaces'
-import { isDelimited } from '../shared/sheets'
+import { isDelimited, isWorkbook } from '../shared/sheets'
 import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
 import { changeMarks, diffSnapshots, editLine, getDiff, parseChangeRefRequest, parseDiffRequest, selectChange, type DiffSource } from './surfaces/diff'
 import { ChangeRefs } from './surfaces/change-refs'
-import { surfaceBridge, surfaceServer } from './surfaces/mcp-surface'
+import { sheetNames, surfaceBridge, surfaceServer } from './surfaces/mcp-surface'
 import { SURFACE_OPEN_TOOL, SURFACE_STATE_TOOL } from '../shared/surface-tools'
 import {
   getResolvedSettings,
@@ -84,6 +85,7 @@ let htmlViews: HtmlViews | null = null
 let imageCaps: ReturnType<typeof createImageCaps> | null = null
 let diffs: ReturnType<typeof diffSnapshots> | null = null
 let presentation: ReturnType<typeof surfaceBridge> | null = null
+let sheets: ReturnType<typeof sheetJobs> | null = null
 const LAUNCHERS = /\.(app|command|terminal|tool|fileloc|webloc|inetloc|workflow|action|jar|pkg|mpkg|scpt|applescript)$/i
 
 // Backstop: a window-teardown race can throw "Object has been destroyed" from an
@@ -334,11 +336,13 @@ function createWindow(): void {
     presentation?.renew()
     htmlViews?.disposeAll()
     imageCaps?.clear()
+    sheets?.disposeAll()
   })
-  // A reloaded renderer knows none of the HTML views or image caps, which would otherwise stay live.
+  // A reloaded renderer knows none of the HTML views, image caps or sheet workers, which would otherwise stay live.
   mainWindow.webContents.on('did-navigate', () => {
     htmlViews?.disposeAll()
     imageCaps?.clear()
+    sheets?.disposeAll()
   })
 
   // Probe runs set CLUI_TEST_INACTIVE so the window opens behind whatever the user is working in.
@@ -408,6 +412,16 @@ function registerIpc(): void {
     },
     changed: async (h, p) => !!(await manager.changes(h))?.some((c) => c.path === p),
     browserTabs: (h) => browser.tabsOf(h)?.tabs.map(({ id, url, title }) => ({ id, url, title })) ?? null,
+    sheets: async (h, p) => {
+      const f = await files.resolveAllowed(h, p, { consumer: 'file', operation: 'read-file' })
+      if (!f.ok) return null
+      const s = await statFile(f)
+      if (!s.ok) return null
+      return sheetNames(s.size, async (offset, length) => {
+        const b = await readBytes(f, { revision: s.revision, offset, length })
+        return b.ok ? b.bytes : null
+      })
+    },
     request: (h, op) => bridge.request(h, op)
   })
   const surfaceRoute = listener.route('mcp-surface', surface)
@@ -431,6 +445,7 @@ function registerIpc(): void {
     html.dispose(handleId)
     images.dispose(handleId)
     files.dispose(handleId)
+    sheets?.dispose(handleId)
     forgetSession(handleId)
     for (const [id, owner] of watchOwners) if (owner === handleId) watchOwners.delete(id)
   }
@@ -508,6 +523,7 @@ function registerIpc(): void {
       /* window torn down mid-send; drop the event */
     }
   }
+  sheets = sheetJobs(join(__dirname, 'sheet-worker.js'), push)
   const manager = new SessionManager(
     (handleId, event) => {
       browser.onSessionEvent(handleId, event)
@@ -1065,6 +1081,20 @@ function registerIpc(): void {
     const b = await readBytes(r, { revision: revision as string, offset: offset as number, length: length as number }, isDelimited(r.path))
     return b.ok ? { ok: true, bytes: b.bytes } : b
   })
+  // A workbook is read whole, once per open, and parsed in its own process; the bytes it parses are the ones hashed.
+  handle(IpcChannels.sheetOpen, async (e, handleId: unknown, path: unknown, id: unknown) => {
+    if (typeof id !== 'string' || !/^[\w-]{8,64}$/.test(id)) return { ok: false, reason: 'invalid' }
+    const r = await fileFor(handleId, path, 'read-file')
+    if (!r.ok) return r
+    if (!isWorkbook(r.path)) return { ok: false, reason: 'wrong-type' }
+    const w = await readWhole(r)
+    if (!w.ok) return w
+    if (w.bytes.length) sheets?.start(e.sender, handleId as string, id, w.bytes)
+    return { ok: true, revision: w.revision, version: `sha256:${w.version}`, size: w.bytes.length }
+  })
+  handle(IpcChannels.sheetStop, (_e, id: unknown) => {
+    if (typeof id === 'string') sheets?.stop(id)
+  })
   handle(IpcChannels.docVersion, async (_e, handleId: unknown, path: unknown, revision: unknown) => {
     const r = typeof revision === 'string' ? await docFor(handleId, path) : ({ ok: false, reason: 'invalid' } as const)
     const v = r.ok ? await hashFile(r, revision as string) : r
@@ -1273,6 +1303,7 @@ if (!gotSingleInstanceLock) {
 
 app.on('window-all-closed', () => {
   sessionManager?.stopAll()
+  sheets?.disposeAll()
   // Stopped sessions emit no exit event, so their pages would outlive the window.
   browserManager?.disposeAll()
   htmlViews?.disposeAll()

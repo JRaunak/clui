@@ -202,8 +202,7 @@ const all = (x: CsvIndex): string[][] => x.rows(0, x.facts.records - 1, 100_000)
 
 // The kind, the presentation and restored tabs
 {
-  for (const p of ['/w/a.csv', '/w/a.TSV', '/w/old.xls', '/w/bin.xlsb', '/w/c.ods']) equal(kindForPath(p), 'sheet', `kind: ${p} is a sheet`)
-  equal(kindForPath('/w/a.xlsx'), 'file', 'kind: an .xlsx waits for the workbook reader')
+  for (const p of ['/w/a.csv', '/w/a.TSV', '/w/a.xlsx', '/w/m.XLSM', '/w/old.xls', '/w/bin.xlsb', '/w/c.ods']) equal(kindForPath(p), 'sheet', `kind: ${p} is a sheet`)
   const csv = { kind: 'sheet' as const, key: '/w/a.csv' }
   equal(presentationOf(csv, false), 'preview', 'presentation: a CSV opens as its grid')
   equal(presentationOf({ ...csv, mode: 'source' }, false), 'source', 'presentation: Source on request')
@@ -243,6 +242,9 @@ const all = (x: CsvIndex): string[][] => x.rows(0, x.facts.records - 1, 100_000)
   equal(selectedLabel(a('18:24'), 100, 12), 'Rows 18:24 selected · 84 cells', 'copy: rows')
   equal(selectedLabel(a('18:18'), 100, 12), 'Row 18 selected · 12 cells', 'copy: one row')
   equal(selectedLabel(a('B:D'), 100_000, 12), 'Columns B:D selected · 300,000 cells', 'copy: columns')
+  equal(selectedLabel(a('18:24'), 100, 12, 'Summary', true), 'Summary!18:24 selected · 84 cells · with values', 'copy: workbook rows as the reference')
+  equal(selectedLabel(a('18:18'), 100, 12, 'Summary'), 'Summary!18:18 selected · 12 cells', 'copy: one workbook row')
+  equal(selectedLabel(a('B:B'), 100, 12, 'Q1 sales'), "'Q1 sales'!B:B selected · 100 cells", 'copy: one workbook column')
   equal(selectedSaid(a('A18:D24'), 100, 12), 'A18 to D24 selected, 28 cells', 'copy: said')
   equal(readAs('\t', false), 'Tabs, no header row', 'copy: read as')
   equal(readout(100_000, true, 12, false, 'UTF-8'), '100,000 rows · 12 columns · UTF-8', 'copy: readout')

@@ -121,8 +121,7 @@ export const fileViewKey = (kind: SurfaceTab['kind']): 'viewState' | 'sourceView
 const IMAGE = /\.(png|jpe?g|webp|gif|avif|svg)$/i
 export const isSvg = (p: string): boolean => /\.svg$/i.test(p)
 
-// ponytail: .xlsx and .xlsm stay files until the workbook reader lands; add them here with it.
-const SHEET = /\.(csv|tsv|xls|xlsb|ods)$/i
+const SHEET = /\.(csv|tsv|xlsx|xlsm|xls|xlsb|ods)$/i
 
 /** The tab kind a path opens as. `.ico` and `.icns` stay files: the image surface reads neither format. `.xls`,
  *  `.xlsb` and `.ods` are sheets so the sheet surface can say it doesn't show them, rather than open as binary files. */

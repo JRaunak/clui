@@ -116,6 +116,13 @@ const api: CluiApi = {
   docOpen: (handleId, path, bytes) => ipcRenderer.invoke(IpcChannels.docOpen, handleId, path, bytes),
   docRead: (handleId, path, revision, offset, length) => ipcRenderer.invoke(IpcChannels.docRead, handleId, path, revision, offset, length),
   docVersion: (handleId, path, revision) => ipcRenderer.invoke(IpcChannels.docVersion, handleId, path, revision),
+  sheetOpen: (handleId, path, id) => ipcRenderer.invoke(IpcChannels.sheetOpen, handleId, path, id),
+  sheetStop: (id) => ipcRenderer.invoke(IpcChannels.sheetStop, id),
+  onSheetExit: (cb) => {
+    const listener = (_e: unknown, payload: { id: string; code: number }): void => cb(payload)
+    ipcRenderer.on(IpcChannels.sheetExit, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.sheetExit, listener)
+  },
   watchFile: (handleId, path) => ipcRenderer.invoke(IpcChannels.watchFile, handleId, path),
   unwatchFile: (handleId, id) => ipcRenderer.invoke(IpcChannels.unwatchFile, handleId, id),
   openPath: (handleId, path) => ipcRenderer.invoke(IpcChannels.openPath, handleId, path),
@@ -226,6 +233,10 @@ const api: CluiApi = {
 }
 
 contextBridge.exposeInMainWorld('clui', api)
+
+// The context bridge can't carry a MessagePort, so a sheet worker's port reaches the page as a window message, which
+// the page accepts only from its own window.
+ipcRenderer.on(IpcChannels.sheetPort, (e, id: string) => window.postMessage({ cluiSheetPort: id }, '*', e.ports))
 
 // Resolve + apply the theme BEFORE the renderer paints, avoiding a flash of the wrong
 // palette. Done here (not via an inline <head> script, which our strict

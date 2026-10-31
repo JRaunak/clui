@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { isHtml } from '../../../shared/html-view'
 import { isSvg, type SurfaceKind, type SurfaceTab } from '../../../shared/surfaces'
-import { isDelimited } from '../../../shared/sheets'
+import { isDelimited, isWorkbook } from '../../../shared/sheets'
 
 export type Presentation = 'source' | 'preview'
 
@@ -53,12 +53,12 @@ export const noPreview = (handleId: string | null, path: string | null | undefin
 
 export const useNoPreview = (handleId: string | null, path: string | null | undefined): NoPreview | null => useSyncExternalStore(subscribe, () => noPreview(handleId, path))
 
-/** The tab takes Find: Source, a Markdown Preview, which is DOM text, a PDF or a CSV's grid. An HTML Preview is a native
+/** The tab takes Find: Source, a Markdown Preview, which is DOM text, a PDF or a sheet's grid. An HTML Preview is a native
  *  page and takes none, nor does an image or a sheet Clui can't show. */
 export const hasFind = (handleId: string | null, tab: Pick<SurfaceTab, 'kind' | 'key' | 'mode'> | undefined): boolean => {
   if (!tab || !fileLike(tab.kind)) return false
   if (tab.kind === 'doc') return true
-  if (tab.kind === 'sheet') return isDelimited(tab.key)
+  if (tab.kind === 'sheet') return isDelimited(tab.key) || isWorkbook(tab.key)
   const shown = presentationOf(tab, !!noPreview(handleId, tab.key))
   return tab.kind === 'image' ? shown === 'source' : isMarkdown(tab.key) || shown !== 'preview'
 }

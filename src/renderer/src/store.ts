@@ -1437,7 +1437,9 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
   const page = a.kind === 'file' && a.page ? { location: { page: a.page }, highlight: { page: a.page } } : {}
   const range = a.kind === 'file' && a.range ? parseA1(a.range) : null
   // The grid scrolls the range's first cell to its top left.
-  const cells = range && a.kind === 'file' ? { location: { cell: `${colName(range.c0)}${range.r0 + 1}` }, highlight: { range: a.range } } : {}
+  const sheet = a.kind === 'file' && a.sheet ? { sheet: a.sheet } : {}
+  const cells =
+    range && a.kind === 'file' ? { location: { cell: `${colName(range.c0)}${range.r0 + 1}`, ...sheet }, highlight: { range: a.range, ...sheet } } : a.kind === 'file' && a.sheet ? { location: sheet } : {}
   const spec =
     a.kind === 'browser'
       ? { kind: a.kind, tab: a.tab }

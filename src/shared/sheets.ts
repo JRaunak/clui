@@ -24,7 +24,120 @@ export interface SheetCell {
   formula?: string
   valueState: ValueState
   styleId?: number
+  /** A workbook value's kind where it sets alignment: numbers and dates right, booleans and errors centred. */
+  num?: true
+  centre?: true
 }
+
+/** A workbook cell's formatting as Clui draws it: file colours as `#rrggbb`, borders top, right, bottom, left. */
+export interface CellStyle {
+  fill?: string
+  /** The font colour; on an unfilled cell the renderer moves it to a readable lightness. */
+  ink?: string
+  b?: true
+  i?: true
+  u?: 1 | 2
+  s?: true
+  h?: 'left' | 'center' | 'right' | 'justify'
+  v?: 'top' | 'middle' | 'bottom'
+  indent?: number
+  wrap?: true
+  bd?: [Border, Border, Border, Border]
+  /** A data bar: its length 0 to 1 of the cell, and its colour. */
+  bar?: { f: number; color: string }
+}
+/** 0 none, 1 thin, 2 dotted, 3 dashed, 4 medium or thick, 5 double. */
+export type Border = 0 | 1 | 2 | 3 | 4 | 5
+
+/** What a workbook sheet has that Clui doesn't draw, for the not-shown panel. */
+export interface SheetGaps {
+  charts: number
+  images: number
+  shapes: number
+  pivots: number
+  uncalculated: number
+  cf: boolean
+  notes: boolean
+  validation: boolean
+  sparklines: boolean
+  slicers: boolean
+  controls: boolean
+  fonts: boolean
+}
+/** A workbook sheet's geometry. Sizes are px; hidden rows and columns keep theirs. */
+export interface SheetGeo {
+  rows: number
+  cols: number
+  frozen: { rows: number; cols: number }
+  /** The first scrolling cell the file opens at. */
+  top?: { r: number; c: number }
+  gridlines: boolean
+  /** Every row's height, or null when all are the default. */
+  heights: Float32Array | null
+  widths: Float32Array
+  hiddenRows: Int32Array
+  hiddenCols: Int32Array
+  /** Flat r0, c0, r1, c1 per merge. */
+  merges: Int32Array
+  /** Per merge, the styles index plus one (0 for none) of (r0, c1) and (r1, c0): Excel keeps a merge's right border on
+   *  its right-edge cells and its bottom border on its bottom-edge cells. */
+  mergeEdges: Uint32Array
+  gaps: SheetGaps
+}
+export interface BookFacts {
+  sheets: { name: string; hidden: boolean; rows: number; cols: number }[]
+  styles: CellStyle[]
+  macros: boolean
+  links: boolean
+  recalc: boolean
+}
+/** What the formula bar shows for one cell: `value` raw or verbatim, `shown` the display text when it differs. */
+export interface CellDetail {
+  value: string
+  long: boolean
+  /** CSV: the record's field count. */
+  fields?: number
+  shown?: string
+  formula?: string
+  state?: ValueState
+  link?: string
+  /** A1 of the merge holding the cell. */
+  merged?: string
+}
+/** Why a workbook isn't shown. `cells`: the predicted count past CELL_CEILING. */
+export type BookFailure = { t: 'damaged' } | { t: 'encrypted' } | { t: 'old' } | { t: 'too-many'; cells: number } | { t: 'memory' }
+
+/** A cell's kind in its low three bits, with a saved or missing formula result in the two above. */
+export const K = { text: 0, number: 1, date: 2, bool: 3, error: 4, empty: 5, cached: 8, uncalculated: 16 } as const
+
+export interface BookSheet {
+  name: string
+  hidden: boolean
+  geo: SheetGeo
+  /** Cells row-major: row r's are rowStart[r] to rowStart[r + 1]. `style` is a styles index plus one, 0 for none. */
+  rowStart: Uint32Array
+  col: Uint32Array
+  style: Uint32Array
+  kind: Uint8Array
+  /** Numbers, and dates as serials in the book's date system; NaN otherwise. */
+  num: Float64Array
+  /** Every cell's display text end to end, cell j's from textAt[j] to textAt[j + 1]: one string clones in a fraction of
+   *  the time an array of them does. */
+  text: string
+  textAt: Uint32Array
+  formula: Map<number, string>
+  link: Map<number, string>
+}
+export interface Book {
+  facts: BookFacts & { active: number }
+  date1904: boolean
+  sheets: BookSheet[]
+}
+
+export const CELL_CEILING = 2_000_000
+/** A workbook range this small carries its displayed values. */
+export const VALUES_MAX = 50
+export const isWorkbook = (p: string): boolean => /\.(xlsx|xlsm)$/i.test(p)
 export interface SheetWindow {
   revision: string
   r0: number
@@ -35,7 +148,8 @@ export interface SheetWindow {
   columnWidths: { index: number; px: number }[]
   /** Non-empty cells only. */
   cells: SheetCell[]
-  merges: { row: number; col: number; rows: number; cols: number; anchorValue: string; anchorStyleId?: number }[]
+  /** Every merge the window touches, its anchor's cell included wherever the anchor is. */
+  merges: { row: number; col: number; rows: number; cols: number; anchor?: SheetCell; right?: number; bottom?: number }[]
   /** CSV: each row's field count, from r0, so a missing trailing field reads differently from an empty one. */
   fields?: number[]
 }
@@ -50,6 +164,10 @@ export const ROW_MAX = 100_000_000
 export const COL_MAX = 1_000_000
 
 export const isDelimited = (p: string): boolean => /\.(csv|tsv)$/i.test(p)
+
+const XML_ENT: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }
+/** An XML attribute or text value with its entities and character references decoded. */
+export const unxml = (s: string): string => s.replace(/&(#x?[0-9a-f]+|\w+);/gi, (m, e: string) => (e[0] === '#' ? String.fromCodePoint(Number(e[1] === 'x' || e[1] === 'X' ? `0${e.slice(1)}` : e.slice(1))) : (XML_ENT[e] ?? m)))
 
 /** 0-based and inclusive. A whole-row or whole-column range has the other axis open, as `Infinity`. */
 export interface Rect {

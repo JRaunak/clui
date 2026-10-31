@@ -321,6 +321,13 @@ export interface CluiApi {
   docRead: (handleId: string, path: string, revision: string, offset: number, length: number) => Promise<{ ok: true; bytes: Uint8Array } | Refusal>
   /** The hash of every byte of a PDF or a CSV at the revision it opened at, as its references record it. */
   docVersion: (handleId: string, path: string, revision: string) => Promise<{ ok: true; version: SourceVersion } | Refusal>
+  /** Reads a workbook tab's file once and starts its sheet worker, whose port arrives as a window message
+   *  `{ cluiSheetPort: id }`. `version` hashes the bytes the worker reads; an empty file starts none. */
+  sheetOpen: (handleId: string, path: string, id: string) => Promise<{ ok: true; revision: string; version: SourceVersion; size: number } | Refusal>
+  /** Ends a sheet worker, done or not. */
+  sheetStop: (id: string) => Promise<void>
+  /** A sheet worker that exited before it said it was done: out of memory, or killed. */
+  onSheetExit: (cb: (e: { id: string; code: number }) => void) => () => void
   /** Watch a file while a surface shows it; changes arrive through onFileChanged with the returned id. */
   watchFile: (handleId: string, path: string) => Promise<{ ok: true; id: string } | Refusal>
   unwatchFile: (handleId: string, id: string) => Promise<void>
@@ -561,6 +568,12 @@ export const IpcChannels = {
   docOpen: 'clui:docOpen',
   docRead: 'clui:docRead',
   docVersion: 'clui:docVersion',
+  sheetOpen: 'clui:sheetOpen',
+  sheetStop: 'clui:sheetStop',
+  /** main → renderer: a sheet worker's port, posted with its open's id */
+  sheetPort: 'clui:sheetPort',
+  /** main → renderer push: a sheet worker exited early */
+  sheetExit: 'clui:sheetExit',
   watchFile: 'clui:watchFile',
   unwatchFile: 'clui:unwatchFile',
   /** main → renderer push channel for watched-file changes */

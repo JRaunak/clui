@@ -16,6 +16,8 @@ export interface ChipView {
   thumb?: string
   line1: string
   line2: string
+  /** Shown right after line2 and never truncated: a workbook range, whose sheet name gives way first. */
+  fixed?: string
   /** Data that goes to the model with the reference, shown after line2 and never truncated. */
   disclose?: string
   /** Main says Claude can't read this change any more; said after line2, never truncated. */
@@ -129,7 +131,7 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
         n,
         glyph: 'file',
         line1: baseOf(ref.path),
-        line2: at,
+        ...(ref.sheet === undefined ? { line2: at } : { line2: at.slice(0, -ref.range.length - 1), fixed: `!${ref.range}` }),
         ...(ref.values === undefined ? {} : { disclose: 'with values' }),
         title: `${baseOf(ref.path)} · ${at}${lines}${ref.values === undefined ? '' : ' · with values'}`,
         label: `Reference ${n}: ${spokenRef(ref)}`,
@@ -233,8 +235,9 @@ export function ContextChip({
       <span className="flex min-w-0 flex-col" aria-hidden="true">
         <span className="max-w-40 truncate text-xs text-content">{view.line1}</span>
         {/* The host gives way first: what goes to the model is never cut. */}
-        <span className="flex min-w-0 max-w-40 font-mono text-meta text-faint">
+        <span className={`flex min-w-0 ${view.fixed ? 'max-w-56' : 'max-w-40'} font-mono text-meta text-faint`}>
           <span className="truncate">{view.line2}</span>
+          {view.fixed && <span className="shrink-0 whitespace-pre">{view.fixed}</span>}
           {view.disclose && <span className="shrink-0 whitespace-pre">{`${view.line2 ? ' · ' : ''}${view.disclose}`}</span>}
           {view.unavailable && <span className="shrink-0 whitespace-pre">{' · unavailable'}</span>}
           {view.noted && <span className="shrink-0 whitespace-pre">{' · note'}</span>}
