@@ -12,6 +12,7 @@ import { CHANGE_REF, relativeTo } from '../../shared/context'
 import type { Refusal } from '../../shared/files'
 import { clean, type SurfaceCommand, type SurfaceTarget } from '../../shared/surface-tools'
 import { isSvg, kindForPath } from '../../shared/surfaces'
+import { a1Of, isDelimited, parseA1, qualified } from '../../shared/sheets'
 import { requestUrl } from '../browser/mcp'
 import type { McpHandler, ToolResult } from '../lib/mcp-route'
 import type { ChangeRefs } from './change-refs'
@@ -36,7 +37,7 @@ export const SURFACE_STATE = {
 export const SURFACE_OPEN = {
   name: 'surface_open',
   description:
-    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), or a PDF at a page. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
+    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), a PDF at a page, or a CSV or TSV at a range of cells. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -46,6 +47,8 @@ export const SURFACE_OPEN = {
       line: { type: 'integer', minimum: 1, maximum: MAX_LINE },
       endLine: { type: 'integer', minimum: 1, maximum: MAX_LINE },
       page: { type: 'integer', minimum: 1 },
+      range: { type: 'string', description: 'A1 notation for a sheet: B4, A18:D24, rows 18:24 or columns B:D' },
+      sheet: { type: 'string', description: "A workbook sheet's name" },
       focus: { type: 'boolean' }
     },
     additionalProperties: false
@@ -116,7 +119,10 @@ const GONE_TEXT = 'This session is no longer open in Clui.'
 const GONE = text(GONE_TEXT, true)
 const TIMEOUT = text("Outcome unknown: Clui didn't confirm in time.", true)
 const CLOSED = text("Clui's window closed.", true)
-const OPEN_ARGS = 'surface_open takes path, kind, browserTab, line, endLine, page and focus.'
+const OPEN_ARGS = 'surface_open takes path, kind, browserTab, line, endLine, page, range, sheet and focus.'
+const RANGE_FORM = 'range is A1 notation: B4, A18:D24, 18:24 or B:D.'
+const RANGE_FILE = 'range and sheet apply to a sheet file.'
+const ONE_PLACE = 'Pass one of line, page and range.'
 const PAGE_OR_LINE = 'surface_open takes page for a PDF and line for other files.'
 const MAX_PAGE = 1_000_000
 const SCOPES = "Clui can show files in this session's folder, files Claude changed, and files the user opened."
@@ -138,6 +144,12 @@ const docSpan = (v: unknown): string | null => {
   if (!r || typeof r !== 'object' || !int(r.page, 1, MAX_PAGE) || (r.what !== undefined && (typeof r.what !== 'string' || !WHAT.has(r.what)))) return null
   const pages = int(r.endPage, r.page + 1, MAX_PAGE) ? `pages ${r.page} to ${r.endPage}` : `page ${r.page}`
   return r.what ? `${r.what} on ${pages}` : pages
+}
+/** `A18:D24`, `Summary!B4`. */
+const cells = (v: unknown): string | null => {
+  const r = v as { range?: unknown; sheet?: unknown } | null
+  if (!r || typeof r !== 'object' || typeof r.range !== 'string' || !parseA1(r.range)) return null
+  return qualified(r.range, typeof r.sheet === 'string' ? clean(r.sheet) : undefined)
 }
 const KINDS = new Set(['browser', 'tree', 'file', 'diff', 'image', 'doc', 'sheet', 'artifact'])
 const VIEWS = new Set(['shown', 'background', 'minimized', 'covered'])
@@ -166,10 +178,11 @@ function tabLine(x: unknown, c: Facts): string | null {
   const doc = kind === 'doc'
   const pages = int(f.pages, 1, MAX_PAGE) ? f.pages : null
   const loc = doc ? (int(f.page, 1, pages ?? MAX_PAGE) ? `page ${f.page}${pages ? ` of ${pages}` : ''}` : null) : at(f.location)
-  const hl = doc ? docSpan(f.highlight) : lines(f.highlight)
-  const sel = doc ? docSpan(f.selection) : lines(f.selection)
-  const pending = f.pending as { page?: unknown } | undefined
-  const pend = doc ? (int(pending?.page, 1, MAX_PAGE) ? `page ${pending.page}` : null) : at(f.pending)
+  const grid = kind === 'sheet'
+  const hl = doc ? docSpan(f.highlight) : grid ? cells(f.highlight) : lines(f.highlight)
+  const sel = doc ? docSpan(f.selection) : grid ? cells(f.selection) : lines(f.selection)
+  const pending = f.pending as { page?: unknown; cell?: unknown } | undefined
+  const pend = doc ? (int(pending?.page, 1, MAX_PAGE) ? `page ${pending.page}` : null) : grid ? cells({ range: pending?.cell }) : at(f.pending)
   const notes = [
     sel && `user selection ${sel}`,
     hl && (hl === loc ? 'Claude highlight' : `Claude highlight ${hl}`),
@@ -197,7 +210,8 @@ export function stateText(v: unknown, c: Facts): string | null {
   ].join('\n')
 }
 
-/** `preview`: the label and closing sentence for lines that landed on a Preview, which marks them only in Source. */
+/** `preview`: the label and closing sentence for lines that landed on a Preview, which marks them only in Source, or
+ *  on a CSV's grid, which marks their rows. */
 type Opened = { target: SurfaceTarget; label: string; focus: boolean; preview?: { label: string; note: string } }
 
 export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.now): McpHandler & { revoke(handleId: string): void; setPresentation(handleId: string, on: boolean): void } {
@@ -209,7 +223,7 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
 
   async function opened(handleId: string, a: Record<string, unknown>): Promise<Opened | string> {
     if (Object.keys(a).some((k) => !Object.hasOwn(SURFACE_OPEN.inputSchema.properties, k))) return OPEN_ARGS
-    const { path, kind, browserTab, line, endLine, page, focus = false } = a
+    const { path, kind, browserTab, line, endLine, page, range, sheet, focus = false } = a
     if (typeof focus !== 'boolean' || (kind !== undefined && kind !== 'diff')) return OPEN_ARGS
     if (path !== undefined && (typeof path !== 'string' || !path || path.length > 4096 || path.includes('\0'))) return 'path must be a file or folder path.'
     if ([kind === 'diff' || path !== undefined, browserTab !== undefined].filter(Boolean).length !== 1) return "Pass exactly one of path, browserTab or kind:'diff'."
@@ -220,6 +234,12 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     if (page !== undefined) {
       if (!int(page, 1, MAX_PAGE)) return `page is a whole number from 1 to ${MAX_PAGE}.`
       if (path === undefined || kind === 'diff' || line !== undefined) return PAGE_OR_LINE
+    }
+    if (range !== undefined || sheet !== undefined) {
+      if (range !== undefined && (typeof range !== 'string' || range.length > 32 || !parseA1(range))) return RANGE_FORM
+      if (sheet !== undefined && (typeof sheet !== 'string' || !sheet || sheet.length > 255)) return 'sheet is the name of a sheet in a workbook.'
+      if (path === undefined || kind === 'diff') return RANGE_FILE
+      if (line !== undefined || page !== undefined) return ONE_PLACE
     }
     if (browserTab !== undefined) {
       if (!int(browserTab, 1, 1_000_000)) return 'browserTab is a tab number.'
@@ -241,17 +261,30 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     const r = await present.authorize(handleId, abs)
     if (r === 'tree') {
       if (int(line, 1, MAX_LINE)) return 'line and endLine apply to a file.'
+      if (range !== undefined || sheet !== undefined) return RANGE_FILE
       return page !== undefined ? PAGE_OR_LINE : { target: { kind: 'tree', path: abs }, label: `the file tree at ${rel}`, focus }
     }
     if (r !== 'file') return r === 'denied' ? SCOPES : r === 'missing' ? 'Nothing exists at that path.' : "Clui can't open that path."
     const as = kindForPath(abs)
-    if (as === 'image' && !isSvg(abs) && line !== undefined) return `line applies to text files. ${clean(basename(abs))} is an image.`
+    const name = clean(basename(abs))
+    const grid = isDelimited(abs)
+    if (as === 'image' && !isSvg(abs) && line !== undefined) return `line applies to text files. ${name} is an image.`
+    // ponytail: no workbook reader yet, so sheet is always refused; the XLSX reader accepts it for .xlsx and .xlsm
+    if (sheet !== undefined) return `sheet applies to Excel workbooks, and ${name} isn't one.`
+    if (range !== undefined && !grid) return `range applies to CSV and TSV files, and ${name} isn't one.`
+    if (as === 'sheet' && !grid && line !== undefined) return `line applies to text files. ${name} is a workbook.`
     if (as === 'doc' ? line !== undefined : page !== undefined) return PAGE_OR_LINE
     if (int(page, 1, MAX_PAGE)) return { target: { kind: 'file', path: abs, page }, label: `${rel} page ${page}`, focus }
+    if (typeof range === 'string') {
+      const r = a1Of(parseA1(range)!)
+      return { target: { kind: 'file', path: abs, range: r }, label: `${rel} ${r}`, focus }
+    }
     if (!int(line, 1, MAX_LINE)) return { target: { kind: 'file', path: abs }, label: rel, focus }
     const end = int(endLine, line + 1, MAX_LINE) ? endLine : undefined
-    const note = end ? `Lines ${line} to ${end} are marked in Source.` : `Line ${line} is marked in Source.`
-    return { target: { kind: 'file', path: abs, line, ...(end ? { endLine: end } : {}) }, label: `${rel} ${span(line, end)}`, focus, preview: { label: `${rel} in Preview`, note } }
+    const preview = grid
+      ? { label: `${rel} in Grid`, note: end ? `Lines ${line} to ${end} are marked as the rows that hold them.` : `Line ${line} is marked as the row that holds it.` }
+      : { label: `${rel} in Preview`, note: end ? `Lines ${line} to ${end} are marked in Source.` : `Line ${line} is marked in Source.` }
+    return { target: { kind: 'file', path: abs, line, ...(end ? { endLine: end } : {}) }, label: `${rel} ${span(line, end)}`, focus, preview }
   }
 
   async function open(handleId: string, a: Record<string, unknown>): Promise<ToolResult> {

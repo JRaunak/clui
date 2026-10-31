@@ -50,12 +50,13 @@ import {
 import { removalSpoken, pausedText, resourceLabel, shortLabel } from './lib/refCopy'
 import type { Via } from './lib/motion'
 import { CHANGE_BYTES_MAX, CHANGE_TEXT_BUDGET, type ChangeGitStatus, type FileChangeSummary, type GitPathStatus } from '../../shared/changes'
-import { isSvg, kindForPath, restoreKinds, SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
+import { isSvg, kindForPath, restoreKinds, SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSelection, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
 import { clean, type SurfaceCommand, type SurfaceReply, type SurfaceTarget, type TabFact } from '../../shared/surface-tools'
 import { turnEndLine } from './lib/turnEnd'
 import { suffixes } from './lib/tree'
 import { fileLike, noPreview, presentationOf } from './lib/presentation'
 import { isHtml } from '../../shared/html-view'
+import { colName, isDelimited, parseA1 } from '../../shared/sheets'
 
 export type SettingsSection = 'general' | 'sessions' | 'pane' | 'advanced'
 /** The sections with a second tab row, and their tabs. */
@@ -1040,7 +1041,7 @@ function activation(slice: PerSessionState, id: string, now: number, located = f
   const from = set.active ? set.tabs[set.active] : undefined
   // An unseen tree holds a destination Claude placed behind; that wins like a pending or just-sent one.
   const sent = located || !!pendingShow?.location || !!unseen
-  const reveal = cur.kind === 'tree' && (from?.kind === 'file' || from?.kind === 'image' || from?.kind === 'doc') && !!slice.cwd && from.key.startsWith(`${slice.cwd}/`) && !sent ? from.key : null
+  const reveal = cur.kind === 'tree' && (from?.kind === 'file' || from?.kind === 'image' || from?.kind === 'doc' || from?.kind === 'sheet') && !!slice.cwd && from.key.startsWith(`${slice.cwd}/`) && !sent ? from.key : null
   const next: SurfaceTab = { ...rest, ...pendingShow, ...(reveal ? { reveal } : {}), lastViewedAt: now }
   return { surfaces: { ...set, active: id, tabs: { ...set.tabs, [id]: next } } }
 }
@@ -1382,6 +1383,20 @@ export function paneFacts(handleId: string): SurfaceReply {
         ...(pend?.page ? { pending: { page: pend.page } } : {})
       }
     }
+    if (t.kind === 'sheet' && t.mode !== 'source') {
+      const cells = (x: SurfaceSelection | undefined) => x?.range && { range: x.range, ...(x.sheet ? { sheet: x.sheet } : {}) }
+      const sel = cells(t.selection)
+      const hl = cells(t.highlight)
+      return {
+        kind: t.kind,
+        path: t.key,
+        claude: t.openedBy === 'claude',
+        unseen: !!t.unseen,
+        ...(sel ? { selection: sel } : {}),
+        ...(hl ? { highlight: hl } : {}),
+        ...(pend?.cell ? { pending: { cell: pend.cell } } : {})
+      }
+    }
     const sel = span(t.selection?.lines)
     const hl = span(t.highlight?.lines)
     return {
@@ -1420,11 +1435,21 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
   if (!slice) return { outcome: 'unavailable' }
   const lines = a.kind === 'file' && a.line ? { start: a.line, end: a.endLine ?? a.line } : null
   const page = a.kind === 'file' && a.page ? { location: { page: a.page }, highlight: { page: a.page } } : {}
+  const range = a.kind === 'file' && a.range ? parseA1(a.range) : null
+  // The grid scrolls the range's first cell to its top left.
+  const cells = range && a.kind === 'file' ? { location: { cell: `${colName(range.c0)}${range.r0 + 1}` }, highlight: { range: a.range } } : {}
   const spec =
     a.kind === 'browser'
       ? { kind: a.kind, tab: a.tab }
       : a.kind === 'file'
-        ? { kind: a.kind, key: a.path, title: basename(a.path), ...page, ...(lines ? { location: { line: lines.start, ...(a.endLine ? { endLine: a.endLine } : {}) }, highlight: { lines } } : {}) }
+        ? {
+            kind: a.kind,
+            key: a.path,
+            title: basename(a.path),
+            ...page,
+            ...cells,
+            ...(lines ? { location: { line: lines.start, ...(a.endLine ? { endLine: a.endLine } : {}) }, highlight: { lines } } : {})
+          }
         : a.kind === 'tree'
           ? { kind: a.kind, key: '', title: basename(slice.cwd), location: { file: a.path } }
           : { kind: a.kind, key: '', title: 'Claude changes', ...(a.path ? { location: { file: a.path } } : {}) }
@@ -1436,7 +1461,7 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
   const visible = handleId === now.activeHandleId && !hidden()
   const tab = after.surfaces.tabs[id]
   const shown = visible && after.paneOpen && !now.viewingSubagent && now.settingsSection === null && after.surfaces.active === id && !tab?.pendingShow
-  const preview = !!lines && !!tab && (isHtml(tab.key) || isSvg(tab.key)) && presentationOf(tab, !!noPreview(handleId, tab.key)) === 'preview'
+  const preview = !!lines && !!tab && (isHtml(tab.key) || isSvg(tab.key) || isDelimited(tab.key)) && presentationOf(tab, !!noPreview(handleId, tab.key)) === 'preview'
   return { outcome: shown ? 'shown' : a.focus && !visible ? 'deferred' : 'prepared', ...(preview ? { preview } : {}) }
 }
 
@@ -1464,8 +1489,8 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
   window.clui.onRefSourceChanged(({ handleId, path, reason, version, bytes }) => {
     const cause = { reason, ...(version ? { version } : {}) }
     if (bytes) {
-      useSession.getState().invalidateSource(handleId, `image:${path}`, cause)
-      return void useSession.getState().invalidateSource(handleId, `doc:${path}`, cause)
+      for (const kind of ['image', 'doc', 'sheet']) useSession.getState().invalidateSource(handleId, `${kind}:${path}`, cause)
+      return
     }
     useSession.getState().invalidateSource(handleId, `file:${path}`, cause)
     useSession.getState().invalidateSource(handleId, `page:${path}`, cause)
@@ -1968,7 +1993,7 @@ function invalidations(lost: readonly { ref: ContextReference; reason: RefFailur
     const rec = by.get(id) ?? {
       resourceId: id,
       label: change ? 'changes' : resourceLabel(ref),
-      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'page' ? ref.revision : ref.kind === 'file' || ref.kind === 'image' || ref.kind === 'doc' ? (ref.sourceVersion ?? '') : '',
+      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'page' ? ref.revision : ref.kind === 'file' || ref.kind === 'image' || ref.kind === 'doc' || ref.kind === 'sheet' ? (ref.sourceVersion ?? '') : '',
       at: Date.now(),
       reason,
       removed: []
@@ -2089,7 +2114,7 @@ function flushRefs(handleId: string): void {
         ? [{ path: d.ref.path, version: d.ref.sourceVersion }]
         : d.ref.kind === 'page'
           ? [{ path: d.ref.path, version: d.ref.revision }]
-          : d.ref.kind === 'image' || d.ref.kind === 'doc'
+          : d.ref.kind === 'image' || d.ref.kind === 'doc' || d.ref.kind === 'sheet'
             ? [{ path: d.ref.path, version: d.ref.sourceVersion, bytes: true as const }]
             : []
     )
@@ -4352,7 +4377,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       if (r.kind === 'change') return resourceId === CHANGE_REFS && (cause.reason === 'denied' || cause.reason === 'session')
       if (resourceOf(r) !== resourceId) return false
       if (r.kind === 'browser') return true
-      if ((r.kind === 'file' && r.lines) || r.kind === 'image' || r.kind === 'doc') return cause.reason !== 'changed' || r.sourceVersion !== cause.version
+      if ((r.kind === 'file' && r.lines) || r.kind === 'image' || r.kind === 'doc' || r.kind === 'sheet') return cause.reason !== 'changed' || r.sourceVersion !== cause.version
       // A change with no version is an asset's, seen by the page's watcher.
       if (r.kind === 'page') return cause.reason !== 'changed' || !cause.version || r.revision !== cause.version
       // Whole files and folders point at current content, so only losing access removes them.
@@ -4389,13 +4414,16 @@ export const useSession = create<SessionStore>((set, get) => ({
               ? [`${d.ref.path}\0${JSON.stringify(d.ref.region ?? d.ref.point)}`]
               : d.ref.kind === 'doc'
                 ? [`${d.ref.path}\0${d.ref.page}\0${JSON.stringify(d.ref.region ?? d.ref.point ?? d.ref.text?.quote)}`]
-                : []
+                : d.ref.kind === 'sheet'
+                  ? [`${d.ref.path}\0${d.ref.sheet ?? ''}\0${d.ref.range}`]
+                  : []
         )
     )
     const tabs = slice.surfaces.tabs
     const sel = (t: SurfaceTab): string | null => {
       const { lines, region, point } = t.selection ?? {}
       if (t.kind === 'file' && lines) return `${t.key}\0${lines.start}-${lines.end}`
+      if (t.kind === 'sheet' && t.selection?.range) return `${t.key}\0${t.selection.sheet ?? ''}\0${t.selection.range}`
       if (t.kind === 'doc' && t.selection?.page) return `${t.key}\0${t.selection.page}\0${JSON.stringify(region ?? point ?? quoteOf(t.selection.text ?? '').quote)}`
       return t.kind === 'image' && (region || point) ? `${t.key}\0${JSON.stringify(region ?? point)}` : null
     }

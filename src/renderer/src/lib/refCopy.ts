@@ -2,6 +2,7 @@ import { clipName, hostOf, pinWords } from '../../../shared/annotate'
 import { changeLabel, changeTail, docPages, imagePx, imageTail, MAX_REFS, refLabel, type ChangeSide, type ContextReference, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 import { CHANGE_BYTES_MAX, CHANGE_LINES_MAX, CHANGE_TEXT_BUDGET } from '../../../shared/changes'
 import { WORKSPACE_FILE_CAP } from '../../../shared/files'
+import { parseA1, qualified, spokenA1 } from '../../../shared/sheets'
 
 type Reason = ReferenceInvalidation['reason']
 
@@ -42,10 +43,17 @@ export function shortLabel(r: ContextReference): string {
   if (r.kind === 'change') return changeLabel(r.path, r.side, r.old, r.new)
   if (r.kind === 'image') return imageTail(r, false)
   if (r.kind === 'doc') return docWhat(r)
+  if (r.kind === 'sheet') return qualified(r.range, r.sheet)
   return r.kind === 'file' && r.lines ? rangeText(r.lines) : refLabel(r)
 }
 
 type DocInput = Extract<RefInput, { kind: 'doc' }>
+
+/** `A18 to D24`, `sheet Summary, rows 18 to 24`. */
+export const sheetWhat = (r: Pick<Extract<RefInput, { kind: 'sheet' }>, 'range' | 'sheet'>): string => {
+  const a = parseA1(r.range)
+  return `${r.sheet === undefined ? '' : `sheet ${r.sheet}, `}${a ? spokenA1(a) : r.range}`
+}
 
 /** `text on pages 12 to 14`, `a region on page 12`, `a point on page 12`. */
 export const docWhat = (r: Pick<DocInput, 'page' | 'endPage' | 'text' | 'region'>): string => `${r.text ? 'text' : r.region ? 'a region' : 'a point'} on ${docPages(r)}`
@@ -78,6 +86,8 @@ export function spokenRef(r: RefInput): string {
       return `${baseOf(r.path)}, ${spokenImage(r)}`
     case 'doc':
       return `${baseOf(r.path)}, ${docPages(r)}, ${r.text ? `text "${quoteStart(r.text.quote, 80)}"` : r.region ? 'region' : 'point'}`
+    case 'sheet':
+      return `${baseOf(r.path)}, ${sheetWhat(r)}${r.values === undefined ? '' : ', with values'}`
     default:
       return r satisfies never
   }
@@ -97,7 +107,15 @@ export const selectedText = ({ start, end }: LineRange): string => `${end > star
 /** `Added lines 142 to 158 of manager.ts to the message.` */
 export function addedText(r: RefInput, queued = false): string {
   const what =
-    r.kind === 'file' && r.lines ? `${spokenRange(r.lines)} of ${baseOf(r.path)}` : r.kind === 'doc' ? `${docWhat(r)} of ${baseOf(r.path)}` : r.kind === 'change' ? `${spokenRef(r)},` : spokenRef(r)
+    r.kind === 'file' && r.lines
+      ? `${spokenRange(r.lines)} of ${baseOf(r.path)}`
+      : r.kind === 'doc'
+        ? `${docWhat(r)} of ${baseOf(r.path)}`
+        : r.kind === 'sheet'
+          ? `${sheetWhat(r)} of ${baseOf(r.path)}`
+          : r.kind === 'change'
+            ? `${spokenRef(r)},`
+            : spokenRef(r)
   return `Added ${what} to the ${queued ? 'queued ' : ''}message.`
 }
 
@@ -136,6 +154,7 @@ export const BUDGET_NOTE = `${CHANGE_TEXT_BUDGET / 1024} KB of changes max per m
 export const noteTitle = (note: string): string => `Note: ${note.length > 200 ? `${note.slice(0, 200)}…` : note}`
 
 export const POINT_HINT = 'Click line numbers, or press Shift and an arrow key.'
+export const SHEET_POINT_HINT = 'Click a cell, or press Shift and an arrow key.'
 export const POINT_BLOCK_HINT = "Click a block's line number, or press Shift and an arrow key."
 export const POINT_OFF = 'Pointing off.'
 
@@ -233,7 +252,7 @@ export function removalSpoken(lost: readonly ContextReference[], reason: Reason)
       ? `${lost.length} ${page ? 'elements' : 'selections'} were`
       : first.kind === 'file' && first.lines
         ? `${capital(spokenRange(first.lines))} ${first.lines.end > first.lines.start ? 'were' : 'was'}`
-        : `${capital(first.kind === 'doc' ? docWhat(first) : spokenRef(first))} was`
+        : `${capital(first.kind === 'doc' ? docWhat(first) : first.kind === 'sheet' ? sheetWhat(first) : spokenRef(first))} was`
   return `${leadOf(resourceLabel(first), reason)}. ${what} removed from the message.`
 }
 

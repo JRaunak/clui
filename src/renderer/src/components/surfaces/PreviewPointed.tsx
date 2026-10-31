@@ -10,7 +10,7 @@ export function PreviewPointed({ handleId, tabId }: { handleId: string; tabId: s
   if (!lines) return null
   return (
     <div data-ui="preview-pointed" className="shrink-0 border-b border-border px-3 py-1">
-      <PointedRow label={`Claude pointed to ${rangeText(lines, ' to ')}.`}>
+      <PointedRow label={`Claude pointed to ${rangeText(lines)}.`}>
         <button type="button" className={TEXT_BTN} onClick={(e) => viewSourceAt(handleId, tabId, lines.start, viaOf(e), lines.end > lines.start ? lines.end : undefined)}>
           Show in Source
         </button>

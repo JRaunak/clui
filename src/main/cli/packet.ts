@@ -155,7 +155,8 @@ export async function validateRefs(deps: PacketDeps, handleId: string, refs: rea
         return r === 'ok' ? null : r
       }
       case 'image':
-      case 'doc': {
+      case 'doc':
+      case 'sheet': {
         const r = await once(`b\0${ref.path}`, () => deps.byteVersion(handleId, ref.path))
         if (!r.ok) return readFailure(r.reason)
         return r.version === ref.sourceVersion ? null : 'changed'

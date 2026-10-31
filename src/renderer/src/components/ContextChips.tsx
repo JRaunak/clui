@@ -95,6 +95,15 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
       st.setSurfaceView(handleId, surfaceIdOf({ kind: 'doc', key: r.path }), { selection: { page, ...what, sourceVersion } })
       return
     }
+    // A range is the grid's, so a tab showing Source goes back to its grid.
+    case 'sheet': {
+      const { range, sheet, sourceVersion } = r
+      const id = surfaceIdOf({ kind: 'sheet', key: r.path })
+      const source = st.sessions[handleId]?.surfaces.tabs[id]?.mode === 'source'
+      openFileAt(handleId, r.path, {}, false, via)
+      st.setSurfaceView(handleId, id, { ...(source ? { mode: 'preview' as const } : {}), selection: { range, ...(sheet === undefined ? {} : { sheet }), sourceVersion } })
+      return
+    }
     case 'change': {
       const req = mintedRequest(handleId, r.changeRef)
       requestSurfaceFocus('diff', via)

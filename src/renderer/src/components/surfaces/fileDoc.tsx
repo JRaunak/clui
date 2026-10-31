@@ -58,7 +58,7 @@ export const REASON: Record<Refusal['reason'], string> = {
 export const RETRY = new Set<Refusal['reason']>(['changed', 'limit', 'unreadable'])
 
 export type Lines = { start: number; end: number }
-export const rangeText = (r: Lines, sep: string): string => (r.start === r.end ? `line ${r.start}` : `lines ${r.start}${sep}${r.end}`)
+export const rangeText = (r: Lines): string => (r.start === r.end ? `line ${r.start}` : `lines ${r.start} to ${r.end}`)
 
 export type Doc =
   | { t: 'loading' }
@@ -269,7 +269,7 @@ export function useFileDoc(handleId: string, tabId: string, keep: (moved: (line:
   useEffect(() => {
     if (!selection && !hadSelection.current) return
     hadSelection.current = !!selection
-    const t = (selSay.current = setTimeout(() => say(selection ? `${selection.start === selection.end ? 'Line' : 'Lines'} ${rangeText(selection, ' to ').replace(/^lines? /, '')} selected` : 'Selection cleared'), ANNOUNCE_MS))
+    const t = (selSay.current = setTimeout(() => say(selection ? `${selection.start === selection.end ? 'Line' : 'Lines'} ${rangeText(selection).replace(/^lines? /, '')} selected` : 'Selection cleared'), ANNOUNCE_MS))
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selKey])

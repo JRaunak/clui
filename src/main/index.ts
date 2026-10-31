@@ -47,6 +47,7 @@ import { HtmlViews } from './surfaces/html-view'
 import { createImageCaps, registerScheme, SCHEME } from './surfaces/protocol'
 import { bindSession, deleteSurfaces, flushSurfaces, forgetSession, loadSurfaces, saveSession, trackSession } from './surfaces/persist'
 import { kindForPath, type SurfacesRestore } from '../shared/surfaces'
+import { isDelimited } from '../shared/sheets'
 import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
 import { changeMarks, diffSnapshots, editLine, getDiff, parseChangeRefRequest, parseDiffRequest, selectChange, type DiffSource } from './surfaces/diff'
 import { ChangeRefs } from './surfaces/change-refs'
@@ -1047,20 +1048,21 @@ function registerIpc(): void {
   handle(IpcChannels.imageVersion, (_e, handleId: unknown, path: unknown) =>
     typeof handleId === 'string' && typeof path === 'string' ? packetDeps.byteVersion(handleId, path) : { ok: false, reason: 'invalid' }
   )
-  // pdf.js reads a PDF tab's file by range, bound to the stat revision it opened at; no other file is read this way.
+  // pdf.js reads a PDF tab's file by range, and a sheet tab indexes a CSV's, bound to the stat revision it opened at; no
+  // other file is read this way.
   const docFor = async (handleId: unknown, path: unknown): Promise<FileResource | Refusal> => {
     const r = await fileFor(handleId, path, 'read-file')
-    return !r.ok || kindForPath(r.path) === 'doc' ? r : { ok: false, reason: 'wrong-type' }
+    return !r.ok || kindForPath(r.path) === 'doc' || isDelimited(r.path) ? r : { ok: false, reason: 'wrong-type' }
   }
   handle(IpcChannels.docOpen, async (_e, handleId: unknown, path: unknown, bytes: unknown) => {
     const r = await docFor(handleId, path)
     return r.ok ? docHead(r, bytes as number) : r
   })
   handle(IpcChannels.docRead, async (_e, handleId: unknown, path: unknown, revision: unknown, offset: unknown, length: unknown) => {
-    if (!Number.isSafeInteger(length) || (length as number) > CHUNK_MAX) throw new Error(`A PDF read is at most ${CHUNK_MAX} bytes.`)
+    if (!Number.isSafeInteger(length) || (length as number) > CHUNK_MAX) throw new Error(`A ranged read is at most ${CHUNK_MAX} bytes.`)
     const r = await docFor(handleId, path)
     if (!r.ok) return r
-    const b = await readBytes(r, { revision: revision as string, offset: offset as number, length: length as number })
+    const b = await readBytes(r, { revision: revision as string, offset: offset as number, length: length as number }, isDelimited(r.path))
     return b.ok ? { ok: true, bytes: b.bytes } : b
   })
   handle(IpcChannels.docVersion, async (_e, handleId: unknown, path: unknown, revision: unknown) => {

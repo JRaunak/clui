@@ -262,8 +262,9 @@ export function docHead(r: FileResource, bytes: number): Promise<DocHead | Refus
   })
 }
 
-/** One bounded range of a file at a known revision; a different revision aborts instead of mixing versions. */
-export function readBytes(r: FileResource, range: { revision: string; offset: number; length: number }): Promise<{ ok: true; bytes: Buffer; size: number } | Refusal> {
+/** One bounded range of a file at a known revision; a different revision aborts instead of mixing versions. `prefix`:
+ *  a file past BYTES_MAX is read within its first BYTES_MAX bytes rather than refused, as a CSV's grid reads it. */
+export function readBytes(r: FileResource, range: { revision: string; offset: number; length: number }, prefix = false): Promise<{ ok: true; bytes: Buffer; size: number } | Refusal> {
   const { revision, offset, length } = (range ?? {}) as Record<string, unknown>
   if (!genuine(r) || r.operation !== 'read-file' || r.type !== 'file' || typeof revision !== 'string' || !isInt(offset, 0, BYTES_MAX) || !isInt(length, 1, CHUNK_MAX)) {
     return Promise.resolve(refuse('invalid'))
@@ -271,10 +272,10 @@ export function readBytes(r: FileResource, range: { revision: string; offset: nu
   return guarded(r, async (fh) => {
     const s = await fh.stat({ bigint: true })
     const size = Number(s.size)
-    if (size > BYTES_MAX) throw new Refused('too-large')
+    if (size > BYTES_MAX && !prefix) throw new Refused('too-large')
     if (revisionOf(s) !== revision) throw new Refused('changed')
     if (offset > size) throw new Refused('invalid')
-    const bytes = await readAt(fh, offset, Math.min(length, size - offset))
+    const bytes = await readAt(fh, offset, Math.min(length, Math.min(size, BYTES_MAX) - offset))
     if (revisionOf(await fh.stat({ bigint: true })) !== revision) throw new Refused('changed')
     return { ok: true as const, bytes, size }
   })

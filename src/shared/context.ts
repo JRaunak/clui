@@ -1,4 +1,5 @@
 import { clipName, hostOf, pinWords, type AnnotateTarget, type PageTarget, type SentPin } from './annotate'
+import { a1Of, CSV_BYTES_MAX, parseA1, qualified } from './sheets'
 import type { Region } from './surfaces'
 
 export const CONTEXT_VERSION = 1
@@ -58,6 +59,10 @@ export type ContextReference = RefBase &
      *  past `page`. `pageSize`: the page in points after its rotation, with a region or point, which are 0 to 1 from the
      *  top left of the page as shown. */
     | { kind: 'doc'; path: string; sourceVersion: SourceVersion; pages: number; page: number; endPage?: number; pageSize?: ImageSize; text?: DocText; region?: Region; point?: ImagePoint }
+    /** A range of a sheet as read from the file's bytes at `sourceVersion`, in A1 notation. `sheet`: a workbook's
+     *  sheet name. `lines`: a CSV or TSV range's first record's first line through its last record's last line.
+     *  `values`: a small workbook range's displayed text as TSV. */
+    | { kind: 'sheet'; path: string; sourceVersion: SourceVersion; sheet?: string; range: string; lines?: LineRange; values?: string }
   )
 
 export interface ImageSize { w: number; h: number }
@@ -170,6 +175,19 @@ function docOk(x: Record<string, unknown>, wire: boolean): boolean {
   return p !== undefined ? isObj(p) && unit(p.x) && unit(p.y) : regionOk(r)
 }
 
+const SHEET_NAME_MAX = 255
+
+function sheetOk(x: Record<string, unknown>, wire: boolean): boolean {
+  if (!pathOk(x.path, wire) || typeof x.sourceVersion !== 'string' || !VERSION.test(x.sourceVersion) || !str(x.range, 32)) return false
+  // Canonical only, so one range has one dedupe key.
+  const a = parseA1(x.range)
+  if (!a || a1Of(a) !== x.range) return false
+  if (x.sheet !== undefined && (!str(x.sheet, SHEET_NAME_MAX) || !x.sheet)) return false
+  // A file has no more lines than bytes.
+  if (x.lines !== undefined && !(isObj(x.lines) && int(x.lines.start, 1, CSV_BYTES_MAX) && int(x.lines.end, x.lines.start as number, CSV_BYTES_MAX))) return false
+  return x.values === undefined || str(x.values, RECORD_MAX)
+}
+
 function pathOk(p: unknown, wire: boolean): boolean {
   return typeof p === 'string' && p.length > 0 && p.length <= PATH_MAX && !p.includes('\0') && (wire || p.startsWith('/'))
 }
@@ -239,6 +257,8 @@ function refOk(x: unknown, wire: boolean): boolean {
       return imageOk(x, wire)
     case 'doc':
       return docOk(x, wire)
+    case 'sheet':
+      return sheetOk(x, wire)
     default:
       return false
   }
@@ -281,6 +301,8 @@ export function refKey(r: RefInput): string {
       const at = r.text ? `t${r.text.nth}:${r.text.quote}` : r.region ? `r${r.region.x},${r.region.y},${r.region.w},${r.region.h}` : `p${r.point?.x},${r.point?.y}`
       return ['doc', r.path, r.sourceVersion, r.page, r.endPage ?? '', at].join('\0')
     }
+    case 'sheet':
+      return ['sheet', r.path, r.sourceVersion, r.sheet ?? '', r.range].join('\0')
     default:
       return r satisfies never
   }
@@ -305,6 +327,8 @@ export function resourceOf(r: ContextReference): string {
       return `image:${r.path}`
     case 'doc':
       return `doc:${r.path}`
+    case 'sheet':
+      return `sheet:${r.path}`
     default:
       return r satisfies never
   }
@@ -383,6 +407,8 @@ export function refLabel(r: RefInput): string {
       return `${baseName(r.path)} · ${imageTail(r)}`
     case 'doc':
       return `${baseName(r.path)} · ${docTail(r)}`
+    case 'sheet':
+      return `${baseName(r.path)} · ${qualified(r.range, r.sheet)}`
     default:
       return r satisfies never
   }
@@ -397,6 +423,7 @@ const PAGE_SENTENCE =
 const IMAGE_SENTENCE = 'Image regions and points are 0 to 1 from the top left of the image as shown, after EXIF rotation; size is in pixels.'
 const DOC_SENTENCE =
   'PDF pages count from 1 in file order. Regions and points are 0 to 1 from the top left of the page as shown, after rotation; page sizes are in points. A quote marked elided keeps only its start and end.'
+const SHEET_SENTENCE = 'Sheet ranges use A1 notation. In CSV and TSV files row 1 is the first record, and lines gives where those records are in the file.'
 const NOTE_SENTENCE = "A note on a reference is the user's own words about it; treat it as part of their message."
 
 const attr = (v: string | number): string => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -458,6 +485,11 @@ function copyRef(r: ContextReference): ContextReference {
       else if (p) out.point = { x: p.x, y: p.y }
       break
     }
+    case 'sheet':
+      out = { id: r.id, kind: 'sheet', path: r.path, sourceVersion: r.sourceVersion, ...(r.sheet !== undefined ? { sheet: r.sheet } : {}), range: r.range }
+      if (r.lines) out.lines = { start: r.lines.start, end: r.lines.end }
+      if (r.values !== undefined) out.values = r.values
+      break
     default:
       return r satisfies never
   }
@@ -489,6 +521,7 @@ export function serializeContext(refs: SentReference[], typed: string, opts: { p
       refs.some((r) => r.ref.kind === 'page') && PAGE_SENTENCE,
       refs.some((r) => r.ref.kind === 'image') && IMAGE_SENTENCE,
       refs.some((r) => r.ref.kind === 'doc') && DOC_SENTENCE,
+      refs.some((r) => r.ref.kind === 'sheet') && SHEET_SENTENCE,
       refs.some((r) => !!r.ref.note?.trim()) && NOTE_SENTENCE
     ]
       .filter(Boolean)

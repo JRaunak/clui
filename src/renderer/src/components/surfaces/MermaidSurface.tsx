@@ -123,7 +123,7 @@ export function MermaidSurface({ handleId, tabId }: { handleId: string; tabId: s
     // One tree whatever the state, so the diagram never remounts as it draws; only a drawing is a selectable block.
     content = (
       <div data-pointing={pointing ? '' : undefined} className={drawn ? INNER : undefined}>
-        {drawn && pointed && <PointedRow label={`Claude pointed to ${rangeText(highlight!, '–')}`} />}
+        {drawn && pointed && <PointedRow label={`Claude pointed to ${rangeText(highlight!)}`} />}
         <div ref={blockEl} data-src={drawn ? `${whole.start}-${whole.end}` : undefined} onPointerEnter={(e) => e.pointerType === 'mouse' && showNum(true)} onPointerLeave={() => showNum(false)}>
           {drawn && <GutterNum line={1} />}
           <MermaidDiagram code={text} firstLine={1} lastLine={whole.end} name={name} onState={setState} />

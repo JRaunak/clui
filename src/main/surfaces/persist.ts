@@ -30,6 +30,7 @@ const ID_MAX = 200
 const URL_MAX = 8192
 const EXPANDED_MAX = 200
 const KINDS = ['tree', 'file', 'diff', 'image', 'doc', 'sheet', 'artifact'] as const
+const DELIMITERS = [',', ';', '\t', '|'] as const
 const OPENERS = ['user', 'claude', 'link', 'change'] as const
 const MODES = ['auto', 'preview', 'source'] as const
 const PLACEMENT = /^browser:[1-9]\d*$/
@@ -107,7 +108,17 @@ function viewOf(v: unknown, kind: SavedTab['kind']): SurfaceViewState {
     case 'doc':
       return { kind, page: int(o.page), zoom: zoom(o.zoom, ['fit-width', 'fit-page'] as const), offset: Math.min(1, num(o.offset)), ...some('pages', o.pages, int), ...find }
     case 'sheet':
-      return { kind, ...some('sheet', o.sheet, (x) => str(x, TEXT_MAX)), topRow: num(o.topRow), leftCol: num(o.leftCol), rowOffset: num(o.rowOffset), colOffset: num(o.colOffset) }
+      return {
+        kind,
+        ...some('sheet', o.sheet, (x) => str(x, TEXT_MAX)),
+        topRow: num(o.topRow),
+        leftCol: num(o.leftCol),
+        rowOffset: num(o.rowOffset),
+        colOffset: num(o.colOffset),
+        ...some('header', o.header, (x) => (typeof x === 'boolean' ? x : fail())),
+        ...some('delimiter', o.delimiter, (x) => oneOf(x, DELIMITERS)),
+        ...some('showHidden', o.showHidden, (x): true => (x === true ? true : fail()))
+      }
     case 'artifact':
       return fail()
   }

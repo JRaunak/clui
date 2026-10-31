@@ -4,6 +4,7 @@ import type { PagePlace } from './html-view'
 export type SurfaceKind = 'browser' | 'tree' | 'file' | 'diff' | 'image' | 'doc' | 'sheet' | 'artifact'
 export type OpenedBy = 'user' | 'claude' | 'link' | 'change'
 export type ViewMode = 'auto' | 'preview' | 'source'
+export type Delimiter = ',' | ';' | '\t' | '|'
 /** Normalized 0..1 of the rendered page or image. */
 export interface Region { x: number; y: number; w: number; h: number }
 
@@ -38,7 +39,9 @@ export interface SurfaceSelection {
     /** `changeSelection(...).ok` on the hunk the surface rendered; a preview, main decides at mint. */
     fits: boolean
   }
+  /** A sheet range in A1 notation; `sheet` names its workbook sheet. */
   range?: string
+  sheet?: string
   region?: Region
   point?: { x: number; y: number }
   page?: number
@@ -56,7 +59,8 @@ export type SurfaceViewState =
   | { kind: 'image'; zoom: number | 'fit'; panX: number; panY: number }
   /** `offset`: 0 to 1 down the current page's box, at the viewport's centre. `pages`: the count it was read with. */
   | { kind: 'doc'; page: number; zoom: number | 'fit-width' | 'fit-page'; offset: number; pages?: number; find?: string }
-  | { kind: 'sheet'; sheet?: string; topRow: number; leftCol: number; rowOffset: number; colOffset: number }
+  /** `header` and `delimiter` only when the user overrode the guess. */
+  | { kind: 'sheet'; sheet?: string; topRow: number; leftCol: number; rowOffset: number; colOffset: number; header?: boolean; delimiter?: Delimiter; showHidden?: true }
 
 export interface SurfaceTab {
   /** Resource identity; Source/Preview does not create another tab. */
@@ -110,15 +114,19 @@ export interface SurfaceSet {
 /** `prepare` places a tab unseen without activating it; a Claude `focus` falls back to it while the user is busy in the pane or a Gate is up. */
 export type OpenIntent = 'focus' | 'open' | 'prepare'
 
-/** Where a tab keeps its `kind: 'file'` view state. A viewState must be of the tab's own kind, so an artifact's or an
- *  SVG's Source goes in sourceView. */
-export const fileViewKey = (kind: SurfaceTab['kind']): 'viewState' | 'sourceView' => (kind === 'artifact' || kind === 'image' ? 'sourceView' : 'viewState')
+/** Where a tab keeps its `kind: 'file'` view state. A viewState must be of the tab's own kind, so an artifact's, an
+ *  SVG's or a CSV's Source goes in sourceView. */
+export const fileViewKey = (kind: SurfaceTab['kind']): 'viewState' | 'sourceView' => (kind === 'artifact' || kind === 'image' || kind === 'sheet' ? 'sourceView' : 'viewState')
 
 const IMAGE = /\.(png|jpe?g|webp|gif|avif|svg)$/i
 export const isSvg = (p: string): boolean => /\.svg$/i.test(p)
 
-/** The tab kind a path opens as. `.ico` and `.icns` stay files: the image surface reads neither format. */
-export const kindForPath = (p: string): 'file' | 'image' | 'doc' => (IMAGE.test(p) ? 'image' : /\.pdf$/i.test(p) ? 'doc' : 'file')
+// ponytail: .xlsx and .xlsm stay files until the workbook reader lands; add them here with it.
+const SHEET = /\.(csv|tsv|xls|xlsb|ods)$/i
+
+/** The tab kind a path opens as. `.ico` and `.icns` stay files: the image surface reads neither format. `.xls`,
+ *  `.xlsb` and `.ods` are sheets so the sheet surface can say it doesn't show them, rather than open as binary files. */
+export const kindForPath = (p: string): 'file' | 'image' | 'doc' | 'sheet' => (IMAGE.test(p) ? 'image' : /\.pdf$/i.test(p) ? 'doc' : SHEET.test(p) ? 'sheet' : 'file')
 
 /** Tree and diff are session singletons; a path resource is one tab whatever its presentation. */
 export const surfaceIdOf = (t: Pick<SurfaceTab, 'kind' | 'key' | 'provenance'>): string =>
@@ -135,8 +143,9 @@ export interface SavedSet {
   active: string | null
   tabs: Record<string, SavedTab>
 }
-/** A set saved before images and PDFs had their own kinds: such a `file:` tab comes back as its `image:` or `doc:`
- *  tab, without the file view state it can't use. A set already holding that tab keeps that one. */
+/** A set saved before images, PDFs and sheets had their own kinds: such a `file:` tab comes back as its `image:`,
+ *  `doc:` or `sheet:` tab. A sheet keeps its file view state as its Source's; the others drop what they can't use. A
+ *  set already holding that tab keeps that one. */
 export function restoreKinds(set: SavedSet): SavedSet {
   const ids = new Map<string, string>()
   const tabs: Record<string, SavedTab> = {}
@@ -146,8 +155,8 @@ export function restoreKinds(set: SavedSet): SavedSet {
       tabs[id] = t
       continue
     }
-    const { viewState: _v, ...rest } = t
-    const next: SavedTab = { ...rest, kind }
+    const { viewState: v, ...rest } = t
+    const next: SavedTab = { ...rest, kind, ...(kind === 'sheet' && v?.kind === 'file' ? { sourceView: v } : {}) }
     next.id = surfaceIdOf(next)
     ids.set(id, next.id)
     if (!set.tabs[next.id]) tabs[next.id] = next

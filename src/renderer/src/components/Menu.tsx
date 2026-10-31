@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
-import { usePopover, type PopoverAlign } from './Popover'
+import { usePopover, type PopoverAlign, type PopoverPlacement } from './Popover'
 import { viaOf } from '../lib/motion'
+import { IconCheck } from './Icon'
 
 export interface MenuItem {
   key: string
   label: string
-  icon: JSX.Element
+  /** A radio or checkbox item shows a check in this place instead. */
+  icon?: JSX.Element
   onClick: () => void
+  type?: 'radio' | 'checkbox'
+  checked?: boolean
   danger?: boolean
   /** Keyboard-accelerator hint or a short fact, right-aligned, so the visible menu teaches the invisible key. It
    *  stays out of the item's name; `keys` and `description` say it to assistive tech. */
@@ -28,6 +32,7 @@ export function Menu({
   label,
   items,
   align,
+  placement = 'down',
   width = 'min-w-[188px]',
   trigger,
   children
@@ -35,12 +40,13 @@ export function Menu({
   label: string
   items: MenuItem[]
   align: PopoverAlign
+  placement?: PopoverPlacement
   width?: string
   trigger: ButtonHTMLAttributes<HTMLButtonElement> & { 'data-ui'?: string }
   children: ReactNode
 }): JSX.Element | null {
   const [focusIdx, setFocusIdx] = useState(0)
-  const p = usePopover({ placement: 'down', align })
+  const p = usePopover({ placement, align })
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   useEffect(() => {
@@ -87,12 +93,13 @@ export function Menu({
           <button
             key={it.key}
             ref={(el) => (itemRefs.current[i] = el)}
-            role="menuitem"
+            role={it.type ? `menuitem${it.type}` : 'menuitem'}
+            aria-checked={it.type ? !!it.checked : undefined}
             tabIndex={i === focusIdx ? 0 : -1}
             aria-description={it.description}
             aria-keyshortcuts={it.keys}
             className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-label text-content -outline-offset-2 hover:bg-[var(--glass-row-hover)] focus-visible:bg-[var(--glass-row-hover)] ${
-              it.danger ? 'mt-1 border-t border-[var(--glass-edge)] pt-2' : ''
+              it.danger || (i > 0 && it.type !== items[i - 1].type) ? 'mt-1 border-t border-[var(--glass-edge)] pt-2' : ''
             }`}
             onClick={(e) => {
               e.stopPropagation()
@@ -102,7 +109,9 @@ export function Menu({
           >
             {/* Destructive reads by mark and icon, since err text fails on glass. */}
             {it.danger && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-err" aria-hidden="true" />}
-            <span className={`shrink-0 ${it.danger ? 'text-err' : 'text-dim'}`}>{it.icon}</span>
+            <span className={`shrink-0 ${it.danger ? 'text-err' : 'text-dim'}`}>
+              {it.type ? <IconCheck className={`h-3.5 w-3.5 ${it.checked ? '' : 'invisible'}`} /> : it.icon}
+            </span>
             <span className="min-w-0 flex-1 truncate">{it.label}</span>
             {it.hint && (
               <span aria-hidden="true" title={it.hintTitle} className="min-w-0 max-w-[55%] truncate text-meta text-dim">

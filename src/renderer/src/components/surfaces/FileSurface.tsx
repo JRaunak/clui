@@ -50,7 +50,7 @@ type Item =
 function chipOf(h: ChangeMarks['hunks'][number]): { text: string; label: string } {
   if (h.bars.length) {
     const r = { start: h.bars[0][0], end: h.bars.at(-1)![1] }
-    return { text: `Claude changed ${rangeText(r, '–')}`, label: `View Claude's change to ${rangeText(r, ' to ')}` }
+    return { text: `Claude changed ${rangeText(r)}`, label: `View Claude's change to ${rangeText(r)}` }
   }
   const w = h.wedge!
   return { text: `Claude removed ${lines(w.count)} here`, label: `View the ${lines(w.count)} Claude removed after line ${w.line - 1}` }
@@ -505,7 +505,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
         return (
           <div className="flex h-6 select-none items-center gap-1.5 pl-[calc(var(--num-ch)+1.75rem)] text-meta text-dim">
             <IconTarget className="h-3 w-3" />
-            {`Claude pointed to ${rangeText(it, '–')}`}
+            {`Claude pointed to ${rangeText(it)}`}
           </div>
         )
       case 'big':

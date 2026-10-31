@@ -4,6 +4,7 @@ import { changeTail, docPages, docPagesShort, docPt, imageTail, refLabel, type C
 import type { ProcessedAttachment } from '../lib/images'
 import type { ShownAttachment } from '../store'
 import { baseOf, CHANGE_UNAVAILABLE, noteTitle, quoteStart, rangeText, spokenRef } from '../lib/refCopy'
+import { qualified } from '../../../shared/sheets'
 import { FileIcon } from './FileIcon'
 import { IconClose, IconDiff, IconFile, IconTarget } from './Icon'
 
@@ -117,6 +118,21 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
         ...(thumb ? { disclose: 'with picture' } : {}),
         title: `${baseOf(ref.path)} · ${docPages(ref)} · ${what}${pic}`,
         label: `Reference ${n}: ${spokenRef(ref)}${thumb ? ', with picture' : ''}`,
+        spoken: spokenRef(ref)
+      }
+    }
+    case 'sheet': {
+      const at = qualified(ref.range, ref.sheet)
+      const lines = ref.lines ? ` · lines ${ref.lines.start}${ref.lines.end > ref.lines.start ? ` to ${ref.lines.end}` : ''}` : ''
+      return {
+        key,
+        n,
+        glyph: 'file',
+        line1: baseOf(ref.path),
+        line2: at,
+        ...(ref.values === undefined ? {} : { disclose: 'with values' }),
+        title: `${baseOf(ref.path)} · ${at}${lines}${ref.values === undefined ? '' : ' · with values'}`,
+        label: `Reference ${n}: ${spokenRef(ref)}`,
         spoken: spokenRef(ref)
       }
     }

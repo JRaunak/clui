@@ -314,11 +314,12 @@ export interface CluiApi {
   imageOpen: (handleId: string, owner: string, path: string) => Promise<ImageOpen>
   /** The hash of an image's bytes now, to check a selection against before its picture is taken. */
   imageVersion: (handleId: string, path: string) => Promise<{ ok: true; version: SourceVersion } | Refusal>
-  /** A PDF tab's file before pdf.js reads it: size, stat revision and its first `bytes`. */
+  /** A PDF's or a CSV's file before its tab reads it: size, stat revision and its first `bytes`. */
   docOpen: (handleId: string, path: string, bytes: number) => Promise<DocHead | Refusal>
-  /** One range of a PDF at the revision it opened at, CHUNK_MAX at most; another revision is refused. */
+  /** One range of a PDF or a CSV at the revision it opened at, CHUNK_MAX at most; another revision is refused. A CSV past
+   *  200 MiB reads within its first 200 MiB. */
   docRead: (handleId: string, path: string, revision: string, offset: number, length: number) => Promise<{ ok: true; bytes: Uint8Array } | Refusal>
-  /** The hash of every byte of a PDF at the revision it opened at, as its references record it. */
+  /** The hash of every byte of a PDF or a CSV at the revision it opened at, as its references record it. */
   docVersion: (handleId: string, path: string, revision: string) => Promise<{ ok: true; version: SourceVersion } | Refusal>
   /** Watch a file while a surface shows it; changes arrive through onFileChanged with the returned id. */
   watchFile: (handleId: string, path: string) => Promise<{ ok: true; id: string } | Refusal>

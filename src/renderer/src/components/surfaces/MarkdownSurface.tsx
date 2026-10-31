@@ -173,7 +173,7 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
     const fm = frontMatter(shown)
     return { fm, body: fm ? fm.body : shown, cut: end !== null }
   }, [text, end, toSource])
-  const pointed = useMemo(() => (highlight ? { ...highlight, label: `Claude pointed to ${rangeText(highlight, '–')}` } : null), [highlight])
+  const pointed = useMemo(() => (highlight ? { ...highlight, label: `Claude pointed to ${rangeText(highlight)}` } : null), [highlight])
 
   // The tree: parsed here when small, in the worker otherwise. A reparse keeps showing the tree it replaces.
   const [parse] = useState(() => latestParse())

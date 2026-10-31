@@ -12,6 +12,7 @@ import { MarkdownSurface } from './MarkdownSurface'
 import { MermaidSurface } from './MermaidSurface'
 import { ImageSurface } from './ImageSurface'
 import { PdfSurface } from './PdfSurface'
+import { SheetSurface } from './SheetSurface'
 import { PresentationButton } from './PresentationButton'
 import { fileLike, isMarkdown, isMermaid, opensDefault, presentationOf, useNoPreview } from '../../lib/presentation'
 import { isHtml } from '../../../../shared/html-view'
@@ -71,6 +72,8 @@ export function SurfaceHost(): JSX.Element | null {
         activeId &&
         (kind === 'doc' ? (
           <PdfSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
+        ) : kind === 'sheet' && shown !== 'source' ? (
+          <SheetSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
         ) : image && shown !== 'source' ? (
           <ImageSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
         ) : shown === 'preview' ? (

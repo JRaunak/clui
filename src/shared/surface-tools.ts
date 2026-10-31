@@ -6,8 +6,8 @@ export const SURFACE_OPEN_TOOL = 'mcp__clui-surface__surface_open'
 
 /** Validated in main: a path here is absolute and already authorized for its kind. */
 export type SurfaceTarget =
-  /** `page` only for a PDF, `line` only for anything else. */
-  | { kind: 'file'; path: string; line?: number; endLine?: number; page?: number }
+  /** `page` only for a PDF, `range` and `sheet` only for a sheet, `line` for text, which a CSV's grid marks as rows. */
+  | { kind: 'file'; path: string; line?: number; endLine?: number; page?: number; range?: string; sheet?: string }
   | { kind: 'tree'; path: string }
   | { kind: 'diff'; path?: string }
   | { kind: 'browser'; tab: number }
@@ -18,6 +18,8 @@ export type SurfaceCommand = CommandBase & ({ op: 'state' } | { op: 'open'; args
 export interface Lines { start: number; end: number }
 /** A PDF selection by its pages and what it is, never its text; Claude's highlight is a page and has no `what`. */
 export interface DocSpan { page: number; endPage?: number; what?: 'text' | 'region' | 'point' }
+/** A sheet range in A1 notation, never its values. */
+export interface Cells { range: string; sheet?: string }
 /** What a tab shows, never its content. Main formats the label: path tabs and the tree send `path`, browser tabs `tab`. */
 export interface TabFact {
   kind: SurfaceKind
@@ -31,9 +33,9 @@ export interface TabFact {
   /** A PDF's current page and its count. */
   page?: number
   pages?: number
-  selection?: Lines | DocSpan
-  highlight?: Lines | DocSpan
-  pending?: { line?: number; endLine?: number; page?: number }
+  selection?: Lines | DocSpan | Cells
+  highlight?: Lines | DocSpan | Cells
+  pending?: { line?: number; endLine?: number; page?: number; cell?: string }
 }
 export type SessionView = 'shown' | 'background' | 'minimized' | 'covered'
 export interface PaneFacts {
@@ -46,7 +48,8 @@ export interface PaneFacts {
 }
 /** `pane-closed`: the tab is active, but the user closed the pane and nothing reopens it on its own. */
 export type OpenOutcome = 'shown' | 'prepared' | 'deferred' | 'pane-closed' | 'unavailable'
-/** `preview`: Claude's lines landed on a tab showing an HTML or SVG Preview, which marks them only in Source. */
+/** `preview`: Claude's lines landed on a tab showing an HTML or SVG Preview, which marks them only in Source, or a
+ *  CSV's grid, which marks the rows holding them. */
 export type SurfaceReply = PaneFacts | { outcome: OpenOutcome; preview?: true }
 
 // Filenames and page titles are someone else's strings: no controls, no bidi overrides, one bounded line.
