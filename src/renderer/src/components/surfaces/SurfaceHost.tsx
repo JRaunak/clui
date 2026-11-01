@@ -12,6 +12,8 @@ import { MarkdownSurface } from './MarkdownSurface'
 import { MermaidSurface } from './MermaidSurface'
 import { ImageSurface } from './ImageSurface'
 import { PdfSurface } from './PdfSurface'
+import { OfficeSurface } from './OfficeSurface'
+import { isOffice } from '../../../../shared/office'
 import { SheetSurface } from './SheetSurface'
 import { PresentationButton } from './PresentationButton'
 import { fileLike, isMarkdown, isMermaid, opensDefault, presentationOf, useNoPreview } from '../../lib/presentation'
@@ -45,7 +47,7 @@ export function SurfaceHost(): JSX.Element | null {
       <BrowserSettingsButton />
     </>
   ) : kind === 'doc' && activeId ? (
-    <PointButton kind="doc" id={activeId} />
+    filePath && !isOffice(filePath) ? <PointButton kind="doc" id={activeId} /> : null
   ) : image && activeId ? (
     <>
       {shown !== 'source' && <PointButton kind="image" id={activeId} />}
@@ -71,7 +73,11 @@ export function SurfaceHost(): JSX.Element | null {
       {fileTab &&
         activeId &&
         (kind === 'doc' ? (
-          <PdfSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
+          filePath && isOffice(filePath) ? (
+            <OfficeSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
+          ) : (
+            <PdfSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
+          )
         ) : kind === 'sheet' && shown !== 'source' ? (
           <SheetSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
         ) : image && shown !== 'source' ? (

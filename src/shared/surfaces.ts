@@ -1,6 +1,7 @@
 import type { HunkRows } from './changes'
 import type { ChangeSide, LineRange, SourceVersion } from './context'
 import type { PagePlace } from './html-view'
+import type { WordPart } from './office'
 export type SurfaceKind = 'browser' | 'tree' | 'file' | 'diff' | 'image' | 'doc' | 'sheet' | 'artifact'
 export type OpenedBy = 'user' | 'claude' | 'link' | 'change'
 export type ViewMode = 'auto' | 'preview' | 'source'
@@ -20,6 +21,9 @@ export interface SurfaceLocation {
   hunk?: string
   /** An element id a Preview scrolls to: a Markdown heading or footnote, or a page's own id; Source ignores it. */
   anchor?: string
+  /** Claude's words in a PDF or Word document, and which match of them, from 0. */
+  text?: string
+  nth?: number
 }
 export interface SurfaceSelection {
   lines?: { start: number; end: number }
@@ -47,9 +51,14 @@ export interface SurfaceSelection {
   page?: number
   /** A PDF text selection's last page, when it runs past `page`. */
   endPage?: number
-  /** A PDF's selected text, whitespace collapsed, and which occurrence of it on `page` it is. */
+  /** A PDF's selected text, whitespace collapsed, and which occurrence of it on `page` it is; in a Word file, which
+   *  occurrence in `part`, with the paragraphs it spans. Claude's `text` highlight carries what it asked for. */
   text?: string
   nth?: number
+  part?: WordPart
+  blocks?: { start: number; end: number }
+  heading?: string
+  tracked?: true
 }
 export type SurfaceViewState =
   | { kind: 'tree'; expanded: string[]; scrollTop: number }
@@ -57,8 +66,9 @@ export type SurfaceViewState =
   | { kind: 'file'; topLine: number; offsetPx: number; scrollLeft: number; find?: string; page?: PagePlace }
   | { kind: 'diff'; path?: string; segmentId?: string; revision?: string; topHunk?: string; offsetPx: number; find?: string }
   | { kind: 'image'; zoom: number | 'fit'; panX: number; panY: number }
-  /** `offset`: 0 to 1 down the current page's box, at the viewport's centre. `pages`: the count it was read with. */
-  | { kind: 'doc'; page: number; zoom: number | 'fit-width' | 'fit-page'; offset: number; pages?: number; find?: string }
+  /** `offset`: 0 to 1 down the current page's box, at the viewport's centre. `pages`: the count it was read with. A Word
+   *  file's `page` is the segment at the viewport's top, `offset` how far down it, and `layout` how it's laid out. */
+  | { kind: 'doc'; page: number; zoom: number | 'fit-width' | 'fit-page'; offset: number; pages?: number; find?: string; layout?: 'flow' | 'pages' }
   /** `header` and `delimiter` only when the user overrode the guess. */
   | { kind: 'sheet'; sheet?: string; topRow: number; leftCol: number; rowOffset: number; colOffset: number; header?: boolean; delimiter?: Delimiter; showHidden?: true }
 
@@ -123,9 +133,12 @@ export const isSvg = (p: string): boolean => /\.svg$/i.test(p)
 
 const SHEET = /\.(csv|tsv|xlsx|xlsm|xls|xlsb|ods)$/i
 
+const DOC = /\.(pdf|docx|docm|doc|odt|rtf|pptx|pptm|ppt|odp)$/i
+
 /** The tab kind a path opens as. `.ico` and `.icns` stay files: the image surface reads neither format. `.xls`,
- *  `.xlsb` and `.ods` are sheets so the sheet surface can say it doesn't show them, rather than open as binary files. */
-export const kindForPath = (p: string): 'file' | 'image' | 'doc' | 'sheet' => (IMAGE.test(p) ? 'image' : /\.pdf$/i.test(p) ? 'doc' : SHEET.test(p) ? 'sheet' : 'file')
+ *  `.xlsb` and `.ods` are sheets so the sheet surface can say it doesn't show them, rather than open as binary files.
+ *  `.key` stays a file: in a repository it's far more often a PEM key than a Keynote deck. */
+export const kindForPath = (p: string): 'file' | 'image' | 'doc' | 'sheet' => (IMAGE.test(p) ? 'image' : DOC.test(p) ? 'doc' : SHEET.test(p) ? 'sheet' : 'file')
 
 /** Tree and diff are session singletons; a path resource is one tab whatever its presentation. */
 export const surfaceIdOf = (t: Pick<SurfaceTab, 'kind' | 'key' | 'provenance'>): string =>

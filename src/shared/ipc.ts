@@ -6,6 +6,7 @@
  * session id they belong to.
  */
 import type { DomainEvent, ElicitationResponse } from './events'
+import type { Glimpse, OfficeOpen } from './office'
 import type {
   ProjectGroup,
   TranscriptResult,
@@ -316,11 +317,16 @@ export interface CluiApi {
   imageVersion: (handleId: string, path: string) => Promise<{ ok: true; version: SourceVersion } | Refusal>
   /** A PDF's or a CSV's file before its tab reads it: size, stat revision and its first `bytes`. */
   docOpen: (handleId: string, path: string, bytes: number) => Promise<DocHead | Refusal>
-  /** One range of a PDF or a CSV at the revision it opened at, CHUNK_MAX at most; another revision is refused. A CSV past
+  /** One range of a PDF, a CSV or a Word file at the revision it opened at, CHUNK_MAX at most; another revision is refused. A CSV past
    *  200 MiB reads within its first 200 MiB. */
   docRead: (handleId: string, path: string, revision: string, offset: number, length: number) => Promise<{ ok: true; bytes: Uint8Array } | Refusal>
-  /** The hash of every byte of a PDF or a CSV at the revision it opened at, as its references record it. */
+  /** The hash of every byte of a PDF, a CSV or a Word file at the revision it opened at, as its references record it. */
   docVersion: (handleId: string, path: string, revision: string) => Promise<{ ok: true; version: SourceVersion } | Refusal>
+  /** An Office tab's pre-flight, before anything renders it. A Word file it lays out may then be read by `docRead` at
+   *  the revision it returns, and no other. */
+  officeOpen: (handleId: string, path: string) => Promise<OfficeOpen>
+  /** Quick Look's first page of an Office file at the revision its pre-flight saw. */
+  officeGlimpse: (handleId: string, path: string, revision: string) => Promise<Glimpse | Refusal>
   /** Reads a workbook tab's file once and starts its sheet worker, whose port arrives as a window message
    *  `{ cluiSheetPort: id }`. `version` hashes the bytes the worker reads; an empty file starts none. */
   sheetOpen: (handleId: string, path: string, id: string) => Promise<{ ok: true; revision: string; version: SourceVersion; size: number } | Refusal>
@@ -568,6 +574,8 @@ export const IpcChannels = {
   docOpen: 'clui:docOpen',
   docRead: 'clui:docRead',
   docVersion: 'clui:docVersion',
+  officeOpen: 'clui:officeOpen',
+  officeGlimpse: 'clui:officeGlimpse',
   sheetOpen: 'clui:sheetOpen',
   sheetStop: 'clui:sheetStop',
   /** main → renderer: a sheet worker's port, posted with its open's id */
@@ -661,8 +669,9 @@ export interface MenuState {
   reload: boolean
   /** Focus is in a Markdown Preview whose anchor jumps have a place to go back to. */
   back: boolean
-  /** An image Preview or a PDF is the active tab, so the View menu's zoom items work, and which names the fit item. */
-  zoom: 'none' | 'image' | 'doc'
+  /** An image Preview, a PDF or a Word view is the active tab, so the View menu's zoom items work, and which names the
+   *  fit item. `text` is a Word view in Flow, which has no fit. */
+  zoom: 'none' | 'image' | 'doc' | 'text'
   /** A PDF is shown, so Go to Line goes to a page. */
   pages: boolean
 }

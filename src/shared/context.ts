@@ -1,5 +1,6 @@
 import { clipName, hostOf, pinWords, type AnnotateTarget, type PageTarget, type SentPin } from './annotate'
 import { a1Of, CSV_BYTES_MAX, parseA1, qualified } from './sheets'
+import type { WordPart } from './office'
 import type { Region } from './surfaces'
 
 export const CONTEXT_VERSION = 1
@@ -63,6 +64,11 @@ export type ContextReference = RefBase &
      *  sheet name. `lines`: a CSV or TSV range's first record's first line through its last record's last line.
      *  `values`: a small workbook range's displayed text as TSV. */
     | { kind: 'sheet'; path: string; sourceVersion: SourceVersion; sheet?: string; range: string; lines?: LineRange; values?: string }
+    /** Text in one part of a Word document as Clui laid it out from the file's bytes at `sourceVersion`. `text.nth`
+     *  counts earlier occurrences of the quote in the part. `blocks`: the first and last paragraph, counted from 1 in
+     *  the part as rendered. `heading`: the nearest heading above it, body only. `tracked`: the part has tracked changes,
+     *  quoted as if accepted. */
+    | { kind: 'docx'; path: string; sourceVersion: SourceVersion; part: WordPart; blocks: LineRange; text: DocText; heading?: string; tracked?: true }
   )
 
 export interface ImageSize { w: number; h: number }
@@ -168,7 +174,7 @@ function docOk(x: Record<string, unknown>, wire: boolean): boolean {
   if ([t, r, p].filter((v) => v !== undefined).length !== 1) return false
   if (t !== undefined) {
     if (size !== undefined || (endPage !== undefined && !int(endPage, page + 1, pages))) return false
-    return isObj(t) && typeof t.quote === 'string' && !!t.quote && [...t.quote].length <= QUOTE_MAX + ELISION.length && int(t.nth, 0, LINE_MAX) && (t.elided === undefined || t.elided === true)
+    return textOk(t)
   }
   const sized = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= POINTS_MAX
   if (endPage !== undefined || !isObj(size) || !sized(size.w) || !sized(size.h)) return false
@@ -176,6 +182,17 @@ function docOk(x: Record<string, unknown>, wire: boolean): boolean {
 }
 
 const SHEET_NAME_MAX = 255
+export const HEADING_MAX = 200
+const PARTS = new Set<unknown>(['body', 'footnotes', 'endnotes'])
+
+const textOk = (t: unknown): boolean =>
+  isObj(t) && typeof t.quote === 'string' && !!t.quote && [...t.quote].length <= QUOTE_MAX + ELISION.length && int(t.nth, 0, LINE_MAX) && (t.elided === undefined || t.elided === true)
+
+function docxOk(x: Record<string, unknown>, wire: boolean): boolean {
+  if (!pathOk(x.path, wire) || typeof x.sourceVersion !== 'string' || !VERSION.test(x.sourceVersion) || !PARTS.has(x.part) || !rangeOk(x.blocks) || !textOk(x.text)) return false
+  if (x.heading !== undefined && (x.part !== 'body' || !str(x.heading, HEADING_MAX) || !x.heading)) return false
+  return x.tracked === undefined || x.tracked === true
+}
 
 function sheetOk(x: Record<string, unknown>, wire: boolean): boolean {
   if (!pathOk(x.path, wire) || typeof x.sourceVersion !== 'string' || !VERSION.test(x.sourceVersion) || !str(x.range, 32)) return false
@@ -259,6 +276,8 @@ function refOk(x: unknown, wire: boolean): boolean {
       return docOk(x, wire)
     case 'sheet':
       return sheetOk(x, wire)
+    case 'docx':
+      return docxOk(x, wire)
     default:
       return false
   }
@@ -303,6 +322,8 @@ export function refKey(r: RefInput): string {
     }
     case 'sheet':
       return ['sheet', r.path, r.sourceVersion, r.sheet ?? '', r.range].join('\0')
+    case 'docx':
+      return ['docx', r.path, r.sourceVersion, r.part, r.text.nth, r.text.quote].join('\0')
     default:
       return r satisfies never
   }
@@ -329,6 +350,9 @@ export function resourceOf(r: ContextReference): string {
       return `doc:${r.path}`
     case 'sheet':
       return `sheet:${r.path}`
+    // A Word file opens in a doc tab, so its references share that tab's resource and go stale with it.
+    case 'docx':
+      return `doc:${r.path}`
     default:
       return r satisfies never
   }
@@ -388,6 +412,10 @@ export function docTail(r: DocRef): string {
   return `${docPages(r)} · ${p.w === undefined ? `point ${p.x},${p.y} pt` : `region ${p.w}×${p.h} pt at ${p.x},${p.y}`}`
 }
 
+type DocxRef = Pick<Extract<RefInput, { kind: 'docx' }>, 'part' | 'heading'>
+/** `text under "Scope of work"`, `text`, `footnote text`. */
+export const docxTail = (r: DocxRef): string => (r.part !== 'body' ? `${r.part === 'footnotes' ? 'footnote' : 'endnote'} text` : r.heading ? `text under "${clipName(r.heading)}"` : 'text')
+
 /** `manager.ts · L142–158`, `manager.ts`, `browser/`, `button "Sign in"`. The one place this copy lives. */
 export function refLabel(r: RefInput): string {
   switch (r.kind) {
@@ -409,6 +437,8 @@ export function refLabel(r: RefInput): string {
       return `${baseName(r.path)} · ${docTail(r)}`
     case 'sheet':
       return `${baseName(r.path)} · ${qualified(r.range, r.sheet)}`
+    case 'docx':
+      return `${baseName(r.path)} · ${docxTail(r)}`
     default:
       return r satisfies never
   }
@@ -423,6 +453,8 @@ const PAGE_SENTENCE =
 const IMAGE_SENTENCE = 'Image regions and points are 0 to 1 from the top left of the image as shown, after EXIF rotation; size is in pixels.'
 const DOC_SENTENCE =
   'PDF pages count from 1 in file order. Regions and points are 0 to 1 from the top left of the page as shown, after rotation; page sizes are in points. A quote marked elided keeps only its start and end.'
+const DOCX_SENTENCE =
+  "A Word reference quotes text from Clui's own layout of a .docx, which keeps the document's structure but not Word's pages. part says where the text is; nth counts earlier occurrences of the quote in that part, from 0; blocks is a rough position, its paragraphs counted from 1 as Clui laid them out with table cells included, and can run slightly ahead of the paragraph count in the XML, so find the text by the quote; heading is the nearest heading above it. tracked marks a document with tracked changes, quoted as if accepted. A quote marked elided keeps only its start and end."
 const SHEET_SENTENCE = 'Sheet ranges use A1 notation. In CSV and TSV files row 1 is the first record, and lines gives where those records are in the file.'
 const NOTE_SENTENCE = "A note on a reference is the user's own words about it; treat it as part of their message."
 
@@ -490,6 +522,13 @@ function copyRef(r: ContextReference): ContextReference {
       if (r.lines) out.lines = { start: r.lines.start, end: r.lines.end }
       if (r.values !== undefined) out.values = r.values
       break
+    case 'docx': {
+      const t = r.text
+      out = { id: r.id, kind: 'docx', path: r.path, sourceVersion: r.sourceVersion, part: r.part, blocks: { start: r.blocks.start, end: r.blocks.end }, text: { quote: t.quote, nth: t.nth, ...(t.elided ? { elided: true as const } : {}) } }
+      if (r.heading !== undefined) out.heading = r.heading
+      if (r.tracked) out.tracked = true
+      break
+    }
     default:
       return r satisfies never
   }
@@ -522,6 +561,7 @@ export function serializeContext(refs: SentReference[], typed: string, opts: { p
       refs.some((r) => r.ref.kind === 'image') && IMAGE_SENTENCE,
       refs.some((r) => r.ref.kind === 'doc') && DOC_SENTENCE,
       refs.some((r) => r.ref.kind === 'sheet') && SHEET_SENTENCE,
+      refs.some((r) => r.ref.kind === 'docx') && DOCX_SENTENCE,
       refs.some((r) => !!r.ref.note?.trim()) && NOTE_SENTENCE
     ]
       .filter(Boolean)

@@ -138,6 +138,19 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
         spoken: spokenRef(ref)
       }
     }
+    case 'docx': {
+      const where = ref.part !== 'body' ? `${ref.part === 'footnotes' ? 'footnote' : 'endnote'} · ` : ref.heading ? `under "${clipName(ref.heading)}" · ` : ''
+      return {
+        key,
+        n,
+        glyph: 'file',
+        line1: baseOf(ref.path),
+        line2: `"${ref.text.quote}`,
+        title: `${baseOf(ref.path)} · ${where}"${quoteStart(ref.text.quote, 120)}"`,
+        label: `Reference ${n}: ${spokenRef(ref)}`,
+        spoken: spokenRef(ref)
+      }
+    }
     default:
       return ref satisfies never
   }

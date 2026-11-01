@@ -52,6 +52,8 @@ import type { Via } from './lib/motion'
 import { CHANGE_BYTES_MAX, CHANGE_TEXT_BUDGET, type ChangeGitStatus, type FileChangeSummary, type GitPathStatus } from '../../shared/changes'
 import { isSvg, kindForPath, restoreKinds, SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSelection, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
 import { clean, type SurfaceCommand, type SurfaceReply, type SurfaceTarget, type TabFact } from '../../shared/surface-tools'
+import { isWord } from '../../shared/office'
+import { awaitFound } from './lib/pointedText'
 import { turnEndLine } from './lib/turnEnd'
 import { suffixes } from './lib/tree'
 import { fileLike, noPreview, presentationOf } from './lib/presentation'
@@ -1368,6 +1370,19 @@ export function paneFacts(handleId: string): SurfaceReply {
     if (!t) return null
     const at = t.location
     const pend = t.pendingShow?.location
+    if (t.kind === 'doc' && isWord(t.key)) {
+      const s = t.selection
+      const h = t.highlight
+      return {
+        kind: t.kind,
+        path: t.key,
+        claude: t.openedBy === 'claude',
+        unseen: !!t.unseen,
+        ...(s?.part && s.text ? { selection: { what: 'text' as const, part: s.part } } : {}),
+        ...(h?.text ? { highlight: { what: 'text' as const, ...(h.part ? { part: h.part } : {}) } } : {}),
+        ...(pend?.page ? { pending: { page: pend.page } } : {})
+      }
+    }
     if (t.kind === 'doc') {
       const v = t.viewState?.kind === 'doc' ? t.viewState : undefined
       const s = t.selection
@@ -1379,7 +1394,7 @@ export function paneFacts(handleId: string): SurfaceReply {
         unseen: !!t.unseen,
         ...(v ? { page: v.page, ...(v.pages ? { pages: v.pages } : {}) } : {}),
         ...(s?.page && what ? { selection: { page: s.page, ...(s.endPage ? { endPage: s.endPage } : {}), what } } : {}),
-        ...(t.highlight?.page ? { highlight: { page: t.highlight.page } } : {}),
+        ...(t.highlight?.page ? { highlight: { page: t.highlight.page, ...(t.highlight.text ? { what: 'text' as const } : {}) } } : t.highlight?.text ? { highlight: { what: 'text' as const } } : {}),
         ...(pend?.page ? { pending: { page: pend.page } } : {})
       }
     }
@@ -1434,7 +1449,11 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
   const slice = st.sessions[handleId]
   if (!slice) return { outcome: 'unavailable' }
   const lines = a.kind === 'file' && a.line ? { start: a.line, end: a.endLine ?? a.line } : null
-  const page = a.kind === 'file' && a.page ? { location: { page: a.page }, highlight: { page: a.page } } : {}
+  const words = a.kind === 'file' && a.text !== undefined ? { text: a.text, ...(a.nth ? { nth: a.nth } : {}) } : null
+  const page =
+    a.kind === 'file' && (a.page || words)
+      ? { location: { ...(a.page ? { page: a.page } : {}), ...words }, highlight: { ...(a.page ? { page: a.page } : {}), ...words } }
+      : {}
   const range = a.kind === 'file' && a.range ? parseA1(a.range) : null
   // The grid scrolls the range's first cell to its top left.
   const sheet = a.kind === 'file' && a.sheet ? { sheet: a.sheet } : {}
@@ -1467,13 +1486,27 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
   return { outcome: shown ? 'shown' : a.focus && !visible ? 'deferred' : 'prepared', ...(preview ? { preview } : {}) }
 }
 
+/** The tool's wait for a shown tab to say whether Claude's text is in it, inside the bridge's reply window. */
+const FOUND_MS = 2500
+
+/** openForClaude, and for `text` on a shown tab, whether the tab found it. */
+async function openWithText(handleId: string, a: SurfaceTarget & { focus: boolean }): Promise<SurfaceReply> {
+  const id = a.kind === 'file' && a.text !== undefined ? surfaceIdOf({ kind: kindForPath(a.path), key: a.path }) : null
+  const wait = id ? awaitFound(id, FOUND_MS) : null
+  const r = openForClaude(handleId, a)
+  if (!wait || !('outcome' in r) || r.outcome !== 'shown') return r
+  const found = await wait
+  return found === undefined ? r : { ...r, found }
+}
+
 const answered = new Set<string>()
 /** Applies each command at most once and refuses one main has already given up on. */
 export function answerSurface(cmd: SurfaceCommand): void {
   if (answered.has(cmd.reqId) || Date.now() > cmd.expiresAt) return
   answered.add(cmd.reqId)
   if (answered.size > 256) answered.delete(answered.values().next().value as string)
-  void window.clui.surfaceReply(cmd.reqId, cmd.op === 'state' ? paneFacts(cmd.handleId) : openForClaude(cmd.handleId, cmd.args))
+  if (cmd.op === 'state') return void window.clui.surfaceReply(cmd.reqId, paneFacts(cmd.handleId))
+  void openWithText(cmd.handleId, cmd.args).then((r) => window.clui.surfaceReply(cmd.reqId, r))
 }
 
 function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void): void {
@@ -1995,7 +2028,7 @@ function invalidations(lost: readonly { ref: ContextReference; reason: RefFailur
     const rec = by.get(id) ?? {
       resourceId: id,
       label: change ? 'changes' : resourceLabel(ref),
-      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'page' ? ref.revision : ref.kind === 'file' || ref.kind === 'image' || ref.kind === 'doc' || ref.kind === 'sheet' ? (ref.sourceVersion ?? '') : '',
+      oldVersion: ref.kind === 'browser' ? ref.pin.source.docId : ref.kind === 'page' ? ref.revision : ref.kind === 'file' || ref.kind === 'image' || ref.kind === 'doc' || ref.kind === 'sheet' || ref.kind === 'docx' ? (ref.sourceVersion ?? '') : '',
       at: Date.now(),
       reason,
       removed: []
@@ -2116,7 +2149,7 @@ function flushRefs(handleId: string): void {
         ? [{ path: d.ref.path, version: d.ref.sourceVersion }]
         : d.ref.kind === 'page'
           ? [{ path: d.ref.path, version: d.ref.revision }]
-          : d.ref.kind === 'image' || d.ref.kind === 'doc' || d.ref.kind === 'sheet'
+          : d.ref.kind === 'image' || d.ref.kind === 'doc' || d.ref.kind === 'sheet' || d.ref.kind === 'docx'
             ? [{ path: d.ref.path, version: d.ref.sourceVersion, bytes: true as const }]
             : []
     )
@@ -4379,7 +4412,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       if (r.kind === 'change') return resourceId === CHANGE_REFS && (cause.reason === 'denied' || cause.reason === 'session')
       if (resourceOf(r) !== resourceId) return false
       if (r.kind === 'browser') return true
-      if ((r.kind === 'file' && r.lines) || r.kind === 'image' || r.kind === 'doc' || r.kind === 'sheet') return cause.reason !== 'changed' || r.sourceVersion !== cause.version
+      if ((r.kind === 'file' && r.lines) || r.kind === 'image' || r.kind === 'doc' || r.kind === 'sheet' || r.kind === 'docx') return cause.reason !== 'changed' || r.sourceVersion !== cause.version
       // A change with no version is an asset's, seen by the page's watcher.
       if (r.kind === 'page') return cause.reason !== 'changed' || !cause.version || r.revision !== cause.version
       // Whole files and folders point at current content, so only losing access removes them.
@@ -4418,7 +4451,9 @@ export const useSession = create<SessionStore>((set, get) => ({
                 ? [`${d.ref.path}\0${d.ref.page}\0${JSON.stringify(d.ref.region ?? d.ref.point ?? d.ref.text?.quote)}`]
                 : d.ref.kind === 'sheet'
                   ? [`${d.ref.path}\0${d.ref.sheet ?? ''}\0${d.ref.range}`]
-                  : []
+                  : d.ref.kind === 'docx'
+                    ? [`${d.ref.path}\0${d.ref.part}\0${d.ref.text.quote}`]
+                    : []
         )
     )
     const tabs = slice.surfaces.tabs
@@ -4426,6 +4461,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       const { lines, region, point } = t.selection ?? {}
       if (t.kind === 'file' && lines) return `${t.key}\0${lines.start}-${lines.end}`
       if (t.kind === 'sheet' && t.selection?.range) return `${t.key}\0${t.selection.sheet ?? ''}\0${t.selection.range}`
+      if (t.kind === 'doc' && t.selection?.part) return `${t.key}\0${t.selection.part}\0${quoteOf(t.selection.text ?? '').quote}`
       if (t.kind === 'doc' && t.selection?.page) return `${t.key}\0${t.selection.page}\0${JSON.stringify(region ?? point ?? quoteOf(t.selection.text ?? '').quote)}`
       return t.kind === 'image' && (region || point) ? `${t.key}\0${JSON.stringify(region ?? point)}` : null
     }

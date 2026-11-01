@@ -130,9 +130,9 @@ export function linesOf(text: string): [number, number][] {
 }
 
 /** `Fit width, 84%`, `Zoom 150%`, `Zoom 400%, the largest`. */
-export function zoomSaid(s: number, mode: DocZoom, min: number, pct: (s: number) => string): string {
+export function zoomSaid(s: number, mode: DocZoom, min: number, pct: (s: number) => string, max = PDF_MAX): string {
   if (mode === 'fit-width') return `Fit width, ${pct(s)}`
   if (mode === 'fit-page') return `Fit page, ${pct(s)}`
-  if (s >= PDF_MAX - EPS) return `Zoom ${pct(s)}, the largest`
+  if (s >= max - EPS) return `Zoom ${pct(s)}, the largest`
   return s <= min + EPS ? `Zoom ${pct(s)}, the smallest` : `Zoom ${pct(s)}`
 }

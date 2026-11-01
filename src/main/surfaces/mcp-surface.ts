@@ -7,16 +7,17 @@
 import { randomBytes } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { basename, isAbsolute, resolve } from 'node:path'
-import { inflateRawSync } from 'node:zlib'
 import { CHANGE_TEXT_BUDGET } from '../../shared/changes'
 import { CHANGE_REF, relativeTo } from '../../shared/context'
 import type { Refusal } from '../../shared/files'
 import { clean, type SurfaceCommand, type SurfaceTarget } from '../../shared/surface-tools'
 import { isSvg, kindForPath } from '../../shared/surfaces'
+import { isOffice, isWord } from '../../shared/office'
 import { a1Of, isDelimited, isWorkbook, parseA1, qualified, unxml } from '../../shared/sheets'
 import { requestUrl } from '../browser/mcp'
 import type { McpHandler, ToolResult } from '../lib/mcp-route'
 import type { ChangeRefs } from './change-refs'
+import { zipEntries, zipPart, type Read } from './zip'
 
 const WINDOW_MS = 60_000
 
@@ -29,6 +30,8 @@ export const CHANGE_READ = {
 }
 
 const MAX_LINE = 10_000_000
+const TEXT_MAX = 300
+const NTH_MAX = 1_000_000
 export const SURFACE_STATE = {
   name: 'surface_state',
   description: "What the user's Clui side pane shows for this session: tabs, the active one, line selections and highlights. No file contents.",
@@ -38,7 +41,7 @@ export const SURFACE_STATE = {
 export const SURFACE_OPEN = {
   name: 'surface_open',
   description:
-    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), a PDF at a page, or a CSV, TSV or workbook at a range of cells. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
+    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), a PDF at a page, words in a PDF or Word document, or a CSV, TSV or workbook at a range of cells. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -50,6 +53,8 @@ export const SURFACE_OPEN = {
       page: { type: 'integer', minimum: 1 },
       range: { type: 'string', description: 'A1 notation for a sheet: B4, A18:D24, rows 18:24 or columns B:D' },
       sheet: { type: 'string', description: "A workbook sheet's name" },
+      text: { type: 'string', minLength: 1, maxLength: TEXT_MAX, description: 'Words to point at in a PDF or Word document, matched ignoring case and spacing. On a PDF, text is matched within a single page.' },
+      nth: { type: 'integer', minimum: 0, description: 'Which match of text, from 0; on a PDF with page, counted on that page' },
       focus: { type: 'boolean' }
     },
     additionalProperties: false
@@ -112,6 +117,8 @@ export interface Presenter {
   browserTabs(handleId: string): { id: number; url: string; title: string }[] | null
   /** A workbook's sheet names, or null when they can't be read. */
   sheets(handleId: string, abs: string): Promise<string[] | null>
+  /** Whether a Word file is too long for Clui's own layout, so its tab shows Quick Look's first page instead. */
+  wordTooLong(handleId: string, abs: string): Promise<boolean>
   request(handleId: string, op: Op): Promise<Delivery>
 }
 
@@ -122,7 +129,8 @@ const GONE_TEXT = 'This session is no longer open in Clui.'
 const GONE = text(GONE_TEXT, true)
 const TIMEOUT = text("Outcome unknown: Clui didn't confirm in time.", true)
 const CLOSED = text("Clui's window closed.", true)
-const OPEN_ARGS = 'surface_open takes path, kind, browserTab, line, endLine, page, range, sheet and focus.'
+const OPEN_ARGS = 'surface_open takes path, kind, browserTab, line, endLine, page, range, sheet, text, nth and focus.'
+const TEXT_DOCS = 'text applies to PDFs and .docx or .docm files.'
 const RANGE_FORM = 'range is A1 notation: B4, A18:D24, 18:24 or B:D.'
 const RANGE_FILE = 'range and sheet apply to a sheet file.'
 const ONE_PLACE = 'Pass one of line, page and range.'
@@ -132,36 +140,14 @@ const SCOPES = "Clui can show files in this session's folder, files Claude chang
 
 const SHEETS_LISTED = 20
 
-const EOCD = Buffer.from('504b0506', 'hex')
-
-/** The sheet names in a workbook's `xl/workbook.xml`, reached through the zip's central directory so nothing else is
- *  read or inflated. Null for whatever it can't follow (not a zip, zip64, a damaged directory): the open path shows
- *  that file's own state instead. */
-export async function sheetNames(size: number, read: (offset: number, length: number) => Promise<Buffer | null>): Promise<string[] | null> {
-  const from = Math.max(0, size - 22 - 0xffff)
-  const tail = await read(from, size - from)
-  const e = tail ? tail.lastIndexOf(EOCD) : -1
-  if (!tail || e < 0 || e + 22 > tail.length) return null
-  const cd = await read(tail.readUInt32LE(e + 16), tail.readUInt32LE(e + 12))
-  if (!cd) return null
-  for (let p = 0; p + 46 <= cd.length && cd.readUInt32LE(p) === 0x02014b50; p += 46 + cd.readUInt16LE(p + 28) + cd.readUInt16LE(p + 30) + cd.readUInt16LE(p + 32)) {
-    if (cd.toString('latin1', p + 46, p + 46 + cd.readUInt16LE(p + 28)) !== 'xl/workbook.xml') continue
-    const method = cd.readUInt16LE(p + 10)
-    const at = cd.readUInt32LE(p + 42)
-    const local = await read(at, 30)
-    if (!local || local.length < 30 || local.readUInt32LE(0) !== 0x04034b50 || (method !== 0 && method !== 8)) return null
-    const raw = await read(at + 30 + local.readUInt16LE(26) + local.readUInt16LE(28), cd.readUInt32LE(p + 20))
-    if (!raw) return null
-    let xml: string
-    try {
-      xml = (method === 8 ? inflateRawSync(raw, { maxOutputLength: 1 << 24 }) : raw).toString()
-    } catch {
-      return null
-    }
-    const names = [...xml.matchAll(/<sheet\b[^>]*>/g)].map((m) => unxml(/\bname="([^"]*)"/.exec(m[0])?.[1] ?? ''))
-    return names.length ? names : null
-  }
-  return null
+/** The sheet names in a workbook's `xl/workbook.xml`, reached through the zip's central directory. Null for whatever it
+ *  can't follow (not a zip, zip64, a damaged directory): the open path shows that file's own state instead. */
+export async function sheetNames(size: number, read: Read): Promise<string[] | null> {
+  const e = (await zipEntries(size, read))?.find((x) => x.name === 'xl/workbook.xml')
+  const raw = e && e.size <= 1 << 24 ? await zipPart(e, read) : null
+  if (!raw) return null
+  const names = [...raw.toString().matchAll(/<sheet\b[^>]*>/g)].map((m) => unxml(/\bname="([^"]*)"/.exec(m[0])?.[1] ?? ''))
+  return names.length ? names : null
 }
 
 const span = (start: number, end?: number): string => `L${start}${end !== undefined && end > start ? `-${end}` : ''}`
@@ -181,6 +167,14 @@ const docSpan = (v: unknown): string | null => {
   if (!r || typeof r !== 'object' || !int(r.page, 1, MAX_PAGE) || (r.what !== undefined && (typeof r.what !== 'string' || !WHAT.has(r.what)))) return null
   const pages = int(r.endPage, r.page + 1, MAX_PAGE) ? `pages ${r.page} to ${r.endPage}` : `page ${r.page}`
   return r.what ? `${r.what} on ${pages}` : pages
+}
+const PARTS = new Set(['body', 'footnotes', 'endnotes'])
+/** `text in the body`, `text in the footnotes`, or a PDF's `text` Claude pointed at with no page. */
+const textSpan = (v: unknown): string | null => {
+  const r = v as { what?: unknown; part?: unknown; page?: unknown } | null
+  if (!r || typeof r !== 'object' || r.what !== 'text' || r.page !== undefined) return null
+  if (r.part === undefined) return 'text'
+  return typeof r.part === 'string' && PARTS.has(r.part) ? `text in the ${r.part === 'body' ? 'body' : r.part}` : null
 }
 /** `A18:D24`, `Summary!B4`. */
 const cells = (v: unknown): string | null => {
@@ -216,8 +210,8 @@ function tabLine(x: unknown, c: Facts): string | null {
   const pages = int(f.pages, 1, MAX_PAGE) ? f.pages : null
   const loc = doc ? (int(f.page, 1, pages ?? MAX_PAGE) ? `page ${f.page}${pages ? ` of ${pages}` : ''}` : null) : at(f.location)
   const grid = kind === 'sheet'
-  const hl = doc ? docSpan(f.highlight) : grid ? cells(f.highlight) : lines(f.highlight)
-  const sel = doc ? docSpan(f.selection) : grid ? cells(f.selection) : lines(f.selection)
+  const hl = doc ? (docSpan(f.highlight) ?? textSpan(f.highlight)) : grid ? cells(f.highlight) : lines(f.highlight)
+  const sel = doc ? (docSpan(f.selection) ?? textSpan(f.selection)) : grid ? cells(f.selection) : lines(f.selection)
   const pending = f.pending as { page?: unknown; cell?: unknown } | undefined
   const pend = doc ? (int(pending?.page, 1, MAX_PAGE) ? `page ${pending.page}` : null) : grid ? cells({ range: pending?.cell }) : at(f.pending)
   const notes = [
@@ -249,7 +243,7 @@ export function stateText(v: unknown, c: Facts): string | null {
 
 /** `preview`: the label and closing sentence for lines that landed on a Preview, which marks them only in Source, or
  *  on a CSV's grid, which marks their rows. */
-type Opened = { target: SurfaceTarget; label: string; focus: boolean; preview?: { label: string; note: string } }
+type Opened = { target: SurfaceTarget; label: string; focus: boolean; preview?: { label: string; note: string }; words?: { name: string; glimpse: boolean } }
 
 export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.now): McpHandler & { revoke(handleId: string): void; setPresentation(handleId: string, on: boolean): void } {
   // A rolling window per handle: no turn identity reaches the server, and no result event resets it.
@@ -260,7 +254,7 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
 
   async function opened(handleId: string, a: Record<string, unknown>): Promise<Opened | string> {
     if (Object.keys(a).some((k) => !Object.hasOwn(SURFACE_OPEN.inputSchema.properties, k))) return OPEN_ARGS
-    const { path, kind, browserTab, line, endLine, page, range, sheet, focus = false } = a
+    const { path, kind, browserTab, line, endLine, page, range, sheet, text: quote, nth, focus = false } = a
     if (typeof focus !== 'boolean' || (kind !== undefined && kind !== 'diff')) return OPEN_ARGS
     if (path !== undefined && (typeof path !== 'string' || !path || path.length > 4096 || path.includes('\0'))) return 'path must be a file or folder path.'
     if ([kind === 'diff' || path !== undefined, browserTab !== undefined].filter(Boolean).length !== 1) return "Pass exactly one of path, browserTab or kind:'diff'."
@@ -277,6 +271,12 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
       if (sheet !== undefined && (typeof sheet !== 'string' || !sheet || sheet.length > 255)) return 'sheet is the name of a sheet in a workbook.'
       if (path === undefined || kind === 'diff') return RANGE_FILE
       if (line !== undefined || page !== undefined) return ONE_PLACE
+    }
+    if (quote !== undefined || nth !== undefined) {
+      if (typeof quote !== 'string' || !quote.trim() || [...quote].length > TEXT_MAX) return `text is 1 to ${TEXT_MAX} characters.`
+      if (nth !== undefined && !int(nth, 0, NTH_MAX)) return 'nth is a whole number from 0, which match of text to point at.'
+      if (path === undefined || kind === 'diff') return TEXT_DOCS
+      if (line !== undefined || range !== undefined || sheet !== undefined) return 'Pass text, line or range, not two of them.'
     }
     if (browserTab !== undefined) {
       if (!int(browserTab, 1, 1_000_000)) return 'browserTab is a tab number.'
@@ -299,6 +299,7 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     if (r === 'tree') {
       if (int(line, 1, MAX_LINE)) return 'line and endLine apply to a file.'
       if (range !== undefined || sheet !== undefined) return RANGE_FILE
+      if (quote !== undefined) return TEXT_DOCS
       return page !== undefined ? PAGE_OR_LINE : { target: { kind: 'tree', path: abs }, label: `the file tree at ${rel}`, focus }
     }
     if (r !== 'file') return r === 'denied' ? SCOPES : r === 'missing' ? 'Nothing exists at that path.' : "Clui can't open that path."
@@ -310,7 +311,25 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     if (sheet !== undefined && !book) return `sheet applies to Excel workbooks, and ${name} isn't one.`
     if (range !== undefined && !grid && !book) return `range applies to CSV, TSV and Excel files, and ${name} isn't one.`
     if (as === 'sheet' && !grid && line !== undefined) return `line applies to text files. ${name} is a workbook.`
+    const office = isOffice(abs)
+    const word = isWord(abs)
+    if (quote !== undefined && office && !word) return `${TEXT_DOCS} Clui shows only the first page of ${name}, as a picture.`
+    if (quote !== undefined && as !== 'doc') return TEXT_DOCS
+    if (word && line !== undefined) return `line applies to text files. Pass text to point at words in ${name}.`
     if (as === 'doc' ? line !== undefined : page !== undefined) return PAGE_OR_LINE
+    const glimpse = word && (page !== undefined || quote !== undefined) && (await present.wordTooLong(handleId, abs))
+    if (word && page !== undefined && !glimpse) return `Clui shows ${name} in its own layout, which has no page numbers to rely on. Pass text to point at words in it.`
+    if (typeof quote === 'string') {
+      const n = int(nth, 0, NTH_MAX) ? nth : 0
+      const shown = [...clean(quote.replace(/\s+/g, ' ').trim())]
+      const clip = shown.length > 40 ? `${shown.slice(0, 40).join('')}…` : shown.join('')
+      return {
+        target: { kind: 'file', path: abs, text: quote, ...(n ? { nth: n } : {}), ...(int(page, 1, MAX_PAGE) ? { page } : {}) },
+        label: `${rel}${int(page, 1, MAX_PAGE) ? ` page ${page}` : ''} at "${clip}"${n ? ` (match ${n + 1})` : ''}`,
+        focus,
+        words: { name, glimpse }
+      }
+    }
     if (typeof sheet === 'string') {
       const names = await present.sheets(handleId, abs)
       if (names && !names.includes(sheet)) {
@@ -346,10 +365,12 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     }
     const d = await present.request(handleId, { op: 'open', args: { ...o.target, focus: o.focus && !limited } })
     if (!d.ok) return d.why === 'closed' ? CLOSED : TIMEOUT
-    const v = d.value as { outcome?: unknown; preview?: unknown } | null
+    const v = d.value as { outcome?: unknown; preview?: unknown; found?: unknown } | null
     const p = v?.preview === true ? o.preview : undefined
     const label = p?.label ?? o.label
-    const note = p ? ` ${p.note}` : ''
+    const w = o.words
+    if (w && !w.glimpse && v?.found === false && v.outcome === 'shown') return text(`Opened ${w.name}, but that text isn't in it.`)
+    const note = p ? ` ${p.note}` : w?.glimpse ? ` ${w.name} is too long for Clui to lay out, so the tab shows a first-page preview from Quick Look.` : ''
     switch (v?.outcome) {
       case 'shown':
         return text(`Shown: ${label}.${note}`)

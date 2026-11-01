@@ -1603,6 +1603,11 @@ body {
 ::highlight(pdf-selected) {
   background-color: var(--color-text-selected);
 }
+/* Claude's words: dashed, Claude's mark elsewhere, and a decoration since a highlight can't draw the find edge. */
+::highlight(pdf-pointed) {
+  text-decoration: underline dashed 2px var(--color-edge-dark);
+  text-underline-offset: 3px;
+}
 .pdf-column .annotationLayer {
   position: absolute;
   top: 0;

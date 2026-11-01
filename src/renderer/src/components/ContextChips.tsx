@@ -95,6 +95,15 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
       st.setSurfaceView(handleId, surfaceIdOf({ kind: 'doc', key: r.path }), { selection: { page, ...what, sourceVersion } })
       return
     }
+    // DocxSurface selects the quote's occurrence in its part and brings it to the top.
+    case 'docx': {
+      const { part, blocks, text, heading, tracked, sourceVersion } = r
+      openFileAt(handleId, r.path, {}, false, via)
+      st.setSurfaceView(handleId, surfaceIdOf({ kind: 'doc', key: r.path }), {
+        selection: { part, blocks, text: text.quote, nth: text.nth, ...(heading ? { heading } : {}), ...(tracked ? { tracked } : {}), sourceVersion }
+      })
+      return
+    }
     // A range is the grid's, so a tab showing Source goes back to its grid.
     case 'sheet': {
       const { range, sheet, sourceVersion } = r

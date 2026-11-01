@@ -5,6 +5,7 @@ import { useSession, activeSlice, type PerSessionState } from './store'
 import { trackReducedTransparency } from './lib/theme'
 import { resetHeroForTests } from './components/Hero'
 import { mermaidTestHooks } from './lib/mermaid'
+import { docxTestHooks } from './lib/docx'
 import './styles.css'
 import './find-marks.css'
 
@@ -16,6 +17,7 @@ const w = window as unknown as {
   __cluiActive?: () => PerSessionState | null
   __cluiResetHero?: () => void
   __cluiMermaid?: typeof mermaidTestHooks
+  __cluiDocx?: typeof docxTestHooks
 }
 w.__cluiStore = useSession
 // Lets the screenshot harness replay the once-per-launch hero.
@@ -24,6 +26,8 @@ w.__cluiResetHero = resetHeroForTests
 w.__cluiActive = () => activeSlice(useSession.getState())
 // Lets a probe slow or fail the diagram renderer's chunk, which no Playwright route reaches.
 w.__cluiMermaid = mermaidTestHooks
+// Lets the docx probe render a fixture with bare docx-preview, to see whether the pinned 0.4.1 still needs the note fix.
+w.__cluiDocx = docxTestHooks
 
 trackReducedTransparency()
 

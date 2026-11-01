@@ -127,6 +127,7 @@ const point: RefInput = { ...base, pageSize: { w: 612, h: 792 }, point: { x: 0.4
   equal(zoomSaid(0.84, 'fit-width', 0.25, pct), 'Fit width, 84%', 'say: fit width')
   equal(zoomSaid(4, 4, 0.25, pct), 'Zoom 400%, the largest', 'say: the largest')
   equal(zoomSaid(1.5, 1.5, 0.25, pct), 'Zoom 150%', 'say: a stop')
+  equal(zoomSaid(2, 2, 0.5, pct, 2), 'Zoom 200%, the largest', 'say: the largest of a smaller range')
 }
 
 // Kinds: .pdf opens as doc, a saved file tab comes back as one, and the doc tab finds and opens externally

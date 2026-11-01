@@ -6,8 +6,9 @@ export const SURFACE_OPEN_TOOL = 'mcp__clui-surface__surface_open'
 
 /** Validated in main: a path here is absolute and already authorized for its kind. */
 export type SurfaceTarget =
-  /** `page` only for a PDF, `range` and `sheet` only for a sheet, `line` for text, which a CSV's grid marks as rows. */
-  | { kind: 'file'; path: string; line?: number; endLine?: number; page?: number; range?: string; sheet?: string }
+  /** `page` only for a PDF or a glimpsed Office file, `range` and `sheet` only for a sheet, `line` for text, which a
+   *  CSV's grid marks as rows. `text` and `nth` only for a PDF or a Word file, `page` with them searching that page. */
+  | { kind: 'file'; path: string; line?: number; endLine?: number; page?: number; range?: string; sheet?: string; text?: string; nth?: number }
   | { kind: 'tree'; path: string }
   | { kind: 'diff'; path?: string }
   | { kind: 'browser'; tab: number }
@@ -16,8 +17,11 @@ interface CommandBase { reqId: string; handleId: string; generation: number; exp
 export type SurfaceCommand = CommandBase & ({ op: 'state' } | { op: 'open'; args: SurfaceTarget & { focus: boolean } })
 
 export interface Lines { start: number; end: number }
-/** A PDF selection by its pages and what it is, never its text; Claude's highlight is a page and has no `what`. */
+/** A PDF selection by its pages and what it is, never its text; Claude's highlight is a page, with `what: 'text'` when it points at words on it. */
 export interface DocSpan { page: number; endPage?: number; what?: 'text' | 'region' | 'point' }
+/** Text Claude pointed at or the user selected in a Word document, by its part; a PDF's text Claude pointed at without
+ *  a page has no part. Never the words. */
+export interface TextSpan { what: 'text'; part?: 'body' | 'footnotes' | 'endnotes' }
 /** A sheet range in A1 notation, never its values. */
 export interface Cells { range: string; sheet?: string }
 /** What a tab shows, never its content. Main formats the label: path tabs and the tree send `path`, browser tabs `tab`. */
@@ -33,8 +37,8 @@ export interface TabFact {
   /** A PDF's current page and its count. */
   page?: number
   pages?: number
-  selection?: Lines | DocSpan | Cells
-  highlight?: Lines | DocSpan | Cells
+  selection?: Lines | DocSpan | Cells | TextSpan
+  highlight?: Lines | DocSpan | Cells | TextSpan
   pending?: { line?: number; endLine?: number; page?: number; cell?: string }
 }
 export type SessionView = 'shown' | 'background' | 'minimized' | 'covered'
@@ -49,8 +53,9 @@ export interface PaneFacts {
 /** `pane-closed`: the tab is active, but the user closed the pane and nothing reopens it on its own. */
 export type OpenOutcome = 'shown' | 'prepared' | 'deferred' | 'pane-closed' | 'unavailable'
 /** `preview`: Claude's lines landed on a tab showing an HTML or SVG Preview, which marks them only in Source, or a
- *  CSV's grid, which marks the rows holding them. */
-export type SurfaceReply = PaneFacts | { outcome: OpenOutcome; preview?: true }
+ *  CSV's grid, which marks the rows holding them. `found`: whether the shown tab found Claude's `text`, absent when it
+ *  didn't search in time. */
+export type SurfaceReply = PaneFacts | { outcome: OpenOutcome; preview?: true; found?: boolean }
 
 // Filenames and page titles are someone else's strings: no controls, no bidi overrides, one bounded line.
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g

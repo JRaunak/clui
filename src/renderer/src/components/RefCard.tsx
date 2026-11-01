@@ -1,6 +1,6 @@
 import { useId, type KeyboardEvent } from 'react'
 import { hostOf, type SentPin } from '../../../shared/annotate'
-import { changeTail, docTail, imageTail, refLabel, relativeTo, REF_NOTE_MAX, type ContextReference, type DraftReference, type RefInput } from '../../../shared/context'
+import { changeTail, docTail, docxTail, imageTail, refLabel, relativeTo, REF_NOTE_MAX, type ContextReference, type DraftReference, type RefInput } from '../../../shared/context'
 import { useActive, useSession, type RefTarget } from '../store'
 import { rangeText, spokenRef } from '../lib/refCopy'
 import { qualified } from '../../../shared/sheets'
@@ -44,6 +44,8 @@ function headOf(r: ContextReference, cwd: string | null): { main: string; tail: 
       return { main: relativeTo(cwd, r.path), tail: docTail(r) }
     case 'sheet':
       return { main: relativeTo(cwd, r.path), tail: qualified(r.range, r.sheet) }
+    case 'docx':
+      return { main: relativeTo(cwd, r.path), tail: docxTail(r) }
     default:
       return r satisfies never
   }
@@ -115,6 +117,7 @@ export function RefCard({ pop, handleId, shown, n, cwd, onOpen }: {
       case 'image':
       case 'doc':
       case 'sheet':
+      case 'docx':
         return null
       default:
         return r satisfies never

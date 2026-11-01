@@ -31,6 +31,7 @@ const URL_MAX = 8192
 const EXPANDED_MAX = 200
 const KINDS = ['tree', 'file', 'diff', 'image', 'doc', 'sheet', 'artifact'] as const
 const DELIMITERS = [',', ';', '\t', '|'] as const
+const LAYOUTS = ['flow', 'pages'] as const
 const OPENERS = ['user', 'claude', 'link', 'change'] as const
 const MODES = ['auto', 'preview', 'source'] as const
 const PLACEMENT = /^browser:[1-9]\d*$/
@@ -106,7 +107,7 @@ function viewOf(v: unknown, kind: SavedTab['kind']): SurfaceViewState {
     case 'image':
       return { kind, zoom: zoom(o.zoom, ['fit'] as const), panX: finite(o.panX), panY: finite(o.panY) }
     case 'doc':
-      return { kind, page: int(o.page), zoom: zoom(o.zoom, ['fit-width', 'fit-page'] as const), offset: Math.min(1, num(o.offset)), ...some('pages', o.pages, int), ...find }
+      return { kind, page: int(o.page), zoom: zoom(o.zoom, ['fit-width', 'fit-page'] as const), offset: Math.min(1, num(o.offset)), ...some('pages', o.pages, int), ...find, ...some('layout', o.layout, (x) => oneOf(x, LAYOUTS)) }
     case 'sheet':
       return {
         kind,

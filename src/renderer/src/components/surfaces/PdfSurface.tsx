@@ -25,6 +25,8 @@ import { linkTitle, openLink, useLinkTarget } from '../../lib/openLink'
 import { POINT_OFF } from '../../lib/refCopy'
 import { setPointBlocked, setPointing, takePoint, takeSurfaceFocus, usePointing, usePointRequest } from '../../lib/surfaceFocus'
 import { loadPdf, pdfAssets } from '../../lib/pdf'
+import { clip40, flatten, foldCase, matchesIn } from '../../lib/docxView'
+import { reportFound } from '../../lib/pointedText'
 import { clampScale, FIT_MARGIN, minScale, percent, round4, stepDown, stepUp, type Size } from '../../lib/imageView'
 import {
   fitPage,
@@ -188,7 +190,8 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
       : null
   )
   const selection = useMemo<Sel | null>(() => JSON.parse(selJson), [selJson])
-  const highlight = tab?.highlight?.page ?? null
+  // Claude's text carries its own mark and row, so a page it was searched on isn't outlined.
+  const highlight = (!tab?.highlight?.text && tab?.highlight?.page) || null
   const location = tab?.location
 
   const viewOf = (i: number): PageView | null => (pv.current?.view.getPageView(i) as PageView | undefined) ?? null
@@ -756,6 +759,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
       void shownTask.current?.destroy()
       cover.current?.remove()
       CSS.highlights.delete('pdf-selected')
+      CSS.highlights.delete('pdf-pointed')
       setStatus(owner, null)
     },
     [owner]
@@ -796,10 +800,69 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
     setWatchGen((n) => n + 1)
   }
 
+  // Claude's words: the nth match in the text of every page in order, or of its page, case and spacing ignored. The page
+  // comes into view so its text layer draws, and the mark goes on once it has.
+  const [words, setWords] = useState<{ page: number; k: number; text: string; found: boolean } | null>(null)
+  const wordsFor = useRef<typeof location | null>(null)
+  useEffect(() => {
+    if (!doc || location?.text === undefined || wordsFor.current === location) return
+    const loc = location
+    wordsFor.current = loc
+    void (async () => {
+      const query = loc.text!
+      let left = loc.nth ?? 0
+      const pages = loc.page ? [Math.min(doc.pages, loc.page)] : Array.from({ length: doc.pages }, (_, i) => i + 1)
+      for (const p of pages) {
+        const page = await doc.doc.getPage(p).catch(() => null)
+        const content = page ? await page.getTextContent().catch(() => null) : null
+        if (shownRef.current !== doc || wordsFor.current !== loc) return
+        const text = (content?.items ?? []).map((it) => ('str' in it ? it.str + (it.hasEOL ? '\n' : '') : '')).join('')
+        const n = matchesIn(flatten([{ text }]), query, foldCase, left + 1).length
+        if (n > left) {
+          setWords({ page: p, k: left, text: query, found: true })
+          hold.current = { page: p, go: () => toTop(p) }
+          hold.current.go()
+          return reportFound(tabId, true)
+        }
+        left -= n
+      }
+      setWords({ page: 0, k: 0, text: query, found: false })
+      reportFound(tabId, false)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, location])
+  useEffect(() => {
+    if (!tab?.highlight?.text) setWords(null)
+  }, [tab?.highlight?.text])
+  const paintWords = (page: number): void => {
+    const w = wordsRef.current
+    if (!w?.found || w.page !== page) return
+    const d = viewOf(page - 1)?.div
+    const l = d && layerOf(page, d)
+    const m = l ? matchesIn(flatten([{ text: l.text }]), w.text, foldCase, w.k + 1)[w.k] : null
+    if (!l || !m) return
+    const r = document.createRange()
+    r.setStart(...pointOf(l, m.a.off))
+    r.setEnd(...pointOf(l, m.b.off))
+    CSS.highlights.set('pdf-pointed', new Highlight(r))
+    if (wordsShown.current === w) return
+    wordsShown.current = w
+    hold.current = null
+    ;(r.startContainer.parentElement ?? d)?.scrollIntoView({ block: 'center', inline: 'nearest' })
+  }
+  const wordsRef = useRef(words)
+  wordsRef.current = words
+  const wordsShown = useRef<typeof words>(null)
+  useEffect(() => {
+    if (!words?.found) return void CSS.highlights.delete('pdf-pointed')
+    paintWords(words.page)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [words])
+
   // Claude's page arrives as the tab's location.
   const applied = useRef<typeof location | null>(null)
   useEffect(() => {
-    if (!doc || !location?.page || applied.current === location) return
+    if (!doc || !location?.page || location.text !== undefined || applied.current === location) return
     applied.current = location
     const page = Math.min(doc.pages, location.page)
     hold.current = { page, go: () => toTop(page) }
@@ -869,6 +932,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
   onText.current = (page) => {
     viewOf(page - 1)?.div.querySelector('.textLayer')?.removeAttribute('tabindex')
     paintText()
+    paintWords(page)
   }
   useEffect(() => {
     paintText()
@@ -1130,7 +1194,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
           stop()
           return void latest.current.add()
         }
-        if (e.key === 'Escape' && (selection?.text || (!selection && highlight))) {
+        if (e.key === 'Escape' && (selection?.text || (!selection && (highlight || wordsRef.current)))) {
           stop()
           window.getSelection()?.removeAllRanges()
           if (selection) return setSelectionRef.current(null)
@@ -1408,6 +1472,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
   }, [outline])
 
   const openApp = (): void => void openDefault(handleId, path)
+  const wordsText = !words ? '' : words.found ? `Claude pointed to "${clip40(words.text)}"` : `Claude pointed to text that isn't in ${name}: "${clip40(words.text)}"`
   const z = zoomed
   const atMin = !!z && z.s <= z.min + 1e-6
   const atMax = !!z && z.s >= PDF_MAX - 1e-6
@@ -1603,6 +1668,14 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
           <nav aria-label={`Contents of ${name}`} className="px-1">
             {renderItems(nested)}
           </nav>
+        </div>
+      )}
+      {words && (
+        <div data-ui="pdf-pointed-text" className="flex min-h-8 shrink-0 items-center gap-1.5 px-3 text-meta text-dim">
+          <IconTarget className="h-3 w-3 shrink-0" />
+          <span className="min-w-0 truncate" title={wordsText}>
+            {wordsText}
+          </span>
         </div>
       )}
       <div ref={frameEl} className="pdf-frame relative min-h-0 flex-1">

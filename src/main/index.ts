@@ -53,6 +53,8 @@ import { parseAnchor, parseMenuItems, popupMenu } from './context-menu'
 import { changeMarks, diffSnapshots, editLine, getDiff, parseChangeRefRequest, parseDiffRequest, selectChange, type DiffSource } from './surfaces/diff'
 import { ChangeRefs } from './surfaces/change-refs'
 import { sheetNames, surfaceBridge, surfaceServer } from './surfaces/mcp-surface'
+import { glimpses, preflight, wordXml } from './surfaces/office'
+import { isOffice, isWord, WORD_XML_MAX } from '../shared/office'
 import { SURFACE_OPEN_TOOL, SURFACE_STATE_TOOL } from '../shared/surface-tools'
 import {
   getResolvedSettings,
@@ -86,6 +88,12 @@ let imageCaps: ReturnType<typeof createImageCaps> | null = null
 let diffs: ReturnType<typeof diffSnapshots> | null = null
 let presentation: ReturnType<typeof surfaceBridge> | null = null
 let sheets: ReturnType<typeof sheetJobs> | null = null
+let quickLook: ReturnType<typeof glimpses>
+/** A file's bytes by range at one stat revision, for a reader that parses only the parts it needs. */
+const rangeOf = (r: FileResource, revision: string) => async (offset: number, length: number) => {
+  const b = await readBytes(r, { revision, offset, length })
+  return b.ok ? b.bytes : null
+}
 const LAUNCHERS = /\.(app|command|terminal|tool|fileloc|webloc|inetloc|workflow|action|jar|pkg|mpkg|scpt|applescript)$/i
 
 // Backstop: a window-teardown race can throw "Object has been destroyed" from an
@@ -280,7 +288,7 @@ function buildMenu(): void {
         {
           label: menuState.zoom === 'doc' ? 'Fit Width or Page' : 'Fit or Actual Size',
           accelerator: 'CmdOrCtrl+0',
-          enabled: menuState.zoom !== 'none',
+          enabled: menuState.zoom !== 'none' && menuState.zoom !== 'text',
           click: () => send('image-zoom-toggle')
         }
       ]
@@ -422,6 +430,11 @@ function registerIpc(): void {
         return b.ok ? b.bytes : null
       })
     },
+    wordTooLong: async (h, p) => {
+      const f = await files.resolveAllowed(h, p, { consumer: 'file', operation: 'read-file' })
+      const s = f.ok ? await statFile(f) : null
+      return !!f.ok && !!s?.ok && ((await wordXml(s.size, rangeOf(f, s.revision))) ?? 0) > WORD_XML_MAX
+    },
     request: (h, op) => bridge.request(h, op)
   })
   const surfaceRoute = listener.route('mcp-surface', surface)
@@ -524,6 +537,8 @@ function registerIpc(): void {
     }
   }
   sheets = sheetJobs(join(__dirname, 'sheet-worker.js'), push)
+  // CLUI_QLMANAGE stands in a failing generator for the probes; a packaged build always runs the system's.
+  quickLook = glimpses(join(app.getPath('userData'), 'glimpse'), (!app.isPackaged && process.env.CLUI_QLMANAGE) || '/usr/bin/qlmanage')
   const manager = new SessionManager(
     (handleId, event) => {
       browser.onSessionEvent(handleId, event)
@@ -1064,20 +1079,44 @@ function registerIpc(): void {
   handle(IpcChannels.imageVersion, (_e, handleId: unknown, path: unknown) =>
     typeof handleId === 'string' && typeof path === 'string' ? packetDeps.byteVersion(handleId, path) : { ok: false, reason: 'invalid' }
   )
-  // pdf.js reads a PDF tab's file by range, and a sheet tab indexes a CSV's, bound to the stat revision it opened at; no
-  // other file is read this way.
+  // pdf.js reads a PDF tab's file by range, a sheet tab indexes a CSV's, and a Word tab reads a document its pre-flight
+  // passed, each bound to the stat revision it opened at; no other file is read this way.
   const docFor = async (handleId: unknown, path: unknown): Promise<FileResource | Refusal> => {
     const r = await fileFor(handleId, path, 'read-file')
-    return !r.ok || kindForPath(r.path) === 'doc' || isDelimited(r.path) ? r : { ok: false, reason: 'wrong-type' }
+    return !r.ok || (kindForPath(r.path) === 'doc' && (!isOffice(r.path) || isWord(r.path))) || isDelimited(r.path) ? r : { ok: false, reason: 'wrong-type' }
   }
+  const passed = new Set<string>()
+  handle(IpcChannels.officeOpen, async (_e, handleId: unknown, path: unknown) => {
+    const r = await fileFor(handleId, path, 'read-file')
+    if (!r.ok) return r
+    if (!isOffice(r.path)) return { ok: false, reason: 'wrong-type' }
+    const s = await statFile(r)
+    if (!s.ok) return s
+    const f = await preflight(r.path, s.size, rangeOf(r, s.revision))
+    if (f.t === 'word') {
+      passed.add(`${r.path}\0${s.revision}`)
+      if (passed.size > 64) passed.delete(passed.values().next().value as string)
+    }
+    return { ok: true, revision: s.revision, size: s.size, ...f }
+  })
+  handle(IpcChannels.officeGlimpse, async (_e, handleId: unknown, path: unknown, revision: unknown) => {
+    const r = await fileFor(handleId, path, 'read-file')
+    if (!r.ok) return r
+    if (!isOffice(r.path) || typeof revision !== 'string') return { ok: false, reason: 'invalid' }
+    const s = await statFile(r)
+    if (!s.ok) return s
+    if (s.revision !== revision) return { ok: false, why: 'changed' }
+    return quickLook.get(r.path, revision, s.size, rangeOf(r, revision))
+  })
   handle(IpcChannels.docOpen, async (_e, handleId: unknown, path: unknown, bytes: unknown) => {
     const r = await docFor(handleId, path)
-    return r.ok ? docHead(r, bytes as number) : r
+    return !r.ok ? r : isOffice(r.path) ? { ok: false, reason: 'wrong-type' } : docHead(r, bytes as number)
   })
   handle(IpcChannels.docRead, async (_e, handleId: unknown, path: unknown, revision: unknown, offset: unknown, length: unknown) => {
     if (!Number.isSafeInteger(length) || (length as number) > CHUNK_MAX) throw new Error(`A ranged read is at most ${CHUNK_MAX} bytes.`)
     const r = await docFor(handleId, path)
     if (!r.ok) return r
+    if (isWord(r.path) && !passed.has(`${r.path}\0${revision}`)) return { ok: false, reason: 'denied' }
     const b = await readBytes(r, { revision: revision as string, offset: offset as number, length: length as number }, isDelimited(r.path))
     return b.ok ? { ok: true, bytes: b.bytes } : b
   })
@@ -1167,9 +1206,9 @@ function registerIpc(): void {
   })
 
   handle(IpcChannels.openExternal, async (_e, url: string) => {
-    // Only allow web links from markdown, never file:// or arbitrary schemes
-    // (defense against a malicious link in model output opening a local target).
-    if (/^https?:\/\//i.test(url)) await shell.openExternal(url)
+    // Only web and mail links, never file:// or arbitrary schemes (defense against a malicious link in model output or a
+    // document opening a local target).
+    if (/^(https?:\/\/|mailto:)/i.test(url)) await shell.openExternal(url)
   })
 
   handle(IpcChannels.listWorkspaceFiles, async (_e, handleId: string) => {

@@ -44,6 +44,7 @@ export function shortLabel(r: ContextReference): string {
   if (r.kind === 'image') return imageTail(r, false)
   if (r.kind === 'doc') return docWhat(r)
   if (r.kind === 'sheet') return qualified(r.range, r.sheet)
+  if (r.kind === 'docx') return r.part === 'body' && r.heading ? `under "${clipName(r.heading)}"` : 'text'
   return r.kind === 'file' && r.lines ? rangeText(r.lines) : refLabel(r)
 }
 
@@ -54,6 +55,10 @@ export const sheetWhat = (r: Pick<Extract<RefInput, { kind: 'sheet' }>, 'range' 
   const a = parseA1(r.range)
   return `${r.sheet === undefined ? '' : `sheet ${r.sheet}, `}${a ? spokenA1(a) : r.range}`
 }
+
+/** `text under Scope of work`, `text`, `footnote text`, as a screen reader hears a Word reference's place. */
+export const docxWords = (r: Pick<Extract<RefInput, { kind: 'docx' }>, 'part' | 'heading'>): string =>
+  r.part !== 'body' ? `${r.part === 'footnotes' ? 'footnote' : 'endnote'} text` : r.heading ? `text under ${clipName(r.heading)}` : 'text'
 
 /** `text on pages 12 to 14`, `a region on page 12`, `a point on page 12`. */
 export const docWhat = (r: Pick<DocInput, 'page' | 'endPage' | 'text' | 'region'>): string => `${r.text ? 'text' : r.region ? 'a region' : 'a point'} on ${docPages(r)}`
@@ -88,6 +93,8 @@ export function spokenRef(r: RefInput): string {
       return `${baseOf(r.path)}, ${docPages(r)}, ${r.text ? `text "${quoteStart(r.text.quote, 80)}"` : r.region ? 'region' : 'point'}`
     case 'sheet':
       return `${baseOf(r.path)}, ${sheetWhat(r)}${r.values === undefined ? '' : ', with values'}`
+    case 'docx':
+      return `${baseOf(r.path)}, ${docxWords(r)}, "${quoteStart(r.text.quote, 80)}"`
     default:
       return r satisfies never
   }
@@ -113,6 +120,8 @@ export function addedText(r: RefInput, queued = false): string {
         ? `${docWhat(r)} of ${baseOf(r.path)}`
         : r.kind === 'sheet'
           ? `${sheetWhat(r)} of ${baseOf(r.path)}`
+          : r.kind === 'docx'
+            ? `text from ${baseOf(r.path)}`
           : r.kind === 'change'
             ? `${spokenRef(r)},`
             : spokenRef(r)
@@ -252,7 +261,7 @@ export function removalSpoken(lost: readonly ContextReference[], reason: Reason)
       ? `${lost.length} ${page ? 'elements' : 'selections'} were`
       : first.kind === 'file' && first.lines
         ? `${capital(spokenRange(first.lines))} ${first.lines.end > first.lines.start ? 'were' : 'was'}`
-        : `${capital(first.kind === 'doc' ? docWhat(first) : first.kind === 'sheet' ? sheetWhat(first) : spokenRef(first))} was`
+        : `${capital(first.kind === 'doc' ? docWhat(first) : first.kind === 'sheet' ? sheetWhat(first) : first.kind === 'docx' ? docxWords(first) : spokenRef(first))} was`
   return `${leadOf(resourceLabel(first), reason)}. ${what} removed from the message.`
 }
 
