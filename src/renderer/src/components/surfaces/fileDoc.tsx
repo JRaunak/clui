@@ -111,7 +111,11 @@ export function useFileDoc(handleId: string, tabId: string, keep: (moved: (line:
   const path = tab?.key ?? ''
   const busy = useActive((s) => !!s?.busy)
   const setView = useSession((s) => s.setSurfaceView)
-  const selection = tab?.selection?.lines ?? null
+  // A Mermaid part or area selection keeps its diagram's block in `lines`, which isn't a line selection.
+  const diagramSel = !!tab?.selection?.parts || !!tab?.selection?.region
+  const selection = diagramSel ? null : (tab?.selection?.lines ?? null)
+  const rawSel = useRef(tab?.selection)
+  rawSel.current = tab?.selection
 
   const [doc, setDoc] = useState<Doc>({ t: 'loading' })
   const docRef = useRef(doc)
@@ -184,6 +188,7 @@ export function useFileDoc(handleId: string, tabId: string, keep: (moved: (line:
       const mapped = (): Int32Array | null => (map === undefined ? (map = survivors(prev.text, next.text)) : map)
       keepRef.current((n) => movedLine(mapped(), n))
       const sel = selRef.current
+      const raw = rawSel.current
       // A selection that is in a message clears on any change, with no remap.
       if (sel && attachedRef.current) {
         setView(handleId, tabId, { selection: undefined })
@@ -199,6 +204,12 @@ export function useFileDoc(handleId: string, tabId: string, keep: (moved: (line:
           setNotice('cleared')
           say(CLEARED)
         }
+      } else if (raw?.lines && (raw.parts || raw.region)) {
+        // The diagram re-resolves its parts or recounts its area once it draws the new text; this only follows its block.
+        const { start: s0, end: e0 } = raw.lines
+        const at = mapped()?.[s0 - 1] ?? -1
+        const start = at >= 0 ? at + 1 : s0
+        setView(handleId, tabId, { selection: { ...raw, lines: { start, end: start + e0 - s0 }, sourceVersion: `sha256:${next.revision}` } })
       }
     } else if (next.t === 'text' && selRef.current && selVersion.current && selVersion.current !== `sha256:${next.revision}`) {
       // A remounted tab has no earlier text to remap from; its selection was made against the revision it stored.
@@ -265,8 +276,10 @@ export function useFileDoc(handleId: string, tabId: string, keep: (moved: (line:
 
   // The selection's announcement trails the keys that make it.
   const hadSelection = useRef(false)
-  const selKey = selection ? `${selection.start}-${selection.end}` : ''
+  const selKey = diagramSel ? '\0diagram' : selection ? `${selection.start}-${selection.end}` : ''
   useEffect(() => {
+    // The diagram host speaks for its own selections.
+    if (diagramSel) return void (hadSelection.current = false)
     if (!selection && !hadSelection.current) return
     hadSelection.current = !!selection
     const t = (selSay.current = setTimeout(() => say(selection ? `${selection.start === selection.end ? 'Line' : 'Lines'} ${rangeText(selection).replace(/^lines? /, '')} selected` : 'Selection cleared'), ANNOUNCE_MS))

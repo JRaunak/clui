@@ -47,6 +47,11 @@ export interface SurfaceSelection {
   range?: string
   sheet?: string
   region?: Region
+  /** Mermaid parts: on `selection` the drawing's part keys, on `highlight` the ids Claude passed. With `lines`, the
+   *  diagram's block. */
+  parts?: string[]
+  /** How many labels a diagram area holds, for surface_state. */
+  labels?: number
   point?: { x: number; y: number }
   page?: number
   /** A PDF text selection's last page, when it runs past `page`. */

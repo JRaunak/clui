@@ -69,7 +69,24 @@ export type ContextReference = RefBase &
      *  the part as rendered. `heading`: the nearest heading above it, body only. `tracked`: the part has tracked changes,
      *  quoted as if accepted. `via`: laid out from macOS's conversion of an .odt or .rtf, not from the bytes. */
     | { kind: 'docx'; path: string; sourceVersion: SourceVersion; part: WordPart; blocks: LineRange; text: DocText; heading?: string; tracked?: true; via?: 'textutil' }
+    /** Parts of a Mermaid diagram, or the labels drawn in an area of it, as Clui drew it from `lines` of the file at `sourceVersion`. */
+    | { kind: 'diagram'; path: string; sourceVersion: SourceVersion; lines: LineRange; type: string; parts: DiagramPart[]; labels?: undefined }
+    | { kind: 'diagram'; path: string; sourceVersion: SourceVersion; lines: LineRange; type: string; labels: DiagramLabel[]; parts?: undefined }
   )
+
+export type BlockKeyword = 'loop' | 'alt' | 'opt' | 'par' | 'critical' | 'break'
+/** Ids are as written in the source, `[*]` for a state diagram's start or end. A block's `label` is absent when its
+ *  opening line has no text; `fromLabel` and `toLabel` are absent when the end draws its id. */
+export type DiagramPart =
+  | { kind: 'node' | 'group' | 'participant'; id: string; label?: string; line?: number }
+  | { kind: 'edge' | 'message'; from: string; to: string; nth: number; label?: string; fromLabel?: string; toLabel?: string }
+  | { kind: 'note'; label: string; nth: number }
+  | { kind: 'block'; keyword: BlockKeyword; label?: string; nth: number; sections?: string[]; lines?: LineRange }
+export interface DiagramLabel { text: string; line?: number }
+export const DIAGRAM_PARTS_MAX = 20
+export const DIAGRAM_LABELS_MAX = 40
+export const DIAGRAM_NAME_MAX = 120
+export const DIAGRAM_SECTIONS_MAX = 8
 
 export interface ImageSize { w: number; h: number }
 export interface ImagePoint { x: number; y: number }
@@ -205,6 +222,46 @@ function sheetOk(x: Record<string, unknown>, wire: boolean): boolean {
   return x.values === undefined || str(x.values, RECORD_MAX)
 }
 
+const DIAGRAM_TYPE = /^[A-Za-z][\w-]{0,39}$/
+const KEYWORDS = new Set<unknown>(['loop', 'alt', 'opt', 'par', 'critical', 'break'])
+const named = (v: unknown): v is string => typeof v === 'string' && !!v && [...v].length <= DIAGRAM_NAME_MAX
+const maybeNamed = (v: unknown): boolean => v === undefined || named(v)
+
+const endOk = (v: unknown, id: unknown): boolean => v === undefined || (named(v) && v !== id)
+
+function partOk(p: unknown, l: LineRange): boolean {
+  if (!isObj(p)) return false
+  const within = (n: unknown): boolean => int(n, l.start, l.end)
+  switch (p.kind) {
+    case 'node':
+    case 'group':
+    case 'participant':
+      return named(p.id) && maybeNamed(p.label) && (p.line === undefined || within(p.line))
+    case 'edge':
+    case 'message':
+      return named(p.from) && named(p.to) && int(p.nth, 0, LINE_MAX) && maybeNamed(p.label) && endOk(p.fromLabel, p.from) && endOk(p.toLabel, p.to)
+    case 'note':
+      return named(p.label) && int(p.nth, 0, LINE_MAX)
+    case 'block': {
+      const { sections: s, lines: r } = p
+      if (!KEYWORDS.has(p.keyword) || !maybeNamed(p.label) || !int(p.nth, 0, LINE_MAX)) return false
+      if (s !== undefined && !(Array.isArray(s) && s.length <= DIAGRAM_SECTIONS_MAX && s.every(named))) return false
+      return r === undefined || (rangeOk(r) && within((r as LineRange).start) && within((r as LineRange).end))
+    }
+    default:
+      return false
+  }
+}
+
+function diagramOk(x: Record<string, unknown>, wire: boolean): boolean {
+  if (!pathOk(x.path, wire) || typeof x.sourceVersion !== 'string' || !VERSION.test(x.sourceVersion) || !rangeOk(x.lines) || typeof x.type !== 'string' || !DIAGRAM_TYPE.test(x.type)) return false
+  const l = x.lines as LineRange
+  const { parts, labels } = x
+  if ((parts === undefined) === (labels === undefined)) return false
+  if (parts !== undefined) return Array.isArray(parts) && parts.length >= 1 && parts.length <= DIAGRAM_PARTS_MAX && parts.every((p) => partOk(p, l))
+  return Array.isArray(labels) && labels.length <= DIAGRAM_LABELS_MAX && labels.every((b) => isObj(b) && named(b.text) && (b.line === undefined || int(b.line, l.start, l.end)))
+}
+
 function pathOk(p: unknown, wire: boolean): boolean {
   return typeof p === 'string' && p.length > 0 && p.length <= PATH_MAX && !p.includes('\0') && (wire || p.startsWith('/'))
 }
@@ -278,6 +335,8 @@ function refOk(x: unknown, wire: boolean): boolean {
       return sheetOk(x, wire)
     case 'docx':
       return docxOk(x, wire)
+    case 'diagram':
+      return diagramOk(x, wire)
     default:
       return false
   }
@@ -324,8 +383,28 @@ export function refKey(r: RefInput): string {
       return ['sheet', r.path, r.sourceVersion, r.sheet ?? '', r.range].join('\0')
     case 'docx':
       return ['docx', r.path, r.sourceVersion, r.part, r.text.nth, r.text.quote].join('\0')
+    case 'diagram': {
+      const what = r.parts ? r.parts.map(partKey) : r.labels.map((b) => `${b.text}@${b.line ?? ''}`)
+      return ['diagram', r.path, r.sourceVersion, `${r.lines.start}-${r.lines.end}`, r.parts ? 'parts' : 'labels', ...what].join('\0')
+    }
     default:
       return r satisfies never
+  }
+}
+
+function partKey(p: DiagramPart): string {
+  switch (p.kind) {
+    case 'node':
+    case 'group':
+    case 'participant':
+      return `${p.kind}+${p.id}`
+    case 'edge':
+    case 'message':
+      return `${p.kind}+${p.from}+${p.to}+${p.nth}`
+    case 'note':
+      return `note+${p.label}+${p.nth}`
+    case 'block':
+      return `block+${p.keyword}+${p.label ?? ''}+${p.nth}`
   }
 }
 
@@ -353,6 +432,9 @@ export function resourceOf(r: ContextReference): string {
     // A Word file opens in a doc tab, so its references share that tab's resource and go stale with it.
     case 'docx':
       return `doc:${r.path}`
+    // Lines of a text file, so it goes stale with them.
+    case 'diagram':
+      return `file:${r.path}`
     default:
       return r satisfies never
   }
@@ -416,6 +498,46 @@ type DocxRef = Pick<Extract<RefInput, { kind: 'docx' }>, 'part' | 'heading'>
 /** `text under "Scope of work"`, `text`, `footnote text`. */
 export const docxTail = (r: DocxRef): string => (r.part !== 'body' ? `${r.part === 'footnotes' ? 'footnote' : 'endnote'} text` : r.heading ? `text under "${clipName(r.heading)}"` : 'text')
 
+export type DiagramFamily = 'flowchart' | 'class' | 'state' | 'er' | 'sequence'
+/** The family of a diagram by the keyword its source opens with. */
+export const familyOfKeyword = (type: string): DiagramFamily | null =>
+  /^(flowchart|graph)$/.test(type) ? 'flowchart' : /^classDiagram/.test(type) ? 'class' : /^stateDiagram/.test(type) ? 'state' : type === 'erDiagram' ? 'er' : type === 'sequenceDiagram' ? 'sequence' : null
+
+type PartKind = DiagramPart['kind']
+const WORDS: Record<DiagramFamily, Partial<Record<PartKind, string>>> = {
+  flowchart: { node: 'node', group: 'subgraph', edge: 'link' },
+  class: { node: 'class', group: 'namespace', edge: 'relation' },
+  state: { node: 'state', group: 'state', edge: 'transition' },
+  er: { node: 'entity', edge: 'relationship' },
+  sequence: { participant: 'participant', message: 'message', note: 'note' }
+}
+const ANY_WORD: Record<PartKind, string> = { node: 'node', group: 'group', edge: 'link', participant: 'participant', message: 'message', note: 'note', block: 'block' }
+/** What a part is called in its diagram type: a flowchart's edge is a link, a state diagram's a transition. */
+export const partWord = (type: string, p: DiagramPart): string => (p.kind === 'block' ? p.keyword : (WORDS[familyOfKeyword(type)!]?.[p.kind] ?? ANY_WORD[p.kind]))
+
+/** `node "Start"`, `link Start → Do it`, `loop "Every min"`. */
+export function partPhrase(type: string, p: DiagramPart): string {
+  const word = partWord(type, p)
+  switch (p.kind) {
+    case 'node':
+    case 'group':
+    case 'participant':
+      return `${word} "${clipName(p.label ?? p.id)}"`
+    case 'edge':
+    case 'message':
+      return `${word} ${clipName(p.fromLabel ?? p.from)} → ${clipName(p.toLabel ?? p.to)}`
+    case 'note':
+    case 'block':
+      return p.label ? `${word} "${clipName(p.label)}"` : word
+  }
+}
+
+const labelCount = (n: number): string => (n ? `${n} ${n === 1 ? 'label' : 'labels'}` : 'no labels')
+type DiagramRef = Extract<RefInput, { kind: 'diagram' }>
+/** `node "Start"`, `3 parts`, `area, 3 labels`. */
+export const diagramTail = (r: Pick<DiagramRef, 'type' | 'parts' | 'labels'>): string =>
+  r.labels ? `area, ${labelCount(r.labels.length)}` : r.parts!.length === 1 ? partPhrase(r.type, r.parts![0]) : `${r.parts!.length} parts`
+
 /** `manager.ts · L142–158`, `manager.ts`, `browser/`, `button "Sign in"`. The one place this copy lives. */
 export function refLabel(r: RefInput): string {
   switch (r.kind) {
@@ -439,6 +561,8 @@ export function refLabel(r: RefInput): string {
       return `${baseName(r.path)} · ${qualified(r.range, r.sheet)}`
     case 'docx':
       return `${baseName(r.path)} · ${docxTail(r)}`
+    case 'diagram':
+      return `${baseName(r.path)} · ${diagramTail(r)}`
     default:
       return r satisfies never
   }
@@ -458,6 +582,10 @@ const DOCX_SENTENCE =
 const TEXTUTIL_SENTENCE =
   "A Word reference with via textutil quotes an .odt or .rtf file as macOS converted it, which keeps words, tables, lists and links and drops pictures, notes, comments, headers and footers. Its blocks count paragraphs and list items in that conversion, not in the file; a footnote's number can sit in the quote as a plain digit, and a picture's description as text."
 const SHEET_SENTENCE = 'Sheet ranges use A1 notation. In CSV and TSV files row 1 is the first record, and lines gives where those records are in the file.'
+const DIAGRAM_SENTENCE =
+  "A diagram reference points at parts of a Mermaid diagram that Clui drew from lines of the file: read those lines with your own tools. type is the diagram's keyword in that source. A part's id, from and to are ids as written in the source, with [*] for a state diagram's start or end; label is the text drawn on it, and fromLabel and toLabel are the drawn text of its ends; nth counts earlier parts of the same kind between the same from and to, or for a note with the same label, or for a block with the same keyword and label, from 0 in source order; line is present only when exactly one line declares the part, and a block's lines run from its opening line to its end line."
+const DIAGRAM_AREA_SENTENCE =
+  "A diagram reference with labels is an area the user marked on a diagram that has no part ids: labels lists the text drawn inside it, in reading order. A label's line is present only when its text appears on exactly one line of the diagram's source; a label without one may be text Mermaid generated, such as an axis date or a percentage."
 const NOTE_SENTENCE = "A note on a reference is the user's own words about it; treat it as part of their message."
 
 const attr = (v: string | number): string => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -524,6 +652,11 @@ function copyRef(r: ContextReference): ContextReference {
       if (r.lines) out.lines = { start: r.lines.start, end: r.lines.end }
       if (r.values !== undefined) out.values = r.values
       break
+    case 'diagram': {
+      const head = { id: r.id, kind: 'diagram' as const, path: r.path, sourceVersion: r.sourceVersion, lines: { start: r.lines.start, end: r.lines.end }, type: r.type }
+      out = r.parts ? { ...head, parts: r.parts.map(copyPart) } : { ...head, labels: r.labels.map((b) => (b.line === undefined ? { text: b.text } : { text: b.text, line: b.line })) }
+      break
+    }
     case 'docx': {
       const t = r.text
       out = { id: r.id, kind: 'docx', path: r.path, sourceVersion: r.sourceVersion, part: r.part, blocks: { start: r.blocks.start, end: r.blocks.end }, text: { quote: t.quote, nth: t.nth, ...(t.elided ? { elided: true as const } : {}) } }
@@ -539,12 +672,39 @@ function copyRef(r: ContextReference): ContextReference {
   return out
 }
 
+function copyPart(p: DiagramPart): DiagramPart {
+  const label = p.label === undefined ? {} : { label: p.label }
+  switch (p.kind) {
+    case 'node':
+    case 'group':
+    case 'participant':
+      return { kind: p.kind, id: p.id, ...label, ...(p.line === undefined ? {} : { line: p.line }) }
+    case 'edge':
+    case 'message':
+      return { kind: p.kind, from: p.from, to: p.to, nth: p.nth, ...label, ...(p.fromLabel === undefined ? {} : { fromLabel: p.fromLabel }), ...(p.toLabel === undefined ? {} : { toLabel: p.toLabel }) }
+    case 'note':
+      return { kind: 'note', label: p.label, nth: p.nth }
+    case 'block':
+      return { kind: 'block', keyword: p.keyword, ...label, nth: p.nth, ...(p.sections ? { sections: [...p.sections] } : {}), ...(p.lines ? { lines: { start: p.lines.start, end: p.lines.end } } : {}) }
+  }
+}
+
 function record(s: SentReference): string {
   const rec: SentReference = { version: 1, ref: copyRef(s.ref) }
   if (s.visualAttachmentIndex !== undefined) rec.visualAttachmentIndex = s.visualAttachmentIndex
   const json = JSON.stringify(rec).replace(/[<>&]/g, (c) => JSON_ESC[c])
   if (json.length > RECORD_MAX) throw new Error(`reference ${s.ref.id} serializes past ${RECORD_MAX} chars`)
   return json
+}
+
+/** Whether a reference serializes inside RECORD_MAX, as `record` would at send, with a crop's index. */
+export function fitsRecord(ref: RefInput): boolean {
+  try {
+    record({ version: 1, ref: { ...ref, id: 'r99999999' } as ContextReference, visualAttachmentIndex: 99 })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** The message text Claude reads: the `<clui-context>` block, then what the user typed. Throws on input the
@@ -566,6 +726,8 @@ export function serializeContext(refs: SentReference[], typed: string, opts: { p
       refs.some((r) => r.ref.kind === 'sheet') && SHEET_SENTENCE,
       refs.some((r) => r.ref.kind === 'docx') && DOCX_SENTENCE,
       refs.some((r) => r.ref.kind === 'docx' && r.ref.via === 'textutil') && TEXTUTIL_SENTENCE,
+      refs.some((r) => r.ref.kind === 'diagram') && DIAGRAM_SENTENCE,
+      refs.some((r) => r.ref.kind === 'diagram' && !!r.ref.labels) && DIAGRAM_AREA_SENTENCE,
       refs.some((r) => !!r.ref.note?.trim()) && NOTE_SENTENCE
     ]
       .filter(Boolean)

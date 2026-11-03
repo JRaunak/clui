@@ -51,7 +51,7 @@ import { removalSpoken, pausedText, resourceLabel, shortLabel } from './lib/refC
 import type { Via } from './lib/motion'
 import { CHANGE_BYTES_MAX, CHANGE_TEXT_BUDGET, type ChangeGitStatus, type FileChangeSummary, type GitPathStatus } from '../../shared/changes'
 import { isSvg, kindForPath, restoreKinds, SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSelection, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
-import { clean, type SurfaceCommand, type SurfaceReply, type SurfaceTarget, type TabFact } from '../../shared/surface-tools'
+import { clean, type Lines, type SurfaceCommand, type SurfaceReply, type SurfaceTarget, type TabFact } from '../../shared/surface-tools'
 import { laysOut } from '../../shared/office'
 import { awaitFound } from './lib/pointedText'
 import { turnEndLine } from './lib/turnEnd'
@@ -1364,7 +1364,11 @@ export function paneFacts(handleId: string): SurfaceReply {
   const slice = st.sessions[handleId]
   if (!slice) return { outcome: 'unavailable' }
   const set0 = slice.surfaces
-  const span = (l: { start: number; end: number } | undefined) => l && { start: l.start, end: l.end }
+  const span = (x: SurfaceSelection | undefined): Lines | undefined => {
+    const l = x?.lines
+    const what = x?.parts ? { parts: x.parts.length } : x?.region && x.labels !== undefined ? { labels: x.labels } : {}
+    return l || x?.parts ? { ...(l ? { start: l.start, end: l.end } : {}), ...what } : undefined
+  }
   const fact = (id: string): TabFact | null => {
     const tab = browserTabOf(id)
     if (tab !== null) return slice.browser ? { kind: 'browser', tab, claude: false, unseen: !!set0.browserUnseen[id] } : null
@@ -1414,8 +1418,8 @@ export function paneFacts(handleId: string): SurfaceReply {
         ...(pend?.cell ? { pending: { cell: pend.cell } } : {})
       }
     }
-    const sel = span(t.selection?.lines)
-    const hl = span(t.highlight?.lines)
+    const sel = span(t.selection)
+    const hl = span(t.highlight)
     return {
       kind: t.kind,
       ...(t.kind === 'diff' ? { files: slice.changes.length } : { path: t.kind === 'tree' ? (at?.file ?? slice.cwd) : t.key }),
@@ -1451,6 +1455,7 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
   const slice = st.sessions[handleId]
   if (!slice) return { outcome: 'unavailable' }
   const lines = a.kind === 'file' && a.line ? { start: a.line, end: a.endLine ?? a.line } : null
+  const parts = a.kind === 'file' && a.parts ? a.parts : null
   const words = a.kind === 'file' && a.text !== undefined ? { text: a.text, ...(a.nth ? { nth: a.nth } : {}) } : null
   const page =
     a.kind === 'file' && (a.page || words)
@@ -1471,7 +1476,8 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
             title: basename(a.path),
             ...page,
             ...cells,
-            ...(lines ? { location: { line: lines.start, ...(a.endLine ? { endLine: a.endLine } : {}) }, highlight: { lines } } : {})
+            ...(lines ? { location: { line: lines.start, ...(a.endLine ? { endLine: a.endLine } : {}) }, highlight: { lines } } : {}),
+            ...(parts ? { highlight: { ...(lines ? { lines } : {}), parts } } : {})
           }
         : a.kind === 'tree'
           ? { kind: a.kind, key: '', title: basename(slice.cwd), location: { file: a.path } }
@@ -1484,21 +1490,23 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
   const visible = handleId === now.activeHandleId && !hidden()
   const tab = after.surfaces.tabs[id]
   const shown = visible && after.paneOpen && !now.viewingSubagent && now.settingsSection === null && after.surfaces.active === id && !tab?.pendingShow
-  const preview = !!lines && !!tab && (isHtml(tab.key) || isSvg(tab.key) || isDelimited(tab.key)) && presentationOf(tab, !!noPreview(handleId, tab.key)) === 'preview'
-  return { outcome: shown ? 'shown' : a.focus && !visible ? 'deferred' : 'prepared', ...(preview ? { preview } : {}) }
+  const preview = !!lines && !parts && !!tab && (isHtml(tab.key) || isSvg(tab.key) || isDelimited(tab.key)) && presentationOf(tab, !!noPreview(handleId, tab.key)) === 'preview'
+  const source = !!parts && tab?.mode === 'source'
+  return { outcome: shown ? 'shown' : a.focus && !visible ? 'deferred' : 'prepared', ...(preview ? { preview } : {}), ...(source ? { source } : {}) }
 }
 
 /** The tool's wait for a shown tab to say whether Claude's text is in it, inside the bridge's reply window. */
 const FOUND_MS = 2500
 
-/** openForClaude, and for `text` on a shown tab, whether the tab found it. */
+/** openForClaude, and for `text` or `parts` on a shown tab, whether the tab found them. */
 async function openWithText(handleId: string, a: SurfaceTarget & { focus: boolean }): Promise<SurfaceReply> {
-  const id = a.kind === 'file' && a.text !== undefined ? surfaceIdOf({ kind: kindForPath(a.path), key: a.path }) : null
+  const id = a.kind === 'file' && (a.text !== undefined || a.parts) ? surfaceIdOf({ kind: kindForPath(a.path), key: a.path }) : null
   const wait = id ? awaitFound(id, FOUND_MS) : null
   const r = openForClaude(handleId, a)
-  if (!wait || !('outcome' in r) || r.outcome !== 'shown') return r
+  if (!wait || !('outcome' in r) || r.outcome !== 'shown' || r.source) return r
   const found = await wait
-  return found === undefined ? r : { ...r, found }
+  if (found === undefined) return r
+  return typeof found === 'boolean' ? { ...r, found } : found === 'no-diagram' ? { ...r, diagram: false } : { ...r, missing: found }
 }
 
 const answered = new Set<string>()

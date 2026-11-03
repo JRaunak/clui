@@ -1,5 +1,5 @@
 import { clipName, hostOf, pinWords } from '../../../shared/annotate'
-import { changeLabel, changeTail, docPages, imagePx, imageTail, MAX_REFS, refLabel, type ChangeSide, type ContextReference, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
+import { changeLabel, changeTail, DIAGRAM_LABELS_MAX, DIAGRAM_PARTS_MAX, diagramTail, docPages, fitsRecord, imagePx, imageTail, isRefInput, MAX_REFS, partPhrase, partWord, refLabel, type ChangeSide, type ContextReference, type DiagramPart, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 import { CHANGE_BYTES_MAX, CHANGE_LINES_MAX, CHANGE_TEXT_BUDGET } from '../../../shared/changes'
 import { WORKSPACE_FILE_CAP } from '../../../shared/files'
 import { parseA1, qualified, spokenA1 } from '../../../shared/sheets'
@@ -45,6 +45,7 @@ export function shortLabel(r: ContextReference): string {
   if (r.kind === 'doc') return docWhat(r)
   if (r.kind === 'sheet') return qualified(r.range, r.sheet)
   if (r.kind === 'docx') return r.part === 'body' && r.heading ? `under "${clipName(r.heading)}"` : 'text'
+  if (r.kind === 'diagram') return diagramTail(r)
   return r.kind === 'file' && r.lines ? rangeText(r.lines) : refLabel(r)
 }
 
@@ -95,9 +96,91 @@ export function spokenRef(r: RefInput): string {
       return `${baseOf(r.path)}, ${sheetWhat(r)}${r.values === undefined ? '' : ', with values'}`
     case 'docx':
       return `${baseOf(r.path)}, ${docxWords(r)}, "${quoteStart(r.text.quote, 80)}"`
+    case 'diagram':
+      return `${baseOf(r.path)}, ${diagramWords(r)}`
     default:
       return r satisfies never
   }
+}
+
+type DiagramInput = Extract<RefInput, { kind: 'diagram' }>
+const end = (id: string, label: string | undefined, side: 'from' | 'to'): string => clipName(label ?? (id === '[*]' ? (side === 'from' ? 'start' : 'end') : id))
+const labelsText = (n: number): string => (n ? `${n} ${n === 1 ? 'label' : 'labels'}` : 'no labels')
+
+/** `node Start`, `link from Start to Do it`, `loop Every min`, as a screen reader hears one part. */
+export function spokenPart(type: string, p: DiagramPart): string {
+  const word = partWord(type, p)
+  switch (p.kind) {
+    case 'node':
+    case 'group':
+    case 'participant':
+      return `${word} ${clipName(p.label ?? p.id)}`
+    case 'edge':
+    case 'message':
+      return `${word} from ${end(p.from, p.fromLabel, 'from')} to ${end(p.to, p.toLabel, 'to')}`
+    case 'note':
+    case 'block':
+      return p.label ? `${word} ${clipName(p.label)}` : word
+  }
+}
+
+/** `node Start`, `3 diagram parts`, `diagram area, 3 labels`. */
+export const diagramWords = (r: Pick<DiagramInput, 'type' | 'parts' | 'labels'>): string =>
+  r.labels ? `diagram area, ${labelsText(r.labels.length)}` : r.parts!.length === 1 ? spokenPart(r.type, r.parts![0]) : `${r.parts!.length} diagram parts`
+
+const SECTION_WORD: Record<string, string> = { alt: 'else', par: 'and', critical: 'option' }
+
+/** A part as its listbox option says it: `Node Start, line 5`, `Link from Start to Do it, labelled yes`, `Alt ok, else
+ *  fail, lines 7 to 11`. */
+export function partOption(type: string, p: DiagramPart): string {
+  const head = capital(spokenPart(type, p))
+  switch (p.kind) {
+    case 'node':
+    case 'group':
+    case 'participant':
+      return p.line === undefined ? head : `${head}, line ${p.line}`
+    case 'edge':
+    case 'message':
+      return p.label ? `${head}, labelled ${clipName(p.label)}` : head
+    case 'note':
+      return `Note, ${clipName(p.label)}`
+    case 'block': {
+      const sections = (p.sections ?? []).map((t) => `${SECTION_WORD[p.keyword] ?? 'else'} ${clipName(t)}`)
+      return [head, ...sections, ...(p.lines ? [spokenRange(p.lines)] : [])].join(', ')
+    }
+  }
+}
+
+/** The bar's label: `Node "Start" selected`, `3 parts selected`. */
+export const partsSelectedText = (type: string, parts: readonly DiagramPart[]): string =>
+  parts.length === 1 ? `${capital(partPhrase(type, parts[0]))} selected` : `${parts.length} parts selected`
+
+/** `Area selected · 3 labels`. */
+export const areaSelectedText = (n: number): string => `Area selected · ${labelsText(n)}`
+
+/** `Area selected, 3 labels: Design, Code, Release`, five at most and then how many more. */
+export function areaSpoken(texts: readonly string[]): string {
+  if (!texts.length) return 'Area selected, no labels'
+  const more = texts.length - 5
+  return `Area selected, ${labelsText(texts.length)}: ${texts.slice(0, 5).map((t) => clipName(t)).join(', ')}${more > 0 ? ` and ${more} more` : ''}`
+}
+
+export const tooManyParts = (n: number, max: number): string => `Too many to add: ${n} parts, ${max} max`
+export const tooManyLabels = (n: number, max: number): string => `Too many labels: ${n}, ${max} max. Draw a smaller area.`
+export const NO_LABELS = 'No labels inside. Draw around some text.'
+export const PARTS_TOO_LARGE = 'Too large to add. Select fewer parts.'
+export const AREA_TOO_LARGE = 'Too large to add. Draw a smaller area.'
+export const PARTS_NOTICE = {
+  cleared: 'The diagram changed on disk, so the selection was cleared.',
+  removed: 'The diagram changed on disk, so the selection was cleared and removed from the message.'
+}
+
+/** Why a diagram selection can't be added, or undefined when it can. */
+export function diagramBlocked(input: DiagramInput, picture: boolean): string | undefined {
+  if (input.parts && input.parts.length > DIAGRAM_PARTS_MAX) return tooManyParts(input.parts.length, DIAGRAM_PARTS_MAX)
+  if (input.labels && input.labels.length > DIAGRAM_LABELS_MAX) return tooManyLabels(input.labels.length, DIAGRAM_LABELS_MAX)
+  if (input.labels && !input.labels.length && !picture) return NO_LABELS
+  if (!isRefInput(input) || !fitsRecord(input)) return input.parts ? PARTS_TOO_LARGE : AREA_TOO_LARGE
 }
 
 /** `region 640 by 320 at 120, 48`, `point at 412, 96`. */
@@ -111,8 +194,8 @@ const capital = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 /** `Lines 142–158 selected`. */
 export const selectedText = ({ start, end }: LineRange): string => `${end > start ? `Lines ${start}–${end}` : `Line ${start}`} selected`
 
-/** `Added lines 142 to 158 of manager.ts to the message.` */
-export function addedText(r: RefInput, queued = false): string {
+/** `Added lines 142 to 158 of manager.ts to the message.` `unpictured`: the bar promised a picture that couldn't be made. */
+export function addedText(r: RefInput, queued = false, unpictured = false): string {
   const what =
     r.kind === 'file' && r.lines
       ? `${spokenRange(r.lines)} of ${baseOf(r.path)}`
@@ -122,10 +205,14 @@ export function addedText(r: RefInput, queued = false): string {
           ? `${sheetWhat(r)} of ${baseOf(r.path)}`
           : r.kind === 'docx'
             ? `text from ${baseOf(r.path)}`
+          : r.kind === 'diagram'
+            ? r.labels
+              ? `a diagram area of ${baseOf(r.path)}`
+              : `${r.parts.length === 1 ? spokenPart(r.type, r.parts[0]) : `${r.parts.length} diagram parts`} of ${baseOf(r.path)}`
           : r.kind === 'change'
             ? `${spokenRef(r)},`
             : spokenRef(r)
-  return `Added ${what} to the ${queued ? 'queued ' : ''}message.`
+  return `Added ${what} to the ${queued ? 'queued ' : ''}message${unpictured ? ', without picture' : ''}.`
 }
 
 export const couldNotAdd = (r: RefInput): string => `Couldn't add ${spokenRef(r)}.`
@@ -165,6 +252,10 @@ export const noteTitle = (note: string): string => `Note: ${note.length > 200 ? 
 export const POINT_HINT = 'Click line numbers, or press Shift and an arrow key.'
 export const SHEET_POINT_HINT = 'Click a cell, or press Shift and an arrow key.'
 export const POINT_BLOCK_HINT = "Click a block's line number, or press Shift and an arrow key."
+export const POINT_PARTS_HINT = 'Click a part, or Tab to the parts and press Space.'
+export const POINT_AREA_HINT = 'Drag across the diagram, or press Shift and an arrow key.'
+export const POINT_PARTS_SAID = 'Pointing. Click a part of the diagram, or Tab to its parts and press Space. Enter adds it.'
+export const POINT_AREA_SAID = 'Pointing. Drag across the diagram to select an area, or click it for the whole diagram. Shift and an arrow key also draws one. Enter adds it.'
 export const POINT_OFF = 'Pointing off.'
 
 const kb = (bytes: number): number => Math.ceil(bytes / 1024)
@@ -261,7 +352,7 @@ export function removalSpoken(lost: readonly ContextReference[], reason: Reason)
       ? `${lost.length} ${page ? 'elements' : 'selections'} were`
       : first.kind === 'file' && first.lines
         ? `${capital(spokenRange(first.lines))} ${first.lines.end > first.lines.start ? 'were' : 'was'}`
-        : `${capital(first.kind === 'doc' ? docWhat(first) : first.kind === 'sheet' ? sheetWhat(first) : first.kind === 'docx' ? docxWords(first) : spokenRef(first))} was`
+        : `${capital(first.kind === 'doc' ? docWhat(first) : first.kind === 'sheet' ? sheetWhat(first) : first.kind === 'docx' ? docxWords(first) : first.kind === 'diagram' ? diagramWords(first) : spokenRef(first))} was`
   return `${leadOf(resourceLabel(first), reason)}. ${what} removed from the message.`
 }
 

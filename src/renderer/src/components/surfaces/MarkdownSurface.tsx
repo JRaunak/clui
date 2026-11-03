@@ -6,7 +6,8 @@ import { CodeBlock, DocContext, docRow, FileLinkContext, GutterNum, PointedRow, 
 import { FindField } from '../FindField'
 import { SelectionBar } from './SelectionBar'
 import { BANNER, baseOf, DocState, FIND_MAX, FLASH_MS, rangeText, SelectionNotice, STATE_BODY, TEXT_BTN, useFileDoc, useFind, VIEW_SETTLE_MS, viewSourceAt } from './fileDoc'
-import { DiagramContext, type DiagramHost } from '../Mermaid'
+import { DiagramContext, useDiagramSelection, type DiagramHost } from '../Mermaid'
+import { reportFound } from '../../lib/pointedText'
 import { blockFor, docTree, frontMatter, joinSpans, meets, nextChunk, parseSpan, pointAt, previewEnd, rowOf, rowWithId, type DocTree, type Span } from '../../lib/markdownDoc'
 import { findRe } from '../../lib/find'
 import { latestParse } from '../../lib/markdownParse'
@@ -153,7 +154,8 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
   const setView = useSession((s) => s.setSurfaceView)
   const root = useLinkRoot(true)
   const name = baseOf(path)
-  const highlight = tab?.highlight?.lines ?? null
+  // Claude's parts carry the line that picks their diagram, which the diagram marks rather than the surface.
+  const highlight = tab?.highlight?.parts ? null : (tab?.highlight?.lines ?? null)
   const location = tab?.location
   const text = doc.t === 'text' ? doc.text : null
   const revision = doc.t === 'text' ? doc.revision : null
@@ -292,6 +294,14 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
     const spans = els.map((el) => parseSpan(el.dataset.src) ?? { start: 0, end: 0 })
     blocks.current = { els, spans }
   }, [parsed, rendered, images0])
+  // Claude's parts name a diagram by a line; one that isn't in a fence goes back as such.
+  const partsAt = tab?.highlight?.parts ? (tab.highlight.lines?.start ?? null) : null
+  useEffect(() => {
+    if (partsAt === null || !rendered) return
+    const el = blocks.current.els[blockFor(blocks.current.spans, partsAt)]
+    const span = el ? parseSpan(el.dataset.src) : null
+    if (!el || !span || !meets(span, { start: partsAt, end: partsAt }) || !el.querySelector(':scope > [data-ui="mermaid"]')) reportFound(tabId, 'no-diagram')
+  }, [partsAt, rendered, tabId])
   useLayoutEffect(() => measure())
   useLayoutEffect(() => {
     const g = goal.current
@@ -535,9 +545,17 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
   const pickRef = useRef(pick)
   pickRef.current = pick
   const [held] = useState((): DiagramHost['held'] => new Map())
+  const escape = (): void => {
+    if (selection || highlight || diagram.active || tab?.highlight) return clearSelection()
+    if (!pointing) return
+    setPointing(tabId, false)
+    clearTimeout(selSay.current)
+    say(POINT_OFF)
+  }
+  const diagram = useDiagramSelection({ handleId, tabId, path, revision, say, selSay, escape })
   const diagrams = useMemo<DiagramHost>(
-    () => ({ selection, pointed: highlight, pick: (l, shift) => pickRef.current(l, shift), viewSource: (line, via) => viewSourceAt(handleId, tabId, line, via), held }),
-    [selection, highlight, handleId, tabId, held]
+    () => ({ selection, pointed: highlight, pick: (l, shift) => pickRef.current(l, shift), viewSource: (line, via) => viewSourceAt(handleId, tabId, line, via), held, ...diagram.host }),
+    [selection, highlight, handleId, tabId, held, diagram.host]
   )
   const spanAt = (node: Node | null): Span | null => {
     const el = node instanceof Element ? node : node?.parentElement
@@ -563,7 +581,7 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
   const onBodyClick = (e: MouseEvent): void => {
     const at = down.current
     down.current = null
-    if (!selection || !at || e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+    if (!(selection || diagram.active) || !at || e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
     if (Math.hypot(e.clientX - at.x, e.clientY - at.y) > 3) return
     if (e.target instanceof Element && e.target.closest('[data-num], button, a, input, textarea')) return
     if (!window.getSelection()?.isCollapsed) return
@@ -592,16 +610,17 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
 
   const onRegionKey = (e: KeyboardEvent): void => {
     unpin()
-    // A click on a wide diagram focuses its scroller, and Enter after it still adds.
-    if (e.target !== e.currentTarget && !(e.target instanceof Element && e.target.matches('[data-ui="mermaid-scroll"]'))) return
-    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && selection) {
+    // A click on a wide diagram focuses its scroller, and Enter after it still adds. A diagram's parts listbox and area
+    // picker handle their own keys first and pass on the rest.
+    if (e.defaultPrevented || (e.target !== e.currentTarget && !(e.target instanceof Element && e.target.matches('[data-ui="mermaid-scroll"], [data-ui="mermaid-parts"]')))) return
+    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (selection || diagram.active)) {
       e.preventDefault()
-      return addSelection()
+      return selection ? addSelection() : diagram.host.add()
     }
     if (e.key === 'Escape') {
-      if (!selection && !highlight && !pointing) return
+      if (!selection && !highlight && !pointing && !diagram.active && !tab?.highlight) return
       e.preventDefault()
-      if (selection || highlight) return clearSelection()
+      if (selection || highlight || diagram.active || tab?.highlight) return clearSelection()
       setPointing(tabId, false)
       clearTimeout(selSay.current)
       return say(POINT_OFF)
@@ -728,6 +747,7 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
         onPointerLeave={() => hover(null)}
       >
         {notice && <SelectionNotice notice={notice} onDismiss={() => setNotice(null)} />}
+        {diagram.notice}
         {parsed.fm && (
           <>
             {pointed && meets({ start: 1, end: parsed.fm.lines }, pointed) && <PointedRow label={pointed.label} />}
@@ -817,7 +837,9 @@ export function MarkdownSurface({ handleId, tabId }: { handleId: string; tabId: 
           </div>
         )}
       </div>
-      {hasText && selection ? (
+      {hasText && diagram.bar ? (
+        diagram.bar
+      ) : hasText && selection ? (
         <SelectionBar label={selectedText(selection)} attached={inTarget} onAdd={addSelection} />
       ) : pointing && hasText ? (
         <SelectionBar label={POINT_BLOCK_HINT} blocked={POINT_BLOCK_HINT} onBlocked={() => say(POINT_BLOCK_HINT)} attached={false} onAdd={addSelection} />

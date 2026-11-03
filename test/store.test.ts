@@ -1071,3 +1071,34 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   ok(cur().messages.at(-1)?.text === 'ACCEPTED', "dispatch: the bubble takes main's accepted text")
   delete replies.sendMessage
 }
+
+// Claude's parts on a tab behind the active one: the reply waits for that tab's diagram to say what it found.
+{
+  const { answerSurface } = await import('../src/renderer/src/store.ts')
+  const { reportFound } = await import('../src/renderer/src/lib/pointedText.ts')
+  const tab = (key: string): any => ({ id: `file:${key}`, kind: 'file', key, title: key.slice(3), openedBy: 'user', openedAt: 0, lastViewedAt: 0 })
+  const open = (reqId: string): Promise<unknown> => {
+    calls.length = 0
+    answerSurface({ reqId, handleId: 'h1', op: 'open', expiresAt: Date.now() + 5000, args: { kind: 'file', path: '/w/flow.mmd', parts: ['A', 'G'], focus: true } } as never)
+    return new Promise((done) => {
+      const poll = (): void => void (calls.find((c) => c.name === 'surfaceReply') ? done(calls.find((c) => c.name === 'surfaceReply')!.args[1]) : setTimeout(poll, 1))
+      poll()
+    })
+  }
+  const two = { order: ['file:/w/seq.mmd'], active: 'file:/w/seq.mmd', tabs: { 'file:/w/seq.mmd': tab('/w/seq.mmd') }, browserLastViewedAt: {}, browserUnseen: {} }
+  notePaneInput(0)
+  reset({ paneOpen: true, surfaces: two })
+  useSession.setState({ viewingSubagent: null, settingsSection: null, stageWide: true })
+  let replied = false
+  const r = open('p1').then((v) => ((replied = true), v))
+  await new Promise((d) => setTimeout(d, 20))
+  equal(cur().surfaces.active, 'file:/w/flow.mmd', 'claude parts: focus brings the diagram forward')
+  ok(!replied, 'claude parts: the reply waits for the diagram')
+  reportFound('file:/w/flow.mmd', ['G'])
+  equal(JSON.stringify(await r), JSON.stringify({ outcome: 'shown', missing: ['G'] }), 'claude parts: shown, with what the drawn diagram lacks')
+  notePaneInput()
+  reset({ paneOpen: true, surfaces: two })
+  equal(JSON.stringify(await open('p2')), JSON.stringify({ outcome: 'prepared' }), 'claude parts: input in the pane holds the focus, so the tab is prepared and nothing is checked')
+  ok(cur().surfaces.active === 'file:/w/seq.mmd' && cur().surfaces.tabs['file:/w/flow.mmd']?.unseen && JSON.stringify(cur().surfaces.tabs['file:/w/flow.mmd'].highlight) === JSON.stringify({ parts: ['A', 'G'] }), 'claude parts: the prepared tab keeps the parts to mark when it draws')
+  notePaneInput(0)
+}

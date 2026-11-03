@@ -1448,6 +1448,87 @@ body {
   outline: 2px solid var(--color-content);
   outline-offset: 3px;
 }
+/* Parts of a diagram with stable ids, keyed on data-part. Box parts mark as nodes do; links and messages add width
+   to their colour, and never a dash, which already means a dotted link in the source. */
+[data-ui='mermaid'] :is(g.cluster, g.statediagram-cluster, g[data-et='participant'], g[data-et='note'])[data-hot] :is(rect, polygon, path, circle, ellipse):not(.label *, .cluster-label *) {
+  stroke: var(--color-content) !important;
+}
+[data-ui='mermaid'] :is(g.cluster, g.statediagram-cluster, g[data-et='participant'], g[data-et='note'])[data-sel] :is(rect, polygon, path, circle, ellipse):not(.label *, .cluster-label *) {
+  fill: var(--color-line-selected) !important;
+  stroke: var(--color-content) !important;
+  stroke-width: 2px !important;
+}
+[data-ui='mermaid'] :is(g.cluster, g.statediagram-cluster, g[data-et='participant'], g[data-et='note'])[data-pointed] :is(rect, polygon, path, circle, ellipse):not(.label *, .cluster-label *) {
+  fill: var(--color-bg-raised) !important;
+  stroke: var(--color-dim) !important;
+  stroke-width: 2px !important;
+}
+[data-ui='mermaid'] [data-part][data-hot],
+[data-ui='mermaid'] [data-hit] {
+  cursor: pointer;
+}
+[data-ui='mermaid'] :is(path[data-edge], line[data-et='message'], line[data-et='life-line'])[data-hot] {
+  stroke: var(--color-content) !important;
+}
+[data-ui='mermaid'] :is(path[data-edge], line[data-et='message'])[data-sel] {
+  stroke: var(--color-content) !important;
+  stroke-width: 3px !important;
+}
+[data-ui='mermaid'] :is(path[data-edge], line[data-et='message'])[data-pointed] {
+  stroke: var(--color-dim) !important;
+  stroke-width: 3px !important;
+}
+[data-ui='mermaid'] line[data-et='life-line'][data-sel] {
+  stroke: var(--color-content) !important;
+}
+[data-ui='mermaid'] line[data-et='life-line'][data-pointed] {
+  stroke: var(--color-dim) !important;
+}
+/* A block's box has no fill; its borders and dividers take the mark, and the dividers keep their dash. */
+[data-ui='mermaid'] g[data-et='control-structure'][data-hot] line.loopLine {
+  stroke: var(--color-content) !important;
+}
+[data-ui='mermaid'] g[data-et='control-structure'][data-sel] line.loopLine {
+  stroke: var(--color-content) !important;
+  stroke-width: 2px !important;
+}
+[data-ui='mermaid'] g[data-et='control-structure'][data-sel] polygon.labelBox {
+  fill: var(--color-line-selected) !important;
+}
+[data-ui='mermaid'] g[data-et='control-structure'][data-pointed] line.loopLine {
+  stroke: var(--color-dim) !important;
+  stroke-width: 2px !important;
+}
+[data-ui='mermaid'] g[data-et='control-structure'][data-pointed] polygon.labelBox {
+  fill: var(--color-bg-raised) !important;
+}
+/* Mermaid paints a page-coloured rect behind every node label and edge label. Inside a marked node it takes the
+   node's fill, and fill only, since a stroke would box the text. Under a band, edge labels take the band's colour. */
+[data-ui='mermaid'] g.node[data-sel] > g.label > rect {
+  fill: var(--color-line-selected) !important;
+}
+[data-ui='mermaid'] g.node[data-pointed] > g.label > rect {
+  fill: var(--color-bg-raised) !important;
+}
+[data-ui='mermaid'][data-band='selected'] g.edgeLabel rect.background {
+  fill: var(--color-line-selected) !important;
+}
+[data-ui='mermaid'][data-band='pointed'] g.edgeLabel rect.background {
+  fill: var(--color-bg-raised) !important;
+}
+[data-ui='mermaid'] g.edgeLabel[data-sel] rect.background {
+  fill: var(--color-line-selected) !important;
+}
+[data-ui='mermaid'] g.edgeLabel[data-pointed] rect.background {
+  fill: var(--color-bg-raised) !important;
+}
+/* Hit corridors: wide, invisible strokes cloned from mermaid's own lines. */
+[data-ui='mermaid'] [data-hit] {
+  fill: none !important;
+  stroke: transparent !important;
+  stroke-width: 24px !important;
+  pointer-events: stroke;
+}
 /* A label on an author's fill that the theme's ink can't be read on. */
 [data-ui='mermaid'] g[data-ink] :is(text, tspan) {
   fill: var(--color-bg) !important;

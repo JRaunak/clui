@@ -1,3 +1,7 @@
+import { CROP_MAX_EDGE } from '../../../shared/annotate'
+import { VISUAL_MAX, type DraftVisual } from '../../../shared/context'
+import type { Region } from '../../../shared/surfaces'
+
 // The image surface's view model: a content box at its CSS size, shown under translate(x, y) scale(s) in a viewport.
 // Pure, so the zoom steps, the clamp and the saved place are testable without a DOM.
 
@@ -83,3 +87,33 @@ export function easing(token: string): (t: number) => number {
 }
 
 export const round4 = (v: number): number => Math.round(v * 1e4) / 1e4
+
+/** The region's pixels as shown, from the element the user sees: `drawImage` takes an `<img>` after EXIF orientation,
+ *  and draws an SVG as vectors at the size asked. */
+export function cropOf(src: CanvasImageSource, natural: Size, r: Region, svg: boolean): DraftVisual | null {
+  const sx = r.x * natural.w
+  const sy = r.y * natural.h
+  const sw = Math.max(1, r.w * natural.w)
+  const sh = Math.max(1, r.h * natural.h)
+  const long = Math.max(sw, sh)
+  let k = svg ? Math.min(CROP_MAX_EDGE, 4 * long) / long : Math.min(1, CROP_MAX_EDGE / long)
+  for (let i = 0; i < 6; i++, k *= 0.75) {
+    const w = Math.max(1, Math.round(sw * k))
+    const h = Math.max(1, Math.round(sh * k))
+    const c = document.createElement('canvas')
+    c.width = w
+    c.height = h
+    const g = c.getContext('2d', { willReadFrequently: true })
+    if (!g) return null
+    g.drawImage(src, sx, sy, sw, sh, 0, 0, w, h)
+    const px = g.getImageData(0, 0, w, h).data
+    let alpha = false
+    for (let j = 3; j < px.length && !alpha; j += 4) alpha = px[j] !== 255
+    const mimeType = alpha ? 'image/png' : 'image/jpeg'
+    const url = alpha ? c.toDataURL(mimeType) : c.toDataURL(mimeType, 0.85)
+    const data = url.slice(url.indexOf(',') + 1)
+    // A noisy region with transparency can encode past the packet's limit; a smaller copy still shows it.
+    if (data.length <= VISUAL_MAX) return { id: crypto.randomUUID(), data, mimeType, w, h }
+  }
+  return null
+}

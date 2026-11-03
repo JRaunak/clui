@@ -1,9 +1,10 @@
-// Claude's surface_open text is searched by the tab that shows it; the reply waits briefly for that tab to say whether
-// the words are there.
-const waiting = new Map<string, (found: boolean | undefined) => void>()
+// Claude's surface_open text or diagram parts are looked for by the tab that shows them; the reply waits briefly for
+// that tab to say what it found: whether the words are there, or which parts the diagram doesn't have.
+export type Found = boolean | string[] | 'no-diagram'
+const waiting = new Map<string, (found: Found | undefined) => void>()
 
-/** Resolves with what tab `id` reports for the text it was just given, or undefined after `ms`. */
-export function awaitFound(id: string, ms: number): Promise<boolean | undefined> {
+/** Resolves with what tab `id` reports for what it was just given, or undefined after `ms`. */
+export function awaitFound(id: string, ms: number): Promise<Found | undefined> {
   waiting.get(id)?.(undefined)
   return new Promise((done) => {
     const t = setTimeout(() => {
@@ -18,4 +19,4 @@ export function awaitFound(id: string, ms: number): Promise<boolean | undefined>
   })
 }
 
-export const reportFound = (id: string, found: boolean): void => waiting.get(id)?.(found)
+export const reportFound = (id: string, found: Found): void => waiting.get(id)?.(found)

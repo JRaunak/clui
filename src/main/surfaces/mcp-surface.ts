@@ -10,7 +10,7 @@ import { basename, isAbsolute, resolve } from 'node:path'
 import { CHANGE_TEXT_BUDGET } from '../../shared/changes'
 import { CHANGE_REF, relativeTo } from '../../shared/context'
 import type { Refusal } from '../../shared/files'
-import { clean, type SurfaceCommand, type SurfaceTarget } from '../../shared/surface-tools'
+import { clean, stripControls, type SurfaceCommand, type SurfaceTarget } from '../../shared/surface-tools'
 import { isSvg, kindForPath } from '../../shared/surfaces'
 import { isOffice, isWord, laysOut } from '../../shared/office'
 import { a1Of, isDelimited, isWorkbook, parseA1, qualified, unxml } from '../../shared/sheets'
@@ -32,6 +32,8 @@ export const CHANGE_READ = {
 const MAX_LINE = 10_000_000
 const TEXT_MAX = 300
 const NTH_MAX = 1_000_000
+const PARTS_MAX = 20
+const PART_MAX = 120
 export const SURFACE_STATE = {
   name: 'surface_state',
   description: "What the user's Clui side pane shows for this session: tabs, the active one, line selections and highlights. No file contents.",
@@ -41,7 +43,7 @@ export const SURFACE_STATE = {
 export const SURFACE_OPEN = {
   name: 'surface_open',
   description:
-    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), a PDF at a page, words in a PDF or Word document, or a CSV, TSV or workbook at a range of cells. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
+    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), a PDF at a page, words in a PDF or Word document, or a CSV, TSV or workbook at a range of cells, or parts of a Mermaid diagram. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -55,6 +57,13 @@ export const SURFACE_OPEN = {
       sheet: { type: 'string', description: "A workbook sheet's name" },
       text: { type: 'string', minLength: 1, maxLength: TEXT_MAX, description: 'Words to point at in a PDF or Word document, matched ignoring case and spacing. On a PDF, text is matched within a single page.' },
       nth: { type: 'integer', minimum: 0, description: 'Which match of text, from 0; on a PDF with page, counted on that page' },
+      parts: {
+        type: 'array',
+        minItems: 1,
+        maxItems: PARTS_MAX,
+        items: { type: 'string', minLength: 1, maxLength: PART_MAX },
+        description: 'Ids of nodes, subgraphs, participants, classes, states or entities to mark in a Mermaid diagram, as written in its source.'
+      },
       focus: { type: 'boolean' }
     },
     additionalProperties: false
@@ -140,7 +149,12 @@ const GONE_TEXT = 'This session is no longer open in Clui.'
 const GONE = text(GONE_TEXT, true)
 const TIMEOUT = text("Outcome unknown: Clui didn't confirm in time.", true)
 const CLOSED = text("Clui's window closed.", true)
-const OPEN_ARGS = 'surface_open takes path, kind, browserTab, line, endLine, page, range, sheet, text, nth and focus.'
+const OPEN_ARGS = 'surface_open takes path, kind, browserTab, line, endLine, page, range, sheet, text, nth, parts and focus.'
+const PARTS_FORM = `parts is 1 to ${PARTS_MAX} ids, each 1 to ${PART_MAX} characters, with no control characters.`
+const PARTS_ALONE = 'parts goes alone on a .mmd or .mermaid file, or with line on a Markdown file, where line picks the diagram.'
+const PARTS_FILES = 'parts applies to Mermaid diagrams.'
+const MERMAID = /\.(mmd|mermaid)$/i
+const MARKDOWN = /\.(md|markdown)$/i
 const TEXT_DOCS = 'text applies to PDFs and .docx, .docm, .odt or .rtf files.'
 const RANGE_FORM = 'range is A1 notation: B4, A18:D24, 18:24 or B:D.'
 const RANGE_FILE = 'range and sheet apply to a sheet file.'
@@ -162,9 +176,14 @@ export async function sheetNames(size: number, read: Read): Promise<string[] | n
 }
 
 const span = (start: number, end?: number): string => `L${start}${end !== undefined && end > start ? `-${end}` : ''}`
+const counted = (n: number, one: string): string => `${n} ${one}${n === 1 ? '' : 's'}`
+/** `L1-20`, `L1-20, 3 diagram parts`, `L1-20, diagram area, 3 labels`: counts only, never ids or label text. */
 const lines = (v: unknown): string | null => {
-  const r = v as { start?: unknown; end?: unknown } | null
-  return r && typeof r === 'object' && int(r.start, 1, MAX_LINE) && int(r.end, r.start, MAX_LINE) ? span(r.start, r.end) : null
+  const r = v as { start?: unknown; end?: unknown; parts?: unknown; labels?: unknown } | null
+  if (!r || typeof r !== 'object') return null
+  const at = int(r.start, 1, MAX_LINE) && int(r.end, r.start, MAX_LINE) ? span(r.start, r.end) : null
+  const what = int(r.parts, 1, NTH_MAX) ? counted(r.parts, 'diagram part') : int(r.labels, 0, NTH_MAX) ? `diagram area, ${counted(r.labels, 'label')}` : null
+  return at && what ? `${at}, ${what}` : (at ?? what)
 }
 const at = (v: unknown): string | null => {
   const r = v as { line?: unknown; endLine?: unknown } | null
@@ -254,7 +273,22 @@ export function stateText(v: unknown, c: Facts): string | null {
 
 /** `preview`: the label and closing sentence for lines that landed on a Preview, which marks them only in Source, or
  *  on a CSV's grid, which marks their rows. */
-type Opened = { target: SurfaceTarget; label: string; focus: boolean; preview?: { label: string; note: string }; words?: { name: string; shows: LaidOut } }
+type Opened = { target: SurfaceTarget; label: string; focus: boolean; preview?: { label: string; note: string }; words?: { name: string; shows: LaidOut }; parts?: { ids: string[]; rel: string } }
+
+/** The reply for Claude's diagram parts on a shown tab, or null for the plain `Shown:` when it didn't draw in time. */
+function partsShown(o: Opened, v: { missing?: unknown; diagram?: unknown; source?: unknown }): string | null {
+  const { ids, rel } = o.parts!
+  if (v.source === true) return `Shown: ${o.label} in Source. The parts are marked in Preview.`
+  const line = o.target.kind === 'file' ? o.target.line : undefined
+  if (v.diagram === false && line) return `Opened ${rel}, but line ${line} isn't in a Mermaid diagram.`
+  if (!Array.isArray(v.missing)) return null
+  const asked = new Set(ids)
+  const missing = [...new Set(v.missing.filter((m): m is string => typeof m === 'string' && asked.has(m)))]
+  const found = asked.size - missing.length
+  if (!found) return `Opened ${rel}, but none of those parts are in its diagram.`
+  if (!missing.length) return `Shown: ${o.label}, ${counted(asked.size, 'part')}.`
+  return `Shown: ${o.label}, ${found} of ${asked.size} parts. Not in the diagram: ${missing.map(clean).join(', ')}.`
+}
 
 export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.now): McpHandler & { revoke(handleId: string): void; setPresentation(handleId: string, on: boolean): void } {
   // A rolling window per handle: no turn identity reaches the server, and no result event resets it.
@@ -265,8 +299,14 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
 
   async function opened(handleId: string, a: Record<string, unknown>): Promise<Opened | string> {
     if (Object.keys(a).some((k) => !Object.hasOwn(SURFACE_OPEN.inputSchema.properties, k))) return OPEN_ARGS
-    const { path, kind, browserTab, line, endLine, page, range, sheet, text: quote, nth, focus = false } = a
+    const { path, kind, browserTab, line, endLine, page, range, sheet, text: quote, nth, parts, focus = false } = a
     if (typeof focus !== 'boolean' || (kind !== undefined && kind !== 'diff')) return OPEN_ARGS
+    if (parts !== undefined) {
+      if (!Array.isArray(parts) || !parts.length || parts.length > PARTS_MAX || !parts.every((p) => typeof p === 'string' && !!p && [...p].length <= PART_MAX && stripControls(p) === p)) return PARTS_FORM
+      if (typeof path !== 'string' || kind === 'diff' || !(MERMAID.test(path) || MARKDOWN.test(path))) return PARTS_FILES
+      const md = MARKDOWN.test(path)
+      if (quote !== undefined || nth !== undefined || range !== undefined || sheet !== undefined || page !== undefined || endLine !== undefined || md !== (line !== undefined)) return PARTS_ALONE
+    }
     if (path !== undefined && (typeof path !== 'string' || !path || path.length > 4096 || path.includes('\0'))) return 'path must be a file or folder path.'
     if ([kind === 'diff' || path !== undefined, browserTab !== undefined].filter(Boolean).length !== 1) return "Pass exactly one of path, browserTab or kind:'diff'."
     if (line !== undefined || endLine !== undefined) {
@@ -359,6 +399,11 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
       return { target: { kind: 'file', path: abs, range: r, ...named }, label: `${rel} ${qualified(r, typeof sheet === 'string' ? clean(sheet) : undefined)}`, focus }
     }
     if (typeof sheet === 'string') return { target: { kind: 'file', path: abs, sheet }, label: `${rel} sheet ${clean(sheet)}`, focus }
+    if (Array.isArray(parts)) {
+      const ids = parts as string[]
+      const at = int(line, 1, MAX_LINE) ? line : undefined
+      return { target: { kind: 'file', path: abs, parts: ids, ...(at ? { line: at } : {}) }, label: at ? `${rel} ${span(at)}` : rel, focus, parts: { ids, rel } }
+    }
     if (!int(line, 1, MAX_LINE)) return { target: { kind: 'file', path: abs }, label: rel, focus }
     const end = int(endLine, line + 1, MAX_LINE) ? endLine : undefined
     const preview = grid
@@ -380,11 +425,13 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     }
     const d = await present.request(handleId, { op: 'open', args: { ...o.target, focus: o.focus && !limited } })
     if (!d.ok) return d.why === 'closed' ? CLOSED : TIMEOUT
-    const v = d.value as { outcome?: unknown; preview?: unknown; found?: unknown } | null
+    const v = d.value as { outcome?: unknown; preview?: unknown; found?: unknown; missing?: unknown; diagram?: unknown; source?: unknown } | null
     const p = v?.preview === true ? o.preview : undefined
     const label = p?.label ?? o.label
     const w = o.words
     if (w?.shows === 'view' && v?.found === false && v.outcome === 'shown') return text(`Opened ${w.name}, but that text isn't in it.`)
+    const shown = o.parts && v?.outcome === 'shown' ? partsShown(o, v) : null
+    if (shown) return text(shown)
     const note = p ? ` ${p.note}` : w && w.shows !== 'view' && w.shows !== 'picture' ? UNSHOWN[w.shows](w.name) : ''
     switch (v?.outcome) {
       case 'shown':

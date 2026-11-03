@@ -82,7 +82,7 @@ export function parseOutgoing(raw: unknown): OutgoingPacket | null {
     if (d.pinId !== undefined && !Number.isSafeInteger(d.pinId)) return null
     if (d.visual === undefined) refs.push({ ref })
     // A point carries no picture: a crop can't show which pixel was meant.
-    else if ((ref.kind === 'browser' || ref.kind === 'page' || ((ref.kind === 'image' || ref.kind === 'doc') && !!ref.region)) && isDraftVisual(d.visual)) refs.push({ ref, visual: d.visual })
+    else if ((ref.kind === 'browser' || ref.kind === 'page' || ref.kind === 'diagram' || ((ref.kind === 'image' || ref.kind === 'doc') && !!ref.region)) && isDraftVisual(d.visual)) refs.push({ ref, visual: d.visual })
     else return null
   }
   const attachments: WireAttachment[] = []
@@ -132,6 +132,12 @@ export async function validateRefs(deps: PacketDeps, handleId: string, refs: rea
       case 'file': {
         // A whole file points at current content, so only losing access to it matters; Claude's tools report a missing one.
         if (!ref.lines) return (await once(`a\0${ref.path}`, () => deps.authorize(handleId, ref.path, 'file'))) === 'denied' ? 'denied' : null
+        const r = await once(`r\0${ref.path}`, () => deps.readRevision(handleId, ref.path))
+        if (!r.ok) return readFailure(r.reason)
+        if (r.version !== ref.sourceVersion) return 'changed'
+        return ref.lines.end > r.lineCount ? 'out-of-range' : null
+      }
+      case 'diagram': {
         const r = await once(`r\0${ref.path}`, () => deps.readRevision(handleId, ref.path))
         if (!r.ok) return readFailure(r.reason)
         if (r.version !== ref.sourceVersion) return 'changed'

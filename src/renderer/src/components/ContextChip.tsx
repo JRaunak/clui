@@ -1,6 +1,6 @@
 import type { CSSProperties, KeyboardEvent, MouseEvent, Ref } from 'react'
 import { hostOf, pinWords, clipName } from '../../../shared/annotate'
-import { changeTail, docPages, docPagesShort, docPt, imageTail, refLabel, type ContextReference } from '../../../shared/context'
+import { changeTail, diagramTail, docPages, docPagesShort, docPt, imageTail, refLabel, type ContextReference } from '../../../shared/context'
 import type { ProcessedAttachment } from '../lib/images'
 import type { ShownAttachment } from '../store'
 import { baseOf, CHANGE_UNAVAILABLE, noteTitle, quoteStart, rangeText, spokenRef } from '../lib/refCopy'
@@ -148,6 +148,21 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
         line2: `"${ref.text.quote}`,
         title: `${baseOf(ref.path)} · ${where}"${quoteStart(ref.text.quote, 120)}"`,
         label: `Reference ${n}: ${spokenRef(ref)}`,
+        spoken: spokenRef(ref)
+      }
+    }
+    case 'diagram': {
+      const pic = thumb ? ' · with picture' : ''
+      return {
+        key,
+        n,
+        glyph: 'file',
+        thumb,
+        line1: baseOf(ref.path),
+        line2: diagramTail(ref),
+        ...(thumb ? { disclose: 'with picture' } : {}),
+        title: `${refLabel(ref)}${pic}`,
+        label: `Reference ${n}: ${spokenRef(ref)}${thumb ? ', with picture' : ''}`,
         spoken: spokenRef(ref)
       }
     }

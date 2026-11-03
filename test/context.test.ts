@@ -17,10 +17,11 @@ import {
   sentRefs,
   serializeContext,
   type ContextReference,
+  type RefInput,
   type SentReference
 } from '../src/shared/context.ts'
 import type { AnnotateTarget } from '../src/shared/annotate.ts'
-import { addedText, selectedText } from '../src/renderer/src/lib/refCopy.ts'
+import { addedText, areaSelectedText, areaSpoken, diagramBlocked, partOption, partsSelectedText, selectedText, shortLabel, spokenRef } from '../src/renderer/src/lib/refCopy.ts'
 import { equal, ok } from './support/harness.mjs'
 
 const HEADER =
@@ -353,4 +354,141 @@ Why did this line change?`
   equal(refLabel(chg({ path: '/w/mcp.ts', side: 'after', old: undefined, new: { start: 41, end: 41 } })), 'mcp.ts · after L41', 'change: after label ranges over new')
   equal(refLabel(chg({ path: '/w/mcp.ts', side: 'diff' })), 'mcp.ts · diff L3, removed', 'change: an old-only diff is all removed rows')
   equal(changeTail('diff', undefined, { start: 41, end: 53 }), 'diff L41–53, added', 'change: a new-only diff is all added rows')
+}
+
+// Diagram references: parts named by their source ids, or the labels inside an area, never coordinates.
+{
+  const V = 'sha256:9d1c0f3a7b2e4c58a6f1e0d93b7c2a41' as const
+  const base = { kind: 'diagram', path: '/w/flow.mmd', sourceVersion: V, lines: { start: 1, end: 12 }, type: 'flowchart' } as const
+  const node = { kind: 'node', id: 'A', label: 'Start', line: 2 } as const
+  const link = { kind: 'edge', from: 'A', to: 'B', nth: 0, label: 'yes' } as const
+  const loop = { kind: 'block', keyword: 'loop', label: 'Every min', nth: 0, sections: ['x'], lines: { start: 4, end: 6 } } as const
+  const parts = (...p: unknown[]): unknown => ({ ...base, parts: p })
+  const labels = (...l: unknown[]): unknown => ({ ...base, type: 'gantt', labels: l })
+  for (const [x, what] of [
+    [parts(node), 'a node'],
+    [parts(node, link, { kind: 'note', label: 'a note', nth: 1 }, { kind: 'participant', id: 'Alice' }, { kind: 'message', from: 'Alice', to: 'Bob', nth: 3 }, loop, { kind: 'group', id: 'g1' }), 'every kind'],
+    [parts({ kind: 'block', keyword: 'par', nth: 0 }), 'a block with no label'],
+    [parts(...Array.from({ length: 20 }, (_, i) => ({ kind: 'node', id: `n${i}` }))), '20 parts'],
+    [parts({ kind: 'edge', from: '[*]', to: 'Still', nth: 0 }), 'a state start'],
+    [labels(), 'an empty area, whose picture is the content'],
+    [labels(...Array.from({ length: 40 }, (_, i) => ({ text: `t${i}` }))), '40 labels'],
+    [labels({ text: 'Design', line: 5 }, { text: '2024-01-01' }), 'labels with and without lines'],
+    [parts({ kind: 'node', id: 'x'.repeat(120) }), 'a 120-character id'],
+    [parts({ ...link, fromLabel: 'S', toLabel: 'x'.repeat(120) }), 'end labels of 1 and 120 characters']
+  ] as [unknown, string][])
+    ok(isRefInput(x), `diagram: accepts ${what}`)
+  for (const [x, what] of [
+    [{ ...base }, 'neither parts nor labels'],
+    [{ ...base, parts: [node], labels: [] }, 'parts with labels'],
+    [parts(), 'no parts'],
+    [parts(...Array.from({ length: 21 }, (_, i) => ({ kind: 'node', id: `n${i}` }))), '21 parts'],
+    [labels(...Array.from({ length: 41 }, (_, i) => ({ text: `t${i}` }))), '41 labels'],
+    [parts({ kind: 'thing', id: 'A' }), 'an unknown kind'],
+    [parts({ ...loop, keyword: 'rect' }), 'an unknown keyword'],
+    [parts({ kind: 'node', id: '' }), 'an empty id'],
+    [parts({ kind: 'node', id: 'x'.repeat(121) }), 'an id past 120'],
+    [parts({ ...node, line: 13 }), 'a part line outside the diagram'],
+    [parts({ ...loop, lines: { start: 4, end: 13 } }), 'block lines outside the diagram'],
+    [parts({ ...loop, sections: Array.from({ length: 9 }, () => 's') }), 'nine sections'],
+    [parts({ kind: 'edge', from: 'A', to: 'B' }), 'an edge with no nth'],
+    [parts({ kind: 'edge', from: 'A', to: 'B', nth: -1 }), 'a negative nth'],
+    [parts({ kind: 'note', nth: 0 }), 'a note with no label'],
+    [parts({ ...link, fromLabel: '' }), 'an empty fromLabel'],
+    [parts({ ...link, toLabel: 'x'.repeat(121) }), 'a toLabel past 120'],
+    [parts({ ...link, fromLabel: 'A' }), 'a fromLabel equal to its id'],
+    [parts({ kind: 'message', from: 'Alice', to: 'Bob', nth: 0, toLabel: 'Bob' }), 'a toLabel equal to its id'],
+    [labels({ text: '' }), 'an empty label'],
+    [labels({ text: 'x', line: 0 }), 'a label line outside the diagram'],
+    [{ ...base, type: 'flow chart', parts: [node] }, 'a type that is not a keyword'],
+    [{ ...base, type: '1flowchart', parts: [node] }, 'a type that starts with a digit'],
+    [{ ...base, lines: { start: 5, end: 2 }, parts: [node] }, 'backwards lines'],
+    [{ ...base, sourceVersion: 'sha256:short', parts: [node] }, 'a bad version']
+  ] as [unknown, string][])
+    ok(!isRefInput(x), `diagram: rejects ${what}`)
+
+  const one = parts(node) as RefInput
+  const area = labels({ text: 'Design', line: 5 }, { text: '2024-01-01' }) as RefInput
+  const many = parts(node, link, loop) as RefInput
+  const msg = serializeContext([{ version: 1, ref: { ...(many as ContextReference & object), id: 'r1', path: 'flow.mmd', parts: [{ ...node, extra: 'dropped' } as typeof node, link, loop] } as ContextReference }], 'Why?', { packetId: null })
+  const back = parseRefs(msg).refs[0]
+  ok(back?.kind === 'current' && back.value.ref.kind === 'diagram', 'diagram: serialize then parse comes back')
+  equal(back?.kind === 'current' ? JSON.stringify(back.value.ref) : '', JSON.stringify({ id: 'r1', kind: 'diagram', path: 'flow.mmd', sourceVersion: V, lines: { start: 1, end: 12 }, type: 'flowchart', parts: [node, link, loop] }), 'diagram: the wire copies known fields only, in order')
+  ok(msg.includes('A diagram reference points at parts') && !msg.includes('A diagram reference with labels'), 'diagram: the parts sentence without the area one')
+  ok(serializeContext([{ version: 1, ref: { ...(area as object), id: 'r2', path: 'gantt.mmd' } as ContextReference }], '', { packetId: null }).includes('A diagram reference with labels is an area'), 'diagram: the area sentence with labels')
+  const areaBack = parseRefs(serializeContext([{ version: 1, ref: { ...(area as object), id: 'r2', path: 'gantt.mmd' } as ContextReference }], '', { packetId: null })).refs[0]
+  equal(areaBack?.kind === 'current' ? JSON.stringify(areaBack.value.ref) : '', JSON.stringify({ id: 'r2', kind: 'diagram', path: 'gantt.mmd', sourceVersion: V, lines: { start: 1, end: 12 }, type: 'gantt', labels: [{ text: 'Design', line: 5 }, { text: '2024-01-01' }] }), 'diagram: an area round trips')
+  equal(refKey(one), refKey({ ...(one as object), parts: [{ kind: 'node', id: 'A' }] } as RefInput), 'diagram: a part dedupes by kind and id, not its label')
+  ok(refKey(one) !== refKey({ ...(one as object), parts: [{ kind: 'group', id: 'A' }] } as RefInput), 'diagram: a group and a node of one id differ')
+  equal(refKey(area), refKey({ ...(area as object) } as RefInput), 'diagram: two areas holding the same labels share a key')
+  ok(refKey(area) !== refKey({ ...(area as object), labels: [{ text: 'Design' }] } as RefInput), 'diagram: a label without its line is another area')
+  equal(resourceOf({ ...(one as object), id: 'r1' } as ContextReference), 'file:/w/flow.mmd', "diagram: stale with its file's lines")
+  const named = { ...link, fromLabel: 'Start', toLabel: 'Do it' } as const
+  const namedBack = parseRefs(serializeContext([{ version: 1, ref: { ...(parts(named) as object), id: 'r3', path: 'flow.mmd' } as ContextReference }], '', { packetId: null })).refs[0]
+  equal(namedBack?.kind === 'current' && namedBack.value.ref.kind === 'diagram' ? JSON.stringify(namedBack.value.ref.parts) : '', JSON.stringify([named]), 'diagram: end labels round trip')
+  ok(serializeContext([{ version: 1, ref: { ...(parts(named) as object), id: 'r3', path: 'flow.mmd' } as ContextReference }], '', { packetId: null }).includes('fromLabel and toLabel are the drawn text of its ends'), 'diagram: the sentence names the end labels')
+
+  equal(refLabel(one), 'flow.mmd · node "Start"', 'copy: chip for one node')
+  equal(refLabel(parts(link) as RefInput), 'flow.mmd · link A → B', 'copy: chip for a link, by ids')
+  equal(refLabel({ ...(parts(loop) as object), path: '/w/seq.mmd', type: 'sequenceDiagram' } as RefInput), 'seq.mmd · loop "Every min"', 'copy: chip for a loop')
+  equal(refLabel(parts(named) as RefInput), 'flow.mmd · link Start → Do it', 'copy: chip for a link, by its end labels')
+  equal(spokenRef(parts(named) as RefInput), 'flow.mmd, link from Start to Do it', 'copy: spoken link by its end labels')
+  equal(addedText(parts(named) as RefInput), 'Added link from Start to Do it of flow.mmd to the message.', 'copy: added link by its end labels')
+  equal(addedText(parts(link) as RefInput), 'Added link from A to B of flow.mmd to the message.', 'copy: added link by ids')
+  equal(shortLabel({ ...(parts(named) as object), id: 'r1' } as ContextReference), 'link Start → Do it', 'copy: notice for a link by its end labels')
+  equal(shortLabel({ ...(parts(link) as object), id: 'r1' } as ContextReference), 'link A → B', 'copy: notice for a link by ids')
+  equal(addedText(one, false, true), 'Added node Start of flow.mmd to the message, without picture.', 'copy: added when the promised picture failed')
+  equal(refLabel(many), 'flow.mmd · 3 parts', 'copy: chip for several')
+  equal(refLabel({ ...(area as object), path: '/w/gantt.mmd' } as RefInput), 'gantt.mmd · area, 2 labels', 'copy: chip for an area')
+  equal(refLabel({ ...(labels() as object), path: '/w/gantt.mmd' } as RefInput), 'gantt.mmd · area, no labels', 'copy: an empty area')
+  equal(spokenRef(one), 'flow.mmd, node Start', 'copy: spoken node')
+  equal(spokenRef(parts(link) as RefInput), 'flow.mmd, link from A to B', 'copy: spoken link')
+  equal(spokenRef(many), 'flow.mmd, 3 diagram parts', 'copy: spoken several')
+  equal(spokenRef({ ...(area as object), path: '/w/gantt.mmd' } as RefInput), 'gantt.mmd, diagram area, 2 labels', 'copy: spoken area')
+  equal(addedText(one), 'Added node Start of flow.mmd to the message.', 'copy: added one')
+  equal(addedText(many), 'Added 3 diagram parts of flow.mmd to the message.', 'copy: added several')
+  equal(addedText({ ...(area as object), path: '/w/gantt.mmd' } as RefInput), 'Added a diagram area of gantt.mmd to the message.', 'copy: added an area')
+  equal(shortLabel({ ...(one as object), id: 'r1' } as ContextReference), 'node "Start"', 'copy: notice for one')
+  equal(shortLabel({ ...(area as object), id: 'r1', labels: [{ text: 'a' }, { text: 'b' }, { text: 'c' }] } as ContextReference), 'area, 3 labels', 'copy: notice for an area')
+  equal(partsSelectedText('flowchart', [node]), 'Node "Start" selected', 'copy: bar for one node')
+  equal(partsSelectedText('sequenceDiagram', [loop]), 'Loop "Every min" selected', 'copy: bar for a loop')
+  equal(partsSelectedText('flowchart', [node, link, loop]), '3 parts selected', 'copy: bar for several')
+  equal(partsSelectedText('flowchart', [named]), 'Link Start → Do it selected', 'copy: the bar names endpoints by their labels')
+  equal(areaSelectedText(3), 'Area selected · 3 labels', 'copy: bar for an area')
+  equal(areaSpoken(['Design', 'Code', 'Release']), 'Area selected, 3 labels: Design, Code, Release', 'copy: an area is spoken with its labels')
+  equal(areaSpoken(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']), 'Area selected, 9 labels: a, b, c, d, e and 4 more', 'copy: five labels, then how many more')
+  equal(areaSpoken([]), 'Area selected, no labels', 'copy: an empty area')
+  equal(partOption('flowchart', node), 'Node Start, line 2', 'option: a node with its line')
+  equal(partOption('flowchart', { kind: 'group', id: 'g1', label: 'Group one', line: 4 }), 'Subgraph Group one, line 4', 'option: a subgraph')
+  equal(partOption('flowchart', named), 'Link from Start to Do it, labelled yes', 'option: a link by its endpoints\' labels')
+  equal(partOption('classDiagram', { kind: 'edge', from: 'Animal', to: 'Duck', nth: 0, label: 'is' }), 'Relation from Animal to Duck, labelled is', 'option: a class relation')
+  equal(partOption('stateDiagram-v2', { kind: 'edge', from: '[*]', to: 'Still', nth: 0 }), 'Transition from start to Still', 'option: [*] is spoken as start')
+  equal(partOption('erDiagram', { kind: 'node', id: 'CUSTOMER' }), 'Entity CUSTOMER', 'option: an entity')
+  equal(partOption('sequenceDiagram', { kind: 'note', label: 'a note', nth: 0 }), 'Note, a note', 'option: a note')
+  equal(partOption('sequenceDiagram', { kind: 'message', from: 'Alice', to: 'Bob', nth: 0, label: 'Hello' }), 'Message from Alice to Bob, labelled Hello', 'option: a message')
+  equal(partOption('sequenceDiagram', loop), 'Loop Every min, else x, lines 4 to 6', 'option: a block with a section and lines')
+
+  // The pre-check blocks what record() would throw on, so Add never reaches a send that fails.
+  const lt = '<'.repeat(80)
+  const fat = { ...base, parts: Array.from({ length: 20 }, (_, i) => ({ kind: 'node', id: `${lt.slice(0, 70)}${i}`, label: lt })) } as Extract<RefInput, { kind: 'diagram' }>
+  const fatArea = { ...base, type: 'gantt', labels: Array.from({ length: 40 }, () => ({ text: lt })) } as Extract<RefInput, { kind: 'diagram' }>
+  for (const [x, want] of [
+    [fat, 'Too large to add. Select fewer parts.'],
+    [fatArea, 'Too large to add. Draw a smaller area.']
+  ] as const) {
+    ok(isRefInput(x), `pre-check: ${want} is valid in shape`)
+    let threw = false
+    try {
+      serializeContext([{ version: 1, ref: { ...x, id: 'r1' } as ContextReference }], '', { packetId: null })
+    } catch {
+      threw = true
+    }
+    ok(threw, `pre-check: record() would throw for ${want}`)
+    equal(diagramBlocked(x, true), want, `pre-check: blocked as ${want}`)
+  }
+  equal(diagramBlocked({ ...base, parts: Array.from({ length: 31 }, (_, i) => ({ kind: 'node' as const, id: `n${i}` })) }, true), 'Too many to add: 31 parts, 20 max', 'pre-check: 21 or more parts')
+  equal(diagramBlocked({ ...base, type: 'gantt', labels: Array.from({ length: 52 }, (_, i) => ({ text: `t${i}` })) }, true), 'Too many labels: 52, 40 max. Draw a smaller area.', 'pre-check: 41 or more labels')
+  equal(diagramBlocked({ ...base, type: 'gantt', labels: [] }, false), 'No labels inside. Draw around some text.', 'pre-check: an empty area with pictures off')
+  equal(diagramBlocked({ ...base, type: 'gantt', labels: [] }, true), undefined, 'pre-check: an empty area with pictures on adds the picture')
+  equal(diagramBlocked(one as Extract<RefInput, { kind: 'diagram' }>, false), undefined, 'pre-check: one part adds')
 }

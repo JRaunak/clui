@@ -13,6 +13,7 @@ import { requestSurfaceFocus, setPointing, takePoint, takeSurfaceFocus, usePoint
 import { reducedMotion, viaOf, type Via } from '../../lib/motion'
 import { SelectionBar } from './SelectionBar'
 import { POINT_HINT, POINT_OFF, selectedText } from '../../lib/refCopy'
+import { SourcePointedParts } from './PreviewPointed'
 import { BANNER, baseOf, DocState, FIND_MAX, FLASH_MS, openDefault, openEditor, rangeText, SelectionNotice, TEXT_BTN, toLines, useFileDoc, useFileStatus, useFind, VIEW_SETTLE_MS, type Lines } from './fileDoc'
 import { clearNoPreview, useNoPreview } from '../../lib/presentation'
 import { findRe } from '../../lib/find'
@@ -627,6 +628,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
           )}
         </div>
       )}
+      <SourcePointedParts handleId={handleId} tabId={tabId} />
       <div
         ref={bodyRef}
         role="region"

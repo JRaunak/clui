@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { refsOf, useActive, useSession } from '../../store'
-import { CROP_MAX_EDGE } from '../../../../shared/annotate'
-import { imagePx, refKey, VISUAL_MAX, type DraftReference, type DraftVisual, type RefInput, type SourceVersion } from '../../../../shared/context'
+import { imagePx, refKey, type DraftReference, type RefInput, type SourceVersion } from '../../../../shared/context'
 import { MAX_PIXELS, tooLarge, type ImageFormat } from '../../../../shared/imageHead'
 import type { Refusal } from '../../../../shared/files'
 import { Button } from '../Button'
@@ -23,6 +22,7 @@ import {
   centreOf,
   clampScale,
   clampView,
+  cropOf,
   densityOf,
   easing,
   fileSize,
@@ -90,36 +90,6 @@ async function stillOf(url: string, type: string): Promise<Still | null> {
   } finally {
     dec.close()
   }
-}
-
-/** The region's pixels as shown, from the element the user sees: `drawImage` takes an `<img>` after EXIF orientation,
- *  and draws an SVG as vectors at the size asked. */
-function cropOf(src: CanvasImageSource, natural: Size, r: NonNullable<Picked>['region'] & {}, svg: boolean): DraftVisual | null {
-  const sx = r.x * natural.w
-  const sy = r.y * natural.h
-  const sw = Math.max(1, r.w * natural.w)
-  const sh = Math.max(1, r.h * natural.h)
-  const long = Math.max(sw, sh)
-  let k = svg ? Math.min(CROP_MAX_EDGE, 4 * long) / long : Math.min(1, CROP_MAX_EDGE / long)
-  for (let i = 0; i < 6; i++, k *= 0.75) {
-    const w = Math.max(1, Math.round(sw * k))
-    const h = Math.max(1, Math.round(sh * k))
-    const c = document.createElement('canvas')
-    c.width = w
-    c.height = h
-    const g = c.getContext('2d', { willReadFrequently: true })
-    if (!g) return null
-    g.drawImage(src, sx, sy, sw, sh, 0, 0, w, h)
-    const px = g.getImageData(0, 0, w, h).data
-    let alpha = false
-    for (let j = 3; j < px.length && !alpha; j += 4) alpha = px[j] !== 255
-    const mimeType = alpha ? 'image/png' : 'image/jpeg'
-    const url = alpha ? c.toDataURL(mimeType) : c.toDataURL(mimeType, 0.85)
-    const data = url.slice(url.indexOf(',') + 1)
-    // A noisy region with transparency can encode past the packet's limit; a smaller copy still shows it.
-    if (data.length <= VISUAL_MAX) return { id: crypto.randomUUID(), data, mimeType, w, h }
-  }
-  return null
 }
 
 const sameSel = (a: Picked, b: Picked): boolean => JSON.stringify(a) === JSON.stringify(b)

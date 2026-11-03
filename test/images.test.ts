@@ -128,6 +128,12 @@ const png = (w: number, h: number, extra: number[] = [], end = true): Uint8Array
   const visual = { id: 'v', data: 'QUJD', mimeType: 'image/png', w: 4, h: 4 }
   ok(!!parseOutgoing({ text: '', now: false, refs: [{ ref: { ...region, id: 'r1' }, visual }], attachments: [] }), 'packet: a region carries its picture')
   equal(parseOutgoing({ text: '', now: false, refs: [{ ref: { ...point, id: 'r1' }, visual }], attachments: [] }), null, 'packet: a point never does')
+  const diagram = { kind: 'diagram', path: '/w/flow.mmd', sourceVersion: 'sha256:9d1c0f3a7b2e4c58a6f1e0d93b7c2a41', lines: { start: 1, end: 12 } } as const
+  const parts = { ...diagram, id: 'r1', type: 'flowchart', parts: [{ kind: 'node', id: 'A', label: 'Start', line: 2 }] }
+  const area = { ...diagram, id: 'r2', path: '/w/gantt.mmd', type: 'gantt', labels: [{ text: 'Design', line: 5 }] }
+  ok(!!parseOutgoing({ text: '', now: false, refs: [{ ref: parts, visual }], attachments: [] }), 'packet: diagram parts carry their picture')
+  ok(!!parseOutgoing({ text: '', now: false, refs: [{ ref: area, visual }], attachments: [] }), 'packet: a diagram area carries its picture')
+  ok(!!parseOutgoing({ text: '', now: false, refs: [{ ref: parts }], attachments: [] }), 'packet: a diagram ref without a picture')
   let version = V as string
   const deps = { byteVersion: async () => ({ ok: true, version }) } as unknown as PacketDeps
   equal((await validateRefs(deps, 'h', [{ ref: { ...region, id: 'r1' } }])).length, 0, 'validate: the same bytes pass')

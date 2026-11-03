@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { GutterNum, PointedRow } from '../Markdown'
-import { DiagramContext, MermaidDiagram, type DiagramHost } from '../Mermaid'
+import { DiagramContext, MermaidDiagram, useDiagramSelection, type DiagramHost } from '../Mermaid'
 import { SelectionBar } from './SelectionBar'
 import { baseOf, DocState, rangeText, SelectionNotice, STATE_BODY, toLines, useFileDoc, viewSourceAt } from './fileDoc'
 import { joinSpans, meets, type Span } from '../../lib/markdownDoc'
 import { setPointing, takePoint, takeSurfaceFocus, usePointing, usePointRequest } from '../../lib/surfaceFocus'
-import { POINT_BLOCK_HINT, POINT_OFF, selectedText } from '../../lib/refCopy'
+import { POINT_AREA_HINT, POINT_AREA_SAID, POINT_BLOCK_HINT, POINT_OFF, POINT_PARTS_HINT, POINT_PARTS_SAID, selectedText } from '../../lib/refCopy'
 
 const INNER = 'relative isolate py-6 pl-12 pr-6 [--gut:3rem] @max-[520px]/md:py-4 @max-[520px]/md:pl-10 @max-[520px]/md:pr-4 @max-[520px]/md:[--gut:2.5rem]'
 // The diagram is the column's only block, so a band across it is the column less its padding.
@@ -26,6 +26,11 @@ export function MermaidSurface({ handleId, tabId }: { handleId: string; tabId: s
     return null
   }, [text])
   const [state, setState] = useState<'pending' | 'drawn' | 'failed'>('pending')
+  const [mode, setMode] = useState<'parts' | 'area' | null>(null)
+  const onState = useCallback((s: 'pending' | 'drawn' | 'failed', m: 'parts' | 'area' | null) => {
+    setState(s)
+    setMode(m)
+  }, [])
   const drawn = state === 'drawn'
   const covered = !!selection && !!whole && selection.start <= whole.start && whole.end <= selection.end
   const pointed = !!highlight && !!whole && meets(whole, highlight)
@@ -45,16 +50,27 @@ export function MermaidSurface({ handleId, tabId }: { handleId: string; tabId: s
   const pickRef = useRef(pick)
   pickRef.current = pick
   const [held] = useState((): DiagramHost['held'] => new Map())
+  const pointing = usePointing(tabId)
+  const escape = (): void => {
+    if (selection || highlight || diagram.active || tab?.highlight) {
+      anchor.current = null
+      return setSelection(null)
+    }
+    if (!pointing) return
+    setPointing(tabId, false)
+    clearTimeout(selSay.current)
+    say(POINT_OFF)
+  }
+  const diagram = useDiagramSelection({ handleId, tabId, path, revision: doc.t === 'text' ? doc.revision : null, say, selSay, escape })
   const host = useMemo<DiagramHost>(
-    () => ({ selection, pointed: highlight, pick: (l, shift) => pickRef.current(l, shift), viewSource: (line, via) => viewSourceAt(handleId, tabId, line, via), held }),
-    [selection, highlight, handleId, tabId, held]
+    () => ({ selection, pointed: highlight, pick: (l, shift) => pickRef.current(l, shift), viewSource: (line, via) => viewSourceAt(handleId, tabId, line, via), held, ...diagram.host }),
+    [selection, highlight, handleId, tabId, held, diagram.host]
   )
 
   useLayoutEffect(() => {
     blockEl.current?.querySelector('[data-num]')?.toggleAttribute('data-sel', covered)
   }, [covered, drawn])
 
-  const pointing = usePointing(tabId)
   const asked = usePointRequest(tabId)
   useLayoutEffect(() => {
     if (!asked || doc.t === 'loading' || !takePoint(tabId)) return
@@ -65,29 +81,26 @@ export function MermaidSurface({ handleId, tabId }: { handleId: string; tabId: s
     }
     if (!whole) return say('This file has no lines to point at.')
     setPointing(tabId, true)
-    bodyEl.current?.focus({ preventScroll: true })
-    say("Pointing. Click a block's line number, or press Shift and an arrow key, to select. Enter adds it.")
+    // An area is drawn from the drawing's own keys, so it takes the focus.
+    const drawing = mode === 'area' ? bodyEl.current?.querySelector<HTMLElement>('[data-ui="mermaid-scroll"]') : null
+    ;(drawing ?? bodyEl.current)?.focus({ preventScroll: true })
+    say(mode === 'parts' ? POINT_PARTS_SAID : mode === 'area' ? POINT_AREA_SAID : "Pointing. Click a block's line number, or press Shift and an arrow key, to select. Enter adds it.")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asked, doc.t, whole])
   useEffect(() => () => setPointing(tabId, false), [tabId])
 
   const onKey = (e: KeyboardEvent): void => {
-    // A click on a wide diagram focuses its scroller, and Enter after it still adds.
-    if (e.target !== e.currentTarget && !(e.target instanceof Element && e.target.matches('[data-ui="mermaid-scroll"]'))) return
-    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && selection) {
+    // A click on a wide diagram focuses its scroller, and Enter after it still adds. The parts listbox and the area
+    // picker handle their own keys first and pass on the rest.
+    if (e.defaultPrevented || (e.target !== e.currentTarget && !(e.target instanceof Element && e.target.matches('[data-ui="mermaid-scroll"], [data-ui="mermaid-parts"]')))) return
+    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (selection || diagram.active)) {
       e.preventDefault()
-      return addSelection()
+      return selection ? addSelection() : diagram.host.add()
     }
     if (e.key === 'Escape') {
-      if (!selection && !highlight && !pointing) return
+      if (!selection && !highlight && !pointing && !diagram.active && !tab?.highlight) return
       e.preventDefault()
-      if (selection || highlight) {
-        anchor.current = null
-        return setSelection(null)
-      }
-      setPointing(tabId, false)
-      clearTimeout(selSay.current)
-      return say(POINT_OFF)
+      return escape()
     }
     if (!e.shiftKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || !whole) return
     e.preventDefault()
@@ -97,7 +110,7 @@ export function MermaidSurface({ handleId, tabId }: { handleId: string; tabId: s
   const onClick = (e: MouseEvent): void => {
     const t = e.target instanceof Element ? e.target : null
     if (t?.closest('[data-num]') && whole) return pick(whole, e.shiftKey)
-    if (!selection || e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || t?.closest('button')) return
+    if (!(selection || diagram.active) || e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || t?.closest('button')) return
     if (!window.getSelection()?.isCollapsed) return
     anchor.current = null
     setSelection(null)
@@ -126,7 +139,7 @@ export function MermaidSurface({ handleId, tabId }: { handleId: string; tabId: s
         {drawn && pointed && <PointedRow label={`Claude pointed to ${rangeText(highlight!)}`} />}
         <div ref={blockEl} data-src={drawn ? `${whole.start}-${whole.end}` : undefined} onPointerEnter={(e) => e.pointerType === 'mouse' && showNum(true)} onPointerLeave={() => showNum(false)}>
           {drawn && <GutterNum line={1} />}
-          <MermaidDiagram code={text} firstLine={1} lastLine={whole.end} name={name} onState={setState} />
+          <MermaidDiagram code={text} firstLine={1} lastLine={whole.end} name={name} onState={onState} />
         </div>
         {drawn && covered && <div aria-hidden="true" className={`${BAND} bg-line-selected`} />}
         {drawn && pointed && (
@@ -139,6 +152,7 @@ export function MermaidSurface({ handleId, tabId }: { handleId: string; tabId: s
   }
 
   const hasText = doc.t === 'text'
+  const hint = mode === 'parts' ? POINT_PARTS_HINT : mode === 'area' ? POINT_AREA_HINT : POINT_BLOCK_HINT
   return (
     <div data-ui="mermaid-surface" className="flex h-full min-h-0 flex-col bg-bg pt-(--top-h)">
       <div
@@ -156,12 +170,15 @@ export function MermaidSurface({ handleId, tabId }: { handleId: string; tabId: s
         className="@container/md min-h-0 flex-1 overflow-y-auto"
       >
         {notice && <SelectionNotice notice={notice} onDismiss={() => setNotice(null)} />}
+        {diagram.notice}
         <DiagramContext.Provider value={host}>{content}</DiagramContext.Provider>
       </div>
-      {hasText && selection ? (
+      {hasText && diagram.bar ? (
+        diagram.bar
+      ) : hasText && selection ? (
         <SelectionBar label={selectedText(selection)} attached={inTarget} onAdd={addSelection} />
       ) : pointing && hasText ? (
-        <SelectionBar label={POINT_BLOCK_HINT} blocked={POINT_BLOCK_HINT} onBlocked={() => say(POINT_BLOCK_HINT)} attached={false} onAdd={addSelection} />
+        <SelectionBar label={hint} blocked={hint} onBlocked={() => say(hint)} attached={false} onAdd={addSelection} />
       ) : null}
       <span data-ui="mermaid-live" className="sr-only" aria-live="polite">
         {said}

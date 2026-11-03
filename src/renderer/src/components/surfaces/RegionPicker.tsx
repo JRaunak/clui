@@ -26,7 +26,7 @@ export const RegionPicker = forwardRef<
   PickerHandle,
   {
     viewport: RefObject<HTMLElement>
-    content: RefObject<HTMLElement>
+    content: RefObject<Element>
     basis: Size
     selection: Picked
     pointing: boolean
@@ -36,15 +36,18 @@ export const RegionPicker = forwardRef<
     onEnd: () => void
     /** The owner pans instead while this holds (Space). */
     panning: () => boolean
+    /** False where a point means nothing: a click is left to the content, and the first Shift and arrow draws a small
+     *  region instead of a point. */
+    points?: boolean
   }
->(function RegionPicker({ viewport, content, basis, selection, pointing, onChange, onAdd, onEnd, panning }, ref) {
+>(function RegionPicker({ viewport, content, basis, selection, pointing, onChange, onAdd, onEnd, panning, points = true }, ref) {
   const svg = useRef<SVGSVGElement>(null)
   const live = useRef<Picked | undefined>(undefined)
   // The keyboard's fixed corner and moving corner; a drag's press point is its anchor.
   const ends = useRef<{ a: P; b: P } | null>(null)
   const own = useRef<Picked>(null)
-  const latest = useRef({ selection, pointing, basis, onChange, onAdd, onEnd, panning })
-  latest.current = { selection, pointing, basis, onChange, onAdd, onEnd, panning }
+  const latest = useRef({ selection, pointing, basis, onChange, onAdd, onEnd, panning, points })
+  latest.current = { selection, pointing, basis, onChange, onAdd, onEnd, panning, points }
 
   const boxes = (): { v: DOMRect; c: DOMRect } | null => {
     const v = viewport.current?.getBoundingClientRect()
@@ -127,7 +130,9 @@ export const RegionPicker = forwardRef<
       const b = boxes()
       if (!b) return
       e.preventDefault()
-      vp.setPointerCapture(e.pointerId)
+      // Captured only once it's a drag, so a click still lands on what's under it.
+      if (latest.current.points) vp.setPointerCapture(e.pointerId)
+      else if (!vp.contains(document.activeElement)) vp.focus({ preventScroll: true })
       const p = norm(e, b)
       drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, a: { x: clamp01(p.x), y: clamp01(p.y) }, moved: false }
     }
@@ -136,6 +141,7 @@ export const RegionPicker = forwardRef<
       if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < CLICK_PX) return
       const b = boxes()
       if (!b) return
+      if (!drag.moved && !vp.hasPointerCapture(e.pointerId)) vp.setPointerCapture(e.pointerId)
       drag.moved = true
       const p = norm(e, b)
       live.current = regionOf(drag.a, { x: clamp01(p.x), y: clamp01(p.y) })
@@ -152,8 +158,14 @@ export const RegionPicker = forwardRef<
       if (d.moved && picked) {
         const p = norm(e, b)
         ends.current = { a: d.a, b: { x: clamp01(p.x), y: clamp01(p.y) } }
+        // The capture retargets the drag's click to the viewport, outside the content's own click handling, where an
+        // owner's click that clears the selection would undo the drag.
+        const eat = (c: MouseEvent): void => c.stopPropagation()
+        window.addEventListener('click', eat, { capture: true, once: true })
+        setTimeout(() => window.removeEventListener('click', eat, true))
         return emit(picked)
       }
+      if (!latest.current.points) return redraw()
       const p = norm(e, b)
       const onImage = p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1
       ends.current = onImage ? { a: p, b: p } : null
@@ -205,6 +217,12 @@ export const RegionPicker = forwardRef<
           const r = Math.min(b.c.right, b.v.right)
           const btm = Math.min(b.c.bottom, b.v.bottom)
           const c = { x: clamp01(((l + r) / 2 - b.c.left) / b.c.width), y: clamp01(((t + btm) / 2 - b.c.top) / b.c.height) }
+          if (!latest.current.points) {
+            const hx = STEP_PX / 2 / b.c.width
+            const hy = STEP_PX / 2 / b.c.height
+            ends.current = { a: { x: clamp01(c.x - hx), y: clamp01(c.y - hy) }, b: { x: clamp01(c.x + hx), y: clamp01(c.y + hy) } }
+            return emit(regionOf(ends.current.a, ends.current.b))
+          }
           ends.current = { a: c, b: c }
           return emit(pointOf(c))
         }

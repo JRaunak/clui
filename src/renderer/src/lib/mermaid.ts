@@ -1,4 +1,6 @@
 import type { Mermaid, MermaidConfig } from 'mermaid'
+import { DIAGRAM_NAME_MAX, DIAGRAM_SECTIONS_MAX, type BlockKeyword, type DiagramFamily, type DiagramLabel, type DiagramPart, type LineRange } from '../../../shared/context'
+import { stripControls } from '../../../shared/surface-tools'
 
 export type Theme = 'dark' | 'light'
 export const themeNow = (): Theme => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark')
@@ -241,11 +243,359 @@ export const sourceIdOf = (elementId: string, renderId: string): string | null =
   return elementId.startsWith(prefix) ? elementId.slice(prefix.length).replace(/-\d+$/, '') : null
 }
 
+/** A part of a drawn diagram. `key` is Clui's own and never sent: `n:<id>`, `g:<id>`, `e:<edgeId>`, `p:<alias>`,
+ *  `m:<n>`, `t:<n>`, `b:<endN>`. `line` and `lines` are 0-based lines of the diagram's text. */
+export interface Part {
+  key: string
+  kind: DiagramPart['kind']
+  id?: string
+  from?: string
+  to?: string
+  nth?: number
+  label?: string
+  fromLabel?: string
+  toLabel?: string
+  line?: number
+  keyword?: BlockKeyword
+  sections?: string[]
+  lines?: LineRange
+}
+
+export const TYPEAHEAD_MS = 500
+
+/** The typed string after `key`, which starts over once a pause runs past `TYPEAHEAD_MS`. */
+export function typedAfter(t: { text: string; at: number }, key: string, now: number): { text: string; at: number } {
+  return { text: now - t.at > TYPEAHEAD_MS ? key.toLowerCase() : t.text + key.toLowerCase(), at: now }
+}
+
+/**
+ * The listbox type-ahead, wrapping, by label and then by id. A single character starts past `from`, so pressing a
+ * letter again cycles; a longer string starts at `from`, so the option still matching keeps the focus.
+ */
+export function typeahead(parts: readonly Part[], from: number, text: string): number {
+  const n = parts.length
+  const start = text.length === 1 ? from + 1 : from
+  for (const field of ['label', 'id'] as const)
+    for (let k = 0; k < n; k++) {
+      const i = (start + k) % n
+      if (parts[i]?.[field]?.toLowerCase().startsWith(text)) return i
+    }
+  return -1
+}
+
+/** The diagram types whose parts have ids that hold across renders. */
+export const familyOf = (diagramType: string): DiagramFamily | null =>
+  /^(flowchart|graph)/.test(diagramType) ? 'flowchart' : /^class/.test(diagramType) ? 'class' : /^state/.test(diagramType) ? 'state' : diagramType === 'er' ? 'er' : diagramType === 'sequence' ? 'sequence' : null
+
+/** The diagram's keyword as its source writes it: the first word after front matter, directives and comments. */
+export function sourceKeyword(text: string): string | null {
+  const src = text.replace(/\r\n?/g, '\n').replace(FRONT, '').replace(DIRECTIVE, '').replace(COMMENT, '')
+  return /^\s*([A-Za-z][\w-]{0,39})(?![\w-])/.exec(src)?.[1] ?? null
+}
+
+const clip = (s: string, n: number): string => {
+  const cp = [...stripControls(s).replace(/\s+/g, ' ').trim()]
+  return cp.length > n ? `${cp.slice(0, n - 1).join('')}…` : cp.join('')
+}
+const LABEL_CLIP = 80
+const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** The diagram's lines as the proofs read them: front matter blanked, so indices stay the text's. */
+function proofLines(text: string): string[] {
+  const src = text.replace(/\r\n?/g, '\n')
+  const fm = FRONT.exec(src)?.[0].replace(/\n$/, '').split('\n').length ?? 0
+  return src.split('\n').map((l, i) => (i < fm ? '' : l))
+}
+const comment = (l: string): boolean => l.trimStart().startsWith('%%')
+
+/** The one line that `re` matches outside `%%` comments, or undefined for none or several. */
+function onlyLine(lines: readonly string[], re: RegExp): number | undefined {
+  let at: number | undefined
+  for (let i = 0; i < lines.length; i++) {
+    if (comment(lines[i]) || !re.test(lines[i])) continue
+    if (at !== undefined) return undefined
+    at = i
+  }
+  return at
+}
+
+const DECLARES: Record<Exclude<DiagramFamily, 'sequence'>, Partial<Record<'node' | 'group', (id: string) => RegExp>>> = {
+  flowchart: { group: (id) => new RegExp(`^\\s*subgraph\\s+${id}(?=[\\s\\[]|$)`) },
+  class: { node: (id) => new RegExp(`^\\s*class\\s+${id}\\b`), group: (id) => new RegExp(`^\\s*namespace\\s+${id}\\b`) },
+  state: { node: (id) => new RegExp(`^\\s*state\\s+(?:"[^"]*"\\s+as\\s+)?${id}\\b`), group: (id) => new RegExp(`^\\s*state\\s+(?:"[^"]*"\\s+as\\s+)?${id}\\b`) },
+  er: { node: (id) => new RegExp(`^\\s*${id}\\s*(?:\\[[^\\]]*\\])?\\s*\\{`) }
+}
+
+type Db = Record<string, unknown>
+const call = <T>(db: Db, name: string): T | undefined => (typeof db[name] === 'function' ? (db[name] as () => T).call(db) : undefined)
+const labelOf = (text: unknown, id?: string): { label?: string } => {
+  const l = typeof text === 'string' ? clip(text, LABEL_CLIP) : ''
+  return l && l !== id ? { label: l } : {}
+}
+const counter = (): ((k: string) => number) => {
+  const seen = new Map<string, number>()
+  return (k) => {
+    const n = seen.get(k) ?? 0
+    seen.set(k, n + 1)
+    return n
+  }
+}
+
+/**
+ * The parts of a diagram, from mermaid's parsed `db` and never from the drawing, in the order the keyboard and the
+ * wire use. `nodes` is the flowchart's `nodeLines`. Null when the db doesn't have the shape this version of mermaid
+ * gives it, which makes the diagram an area type.
+ */
+export function partsOf(family: DiagramFamily, db: unknown, text: string, nodes: ReadonlyMap<string, number> = new Map()): Part[] | null {
+  if (!db || typeof db !== 'object') return null
+  const lines = proofLines(text)
+  const parts = family === 'sequence' ? sequenceParts(db as Db, lines) : graphParts(family, db as Db, lines, nodes)
+  if (!parts) return null
+  const drawn = new Map<string, string>()
+  for (const p of parts) if (p.id && p.label && !drawn.has(p.id)) drawn.set(p.id, p.label)
+  for (const p of parts) {
+    if (p.kind !== 'edge' && p.kind !== 'message') continue
+    const from = drawn.get(p.from!)
+    const to = drawn.get(p.to!)
+    if (from) p.fromLabel = from
+    if (to) p.toLabel = to
+  }
+  return parts
+}
+
+interface GraphNode { id: string; label?: unknown; isGroup?: boolean; shape?: string }
+interface GraphEdge { id: string; start: string; end: string; label?: unknown }
+// Drawn but not parts: notes, and the bars between a state's concurrent regions.
+const NOT_PARTS = new Set(['note', 'divider'])
+
+function graphParts(family: Exclude<DiagramFamily, 'sequence'>, db: Db, lines: readonly string[], nodes: ReadonlyMap<string, number>): Part[] | null {
+  const data = call<{ nodes?: GraphNode[]; edges?: GraphEdge[] }>(db, 'getData')
+  if (!Array.isArray(data?.nodes) || !Array.isArray(data.edges)) return null
+  // A db node id to its source id; ER's nodes are `entity-<NAME>-<i>`.
+  const source = new Map<string, string>()
+  if (family === 'er') {
+    const ents = call<Map<string, { id: string }>>(db, 'getEntities')
+    if (!(ents instanceof Map)) return null
+    for (const [name, e] of ents) source.set(e.id, name)
+  }
+  const out: Part[] = []
+  const keys = new Set<string>()
+  for (const n of data.nodes) {
+    if (family === 'state' && (n.shape === 'stateStart' || n.shape === 'stateEnd')) {
+      source.set(n.id, '[*]')
+      continue
+    }
+    if (NOT_PARTS.has(n.shape ?? '')) continue
+    const id = family === 'er' ? source.get(n.id) : n.id
+    if (!id) continue
+    source.set(n.id, id)
+    const kind = n.isGroup ? 'group' : 'node'
+    const key = `${kind === 'group' ? 'g' : 'n'}:${id}`
+    if (keys.has(key)) continue
+    keys.add(key)
+    const declares = DECLARES[family][kind]
+    const line = family === 'flowchart' && kind === 'node' ? nodes.get(id) : declares ? onlyLine(lines, declares(esc(id))) : undefined
+    out.push({ key, kind, id, ...labelOf(n.label, id), ...(line === undefined ? {} : { line }) })
+  }
+  const nth = counter()
+  for (const e of data.edges) {
+    const from = source.get(e.start)
+    const to = source.get(e.end)
+    if (!from || !to || keys.has(`e:${e.id}`)) continue
+    keys.add(`e:${e.id}`)
+    out.push({ key: `e:${e.id}`, kind: 'edge', from, to, nth: nth(`${from}\0${to}`), ...labelOf(e.label) })
+  }
+  return out
+}
+
+interface Message { id: string | number; type: number; from?: string; to?: string; message?: unknown }
+/** Sequence `db.LINETYPE` on mermaid 12.2.0. `rect` (22) pushes and pops like a block but isn't one. */
+const OPENS: Record<number, BlockKeyword | null> = { 10: 'loop', 12: 'alt', 15: 'opt', 19: 'par', 27: 'critical', 30: 'break', 32: 'par', 22: null }
+const CLOSES: Record<number, number> = { 10: 11, 12: 14, 15: 16, 19: 21, 32: 21, 27: 29, 30: 31, 22: 23 }
+const SECTIONS = new Set([13, 20, 28])
+const ENDS = new Set(Object.values(CLOSES))
+// Notes, activations and autonumber ride in the same list without being messages.
+const NOT_MESSAGES = new Set([2, 17, 18, 26])
+const isControl = (t: number): boolean => t in OPENS || SECTIONS.has(t) || ENDS.has(t)
+const textOf = (m: Message): string => (typeof m.message === 'string' ? m.message : '')
+
+function sequenceParts(db: Db, lines: readonly string[]): Part[] | null {
+  const actors = call<Map<string, { description?: unknown }>>(db, 'getActors')
+  const msgs = call<Message[]>(db, 'getMessages')
+  if (!(actors instanceof Map) || !Array.isArray(msgs)) return null
+  const out: Part[] = []
+  for (const [alias, a] of actors) {
+    const line = onlyLine(lines, new RegExp(`^\\s*(participant|actor)\\s+${esc(alias)}(?=\\s|$)`))
+    out.push({ key: `p:${alias}`, kind: 'participant', id: alias, ...labelOf(a.description, alias), ...(line === undefined ? {} : { line }) })
+  }
+  const items: { at: number; part: Part }[] = []
+  const stack: { at: number; type: number; keyword: BlockKeyword | null; label: string; sections: string[] }[] = []
+  const messageNth = counter()
+  const noteNth = counter()
+  let balanced = true
+  msgs.forEach((m, at) => {
+    const id = String(m.id)
+    if (m.type in OPENS) return void stack.push({ at, type: m.type, keyword: OPENS[m.type], label: clip(textOf(m), LABEL_CLIP), sections: [] })
+    if (SECTIONS.has(m.type)) {
+      const top = stack.at(-1)
+      if (!top) balanced = false
+      else if (top.sections.length < DIAGRAM_SECTIONS_MAX) top.sections.push(clip(textOf(m), LABEL_CLIP))
+      return
+    }
+    if (ENDS.has(m.type)) {
+      const top = stack.pop()
+      if (!top || CLOSES[top.type] !== m.type) return void (balanced = false)
+      if (!top.keyword) return
+      const sections = top.sections.filter(Boolean)
+      items.push({ at: top.at, part: { key: `b:${id}`, kind: 'block', keyword: top.keyword, ...(top.label ? { label: top.label } : {}), ...(sections.length ? { sections } : {}) } })
+      return
+    }
+    if (m.type === 2) {
+      const label = clip(textOf(m), LABEL_CLIP)
+      if (label) items.push({ at, part: { key: `t:${id}`, kind: 'note', label, nth: noteNth(label) } })
+      return
+    }
+    if (NOT_MESSAGES.has(m.type) || !m.from || !m.to) return
+    items.push({ at, part: { key: `m:${id}`, kind: 'message', from: m.from, to: m.to, nth: messageNth(`${m.from}\0${m.to}`), ...labelOf(m.message) } })
+  })
+  if (stack.length) balanced = false
+  items.sort((a, b) => a.at - b.at)
+  const spans = balanced ? blockLines(lines, msgs) : null
+  const blockNth = counter()
+  for (const { part } of items) {
+    if (part.kind === 'block') {
+      if (!balanced) continue
+      part.nth = blockNth(`${part.keyword}\0${part.label ?? ''}`)
+      const l = spans?.get(part.key.slice(2))
+      if (l) part.lines = l
+    }
+    out.push(part)
+  }
+  return out
+}
+
+const OPENER = /^\s*(loop|alt|opt|par|par_over|critical|break|rect|box)\b\s*(.*)$/
+const SECTION = /^\s*(else|and|option)\b\s*(.*)$/
+const END = /^\s*end\s*$/
+const OPEN_TYPE: Record<string, number> = { loop: 10, alt: 12, opt: 15, par: 19, par_over: 32, critical: 27, break: 30, rect: 22 }
+const SECTION_TYPE: Record<string, number> = { else: 13, and: 20, option: 28 }
+const collapse = (s: string): string => s.replace(/\s+/g, ' ').trim()
+
+/**
+ * Each block's opening and `end` lines, by the END message's id, when the source's block keywords line up one to one
+ * with the db's control messages, text included. Null otherwise: one miscount would shift every later block.
+ */
+export function blockLines(lines: readonly string[], msgs: readonly Message[]): Map<string, LineRange> | null {
+  const tokens: { type: number; text: string; line: number }[] = []
+  const open: { type: number | 'box' }[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]
+    if (comment(l)) continue
+    let m: RegExpExecArray | null
+    if ((m = OPENER.exec(l))) {
+      if (m[1] === 'box') open.push({ type: 'box' })
+      else {
+        open.push({ type: OPEN_TYPE[m[1]] })
+        tokens.push({ type: OPEN_TYPE[m[1]], text: collapse(m[2]), line: i })
+      }
+    } else if ((m = SECTION.exec(l))) tokens.push({ type: SECTION_TYPE[m[1]], text: collapse(m[2]), line: i })
+    else if (END.test(l)) {
+      const top = open.pop()
+      if (!top) return null
+      if (top.type !== 'box') tokens.push({ type: CLOSES[top.type], text: '', line: i })
+    }
+  }
+  const control = msgs.filter((m) => isControl(m.type))
+  if (open.length || control.length !== tokens.length) return null
+  const out = new Map<string, LineRange>()
+  const starts: number[] = []
+  for (let k = 0; k < tokens.length; k++) {
+    const t = tokens[k]
+    const m = control[k]
+    if (m.type !== t.type) return null
+    if (ENDS.has(t.type)) {
+      const start = starts.pop()
+      if (start === undefined) return null
+      out.set(String(m.id), { start, end: t.line })
+    } else {
+      if (collapse(textOf(m)) !== t.text) return null
+      if (t.type in OPENS) starts.push(t.line)
+    }
+  }
+  return out
+}
+
+/** A part as the wire carries it, its lines made the file's by `firstLine`. */
+export function wirePart(p: Part, firstLine: number): DiagramPart {
+  const label = p.label ? { label: p.label } : {}
+  switch (p.kind) {
+    case 'node':
+    case 'group':
+    case 'participant':
+      return { kind: p.kind, id: p.id!, ...label, ...(p.line === undefined ? {} : { line: firstLine + p.line }) }
+    case 'edge':
+    case 'message':
+      return { kind: p.kind, from: p.from!, to: p.to!, nth: p.nth!, ...label, ...(p.fromLabel ? { fromLabel: p.fromLabel } : {}), ...(p.toLabel ? { toLabel: p.toLabel } : {}) }
+    case 'note':
+      return { kind: 'note', label: p.label!, nth: p.nth! }
+    case 'block':
+      return {
+        kind: 'block',
+        keyword: p.keyword!,
+        ...label,
+        nth: p.nth!,
+        ...(p.sections ? { sections: p.sections } : {}),
+        ...(p.lines ? { lines: { start: firstLine + p.lines.start, end: firstLine + p.lines.end } } : {})
+      }
+  }
+}
+
+/** A `<text>` or `foreignObject` the drawing shows, its box in screen pixels from the drawing's top left. */
+export interface LabelCandidate { text: string; x: number; y: number; w: number; h: number; shown: boolean }
+export interface Box { x: number; y: number; w: number; h: number }
+const TOLERANCE = 2
+
+/** The texts drawn inside `area`, once each where a label is drawn twice in one place, in reading order. */
+export function labelsIn(cands: readonly LabelCandidate[], area: Box): string[] {
+  const kept: (LabelCandidate & { cx: number; cy: number })[] = []
+  for (const c of cands) {
+    const text = collapse(c.text)
+    if (!c.shown || c.w <= 0 || c.h <= 0 || !text) continue
+    if (c.x < area.x - TOLERANCE || c.y < area.y - TOLERANCE || c.x + c.w > area.x + area.w + TOLERANCE || c.y + c.h > area.y + area.h + TOLERANCE) continue
+    const cx = c.x + c.w / 2
+    const cy = c.y + c.h / 2
+    if (kept.some((k) => k.text === text && Math.abs(k.cx - cx) <= TOLERANCE && Math.abs(k.cy - cy) <= TOLERANCE)) continue
+    kept.push({ ...c, text, cx, cy })
+  }
+  const row = (c: LabelCandidate): number => Math.round(c.y / 4)
+  return kept.sort((a, b) => row(a) - row(b) || a.x - b.x).map((c) => c.text)
+}
+
+/**
+ * Each label with the 0-based line of the text that holds it as a whole word, when exactly one line does. Generated
+ * text (an axis date, a percentage) and a label written on two lines get none.
+ */
+export function labelLines(text: string, labels: readonly string[]): { text: string; line?: number }[] {
+  const lines = proofLines(text)
+  return labels.map((t) => {
+    const line = onlyLine(lines, new RegExp(`(?<![\\p{L}\\p{N}_])${esc(t)}(?![\\p{L}\\p{N}_])`, 'u'))
+    return { text: clip(t, DIAGRAM_NAME_MAX), ...(line === undefined ? {} : { line }) }
+  })
+}
+
+/** An area's labels as the wire carries them, their lines made the file's by `firstLine`. */
+export const wireLabels = (text: string, labels: readonly string[], firstLine: number): DiagramLabel[] =>
+  labelLines(text, labels).map((l) => (l.line === undefined ? { text: l.text } : { text: l.text, line: firstLine + l.line }))
+
 export interface Drawn {
   svg: string
   id: string
   type: string
+  /** The keyword the source opens with, which a reference names its type by. */
+  keyword: string
   nodes: ReadonlyMap<string, number>
+  /** Null on a type without stable ids, or when its reparse failed: the drawing then selects areas. */
+  parts: readonly Part[] | null
 }
 export type Outcome = { ok: true; drawn: Drawn } | { ok: false; why: Failure }
 
@@ -326,12 +676,19 @@ async function draw(text: string, theme: Theme): Promise<Outcome> {
   try {
     const { svg, diagramType } = await m.render(id, text)
     let nodes: ReadonlyMap<string, number> = new Map()
-    if (/^flowchart|^graph/.test(diagramType)) {
+    let parts: Part[] | null = null
+    const family = familyOf(diagramType)
+    if (family) {
       const db = (await m.mermaidAPI.getDiagramFromText(text).catch(() => null))?.db as { getVertices?: () => Map<string, { text?: string }> } | undefined
-      const vertices = db?.getVertices?.()
+      const vertices = family === 'flowchart' ? db?.getVertices?.() : undefined
       if (vertices) nodes = nodeLines(text, vertices)
+      try {
+        parts = partsOf(family, db, text, nodes)
+      } catch {
+        parts = null
+      }
     }
-    out = { ok: true, drawn: { svg, id, type: diagramType, nodes } }
+    out = { ok: true, drawn: { svg, id, type: diagramType, keyword: sourceKeyword(text) ?? 'diagram', nodes, parts } }
   } catch (e) {
     out = { ok: false, why: failureOf(e, text) }
   }

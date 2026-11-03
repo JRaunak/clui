@@ -28,11 +28,12 @@ export function signalRefs(handleId: string, target: RefTarget, s: Signal): void
 /** A surface's Add to message. `say` is the source's live region, where focus stays; a duplicate moves focus to
  *  the existing chip, so it's announced from the composer. `bytes` is a change ref's mint size; `visual` an image
  *  region's picture. */
-export function addFromSurface(handleId: string, input: RefInput, say: (t: string) => void, extra?: { bytes?: number; visual?: DraftVisual }): AddRefResult {
+export function addFromSurface(handleId: string, input: RefInput, say: (t: string) => void, extra?: { bytes?: number; visual?: DraftVisual; unpictured?: boolean }): AddRefResult {
   const st = useSession.getState()
   const target = st.sessions[handleId]?.referenceEditTarget ?? null
-  const r = st.addRef(handleId, input, extra)
-  if (r.status === 'added') say(addedText(input, target !== null))
+  const { unpictured, ...opts } = extra ?? {}
+  const r = st.addRef(handleId, input, opts)
+  if (r.status === 'added') say(addedText(input, target !== null, unpictured))
   else if (r.status === 'duplicate') {
     signalRefs(handleId, target, { focus: r.id, note: 'Already attached.' })
     st.announceRefs(handleId, `Already attached: ${spokenRef(input)}`)
@@ -113,6 +114,9 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
       st.setSurfaceView(handleId, id, { ...(source ? { mode: 'preview' as const } : {}), selection: { range, ...(sheet === undefined ? {} : { sheet }), sourceVersion } })
       return
     }
+    // The parts are ids in the record and keys in the drawing, so the diagram opens at its lines without a selection.
+    case 'diagram':
+      return openFileAt(handleId, r.path, { line: r.lines.start }, false, via)
     case 'change': {
       const req = mintedRequest(handleId, r.changeRef)
       requestSurfaceFocus('diff', via)
