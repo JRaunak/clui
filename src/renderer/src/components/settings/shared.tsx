@@ -1,36 +1,25 @@
-import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { DEFAULT_SETTINGS, type CluiSettings, type SettingsKey, type SettingsSource } from '../../../../shared/settings'
-import { useSession, type SettingsSection, type SettingsSubs } from '../../store'
+import { useCallback, useEffect, useId, useRef, useState, type InputHTMLAttributes, type ReactNode } from 'react'
+import type { CluiSettings, SettingsKey, SettingsSource } from '../../../../shared/settings'
+import type { SettingsSection } from '../../store'
 import { useSettings } from '../../lib/settings'
-import type { StagedKey } from './draft'
+import { useEscape } from '../../lib/useEscape'
 import { IconCheck } from '../Icon'
 import { FieldError } from '../LoginFields'
-
-export type DraftProps = {
-  settings: CluiSettings
-  sources: Record<SettingsKey, SettingsSource>
-  set: <K extends StagedKey>(key: K, value: CluiSettings[K]) => void
-  reset: (key: SettingsKey) => void
-  isOverridden: (key: SettingsKey) => boolean
-}
 
 export const TIMING = 'Applies to new and resumed sessions. Running sessions keep what they started with.'
 export const SAVE_FAILED = "Couldn't save this setting. Try again."
 
 const SCROLL = 'overflow-y-auto [scrollbar-gutter:stable] py-4 pl-5 pr-3'
 
-/** Every pane stays mounted while Settings is open, so a switch keeps its drafts, forms and scroll.
- *  A `flush` pane holds a SubNav and SubPanes, which scroll by themselves under the fixed tab row. */
+/** Every pane stays mounted while Settings is open, so a switch keeps its forms and scroll. */
 export function Pane({
   section,
   active,
-  flush,
   className = '',
   children
 }: {
   section: SettingsSection
   active: boolean
-  flush?: boolean
   className?: string
   children: ReactNode
 }): JSX.Element {
@@ -40,135 +29,54 @@ export function Pane({
       id={`settings-panel-${section}`}
       aria-labelledby={`settings-tab-${section}`}
       hidden={!active}
-      className={flush ? 'flex h-full flex-col' : `h-full ${SCROLL} ${className}`}
+      className={`h-full ${SCROLL} ${className}`}
     >
       {children}
     </div>
   )
 }
 
-type Sub = keyof SettingsSubs
-
-// Not `settings-tab-*`: Settings focuses `settings-tab-${section}` whenever the section changes.
-export const subTabId = (section: Sub, sub: string): string => `settings-subtab-${section}-${sub}`
-const subPanelId = (section: Sub, sub: string): string => `settings-subpanel-${section}-${sub}`
-
-/** The tab a section's sub-nav shows, its first until one is picked during this open. */
-export function useSettingsSub<S extends Sub>(section: S, first: SettingsSubs[S]): SettingsSubs[S] {
-  return useSession((s) => s.settingsSub[section]) ?? first
-}
-
-/** A section's second tab row: the outer tablist's keyboard model turned sideways. */
-export function SubNav<S extends Sub>({
-  section,
-  label,
-  tabs,
-  value
-}: {
-  section: S
-  label: string
-  tabs: readonly { key: SettingsSubs[S]; label: string }[]
-  value: SettingsSubs[S]
-}): JSX.Element {
-  const openSettings = useSession((s) => s.openSettings)
-  const select = (key: SettingsSubs[S]): void => {
-    openSettings(section, key)
-    document.getElementById(subTabId(section, key))?.focus()
-  }
-  const onKey = (e: KeyboardEvent<HTMLDivElement>): void => {
-    const i = tabs.findIndex((t) => t.key === value)
-    const n = tabs.length
-    const next =
-      e.key === 'ArrowRight'
-        ? (i + 1) % n
-        : e.key === 'ArrowLeft'
-          ? (i - 1 + n) % n
-          : e.key === 'Home'
-            ? 0
-            : e.key === 'End'
-              ? n - 1
-              : e.key === 'Enter' || e.key === ' '
-                ? i
-                : -1
-    if (next < 0) return
-    e.preventDefault()
-    if (next !== i) select(tabs[next].key)
-  }
+/** A titled run of fields within a page. The heading takes focus so a deep link can land on it. */
+export function Group({ id, label, children }: { id: string; label: string; children: ReactNode }): JSX.Element {
   return (
-    <div className="flex shrink-0 px-5 pb-3 pt-4">
-      <div
-        role="tablist"
-        aria-orientation="horizontal"
-        aria-label={label}
-        onKeyDown={onKey}
-        className="inline-flex h-8 items-center gap-0.5 rounded-md border border-control-edge bg-control p-0.5"
-      >
-        {tabs.map(({ key, label }) => {
-          const active = key === value
-          return (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              id={subTabId(section, key)}
-              aria-controls={subPanelId(section, key)}
-              aria-selected={active}
-              tabIndex={active ? 0 : -1}
-              onClick={() => select(key)}
-              className="relative h-7 rounded px-3 text-label text-dim -outline-offset-2 pointer-fine:hover:text-content aria-selected:bg-bg-raised aria-selected:font-medium aria-selected:text-content aria-selected:after:absolute aria-selected:after:inset-x-2 aria-selected:after:bottom-0.5 aria-selected:after:h-0.5 aria-selected:after:rounded-full aria-selected:after:bg-content"
-            >
-              {label}
-            </button>
-          )
-        })}
-      </div>
-    </div>
+    <section aria-labelledby={id} className="flex flex-col gap-3">
+      <h3 id={id} tabIndex={-1} className="text-caps uppercase text-dim focus-visible:outline-none">
+        {label}
+      </h3>
+      <div className="flex flex-col gap-5">{children}</div>
+    </section>
   )
 }
 
-export function SubPane<S extends Sub>({
-  section,
-  sub,
-  active,
-  className,
-  children
-}: {
-  section: S
-  sub: SettingsSubs[S]
-  active: boolean
-  className: string
-  children: ReactNode
-}): JSX.Element {
-  return (
-    <div
-      role="tabpanel"
-      id={subPanelId(section, sub)}
-      aria-labelledby={subTabId(section, sub)}
-      hidden={!active}
-      className={`min-h-0 flex-1 ${SCROLL} ${className}`}
-    >
-      {children}
-    </div>
-  )
-}
+export const describedBy = (...ids: (string | false | undefined)[]): string | undefined => ids.filter(Boolean).join(' ') || undefined
 
 /** A setting saved the moment it changes, read from the settings mirror. The new value shows at once and
- *  the saved one comes back if the write fails. `value` is null until the mirror loads. */
+ *  the saved one comes back if the write fails. `value` and `source` are null until the mirror loads. */
 export function useInstantSetting<K extends SettingsKey>(
   key: K
-): { value: CluiSettings[K] | null; set: (v: CluiSettings[K]) => void; reset: () => void; failed: boolean } {
+): {
+  value: CluiSettings[K] | null
+  source: SettingsSource | null
+  overridden: boolean
+  set: (v: CluiSettings[K]) => void
+  reset: () => void
+  failed: boolean
+  clearFailed: () => void
+} {
   const saved = useSettings((s) => (s ? s.values[key] : null))
+  const source = useSettings((s) => (s ? s.sources[key] : null))
   const [pending, setPending] = useState<{ value: CluiSettings[K] } | null>(null)
   const [failed, setFailed] = useState(false)
   // Only the latest write settles the display: main applies them in order, so the last one is what sticks.
   const seq = useRef(0)
-  const write = (value: CluiSettings[K], reset: boolean): void => {
+  // A reset shows nothing of its own, since the value it falls back to is only known once the mirror updates.
+  const write = (next: { value: CluiSettings[K] } | null): void => {
     if (!useSettings.getState()) return
     const n = ++seq.current
-    setPending({ value })
+    setPending(next)
     setFailed(false)
-    const patch: Partial<CluiSettings> = reset ? {} : { [key]: value }
-    void window.clui.updateSettings(patch, reset ? [key] : undefined).then(
+    const patch: Partial<CluiSettings> = next ? { [key]: next.value } : {}
+    void window.clui.updateSettings(patch, next ? undefined : [key]).then(
       () => n === seq.current && setPending(null),
       () => {
         if (n !== seq.current) return
@@ -179,9 +87,77 @@ export function useInstantSetting<K extends SettingsKey>(
   }
   return {
     value: pending ? pending.value : saved,
-    set: (v) => write(v, false),
-    reset: () => write(DEFAULT_SETTINGS[key], true),
-    failed
+    source,
+    overridden: source === 'override',
+    set: (v) => write({ value: v }),
+    reset: () => write(null),
+    failed,
+    clearFailed: () => setFailed(false)
+  }
+}
+
+type TextKey = 'editorCommand' | 'cliPath' | 'defaultWorkspace' | 'defaultChatDir'
+
+/** A text setting saved on blur and on Enter, trimmed. Esc reverts an edit, and closing Settings mid-edit saves it.
+ *  The field follows the saved value except while it's focused or holding a write that failed, which stays for a retry. */
+export function useInstantText(key: TextKey): {
+  inputProps: InputHTMLAttributes<HTMLInputElement>
+  set: (v: string) => void
+  reset: () => void
+  failed: boolean
+  overridden: boolean
+  value: string
+  hintId: string
+  errId: string
+} {
+  const s = useInstantSetting(key)
+  const saved = s.value ?? ''
+  const [text, setText] = useState(saved)
+  const [focused, setFocused] = useState(false)
+  if (!focused && !s.failed && text !== saved) setText(saved)
+
+  const commit = (): void => {
+    const next = text.trim()
+    setText(next)
+    if (next !== saved) s.set(next)
+  }
+  const latest = useRef(commit)
+  latest.current = commit
+  useEffect(() => () => latest.current(), [])
+
+  // The reverted text is the saved value, so a failed write's error no longer describes it.
+  const revert = useCallback(() => {
+    setText(saved)
+    s.clearFailed()
+  }, [saved, s])
+  useEscape(focused && text !== saved, revert)
+
+  const id = useId()
+  const hintId = `${id}-hint`
+  const errId = `${id}-err`
+  return {
+    inputProps: {
+      value: text,
+      onChange: (e) => setText(e.target.value),
+      onFocus: () => setFocused(true),
+      onBlur: () => {
+        setFocused(false)
+        commit()
+      },
+      onKeyDown: (e) => {
+        if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+        e.preventDefault()
+        commit()
+      },
+      'aria-describedby': describedBy(hintId, s.failed && errId)
+    },
+    set: s.set,
+    reset: s.reset,
+    failed: s.failed,
+    overridden: s.overridden,
+    value: saved,
+    hintId,
+    errId
   }
 }
 
@@ -208,7 +184,8 @@ export function Field({
   note,
   children
 }: {
-  label: string
+  /** Absent when a group heading already names the field. */
+  label?: string
   hint?: string
   /** id for the hint <p>, so a control in `children` can point aria-describedby at it. */
   hintId?: string
@@ -222,21 +199,23 @@ export function Field({
 }): JSX.Element {
   return (
     <div className="flex flex-col gap-2">
-      {/* min-h-6 keeps the row a constant height whether or not the button is there,
-          so resetting a field doesn't reflow everything below it. */}
-      <div className="flex min-h-6 items-center justify-between gap-3">
-        <label className="text-ui font-semibold text-content">{label}</label>
-        {onReset && (
-          <button
-            type="button"
-            onClick={onReset}
-            aria-label={`Reset ${label} to its inherited value`}
-            className="-mr-1.5 flex h-6 items-center rounded px-1.5 text-label font-medium text-dim transition-colors hover:text-content"
-          >
-            Reset
-          </button>
-        )}
-      </div>
+      {label && (
+        // min-h-6 keeps the row a constant height whether or not the button is there,
+        // so resetting a field doesn't reflow everything below it.
+        <div className="flex min-h-6 items-center justify-between gap-3">
+          <label className="text-ui font-semibold text-content">{label}</label>
+          {onReset && (
+            <button
+              type="button"
+              onClick={onReset}
+              aria-label={`Reset ${label} to its inherited value`}
+              className="-mr-1.5 flex h-6 items-center rounded px-1.5 text-label font-medium text-dim transition-colors hover:text-content"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+      )}
       {children}
       {hint && (
         <p id={hintId} className="text-meta text-dim">
@@ -251,7 +230,7 @@ export function Field({
 type BoolKey = { [K in SettingsKey]: CluiSettings[K] extends boolean ? K : never }[SettingsKey]
 
 /** A field holding one checkbox that saves the moment it's flipped. */
-export function CheckField({ setting, label, hint, text, ui }: { setting: BoolKey; label: string; hint: string; text: string; ui?: string }): JSX.Element {
+export function CheckField({ setting, label, hint, text, ui }: { setting: BoolKey; label?: string; hint: string; text: string; ui?: string }): JSX.Element {
   const s = useInstantSetting(setting)
   const id = useId()
   return (

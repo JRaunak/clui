@@ -1,113 +1,54 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import type { CluiSettings, SettingsKey } from '../../../shared/settings'
 import type { ModelListResult } from '../../../shared/ipc'
-import { useSession, type SettingsSection, type SettingsSubs } from '../store'
+import { useSession, type SettingsSection } from '../store'
+import { useSettings } from '../lib/settings'
 import { Button } from './Button'
 import { IconClose } from './Icon'
-import { applyTheme } from '../lib/theme'
 import { useEscape } from '../lib/useEscape'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import { useOverlayEnter, useOverlayCovered } from '../lib/overlayOrigin'
-import { Pane, subTabId } from './settings/shared'
+import { Pane } from './settings/shared'
 import { GeneralSection } from './settings/GeneralSection'
 import { SessionsSection } from './settings/SessionsSection'
+import { PermissionsSection } from './settings/PermissionsSection'
 import { PaneSection } from './settings/PaneSection'
+import { BrowserSection } from './settings/BrowserSection'
 import { AdvancedSection } from './settings/AdvancedSection'
-import {
-  draftPatch,
-  draftValues,
-  editDraft,
-  isDirty,
-  isOverridden as overridden,
-  rebaseDraft,
-  resetDraft,
-  type Draft,
-  type StagedKey
-} from './settings/draft'
 
 const SECTIONS: { key: SettingsSection; label: string }[] = [
   { key: 'general', label: 'General' },
   { key: 'sessions', label: 'Sessions' },
+  { key: 'permissions', label: 'Permissions' },
   { key: 'pane', label: 'Pane' },
+  { key: 'browser', label: 'Browser' },
   { key: 'advanced', label: 'Advanced' }
 ]
-
-// These hold typed values and the theme preview, so they commit on Save. The rest save as they change.
-const STAGED = new Set<SettingsSection>(['general', 'sessions'])
 
 export function Settings({ covered }: { covered: boolean }): JSX.Element {
   const section = useSession((s) => s.settingsSection) ?? 'general'
   const openSettings = useSession((s) => s.openSettings)
   const closeSettings = useSession((s) => s.closeSettings)
-  // The theme is applied on change but persisted on Save, so closing with a staged theme reverts to the saved one.
-  const [draft, setDraft] = useState<Draft | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const latest = useRef<Draft | null>(null)
-  useEffect(() => {
-    latest.current = draft
-  }, [draft])
+  const loaded = useSettings((s) => !!s)
 
   // Null until listModels resolves, so a loading list can't read as a live list missing the classifier pin.
   const [modelList, setModelList] = useState<ModelListResult | null>(null)
   useEffect(() => {
-    window.clui.getSettings().then((saved) => setDraft((d) => rebaseDraft(d, saved)))
     void window.clui.listModels().then(setModelList)
   }, [])
 
-  // `latest` is null until loaded, so StrictMode's simulated unmount before getSettings() resolves reverts nothing.
+  // Runs after Overlay's own effect has focused the dialog, so the landing spot wins, on open and on a
+  // section change from outside (a deep link, or ⌘, while open).
   useEffect(() => {
-    return () => {
-      const d = latest.current
-      if (d?.edits.theme !== undefined) applyTheme(d.saved.values.theme)
-    }
-  }, [])
-
-  // Runs after Overlay's own effect has focused the dialog, so the active tab wins, on open and on
-  // a section change from outside (a deep link, or ⌘, while open). A deep link that opened Settings on a
-  // sub-tab lands on that sub-tab; every later section change lands on the section's own tab.
-  const entry = useRef<SettingsSection | null>(section)
-  useEffect(() => {
-    const sub = section === entry.current ? useSession.getState().settingsSub[section as keyof SettingsSubs] : undefined
-    if (section !== entry.current) entry.current = null
-    document.getElementById(sub ? subTabId(section as keyof SettingsSubs, sub) : `settings-tab-${section}`)?.focus()
+    const anchor = useSession.getState().settingsAnchor
+    const group = anchor && document.getElementById(`settings-group-${anchor}`)
+    if (anchor) useSession.setState({ settingsAnchor: null })
+    if (!group) return void document.getElementById(`settings-tab-${section}`)?.focus()
+    group.scrollIntoView({ block: 'start' })
+    group.focus({ preventScroll: true })
   }, [section])
 
-  // Through the escape stack, so an open dropdown inside closes first.
+  // Through the escape stack, so an open dropdown or a field's pending edit takes Esc first.
   useEscape(true, closeSettings)
-
-  const set = <K extends StagedKey>(key: K, value: CluiSettings[K]): void => {
-    setDraft((d) => d && editDraft(d, key, value))
-    setSaveError(null)
-  }
-
-  const reset = (key: SettingsKey): void => {
-    setDraft((d) => d && resetDraft(d, key))
-    setSaveError(null)
-  }
-
-  const previewTheme = (t: CluiSettings['theme']): void => {
-    set('theme', t)
-    applyTheme(t)
-  }
-
-  // Save commits + dismisses (dialog contract: the primary action of a modal both applies and closes).
-  // But close only on success: if the write fails we keep the modal open and surface the error.
-  const save = async (): Promise<void> => {
-    if (!draft || saving) return
-    setSaving(true)
-    setSaveError(null)
-    const { patch, clear } = draftPatch(draft)
-    try {
-      const saved = await window.clui.updateSettings(patch, clear)
-      // Nothing is staged any more, so the unmount revert leaves the saved theme alone.
-      latest.current = rebaseDraft(null, saved)
-      closeSettings()
-    } catch (e) {
-      setSaving(false)
-      setSaveError(e instanceof Error ? e.message : 'Could not save settings.')
-    }
-  }
 
   const onTabKey = (e: KeyboardEvent<HTMLDivElement>): void => {
     const i = SECTIONS.findIndex((x) => x.key === section)
@@ -128,18 +69,6 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
     e.preventDefault()
     if (next !== i) openSettings(SECTIONS[next].key)
   }
-
-  const props = draft && {
-    settings: draftValues(draft),
-    sources: draft.saved.sources,
-    set,
-    reset,
-    isOverridden: (k: SettingsKey) => overridden(draft, k)
-  }
-  const dirty = !!draft && isDirty(draft)
-  const staged = STAGED.has(section)
-  const footer = staged || dirty || !!saveError
-  const loading = <p className="text-meta text-dim">Loading…</p>
 
   return (
     <Overlay covered={covered}>
@@ -190,41 +119,43 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
         </div>
 
         <div className="relative min-w-0 flex-1">
-          <Pane section="general" active={section === 'general'} className="flex flex-col gap-5">
-            {props ? <GeneralSection {...props} previewTheme={previewTheme} /> : loading}
-          </Pane>
-          <Pane section="sessions" active={section === 'sessions'} flush>
-            {props ? <SessionsSection {...props} modelList={modelList} /> : <div className="px-5 py-4">{loading}</div>}
-          </Pane>
-          <PaneSection active={section === 'pane'} />
-          <AdvancedSection active={section === 'advanced'} modelList={modelList} />
+          {loaded ? (
+            <>
+              <Pane section="general" active={section === 'general'} className="flex flex-col gap-5">
+                <GeneralSection />
+              </Pane>
+              <Pane section="sessions" active={section === 'sessions'} className="flex flex-col gap-10">
+                <SessionsSection modelList={modelList} />
+              </Pane>
+              <Pane section="permissions" active={section === 'permissions'} className="flex flex-col gap-5">
+                <PermissionsSection />
+              </Pane>
+              <Pane section="pane" active={section === 'pane'} className="flex flex-col gap-10">
+                <PaneSection />
+              </Pane>
+              <Pane section="browser" active={section === 'browser'} className="flex flex-col gap-5">
+                <BrowserSection />
+              </Pane>
+              <Pane section="advanced" active={section === 'advanced'} className="flex flex-col gap-5">
+                <AdvancedSection modelList={modelList} />
+              </Pane>
+            </>
+          ) : (
+            <p className="px-5 py-4 text-meta text-dim">Loading…</p>
+          )}
         </div>
       </div>
 
-      {footer && (
-        <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-3">
-          {/* A failed save keeps the modal open and says why; success closes it. On an instant section the slot says why Save is here. */}
-          {saveError ? (
-            <span className="mr-auto text-xs text-err" role="alert" aria-live="assertive">
-              {saveError}
-            </span>
-          ) : (
-            !staged && <span className="mr-auto text-meta text-dim">Unsaved changes in other sections.</span>
-          )}
-          <Button variant="outline" size="md" onClick={closeSettings}>
-            Cancel
-          </Button>
-          <Button variant="primary" size="md" onClick={() => void save()} disabled={saving || !props}>
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-        </div>
-      )}
+      <div className="flex items-center justify-end border-t border-border px-5 py-3">
+        <Button variant="primary" size="md" onClick={closeSettings}>
+          Done
+        </Button>
+      </div>
     </Overlay>
   )
 }
 
-/** No scrim dismissal: the form holds unsaved edits an outside click would discard. The height is
- *  fixed so switching between a short section and a long one never moves the dialog. */
+/** The height is fixed so switching between a short section and a long one never moves the dialog. */
 function Overlay({ covered, children }: { covered: boolean; children: React.ReactNode }): JSX.Element {
   const scrimRef = useRef<HTMLDivElement>(null)
   const dialogRef = useDialogFocus<HTMLDivElement>()

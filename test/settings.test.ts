@@ -16,20 +16,8 @@ import {
   effortLabel,
   deriveModelInfo,
   modelCheckReason,
-  DEFAULT_SETTINGS,
-  type CluiSettings,
-  type ResolvedSettings,
-  type SettingsKey
+  DEFAULT_SETTINGS
 } from '../src/shared/settings.ts'
-import {
-  rebaseDraft,
-  editDraft,
-  resetDraft,
-  draftPatch,
-  draftValues,
-  isDirty,
-  isOverridden
-} from '../src/renderer/src/components/settings/draft.ts'
 import { equal, ok } from './support/harness.mjs'
 
 const SP = join(app.getPath('userData'), 'settings.json')
@@ -42,6 +30,12 @@ ok(sameModel('provider-a', 'provider-b') === false, 'model: distinct unknown ids
 ok(sameModel('claude-opus-4-8', 'us.anthropic.claude-opus-4-8') === true, 'model: recognized prefixed/bare equivalent')
 ok(sameModel('claude-sonnet-4-6[1m]', 'claude-sonnet-4-6') === false, 'model: a suffix model at 1M and 200K differ')
 ok(sameModel('claude-opus-5-5[1m]', 'us.anthropic.claude-opus-5-5') === true, 'model: a native-1M model is the same with or without [1m]')
+// The Settings Model field labels the saved default by the live list's option for the same model.
+ok(sameModel('us.anthropic.claude-opus-5-5', DEFAULT_SETTINGS.model), 'model: the bare default matches its Bedrock profile id')
+ok(
+  !['us.anthropic.claude-opus-5', 'us.anthropic.claude-sonnet-5-5', 'us.anthropic.claude-haiku-5-5'].some((id) => sameModel(id, DEFAULT_SETTINGS.model)),
+  'model: the default matches no other listed model'
+)
 
 // takes1mSuffix: only Opus 4.6 and Sonnet 4.6 reach 1M through the suffix
 ok(takes1mSuffix('opus', 4.6) && takes1mSuffix('sonnet', 4.6), 'takes1mSuffix: the 4.6 models')
@@ -253,47 +247,4 @@ ok(effortLabel('turbo') === 'turbo', 'settings: effortLabel passes an unknown le
   ok(m.getSettingsSync().theme === 'dark', 'settings: failed write leaves the cache untouched')
   await m.updateSettings({ cliPath: '/bin/claude' })
   ok(!('theme' in onDisk()), 'settings: next update does not carry the failed value')
-}
-
-// The modal's Save after the Browser pane saved its own switches leaves those switches alone.
-{
-  writeFileSync(SP, JSON.stringify({ schemaVersion: 1 }))
-  const m = await fresh()
-  let d = rebaseDraft(null, await m.getResolvedSettings())
-  await m.updateSettings({ browserEnabled: true })
-  await m.updateSettings({ linkTarget: 'system' })
-  await m.updateSettings({ annotateScreenshots: false })
-  d = editDraft(d, 'editorCommand', 'vim')
-  const { patch, clear } = draftPatch(d)
-  ok(JSON.stringify(patch) === '{"editorCommand":"vim"}' && clear.length === 0, 'draft: Save sends only the edited field')
-  await m.updateSettings(patch, clear)
-  const disk = onDisk()
-  ok(
-    disk.browserEnabled === true && disk.linkTarget === 'system' && disk.annotateScreenshots === false && disk.editorCommand === 'vim',
-    'draft: Save keeps immediate browser, link and screenshot changes'
-  )
-}
-
-// Draft bookkeeping: clean fields follow newer settings, staged edits and resets survive them.
-{
-  const saved = (values: Partial<CluiSettings>, overrides: SettingsKey[] = []): ResolvedSettings => ({
-    values: { ...DEFAULT_SETTINGS, ...values },
-    sources: Object.fromEntries(
-      Object.keys(DEFAULT_SETTINGS).map((k) => [k, overrides.includes(k as SettingsKey) ? 'override' : 'default'])
-    ) as ResolvedSettings['sources']
-  })
-  let d = rebaseDraft(null, saved({ theme: 'light', cliPath: '/a' }, ['theme', 'cliPath']))
-  ok(!isDirty(d), 'draft: a fresh draft is clean')
-  d = editDraft(d, 'editorCommand', 'vim')
-  d = resetDraft(d, 'cliPath')
-  d = rebaseDraft(d, saved({ theme: 'dark', cliPath: '/a', model: 'm2' }, ['cliPath', 'model']))
-  const v = draftValues(d)
-  ok(v.theme === 'dark' && v.model === 'm2', 'draft: an external update refreshes clean fields')
-  ok(v.editorCommand === 'vim', 'draft: an external update keeps a staged edit')
-  ok(JSON.stringify(draftPatch(d)) === '{"patch":{"editorCommand":"vim"},"clear":["cliPath"]}', 'draft: staged edit and reset survive a rebase')
-  ok(!isOverridden(d, 'cliPath') && isOverridden(d, 'model'), 'draft: provenance follows the rebase, minus staged resets')
-  d = rebaseDraft(d, saved({ editorCommand: 'vim' }, ['editorCommand']))
-  ok(!isDirty(d), 'draft: edits matched elsewhere and resets with nothing to clear go clean')
-  d = editDraft(resetDraft(editDraft(d, 'theme', 'light'), 'theme'), 'theme', 'dark')
-  ok(!isDirty(d), 'draft: re-picking the saved value un-stages the edit and the reset')
 }

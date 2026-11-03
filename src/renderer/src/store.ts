@@ -60,9 +60,9 @@ import { fileLike, noPreview, presentationOf } from './lib/presentation'
 import { isHtml } from '../../shared/html-view'
 import { colName, isDelimited, parseA1 } from '../../shared/sheets'
 
-export type SettingsSection = 'general' | 'sessions' | 'pane' | 'advanced'
-/** The sections with a second tab row, and their tabs. */
-export type SettingsSubs = { sessions: 'new' | 'quick'; pane: 'general' | 'browser' | 'artifacts' }
+export type SettingsSection = 'general' | 'sessions' | 'permissions' | 'pane' | 'browser' | 'advanced'
+/** A group heading Settings can scroll to and focus on open. */
+export type SettingsAnchor = 'artifacts'
 
 /** A tool-permission request awaiting the user's decision. */
 export interface PendingPermission {
@@ -663,8 +663,8 @@ interface SessionStore {
   globalSearchOpen: boolean
   /** The Settings section showing; null while Settings is closed. */
   settingsSection: SettingsSection | null
-  /** Each sub-nav's tab for this open of Settings; a missing one shows its first tab. */
-  settingsSub: Partial<SettingsSubs>
+  /** Where the next section change lands, consumed by Settings once it has scrolled there. */
+  settingsAnchor: SettingsAnchor | null
   /**
    * A jump request for Chat: scroll to the message with this id, washing it when `flash` is set.
    * `nonce` makes repeated jumps to the SAME id re-fire (Chat watches the nonce). No need to
@@ -701,11 +701,8 @@ interface SessionStore {
   setFindOpen: (open: boolean) => void
   /** Open/close the ⌘⇧F global search overlay. */
   setGlobalSearchOpen: (open: boolean) => void
-  /** Open Settings on a section and sub-tab, or switch to them while open. Without a section it opens on General. */
-  openSettings: {
-    (section?: SettingsSection): void
-    <S extends keyof SettingsSubs>(section: S, sub: SettingsSubs[S]): void
-  }
+  /** Open Settings on a section, or switch to it while open. Without a section it opens on General. */
+  openSettings: (section?: SettingsSection, anchor?: SettingsAnchor) => void
   closeSettings: () => void
   /** Request Chat scroll to a message by id; `flash` marks where the reader landed. */
   requestScrollTo: (messageId: string, opts?: { align?: 'start'; flash?: Via }) => void
@@ -2360,7 +2357,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   findActiveId: null,
   globalSearchOpen: false,
   settingsSection: null,
-  settingsSub: {},
+  settingsAnchor: null,
   scrollTarget: null,
   currentTurn: null,
   sessionGroups: [],
@@ -3869,8 +3866,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     set((s) => (open && s.viewingSubagent ? {} : open ? { findOpen: true } : { findOpen: false, findActiveId: null })),
   setFindActiveId: (id) => set(() => ({ findActiveId: id })),
   setGlobalSearchOpen: (open) => set(() => ({ globalSearchOpen: open })),
-  openSettings: (section: SettingsSection = 'general', sub?: SettingsSubs[keyof SettingsSubs]) =>
-    set((s) => ({ settingsSection: section, settingsSub: { ...(s.settingsSection && s.settingsSub), ...(sub && { [section]: sub }) } })),
+  openSettings: (section = 'general', anchor) => set(() => ({ settingsSection: section, settingsAnchor: anchor ?? null })),
   closeSettings: () => set(() => ({ settingsSection: null })),
   requestScrollTo: (messageId, opts) =>
     set((s) => ({ scrollTarget: { messageId, nonce: (s.scrollTarget?.nonce ?? 0) + 1, align: opts?.align, flash: opts?.flash } })),

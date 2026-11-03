@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
+import { useId, useMemo } from 'react'
 import type { ModelListResult } from '../../../../shared/ipc'
 import {
-  PERMISSION_MODES,
+  DEFAULT_SETTINGS,
   PERMISSION_MODE_LABELS,
   PERMISSION_MODE_COLORS,
   PERMISSION_MODE_DESCRIPTIONS,
@@ -13,13 +13,13 @@ import {
   groupModels,
   contextSizeLabel,
   contextWindowForModel,
+  sameModel,
   type CluiSettings
 } from '../../../../shared/settings'
 import { Dropdown } from '../Dropdown'
-import { PermissionIcon } from '../Composer'
 import { IconWarn } from '../Icon'
-import { useSession } from '../../store'
-import { Field, SubNav, SubPane, useSettingsSub, type DraftProps } from './shared'
+import { FieldError } from '../LoginFields'
+import { Field, Group, SAVE_FAILED, describedBy, useInstantSetting, useInstantText } from './shared'
 
 /** What to tell the user when the model list is the bundled fallback. Only Bedrock can be queried
  *  for a list; on other providers the CLI reads its own built-in catalog, so a missing `aws` is normal. */
@@ -46,41 +46,19 @@ const QUICK_PERMISSION_DESCRIPTIONS: Record<CluiSettings['permissionMode'], stri
 }
 
 const INHERITING = 'Currently inheriting from ~/.claude/settings.json.'
+const INPUT = 'flex-1 rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent'
+const BROWSE = 'rounded border border-border px-3 text-xs text-dim hover:text-content'
 
-type ModeChoice = CluiSettings['permissionMode']
-
-/** What System Default resolves to, from ~/.claude/settings.json: unset means Interactive, and a mode
- *  Clui doesn't know keeps its raw name and no glyph. */
-function systemDefault(raw: string | null): { mode: ModeChoice | null; label: string } {
-  if (raw === null) return { mode: 'default', label: PERMISSION_MODE_LABELS.default }
-  return raw in PERMISSION_MODE_LABELS ? { mode: raw as ModeChoice, label: PERMISSION_MODE_LABELS[raw as ModeChoice] } : { mode: null, label: raw }
-}
-
-function systemNote(raw: string | null): string {
-  if (raw === null) return 'Currently Interactive. ~/.claude/settings.json sets no default mode.'
-  const { mode, label } = systemDefault(raw)
-  return mode === 'bypassPermissions'
-    ? 'Currently Autonomous, from ~/.claude/settings.json. New sessions run tools without asking.'
-    : `Currently ${label}, from ~/.claude/settings.json.`
-}
-
-const TABS = [
-  { key: 'new', label: 'New sessions' },
-  { key: 'quick', label: 'Quick sessions' }
-] as const
-
-export function SessionsSection({
-  settings,
-  sources,
-  set,
-  reset,
-  isOverridden,
-  modelList
-}: DraftProps & { modelList: ModelListResult | null }): JSX.Element {
-  const sub = useSettingsSub('sessions', 'new')
-  const system = useSession((s) => s.systemPermissionMode)
-  const resolved = system === undefined ? null : systemDefault(system)
-  const defaultModel = deriveModelInfo(settings.model)
+export function SessionsSection({ modelList }: { modelList: ModelListResult | null }): JSX.Element {
+  const uid = useId()
+  const model = useInstantSetting('model')
+  const effort = useInstantSetting('effort')
+  const workspace = useInstantText('defaultWorkspace')
+  const chatDir = useInstantText('defaultChatDir')
+  const family = useInstantSetting('quickModelFamily')
+  const quickMode = useInstantSetting('quickPermissionMode')
+  const modelId = model.value ?? DEFAULT_SETTINGS.model
+  const defaultModel = deriveModelInfo(modelId)
 
   // Group + version-sort the unordered live Bedrock list into the composer picker's shape.
   // Headers only when there's more than one family; the context-size column only for known ones.
@@ -100,113 +78,88 @@ export function SessionsSection({
       ),
     [modelList?.ids]
   )
+  // The bare default names the same model as its Bedrock profile id, so it shows and checks that option. An
+  // unlisted model, or any while the list loads, stays an option so the trigger shows its name, never a raw id.
+  const listed = modelOptions.find((o) => sameModel(o.value, modelId))
+  const shownModels = listed
+    ? modelOptions
+    : [{ value: modelId, label: defaultModel.label, description: modelList?.live ? 'Not in the current model list' : undefined }, ...modelOptions]
 
-  const pick = async (key: 'defaultWorkspace' | 'defaultChatDir'): Promise<void> => {
+  const pick = async (set: (dir: string) => void): Promise<void> => {
     const dir = await window.clui.pickWorkspace()
-    if (dir) set(key, dir)
+    if (dir) set(dir)
   }
+
+  const modelHint = model.source === 'cli' ? INHERITING : undefined
+  const effortHint = defaultModel.efforts.length
+    ? effort.source === 'cli'
+      ? INHERITING
+      : undefined
+    : `${defaultModel.label} doesn't take an effort level. This default applies when a session switches to a model that does.`
 
   return (
     <>
-      <SubNav section="sessions" label="Session types" tabs={TABS} value={sub} />
-      <SubPane section="sessions" sub="new" active={sub === 'new'} className="flex flex-col gap-5">
+      <Group id="settings-group-new" label="New sessions">
         <p className="text-meta text-dim">
-          Used when a session starts. Permission mode, model and effort can also be changed in the composer during a
-          session.
+          Used when a session starts. Model and effort can also be changed in the composer during a session.
         </p>
         <Field
-          label="Permission mode"
-          hint="Applied as a --permission-mode flag. System Default passes none, so the CLI uses your settings, and a project's own settings can override it. Clui never writes ~/.claude/settings.json."
-          onReset={isOverridden('permissionMode') ? () => reset('permissionMode') : undefined}
-          note={
-            settings.permissionMode === 'inherit' &&
-            resolved && (
-              <p className="flex items-center gap-1.5 text-meta text-dim">
-                {resolved.mode && <PermissionIcon mode={resolved.mode} className="h-3.5 w-3.5" />}
-                {systemNote(system ?? null)}
-              </p>
-            )
-          }
-        >
-          <Dropdown<CluiSettings['permissionMode']>
-            value={settings.permissionMode}
-            ariaLabel="Permission mode"
-            options={PERMISSION_MODES.map((m) => ({
-              value: m,
-              label: PERMISSION_MODE_LABELS[m],
-              color: PERMISSION_MODE_COLORS[m],
-              description:
-                m === 'inherit' && resolved
-                  ? system === null
-                    ? 'Follows ~/.claude/settings.json, not set there, so Interactive'
-                    : `Follows ~/.claude/settings.json, now ${resolved.label}`
-                  : PERMISSION_MODE_DESCRIPTIONS[m],
-              tone: m === 'bypassPermissions' ? ('danger' as const) : undefined
-            }))}
-            menuClassName="w-72"
-            onChange={(m) => set('permissionMode', m)}
-          />
-        </Field>
-
-        <Field
           label="Model"
-          hint={sources.model === 'cli' ? INHERITING : undefined}
-          onReset={isOverridden('model') ? () => reset('model') : undefined}
+          hint={modelHint}
+          hintId={`${uid}-model-hint`}
+          onReset={model.overridden ? model.reset : undefined}
           // Amber = degraded but usable: they still have a working list, just possibly incomplete.
           note={
-            modelList &&
-            !modelList.live && (
-              <p className="flex items-start gap-1.5 text-meta text-warn" role="status">
-                <IconWarn className="mt-px h-3.5 w-3.5 shrink-0" />
-                {FALLBACK_NOTES[modelList.reason ?? 'other']}
-              </p>
+            model.failed ? (
+              <FieldError id={`${uid}-model-err`} text={SAVE_FAILED} />
+            ) : (
+              modelList &&
+              !modelList.live && (
+                <p className="flex items-start gap-1.5 text-meta text-warn" role="status">
+                  <IconWarn className="mt-px h-3.5 w-3.5 shrink-0" />
+                  {FALLBACK_NOTES[modelList.reason ?? 'other']}
+                </p>
+              )
             )
           }
         >
           <Dropdown<CluiSettings['model']>
-            value={settings.model}
+            value={listed?.value ?? modelId}
             ariaLabel="Default model for new sessions"
-            options={modelOptions}
-            onChange={(m) => set('model', m)}
+            ariaDescribedBy={describedBy(!!modelHint && `${uid}-model-hint`, model.failed && `${uid}-model-err`)}
+            dataUi="model"
+            options={shownModels}
+            onChange={model.set}
           />
         </Field>
 
         <Field
           label="Effort"
-          hint={
-            defaultModel.efforts.length
-              ? sources.effort === 'cli'
-                ? INHERITING
-                : undefined
-              : `${defaultModel.label} doesn't take an effort level. This default applies when a session switches to a model that does.`
-          }
-          onReset={isOverridden('effort') ? () => reset('effort') : undefined}
+          hint={effortHint}
+          hintId={`${uid}-effort-hint`}
+          onReset={effort.overridden ? effort.reset : undefined}
+          note={effort.failed && <FieldError id={`${uid}-effort-err`} text={SAVE_FAILED} />}
         >
           <Dropdown<CluiSettings['effort']>
-            value={settings.effort}
+            value={effort.value ?? DEFAULT_SETTINGS.effort}
             ariaLabel="Default reasoning effort for new sessions"
+            ariaDescribedBy={describedBy(!!effortHint && `${uid}-effort-hint`, effort.failed && `${uid}-effort-err`)}
+            dataUi="effort"
             options={EFFORT_CHOICES.map((e) => ({ value: e, label: EFFORT_LABELS[e] }))}
-            onChange={(e) => set('effort', e)}
+            onChange={effort.set}
           />
         </Field>
 
         <Field
           label="Default workspace"
           hint="Offered when starting a new session."
-          onReset={isOverridden('defaultWorkspace') ? () => reset('defaultWorkspace') : undefined}
+          hintId={workspace.hintId}
+          onReset={workspace.overridden ? workspace.reset : undefined}
+          note={workspace.failed && <FieldError id={workspace.errId} text={SAVE_FAILED} />}
         >
           <div className="flex gap-2">
-            <input
-              aria-label="Default workspace"
-              className="flex-1 rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
-              placeholder="(none)"
-              value={settings.defaultWorkspace}
-              onChange={(e) => set('defaultWorkspace', e.target.value)}
-            />
-            <button
-              className="rounded border border-border px-3 text-xs text-dim hover:text-content"
-              onClick={() => void pick('defaultWorkspace')}
-            >
+            <input aria-label="Default workspace" data-ui="default-workspace" className={INPUT} placeholder="(none)" {...workspace.inputProps} />
+            <button className={BROWSE} onClick={() => void pick(workspace.set)}>
               Browse…
             </button>
           </div>
@@ -215,51 +168,50 @@ export function SessionsSection({
         <Field
           label="Workbench folder"
           hint="Where sessions started without a project folder run. Leave blank for ~/.clui. Open Workbench sessions stay where they are."
-          onReset={isOverridden('defaultChatDir') ? () => reset('defaultChatDir') : undefined}
+          hintId={chatDir.hintId}
+          onReset={chatDir.overridden ? chatDir.reset : undefined}
+          note={chatDir.failed && <FieldError id={chatDir.errId} text={SAVE_FAILED} />}
         >
           <div className="flex gap-2">
-            <input
-              aria-label="Workbench folder"
-              className="flex-1 rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
-              placeholder="~/.clui"
-              value={settings.defaultChatDir}
-              onChange={(e) => set('defaultChatDir', e.target.value)}
-            />
-            <button
-              className="rounded border border-border px-3 text-xs text-dim hover:text-content"
-              onClick={() => void pick('defaultChatDir')}
-            >
+            <input aria-label="Workbench folder" data-ui="workbench-folder" className={INPUT} placeholder="~/.clui" {...chatDir.inputProps} />
+            <button className={BROWSE} onClick={() => void pick(chatDir.set)}>
               Browse…
             </button>
           </div>
         </Field>
-      </SubPane>
+      </Group>
 
-      <SubPane section="sessions" sub="quick" active={sub === 'quick'} className="flex flex-col gap-5">
-        <p className="text-meta text-dim">
-          Throwaway chats with a limited tool set. These settings apply to every quick session.
-        </p>
+      <Group id="settings-group-quick" label="Quick sessions">
+        <p className="text-meta text-dim">Throwaway chats with a limited tool set. Used when a quick session starts.</p>
         <Field
           label="Model family"
           hint="Runs the latest model in this family, at high effort when the model takes one."
-          onReset={isOverridden('quickModelFamily') ? () => reset('quickModelFamily') : undefined}
+          hintId={`${uid}-family-hint`}
+          onReset={family.overridden ? family.reset : undefined}
+          note={family.failed && <FieldError id={`${uid}-family-err`} text={SAVE_FAILED} />}
         >
           <Dropdown<CluiSettings['quickModelFamily']>
-            value={settings.quickModelFamily}
+            value={family.value ?? DEFAULT_SETTINGS.quickModelFamily}
             ariaLabel="Quick session model family"
+            ariaDescribedBy={describedBy(`${uid}-family-hint`, family.failed && `${uid}-family-err`)}
+            dataUi="quick-model-family"
             options={QUICK_MODEL_FAMILIES.map((f) => ({ value: f, label: QUICK_FAMILY_LABELS[f] }))}
-            onChange={(f) => set('quickModelFamily', f)}
+            onChange={family.set}
           />
         </Field>
 
         <Field
           label="Permission mode"
           hint="How quick sessions handle tool permissions."
-          onReset={isOverridden('quickPermissionMode') ? () => reset('quickPermissionMode') : undefined}
+          hintId={`${uid}-quick-mode-hint`}
+          onReset={quickMode.overridden ? quickMode.reset : undefined}
+          note={quickMode.failed && <FieldError id={`${uid}-quick-mode-err`} text={SAVE_FAILED} />}
         >
           <Dropdown<CluiSettings['quickPermissionMode']>
-            value={settings.quickPermissionMode}
+            value={quickMode.value ?? DEFAULT_SETTINGS.quickPermissionMode}
             ariaLabel="Quick session permission mode"
+            ariaDescribedBy={describedBy(`${uid}-quick-mode-hint`, quickMode.failed && `${uid}-quick-mode-err`)}
+            dataUi="quick-permission-mode"
             options={QUICK_PERMISSION_MODES.map((m) => ({
               value: m,
               label: PERMISSION_MODE_LABELS[m],
@@ -268,10 +220,10 @@ export function SessionsSection({
               tone: m === 'bypassPermissions' ? ('danger' as const) : undefined
             }))}
             menuClassName="w-72"
-            onChange={(m) => set('quickPermissionMode', m)}
+            onChange={quickMode.set}
           />
         </Field>
-      </SubPane>
+      </Group>
     </>
   )
 }

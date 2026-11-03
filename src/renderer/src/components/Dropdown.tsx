@@ -40,6 +40,7 @@ export function Dropdown<T extends string>({
   checkTone = 'accent',
   icon,
   ariaLabel,
+  ariaDescribedBy,
   solid = false,
   dataUi,
   labelClassName,
@@ -52,6 +53,7 @@ export function Dropdown<T extends string>({
   title?: string
   /** Accessible name for the trigger (its visible label is a value, not the field name). */
   ariaLabel?: string
+  ariaDescribedBy?: string
   className?: string
   menuClassName?: string
   align?: 'left' | 'right'
@@ -119,6 +121,7 @@ export function Dropdown<T extends string>({
         {...p.triggerProps}
         data-ui={dataUi}
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         aria-haspopup="listbox"
         className={
           isPill

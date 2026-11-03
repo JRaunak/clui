@@ -4,10 +4,8 @@ import { useBrowserToasts } from '../Toast'
 import { FieldError, LOGIN_INPUT } from '../LoginFields'
 import { IconEdit, IconPlus, IconTrash } from '../Icon'
 import { useEscape } from '../../lib/useEscape'
-import { CheckBox, Field, SAVE_FAILED, SubPane, TIMING, useInstantSetting } from './shared'
-import { Dropdown } from '../Dropdown'
-import { LINK, LINK_MOD } from '../../lib/openLink'
-import type { LinkTarget } from '../../../../shared/settings'
+import { CheckBox, Field, SAVE_FAILED, TIMING, useInstantSetting } from './shared'
+import { LINK } from '../../lib/openLink'
 import { LoginForm } from './LoginForm'
 import { ClearBrowsingData } from './ClearBrowsingData'
 import { useSay } from '../../lib/useSay'
@@ -56,12 +54,10 @@ const CHILDREN = [
   { setting: 'browserDebug', ui: 'browser-debug', label: 'Use developer tools', hint: 'Console, network requests, cookies and storage.' }
 ] as const
 
-/** Browser access, approved sites and saved logins. Changes go straight to main without waiting
- *  for Save; a removal commits once its undo toast runs out. The toasts sit outside the pane, so a
- *  pending removal stays undoable from another section. */
-export function BrowserSection({ active }: { active: boolean }): JSX.Element {
+/** Browser access, approved sites and saved logins. A removal commits once its undo toast runs out.
+ *  The toasts sit outside the pane, so a pending removal stays undoable from another section. */
+export function BrowserSection(): JSX.Element {
   const enabled = useInstantSetting('browserEnabled')
-  const target = useInstantSetting('linkTarget')
   const [sites, setSites] = useState<ApprovedSite[]>([])
   const [netSites, setNetSites] = useState<LocalNetSite[]>([])
   const [logins, setLogins] = useState<SavedLoginInfo[]>([])
@@ -112,7 +108,7 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
   useLayoutEffect(() => {
     if (!focus) return
     setFocus(null)
-    const pane = document.getElementById('settings-subpanel-pane-browser')
+    const pane = document.getElementById('settings-panel-browser')
     const find = (key?: string): HTMLElement | null =>
       key ? (pane?.querySelector<HTMLElement>(`[data-focus="${CSS.escape(key)}"]`) ?? null) : null
     const el = find(focus.key) ?? find(focus.fallback)
@@ -211,295 +207,271 @@ export function BrowserSection({ active }: { active: boolean }): JSX.Element {
 
   return (
     <>
-      <SubPane section="pane" sub="browser" active={active} className="flex flex-col gap-5">
-        <Field
-          label="Browser access"
-          hint={`Reading pages, going to sites and switching tabs come with access. ${TIMING}`}
-          hintId={`${uid}-enabled`}
-          note={enabled.failed && <FieldError id={`${uid}-enabled-err`} text={SAVE_FAILED} />}
-        >
-          <div className="flex flex-col gap-1">
+      <Field
+        label="Browser access"
+        hint={`Reading pages, going to sites and switching tabs come with access. ${TIMING}`}
+        hintId={`${uid}-enabled`}
+        note={enabled.failed && <FieldError id={`${uid}-enabled-err`} text={SAVE_FAILED} />}
+      >
+        <div className="flex flex-col gap-1">
+          <button
+            type="button"
+            role="checkbox"
+            data-ui="browser-enabled"
+            aria-checked={!!enabled.value}
+            aria-disabled={enabled.value === null || undefined}
+            aria-describedby={`${uid}-enabled${enabled.failed ? ` ${uid}-enabled-err` : ''}`}
+            onClick={() => enabled.value !== null && enabled.set(!enabled.value)}
+            className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
+          >
+            <CheckBox checked={!!enabled.value} />
+            <span id={`${uid}-access`} className="text-label text-content">
+              Claude can use the browser
+            </span>
+          </button>
+          <div role="group" aria-labelledby={`${uid}-access`} className="flex flex-col gap-1 pl-6">
+            {CHILDREN.map((c) => (
+              <BrowserChild key={c.setting} {...c} on={!!enabled.value} reasonId={`${uid}-reason`} />
+            ))}
+          </div>
+          {!enabled.value && (
+            <p id={`${uid}-reason`} className="mt-1 pl-6 text-meta text-faint">
+              Turn on browser access above to change these.
+            </p>
+          )}
+        </div>
+      </Field>
+      <section className="flex flex-col gap-2" aria-labelledby={`${uid}-sites`}>
+        <div className="flex min-h-7 items-center gap-2">
+          <h3
+            id={`${uid}-sites`}
+            tabIndex={-1}
+            data-focus="sites-h3"
+            className="text-ui font-semibold text-content focus-visible:outline-none"
+          >
+            Approved sites
+          </h3>
+          <span className="text-meta text-dim">{liveSites.length}</span>
+          {sitesWindowed && (
             <button
               type="button"
-              role="checkbox"
-              data-ui="browser-enabled"
-              aria-checked={!!enabled.value}
-              aria-disabled={enabled.value === null || undefined}
-              aria-describedby={`${uid}-enabled${enabled.failed ? ` ${uid}-enabled-err` : ''}`}
-              onClick={() => enabled.value !== null && enabled.set(!enabled.value)}
-              className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
+              aria-disabled={!siteRows.length || undefined}
+              aria-label={siteQuery ? `Remove ${count(siteRows.length, 'matching site', 'matching sites')}` : `Remove all ${count(siteRows.length, 'site', 'sites')}`}
+              className={`${DANGER_BTN} ml-auto`}
+              onClick={removeAllSites}
             >
-              <CheckBox checked={!!enabled.value} />
-              <span id={`${uid}-access`} className="text-label text-content">
-                Claude can use the browser
-              </span>
+              {siteQuery ? 'Remove matching' : 'Remove all'}
             </button>
-            <div role="group" aria-labelledby={`${uid}-access`} className="flex flex-col gap-1 pl-6">
-              {CHILDREN.map((c) => (
-                <BrowserChild key={c.setting} {...c} on={!!enabled.value} reasonId={`${uid}-reason`} />
-              ))}
-            </div>
-            {!enabled.value && (
-              <p id={`${uid}-reason`} className="mt-1 pl-6 text-meta text-faint">
-                Turn on browser access above to change these.
-              </p>
-            )}
-          </div>
-        </Field>
-        <Field
-          label="Open web links in"
-          hint={
-            enabled.value
-              ? `Applies to web links in Claude's replies and tool output. ${LINK_MOD}-click opens the other way.`
-              : 'Takes effect when browser access is on. Until then, links open in your default browser.'
-          }
-          hintId={`${uid}-links`}
-          onReset={target.value && target.value !== 'clui' ? target.reset : undefined}
-          note={target.failed && <FieldError id={`${uid}-links-err`} text={SAVE_FAILED} />}
-        >
-          <Dropdown<LinkTarget>
-            value={target.value ?? 'clui'}
-            ariaLabel="Open web links in"
-            options={[
-              { value: 'clui', label: "Clui's browser" },
-              { value: 'system', label: 'Default browser' }
-            ]}
-            onChange={target.set}
+          )}
+        </div>
+        {sitesWindowed && (
+          <Filter
+            value={siteQuery}
+            onChange={setSiteQuery}
+            focusKey="sites-filter"
+            label="Filter approved sites"
+            placeholder="Filter sites"
+            matches={siteRows.length}
+            noun={['site', 'sites']}
+            say={sayFilter}
           />
-        </Field>
+        )}
+        {!sitesWindowed && !liveSites.length ? (
+          <p className="text-meta text-dim">No approved sites. Claude asks before it opens a new site.</p>
+        ) : sitesWindowed && !siteRows.length ? (
+          <div className={WINDOW}>
+            <p className="px-0 py-2 text-meta text-dim">No sites match &quot;{siteQuery}&quot;.</p>
+          </div>
+        ) : (
+          <ul className={sitesWindowed ? WINDOW : 'flex flex-col'}>
+            {siteRows.map((s, i) => (
+              <li key={s.site} className="flex h-9 items-center gap-3">
+                <span title={s.site} className="min-w-0 truncate font-mono text-code text-content">
+                  {s.site}
+                </span>
+                <span className="shrink-0 text-meta text-dim">Approved {approvedDate(s.approvedMs)}</span>
+                <button
+                  type="button"
+                  data-focus={siteKey(s)}
+                  title="Remove site"
+                  aria-label={`Remove ${s.site}`}
+                  className={`${ICON_BTN} ${DANGER_HOVER} ml-auto`}
+                  onClick={() => removeSite(s, i)}
+                >
+                  <IconTrash className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
-        <section className="flex flex-col gap-2" aria-labelledby={`${uid}-sites`}>
+      <section className="flex flex-col gap-2" aria-labelledby={`${uid}-net`} aria-describedby={`${uid}-net-hint`}>
+        <div className="flex flex-col">
           <div className="flex min-h-7 items-center gap-2">
             <h3
-              id={`${uid}-sites`}
+              id={`${uid}-net`}
               tabIndex={-1}
-              data-focus="sites-h3"
+              data-focus="net-h3"
               className="text-ui font-semibold text-content focus-visible:outline-none"
             >
-              Approved sites
+              Local network access
             </h3>
-            <span className="text-meta text-dim">{liveSites.length}</span>
-            {sitesWindowed && (
-              <button
-                type="button"
-                aria-disabled={!siteRows.length || undefined}
-                aria-label={siteQuery ? `Remove ${count(siteRows.length, 'matching site', 'matching sites')}` : `Remove all ${count(siteRows.length, 'site', 'sites')}`}
-                className={`${DANGER_BTN} ml-auto`}
-                onClick={removeAllSites}
-              >
-                {siteQuery ? 'Remove matching' : 'Remove all'}
-              </button>
-            )}
+            <span className="text-meta text-dim">{netRows.length}</span>
           </div>
-          {sitesWindowed && (
-            <Filter
-              value={siteQuery}
-              onChange={setSiteQuery}
-              focusKey="sites-filter"
-              label="Filter approved sites"
-              placeholder="Filter sites"
-              matches={siteRows.length}
-              noun={['site', 'sites']}
-              say={sayFilter}
-            />
-          )}
-          {!sitesWindowed && !liveSites.length ? (
-            <p className="text-meta text-dim">No approved sites. Claude asks before it opens a new site.</p>
-          ) : sitesWindowed && !siteRows.length ? (
-            <div className={WINDOW}>
-              <p className="px-0 py-2 text-meta text-dim">No sites match &quot;{siteQuery}&quot;.</p>
-            </div>
-          ) : (
-            <ul className={sitesWindowed ? WINDOW : 'flex flex-col'}>
-              {siteRows.map((s, i) => (
-                <li key={s.site} className="flex h-9 items-center gap-3">
-                  <span title={s.site} className="min-w-0 truncate font-mono text-code text-content">
-                    {s.site}
-                  </span>
-                  <span className="shrink-0 text-meta text-dim">Approved {approvedDate(s.approvedMs)}</span>
-                  <button
-                    type="button"
-                    data-focus={siteKey(s)}
-                    title="Remove site"
-                    aria-label={`Remove ${s.site}`}
-                    className={`${ICON_BTN} ${DANGER_HOVER} ml-auto`}
-                    onClick={() => removeSite(s, i)}
-                  >
-                    <IconTrash className="h-3.5 w-3.5" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+          <p id={`${uid}-net-hint`} className="text-meta text-dim">
+            What pages may reach on this Mac and your network. Separate from what Claude may do.
+          </p>
+        </div>
+        {!netRows.length ? (
+          <p className="text-meta text-dim">No sites have asked. Clui asks you the first time one does.</p>
+        ) : (
+          <ul className="flex flex-col">
+            {netRows.map((s, i) => (
+              <li key={s.site} className="flex h-9 items-center gap-3">
+                <span title={s.site} className="min-w-0 truncate font-mono text-code text-content">
+                  {s.site}
+                </span>
+                <span className="shrink-0 text-meta text-dim">
+                  {s.allow ? 'Allowed' : 'Blocked'} {approvedDate(s.atMs)}
+                </span>
+                <button
+                  type="button"
+                  data-focus={netKey(s)}
+                  title="Forget site"
+                  aria-label={`Forget ${s.site}`}
+                  className={`${ICON_BTN} ${DANGER_HOVER} ml-auto`}
+                  onClick={() => forgetNet(s, i)}
+                >
+                  <IconTrash className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
-        <section className="flex flex-col gap-2" aria-labelledby={`${uid}-net`} aria-describedby={`${uid}-net-hint`}>
-          <div className="flex flex-col">
-            <div className="flex min-h-7 items-center gap-2">
-              <h3
-                id={`${uid}-net`}
-                tabIndex={-1}
-                data-focus="net-h3"
-                className="text-ui font-semibold text-content focus-visible:outline-none"
-              >
-                Local network access
-              </h3>
-              <span className="text-meta text-dim">{netRows.length}</span>
-            </div>
-            <p id={`${uid}-net-hint`} className="text-meta text-dim">
-              What pages may reach on this Mac and your network. Separate from what Claude may do.
-            </p>
-          </div>
-          {!netRows.length ? (
-            <p className="text-meta text-dim">No sites have asked. Clui asks you the first time one does.</p>
-          ) : (
-            <ul className="flex flex-col">
-              {netRows.map((s, i) => (
-                <li key={s.site} className="flex h-9 items-center gap-3">
-                  <span title={s.site} className="min-w-0 truncate font-mono text-code text-content">
-                    {s.site}
-                  </span>
-                  <span className="shrink-0 text-meta text-dim">
-                    {s.allow ? 'Allowed' : 'Blocked'} {approvedDate(s.atMs)}
-                  </span>
-                  <button
-                    type="button"
-                    data-focus={netKey(s)}
-                    title="Forget site"
-                    aria-label={`Forget ${s.site}`}
-                    className={`${ICON_BTN} ${DANGER_HOVER} ml-auto`}
-                    onClick={() => forgetNet(s, i)}
-                  >
-                    <IconTrash className="h-3.5 w-3.5" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="flex flex-col gap-2" aria-labelledby={`${uid}-logins`}>
-          <div
-            className={`flex min-h-7 items-center gap-2 ${loginsWindowed ? 'overflow-hidden [scrollbar-gutter:stable]' : ''}`}
+      <section className="flex flex-col gap-2" aria-labelledby={`${uid}-logins`}>
+        <div
+          className={`flex min-h-7 items-center gap-2 ${loginsWindowed ? 'overflow-hidden [scrollbar-gutter:stable]' : ''}`}
+        >
+          <h3
+            id={`${uid}-logins`}
+            tabIndex={-1}
+            data-focus="logins-h3"
+            className="text-ui font-semibold text-content focus-visible:outline-none"
           >
-            <h3
-              id={`${uid}-logins`}
-              tabIndex={-1}
-              data-focus="logins-h3"
-              className="text-ui font-semibold text-content focus-visible:outline-none"
-            >
-              Saved logins
-            </h3>
-            <span className="text-meta text-dim">{liveLogins.length}</span>
-            <button
-              type="button"
-              data-focus="add"
-              title="Add login"
-              aria-label="Add login"
-              aria-disabled={vault === false || undefined}
-              aria-describedby={vault === false ? `${uid}-vault` : undefined}
-              className={`${ICON_BTN} ${vault === false ? 'cursor-default text-faint' : NEUTRAL_HOVER} ml-auto`}
-              onClick={() => openForm(null, 'add')}
-            >
-              <IconPlus className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          {vault === false && (
-            <p id={`${uid}-vault`} className="text-meta text-dim">
-              Saved logins need macOS Keychain access, which isn&apos;t available right now.
-            </p>
-          )}
-          {loginsWindowed && (
-            <Filter
-              value={loginQuery}
-              onChange={setLoginQuery}
-              focusKey="logins-filter"
-              label="Filter saved logins"
-              placeholder="Filter by site or username"
-              matches={loginRows.length}
-              noun={['login', 'logins']}
-              say={sayFilter}
-            />
-          )}
-          {form && (
-            <LoginForm
-              key={form.edit?.id ?? 'new'}
-              id={formId}
-              edit={form.edit}
-              onCancel={() => {
+            Saved logins
+          </h3>
+          <span className="text-meta text-dim">{liveLogins.length}</span>
+          <button
+            type="button"
+            data-focus="add"
+            title="Add login"
+            aria-label="Add login"
+            aria-disabled={vault === false || undefined}
+            aria-describedby={vault === false ? `${uid}-vault` : undefined}
+            className={`${ICON_BTN} ${vault === false ? 'cursor-default text-faint' : NEUTRAL_HOVER} ml-auto`}
+            onClick={() => openForm(null, 'add')}
+          >
+            <IconPlus className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        {vault === false && (
+          <p id={`${uid}-vault`} className="text-meta text-dim">
+            Saved logins need macOS Keychain access, which isn&apos;t available right now.
+          </p>
+        )}
+        {loginsWindowed && (
+          <Filter
+            value={loginQuery}
+            onChange={setLoginQuery}
+            focusKey="logins-filter"
+            label="Filter saved logins"
+            placeholder="Filter by site or username"
+            matches={loginRows.length}
+            noun={['login', 'logins']}
+            say={sayFilter}
+          />
+        )}
+        {form && (
+          <LoginForm
+            key={form.edit?.id ?? 'new'}
+            id={formId}
+            edit={form.edit}
+            onCancel={() => {
+              setForm(null)
+              setFocus({ key: form.opener })
+            }}
+            onSaved={(saved) => {
+              void relist().then(() => {
                 setForm(null)
-                setFocus({ key: form.opener })
-              }}
-              onSaved={(saved) => {
-                void relist().then(() => {
-                  setForm(null)
-                  setFocus({ key: `edit:${saved.id}`, fallback: loginQuery ? 'logins-filter' : 'logins-h3', top: !form.edit })
-                })
-              }}
-            />
-          )}
-          {vault && !loginsWindowed && !liveLogins.length && !form ? (
-            <p className="text-meta text-dim">
-              No saved logins yet.{' '}
-              <button type="button" data-focus="add-empty" className={LINK} onClick={() => openForm(null, 'add-empty')}>
-                Add a login
-              </button>
-            </p>
-          ) : loginsWindowed && !loginRows.length ? (
-            <div className={WINDOW}>
-              <p className="px-0 py-2 text-meta text-dim">No logins match &quot;{loginQuery}&quot;.</p>
-            </div>
-          ) : (
-            !!loginRows.length && (
-              <ul ref={loginsWindow} className={loginsWindowed ? WINDOW : 'flex flex-col'}>
-                {loginRows.map((l, i) => {
-                  const editing = form?.edit?.id === l.id
-                  return (
-                    <li key={l.id} className="flex h-9 items-center gap-3">
-                      <span title={l.site} className="min-w-0 truncate font-mono text-code text-content">
-                        {l.site}
-                      </span>
-                      <span title={l.username} className="min-w-0 truncate text-meta text-dim">
-                        {l.username}
-                      </span>
-                      {l.hasTotp && <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 text-badge text-dim">2FA</span>}
-                      <span className="ml-auto flex shrink-0 gap-2">
-                        <button
-                          type="button"
-                          data-focus={`edit:${l.id}`}
-                          title="Edit login"
-                          aria-label={`Edit login ${l.username} on ${l.site}`}
-                          aria-expanded={editing}
-                          aria-controls={editing ? formId : undefined}
-                          className={`${ICON_BTN} ${NEUTRAL_HOVER}`}
-                          onClick={() => openForm(l, `edit:${l.id}`)}
-                        >
-                          <IconEdit className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          data-focus={loginKey(l)}
-                          title="Remove login"
-                          aria-label={`Remove login ${l.username} on ${l.site}`}
-                          className={`${ICON_BTN} ${DANGER_HOVER}`}
-                          onClick={() => removeLogin(l, i)}
-                        >
-                          <IconTrash className="h-3.5 w-3.5" />
-                        </button>
-                      </span>
-                    </li>
-                  )
-                })}
-              </ul>
-            )
-          )}
-        </section>
+                setFocus({ key: `edit:${saved.id}`, fallback: loginQuery ? 'logins-filter' : 'logins-h3', top: !form.edit })
+              })
+            }}
+          />
+        )}
+        {vault && !loginsWindowed && !liveLogins.length && !form ? (
+          <p className="text-meta text-dim">
+            No saved logins yet.{' '}
+            <button type="button" data-focus="add-empty" className={LINK} onClick={() => openForm(null, 'add-empty')}>
+              Add a login
+            </button>
+          </p>
+        ) : loginsWindowed && !loginRows.length ? (
+          <div className={WINDOW}>
+            <p className="px-0 py-2 text-meta text-dim">No logins match &quot;{loginQuery}&quot;.</p>
+          </div>
+        ) : (
+          !!loginRows.length && (
+            <ul ref={loginsWindow} className={loginsWindowed ? WINDOW : 'flex flex-col'}>
+              {loginRows.map((l, i) => {
+                const editing = form?.edit?.id === l.id
+                return (
+                  <li key={l.id} className="flex h-9 items-center gap-3">
+                    <span title={l.site} className="min-w-0 truncate font-mono text-code text-content">
+                      {l.site}
+                    </span>
+                    <span title={l.username} className="min-w-0 truncate text-meta text-dim">
+                      {l.username}
+                    </span>
+                    {l.hasTotp && <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 text-badge text-dim">2FA</span>}
+                    <span className="ml-auto flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        data-focus={`edit:${l.id}`}
+                        title="Edit login"
+                        aria-label={`Edit login ${l.username} on ${l.site}`}
+                        aria-expanded={editing}
+                        aria-controls={editing ? formId : undefined}
+                        className={`${ICON_BTN} ${NEUTRAL_HOVER}`}
+                        onClick={() => openForm(l, `edit:${l.id}`)}
+                      >
+                        <IconEdit className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        data-focus={loginKey(l)}
+                        title="Remove login"
+                        aria-label={`Remove login ${l.username} on ${l.site}`}
+                        className={`${ICON_BTN} ${DANGER_HOVER}`}
+                        onClick={() => removeLogin(l, i)}
+                      >
+                        <IconTrash className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          )
+        )}
+      </section>
 
-        <ClearBrowsingData />
-        <span className="sr-only" aria-live="polite">
-          {filterSay}
-        </span>
-      </SubPane>
+      <ClearBrowsingData />
+      <span className="sr-only" aria-live="polite">
+        {filterSay}
+      </span>
     </>
   )
 }
