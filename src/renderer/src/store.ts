@@ -52,7 +52,7 @@ import type { Via } from './lib/motion'
 import { CHANGE_BYTES_MAX, CHANGE_TEXT_BUDGET, type ChangeGitStatus, type FileChangeSummary, type GitPathStatus } from '../../shared/changes'
 import { isSvg, kindForPath, restoreKinds, SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSelection, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
 import { clean, type SurfaceCommand, type SurfaceReply, type SurfaceTarget, type TabFact } from '../../shared/surface-tools'
-import { isWord } from '../../shared/office'
+import { laysOut } from '../../shared/office'
 import { awaitFound } from './lib/pointedText'
 import { turnEndLine } from './lib/turnEnd'
 import { suffixes } from './lib/tree'
@@ -1372,7 +1372,7 @@ export function paneFacts(handleId: string): SurfaceReply {
     if (!t) return null
     const at = t.location
     const pend = t.pendingShow?.location
-    if (t.kind === 'doc' && isWord(t.key)) {
+    if (t.kind === 'doc' && laysOut(t.key)) {
       const s = t.selection
       const h = t.highlight
       return {

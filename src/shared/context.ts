@@ -67,8 +67,8 @@ export type ContextReference = RefBase &
     /** Text in one part of a Word document as Clui laid it out from the file's bytes at `sourceVersion`. `text.nth`
      *  counts earlier occurrences of the quote in the part. `blocks`: the first and last paragraph, counted from 1 in
      *  the part as rendered. `heading`: the nearest heading above it, body only. `tracked`: the part has tracked changes,
-     *  quoted as if accepted. */
-    | { kind: 'docx'; path: string; sourceVersion: SourceVersion; part: WordPart; blocks: LineRange; text: DocText; heading?: string; tracked?: true }
+     *  quoted as if accepted. `via`: laid out from macOS's conversion of an .odt or .rtf, not from the bytes. */
+    | { kind: 'docx'; path: string; sourceVersion: SourceVersion; part: WordPart; blocks: LineRange; text: DocText; heading?: string; tracked?: true; via?: 'textutil' }
   )
 
 export interface ImageSize { w: number; h: number }
@@ -191,7 +191,7 @@ const textOk = (t: unknown): boolean =>
 function docxOk(x: Record<string, unknown>, wire: boolean): boolean {
   if (!pathOk(x.path, wire) || typeof x.sourceVersion !== 'string' || !VERSION.test(x.sourceVersion) || !PARTS.has(x.part) || !rangeOk(x.blocks) || !textOk(x.text)) return false
   if (x.heading !== undefined && (x.part !== 'body' || !str(x.heading, HEADING_MAX) || !x.heading)) return false
-  return x.tracked === undefined || x.tracked === true
+  return (x.tracked === undefined || x.tracked === true) && (x.via === undefined || x.via === 'textutil')
 }
 
 function sheetOk(x: Record<string, unknown>, wire: boolean): boolean {
@@ -455,6 +455,8 @@ const DOC_SENTENCE =
   'PDF pages count from 1 in file order. Regions and points are 0 to 1 from the top left of the page as shown, after rotation; page sizes are in points. A quote marked elided keeps only its start and end.'
 const DOCX_SENTENCE =
   "A Word reference quotes text from Clui's own layout of a .docx, which keeps the document's structure but not Word's pages. part says where the text is; nth counts earlier occurrences of the quote in that part, from 0; blocks is a rough position, its paragraphs counted from 1 as Clui laid them out with table cells included, and can run slightly ahead of the paragraph count in the XML, so find the text by the quote; heading is the nearest heading above it. tracked marks a document with tracked changes, quoted as if accepted. A quote marked elided keeps only its start and end."
+const TEXTUTIL_SENTENCE =
+  "A Word reference with via textutil quotes an .odt or .rtf file as macOS converted it, which keeps words, tables, lists and links and drops pictures, notes, comments, headers and footers. Its blocks count paragraphs and list items in that conversion, not in the file; a footnote's number can sit in the quote as a plain digit, and a picture's description as text."
 const SHEET_SENTENCE = 'Sheet ranges use A1 notation. In CSV and TSV files row 1 is the first record, and lines gives where those records are in the file.'
 const NOTE_SENTENCE = "A note on a reference is the user's own words about it; treat it as part of their message."
 
@@ -527,6 +529,7 @@ function copyRef(r: ContextReference): ContextReference {
       out = { id: r.id, kind: 'docx', path: r.path, sourceVersion: r.sourceVersion, part: r.part, blocks: { start: r.blocks.start, end: r.blocks.end }, text: { quote: t.quote, nth: t.nth, ...(t.elided ? { elided: true as const } : {}) } }
       if (r.heading !== undefined) out.heading = r.heading
       if (r.tracked) out.tracked = true
+      if (r.via) out.via = r.via
       break
     }
     default:
@@ -562,6 +565,7 @@ export function serializeContext(refs: SentReference[], typed: string, opts: { p
       refs.some((r) => r.ref.kind === 'doc') && DOC_SENTENCE,
       refs.some((r) => r.ref.kind === 'sheet') && SHEET_SENTENCE,
       refs.some((r) => r.ref.kind === 'docx') && DOCX_SENTENCE,
+      refs.some((r) => r.ref.kind === 'docx' && r.ref.via === 'textutil') && TEXTUTIL_SENTENCE,
       refs.some((r) => !!r.ref.note?.trim()) && NOTE_SENTENCE
     ]
       .filter(Boolean)

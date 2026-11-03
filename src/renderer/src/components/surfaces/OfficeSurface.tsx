@@ -7,7 +7,7 @@ import { IconTarget } from '../Icon'
 import { useSay } from '../../lib/useSay'
 import { noteRead } from '../../lib/blockedFiles'
 import { takeSurfaceFocus } from '../../lib/surfaceFocus'
-import { megabytes, unpackDetail } from '../../lib/docxView'
+import { megabytes, unconvertedFact, unpackDetail } from '../../lib/docxView'
 import { BANNER, baseOf, DocState, openDefault, REASON, SelectionNotice, SKELETON_MS, STATE_BODY, TEXT_BTN, setStatus, type Doc } from './fileDoc'
 import { DocxSurface } from './DocxSurface'
 
@@ -15,6 +15,7 @@ const TURN_RELOAD_MS = 300
 const MISSING_POLL_MS = 2000
 const LIBREOFFICE = 'https://www.libreoffice.org/'
 const MACROS = ' This document contains macros. Clui never runs them.'
+const DARK_PAGE = "In Dark Mode, Quick Look draws its first page as black text on a dark background, so Clui doesn't show it."
 const CAP = 'Clui lays out Word documents with up to 1 MB of text and formatting'
 const NOTICE = {
   cleared: 'The document changed on disk, so the selection was cleared.',
@@ -22,14 +23,17 @@ const NOTICE = {
 }
 const DAMAGED: Record<DamagedAs, string> = { word: 'Word document', powerpoint: 'PowerPoint presentation', opendocument: 'OpenDocument file', rtf: 'RTF file' }
 
-type Shown = { t: 'loading' } | { t: 'missing' } | { t: 'error'; reason: Refusal['reason']; message: string } | { t: 'failed'; revision: string } | Extract<OfficeOpen, { ok: true }>
+type Shown = { t: 'loading' } | { t: 'missing' } | { t: 'error'; reason: Refusal['reason']; message: string } | { t: 'failed'; revision: string; text: boolean } | Extract<OfficeOpen, { ok: true }>
+/** Shown in Clui's own view, which keeps its selection across versions. */
+const laidOut = (t: Shown['t']): boolean => t === 'word' || t === 'text'
 
 // The install sentence shows on the app session's first glimpse only, and on that tab for as long as it's open.
 let hintTab: string | null = null
 
 /**
- * An Office file in the pane: main's pre-flight first, then Clui's own Word layout for a .docx or .docm that fits, and
- * Quick Look's first page for the rest. Watches the file and runs the pre-flight again on a change.
+ * An Office file in the pane: main's pre-flight first, then Clui's own view for a .docx or .docm that fits or an .odt
+ * or .rtf that converts, and Quick Look's first page for the rest. Watches the file and runs the pre-flight again on a
+ * change.
  */
 export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: string }): JSX.Element {
   const tab = useActive((s) => s?.surfaces.tabs[tabId])
@@ -57,7 +61,7 @@ export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: st
     if (r.ok && 'revision' in prev && prev.revision === r.revision && prev.t === r.t) return
     const next: Shown = r.ok ? r : r.reason === 'missing' ? { t: 'missing' } : { t: 'error', reason: r.reason, message: REASON[r.reason] }
     // The Word view keeps its own selection across versions; leaving it for anything else clears it.
-    if (prev.t === 'word' && next.t !== 'word') {
+    if (laidOut(prev.t) && !laidOut(next.t)) {
       const st = useSession.getState()
       const sel = st.sessions[handleId]?.surfaces.tabs[tabId]?.selection
       if (sel?.part) {
@@ -66,7 +70,7 @@ export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: st
         say(NOTICE.cleared)
       }
     }
-    setStatus(owner, next.t === 'word' ? 'loading' : next.t === 'missing' ? 'missing' : 'error')
+    setStatus(owner, laidOut(next.t) ? 'loading' : next.t === 'missing' ? 'missing' : 'error')
     setShown(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handleId, path, tabId])
@@ -128,14 +132,14 @@ export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: st
   // A user open focuses the state's first action once it settles; the views take it themselves.
   const stateEl = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (shown.t === 'loading' || shown.t === 'word' || shown.t === 'glimpse') return
+    if (shown.t === 'loading' || laidOut(shown.t) || shown.t === 'glimpse') return
     const via = takeSurfaceFocus(tabId)
     if (!via) return
     const opts: FocusOptions & { focusVisible?: boolean } = { preventScroll: true, focusVisible: via === 'keyboard' }
     ;(stateEl.current?.querySelector<HTMLElement>('button') ?? stateEl.current)?.focus(opts)
   }, [shown.t, tabId])
 
-  if (shown.t === 'word') {
+  if (shown.t === 'word' || shown.t === 'text') {
     return (
       <DocxSurface
         handleId={handleId}
@@ -144,7 +148,7 @@ export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: st
         onStale={scheduleLoad}
         onFailed={() => {
           setStatus(owner, 'error')
-          setShown({ t: 'failed', revision: shown.revision })
+          setShown({ t: 'failed', revision: shown.revision, text: shown.t === 'text' })
         }}
       />
     )
@@ -178,7 +182,12 @@ export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: st
       case 'damaged':
         return (
           <>
-            {head(`Couldn't open ${name}`, `The file is damaged or isn't a valid ${DAMAGED[shown.as]}.`)}
+            {head(
+              `Couldn't open ${name}`,
+              shown.converting
+                ? `macOS couldn't read it as ${shown.as === 'rtf' ? 'an RTF file' : 'an OpenDocument text file'}. It may be damaged or cut short.`
+                : `The file is damaged or isn't a valid ${DAMAGED[shown.as]}.`
+            )}
             <div className="flex gap-2">{app}</div>
           </>
         )
@@ -199,7 +208,7 @@ export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: st
       case 'failed':
         return (
           <>
-            {head(`Couldn't show ${name}`, "Clui couldn't lay out this Word document. It may be damaged or use something Clui can't read.")}
+            {head(`Couldn't show ${name}`, shown.text ? "Clui couldn't lay out the converted document." : "Clui couldn't lay out this Word document. It may be damaged or use something Clui can't read.")}
             <div className="flex gap-2">
               <Button
                 variant="secondary"
@@ -316,16 +325,22 @@ function GlimpseView({ handleId, tabId, path, flight, onStale, notice, onDismiss
       About LibreOffice
     </button>
   )
-  const size = flight.xml ? `${CAP}, and this one has ${megabytes(flight.xml)} MB.` : ''
+  const why = flight.xml ? `${CAP}, and this one has ${megabytes(flight.xml)} MB.` : flight.convert ? unconvertedFact(flight.convert) : ''
   const macros = flight.macros ? MACROS : ''
-  const fact = `Showing the first ${page} as Quick Look draws it.${size ? ` ${size}` : ''}${macros}`
+  const fact = `Showing the first ${page} as Quick Look draws it.${why ? ` ${why}` : ''}${macros}`
   const hintText = hint ? ` With LibreOffice installed, Clui shows every ${page} here.` : ''
   const failed = !!g && !g.ok
+  const dark = g?.ok === false && g.why === 'unreadable'
+  const tooLong = !!flight.xml || flight.convert?.why === 'too-long'
   const claude =
     location?.text !== undefined
-      ? flight.xml
+      ? tooLong
         ? `Claude pointed to text in ${name}, which is too long to lay out here. Only its first page shows.`
-        : null
+        : flight.convert?.why === 'timeout'
+          ? `Claude pointed to text in ${name}, which Clui couldn't convert. Only its first page shows.`
+          : flight.convert?.why === 'no-text'
+            ? `Claude pointed to text in ${name}, but macOS found no text in it. Only its first page shows.`
+            : null
       : location?.page && location.page > 1
         ? `Claude pointed to ${page} ${location.page}. Without LibreOffice, Clui shows only the first ${page} of ${name}.`
         : null
@@ -365,15 +380,17 @@ function GlimpseView({ handleId, tabId, path, flight, onStale, notice, onDismiss
           )}
           {failed && (
             <div ref={stateEl} className={`${STATE_BODY} bg-bg`}>
-              {flight.xml ? (
+              {why ? (
                 <>
-                  <p className="text-ui font-medium text-content">{`${name} is too long to lay out here`}</p>
-                  <p className="max-w-[60ch] text-ui text-dim">{`${CAP}, and this one has ${megabytes(flight.xml)} MB. Quick Look couldn't draw its first page. With LibreOffice installed, Clui can show files like this here.${macros}`}</p>
+                  <p className="text-ui font-medium text-content">
+                    {tooLong ? `${name} is too long to lay out here` : flight.convert?.why === 'timeout' ? `${name} took too long to convert` : `Clui can't show ${name} here`}
+                  </p>
+                  <p className="max-w-[60ch] text-ui text-dim">{`${why} ${dark ? DARK_PAGE : "Quick Look couldn't draw its first page."} With LibreOffice installed, Clui can show files like this here.${macros}`}</p>
                 </>
               ) : (
                 <>
                   <p className="text-ui font-medium text-content">{`Clui can't show ${name} here`}</p>
-                  <p className="max-w-[60ch] text-ui text-dim">{`With LibreOffice installed, Clui can show files like this here.${macros}`}</p>
+                  <p className="max-w-[60ch] text-ui text-dim">{`${dark ? `${DARK_PAGE} ` : ''}With LibreOffice installed, Clui can show files like this here.${macros}`}</p>
                 </>
               )}
               <div className="flex gap-2">

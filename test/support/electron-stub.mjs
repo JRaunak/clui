@@ -24,4 +24,6 @@ export const protocol = {}
 export class WebContentsView {}
 // The context menu module imports it; tests check only its payload parsing.
 export const Menu = {}
-export default { app, safeStorage, session, protocol, shell, WebContentsView, Menu }
+// The Office pre-flight module imports it for thumbnails; tests check the pixel test on raw bitmaps.
+export const nativeImage = {}
+export default { app, safeStorage, session, protocol, shell, WebContentsView, Menu, nativeImage }

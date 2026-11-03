@@ -1,14 +1,16 @@
 /**
  * Office files before anything renders them: the pre-flight read of a document's package (bounds, encryption,
- * damage, macros and what Clui's Word layout can't show), and Quick Look's first page of the rest. Reads go through
- * the guarded file reads at one stat revision; nothing here parses more than the parts it names.
+ * damage, macros and what Clui's Word layout can't show), macOS's conversion of .odt and .rtf files to HTML, and Quick
+ * Look's first page of the rest. Reads go through the guarded file reads at one stat revision; nothing here parses more
+ * than the parts it names.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { nativeImage } from 'electron'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { CHUNK_MAX } from '../../shared/files'
-import { isPresentation, isWord, OFFICE_BYTES_MAX, WORD_XML_MAX, type DamagedAs, type Flight, type Glimpse, type WordFacts, type WordPart } from '../../shared/office'
+import { isPresentation, isWord, OFFICE_BYTES_MAX, TEXT_HTML_MAX, WORD_XML_MAX, type Converted, type DamagedAs, type Flight, type Glimpse, type WordFacts, type WordPart } from '../../shared/office'
 import { unxml } from '../../shared/sheets'
 import { zipEntries, zipPart, type Read, type ZipEntry } from './zip'
 
@@ -206,14 +208,48 @@ export async function wordXml(size: number, read: Read): Promise<number | null> 
   return (await zipEntries(size, read))?.find((e) => e.name === 'word/document.xml')?.size ?? null
 }
 
-/** The pre-flight of one Office file at one revision, from its size and a ranged reader. */
+/** Whether an RTF's bytes hold the `\deleted` control word, read in pieces that overlap so a word split across two
+ *  reads is still seen. Null when a read fails. */
+export async function rtfDeleted(size: number, read: Read, chunk = CHUNK_MAX): Promise<boolean | null> {
+  for (let at = 0; ; at += chunk - 16) {
+    const b = await read(at, Math.min(chunk, size - at))
+    if (!b) return null
+    const end = at + b.length >= size
+    // `\\` is an escaped backslash, so `\\deleted` is text and `\\\deleted` the control word. A match at a later read's
+    // first byte can't see what precedes it, and one at a read's last byte can't see what follows; the overlapping read
+    // sees each whole.
+    for (const m of b.toString('latin1').matchAll(/(?<!\\)(?:\\\\)*\\deleted(?![a-z])/g)) {
+      if ((m.index || !at) && (end || m.index + m[0].length < b.length)) return true
+    }
+    if (end) return false
+    await new Promise((r) => setImmediate(r))
+  }
+}
+
+/** A package's zip directory against the unpacking bounds, since what reads it next would inflate a bomb. */
+function unpacks(entries: ZipEntry[]): Flight | null {
+  const unzipped = entries.reduce((n, e) => n + e.size, 0)
+  if (entries.length > ENTRIES_MAX) return { t: 'unpacks', bound: 'entries', n: entries.length }
+  if (unzipped > UNZIPPED_MAX) return { t: 'unpacks', bound: 'unzipped', n: unzipped }
+  if (entries.some((e) => e.size / Math.max(1, e.compressed) > RATIO_MAX)) return { t: 'unpacks', bound: 'ratio' }
+  return null
+}
+
+/** The pre-flight of one Office file at one revision, from its size and a ranged reader. A `text` outcome still has
+ *  to convert (`converts`). */
 export async function preflight(path: string, size: number, read: Read): Promise<Flight> {
   const as = damagedAs(path)
   if (!size) return { t: 'empty' }
   if (size > OFFICE_BYTES_MAX) return { t: 'too-large', bytes: size }
   const head = await read(0, Math.min(size, 8))
   if (!head) return { t: 'damaged', as }
-  if (as === 'rtf') return head.toString('latin1').startsWith('{\\rtf') ? { t: 'glimpse', macros: false } : { t: 'damaged', as }
+  if (as === 'rtf') {
+    if (!head.toString('latin1').startsWith('{\\rtf')) return { t: 'damaged', as }
+    // textutil shows a deletion as ordinary text, with nothing marking it.
+    const deleted = await rtfDeleted(size, read)
+    if (deleted === null) return { t: 'damaged', as }
+    return deleted ? { t: 'glimpse', macros: false, convert: { why: 'tracked' } } : { t: 'text', facts: { as, macros: false, tracked: false } }
+  }
   const ole = head.subarray(0, 8).equals(OLE) ? await oleOf(size, read) : null
   if (/\.(doc|ppt)$/i.test(path)) {
     if (!ole) return { t: 'damaged', as }
@@ -238,16 +274,16 @@ export async function preflight(path: string, size: number, read: Read): Promise
   if (as === 'opendocument') {
     if (!byName.has('content.xml')) return { t: 'damaged', as }
     if ((await text('META-INF/manifest.xml'))?.includes('encryption-data')) return { t: 'locked' }
-    return { t: 'glimpse', macros: names.some((n) => n.startsWith('Basic/') || n.startsWith('Scripts/')) }
+    const macros = names.some((n) => n.startsWith('Basic/') || n.startsWith('Scripts/'))
+    if (!/\.odt$/i.test(path) || (await text('mimetype', 256)) !== 'application/vnd.oasis.opendocument.text') return { t: 'glimpse', macros }
+    return unpacks(entries) ?? { t: 'text', facts: { as, macros, tracked: !!(await text('content.xml'))?.includes('<text:changed-region') } }
   }
   const main = as === 'powerpoint' ? 'ppt/presentation.xml' : 'word/document.xml'
   if (!byName.has('[Content_Types].xml') || !byName.has(main)) return { t: 'damaged', as }
   const macros = names.some((n) => /(^|\/)vbaProject\.bin$/i.test(n))
   if (!isWord(path)) return { t: 'glimpse', macros }
-  const unzipped = entries.reduce((n, e) => n + e.size, 0)
-  if (entries.length > ENTRIES_MAX) return { t: 'unpacks', bound: 'entries', n: entries.length }
-  if (unzipped > UNZIPPED_MAX) return { t: 'unpacks', bound: 'unzipped', n: unzipped }
-  if (entries.some((e) => e.size / Math.max(1, e.compressed) > RATIO_MAX)) return { t: 'unpacks', bound: 'ratio' }
+  const bound = unpacks(entries)
+  if (bound) return bound
   const xml = byName.get(main)!.size
   if (xml > WORD_XML_MAX) return { t: 'glimpse', macros, xml }
   if ((await text(main, WORD_XML_MAX)) === null) return { t: 'damaged', as }
@@ -258,10 +294,54 @@ export async function preflight(path: string, size: number, read: Read): Promise
 const pngSize = (b: Buffer): { w: number; h: number } | null =>
   b.length > 24 && b.readUInt32BE(12) === 0x49484452 ? { w: b.readUInt32BE(16), h: b.readUInt32BE(20) } : null
 
+const linear = (c: number): number => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+
+/**
+ * Whether a first page reads as dark text on a dark page, from its BGRA pixels: the outer `band` pixels average darker
+ * than sRGB 64, and the brightest 1% of the picture is under 3:1 against them. A mid-grey page clears the first test
+ * and a dark cover with light type the second.
+ */
+export function unreadable(bgra: Uint8Array, w: number, h: number, band: number): boolean {
+  const lum = new Float64Array(w * h)
+  let edge = 0
+  let n = 0
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      // Premultiplied, so a transparent pixel shows the white page box under the picture.
+      const a = 255 - bgra[i * 4 + 3]
+      const l = 0.2126 * linear(bgra[i * 4 + 2] + a) + 0.7152 * linear(bgra[i * 4 + 1] + a) + 0.0722 * linear(bgra[i * 4] + a)
+      lum[i] = l
+      if (x < band || y < band || x >= w - band || y >= h - band) {
+        edge += l
+        n++
+      }
+    }
+  }
+  if (!n) return false
+  edge /= n
+  const k = Math.max(1, Math.ceil(lum.length / 100))
+  const bright = lum.sort().subarray(lum.length - k).reduce((s, l) => s + l, 0) / k
+  return edge < linear(64) && (Math.max(edge, bright) + 0.05) / (Math.min(edge, bright) + 0.05) < 3
+}
+
+/** A private copy of one revision, read through the guarded reads; false when the file changed under them. */
+async function copyOut(to: string, size: number, read: Read): Promise<boolean> {
+  const parts: Buffer[] = []
+  for (let at = 0; at < size; at += CHUNK_MAX) {
+    const b = await read(at, Math.min(CHUNK_MAX, size - at))
+    if (!b) return false
+    parts.push(b)
+  }
+  await writeFile(to, Buffer.concat(parts), { mode: 0o600 })
+  return true
+}
+
 /**
  * Quick Look's first page of one file revision. `qlmanage -t` runs on a private copy, never the user's path, and only
  * with `-t`: `-p` once crashed on ODT with a dialog on the user's screen. A revision whose thumbnail failed isn't tried
- * again this app session, so a crashing generator can't raise a second dialog.
+ * again this app session, so a crashing generator can't raise a second dialog. An unreadable one isn't kept, since
+ * Quick Look draws it light again once macOS is in Light Mode.
  */
 export function glimpses(dir: string, qlmanage: string, timeoutMs = 5000) {
   const done = new Map<string, Glimpse>()
@@ -272,19 +352,17 @@ export function glimpses(dir: string, qlmanage: string, timeoutMs = 5000) {
     const copy = join(job, `copy${extname(path).toLowerCase()}`)
     try {
       await mkdir(job, { recursive: true, mode: 0o700 })
-      const parts: Buffer[] = []
-      for (let at = 0; at < size; at += CHUNK_MAX) {
-        const b = await read(at, Math.min(CHUNK_MAX, size - at))
-        if (!b) return { ok: false, why: 'changed' }
-        parts.push(b)
-      }
-      await writeFile(copy, Buffer.concat(parts), { mode: 0o600 })
+      if (!(await copyOut(copy, size, read))) return { ok: false, why: 'changed' }
       const ok = await new Promise<boolean>((res) =>
         execFile(qlmanage, ['-t', '-s', '2000', '-o', job, copy], { timeout: timeoutMs, killSignal: 'SIGKILL' }, (e) => res(!e))
       )
       const png = ok ? await readFile(join(job, `${basename(copy)}.png`)).catch(() => null) : null
       const px = png && pngSize(png)
-      return png && px ? { ok: true, url: `data:image/png;base64,${png.toString('base64')}`, ...px } : { ok: false, why: 'failed' }
+      if (!png || !px) return { ok: false, why: 'failed' }
+      const small = nativeImage.createFromBuffer(png).resize(px.w >= px.h ? { width: 200 } : { height: 200 })
+      const { width, height } = small.getSize()
+      if (unreadable(small.toBitmap(), width, height, Math.max(1, Math.round((16 * width) / px.w)))) return { ok: false, why: 'unreadable' }
+      return { ok: true, url: `data:image/png;base64,${png.toString('base64')}`, ...px }
     } finally {
       await rm(job, { recursive: true, force: true }).catch(() => {})
     }
@@ -306,6 +384,123 @@ export function glimpses(dir: string, qlmanage: string, timeoutMs = 5000) {
           if (done.size > 16) done.delete(done.keys().next().value as string)
         }
         return g
+      })
+      running.set(key, p)
+      return p
+    }
+  }
+}
+
+/** How one revision's conversion came out. `missing`: there's no textutil to run. */
+export type Conversion =
+  | ({ ok: true } & Converted)
+  | { ok: false; why: 'too-long'; bytes: number }
+  | { ok: false; why: 'timeout' | 'no-text' | 'failed' | 'missing' | 'changed' }
+
+/**
+ * textutil's HTML cut into what the renderer sanitizes, without parsing it: the head's one stylesheet, and the body
+ * split before every line that opens with a start tag. With `-prefixspaces 2` every top-level element starts a line at
+ * column 0 and nested ones are indented, and the writer escapes `<` in text, so each piece is one top-level element; a
+ * top-level list's end tag also sits at column 0, and stays with its list.
+ * The split only decides layout; every piece is sanitized on its own.
+ */
+export function sliceHtml(html: string): Converted | 'failed' | 'no-text' {
+  const open = /<body\b[^>]*>/i.exec(html)
+  const close = html.lastIndexOf('</body>')
+  if (!open || close < open.index) return 'failed'
+  const body = html.slice(open.index + open[0].length, close)
+  // A picture-only document converts to nothing, and blank paper would say it's empty.
+  if (!body.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim()) return 'no-text'
+  return {
+    css: /<style type="text\/css">([\s\S]*?)<\/style>/i.exec(html.slice(0, open.index))?.[1] ?? '',
+    blocks: body.split(/\n(?=<[^/])/).map((b) => b.trim()).filter(Boolean)
+  }
+}
+
+/** A converted file's flight from how its conversion came out; null when the file changed while it was copied. */
+export function converted(f: Extract<Flight, { t: 'text' }>, c: Conversion): Flight | null {
+  if (c.ok) return f
+  switch (c.why) {
+    case 'changed':
+      return null
+    case 'failed':
+      return { t: 'damaged', as: f.facts.as, converting: true }
+    case 'missing':
+      return { t: 'glimpse', macros: f.facts.macros }
+    case 'too-long':
+      return { t: 'glimpse', macros: f.facts.macros, convert: { why: 'too-long', bytes: c.bytes } }
+    default:
+      return { t: 'glimpse', macros: f.facts.macros, convert: { why: c.why } }
+  }
+}
+
+/**
+ * macOS's conversion of one .odt or .rtf revision to HTML, on a private copy in its own job directory, never the
+ * user's path. textutil's exit code says nothing (a cut-short file exits 0 with no output), so only its output counts.
+ * Two run at once; the newest eight outcomes are kept, and a revision that failed isn't tried again this app session.
+ */
+export function converts(dir: string, textutil: string, timeoutMs = 10_000) {
+  const done = new Map<string, Conversion>()
+  const failed = new Set<string>()
+  const running = new Map<string, Promise<Conversion>>()
+  let live = 0
+  const waiting: (() => void)[] = []
+  const take = async (): Promise<void> => {
+    if (live < 2) return void live++
+    await new Promise<void>((r) => waiting.push(r))
+  }
+  // A waiter inherits the slot, so nothing can take it between the release and the waiter running.
+  const give = (): void => {
+    const next = waiting.shift()
+    if (next) next()
+    else live--
+  }
+  const run = async (path: string, size: number, read: Read): Promise<Conversion> => {
+    const job = join(dir, randomUUID())
+    const copy = join(job, `copy${extname(path).toLowerCase()}`)
+    const out = join(job, 'out.html')
+    await take()
+    try {
+      await mkdir(job, { recursive: true, mode: 0o700 })
+      if (!(await copyOut(copy, size, read))) return { ok: false, why: 'changed' }
+      // cwd is the job: textutil writes attachments into its working directory. -excludedelements is never passed,
+      // since any value switches the writer to inline styles and <font>.
+      const ran = await new Promise<'ok' | 'timeout' | 'missing'>((res) =>
+        execFile(textutil, ['-convert', 'html', '-noload', '-nostore', '-prefixspaces', '2', '-output', out, copy], { cwd: job, timeout: timeoutMs, killSignal: 'SIGKILL' }, (e) =>
+          res(e?.killed ? 'timeout' : (e as NodeJS.ErrnoException | null)?.code === 'ENOENT' ? 'missing' : 'ok')
+        )
+      )
+      if (ran !== 'ok') return { ok: false, why: ran }
+      const st = await stat(out).catch(() => null)
+      if (!st?.size) return { ok: false, why: 'failed' }
+      if (st.size > TEXT_HTML_MAX) return { ok: false, why: 'too-long', bytes: st.size }
+      const html = sliceHtml(await readFile(out, 'utf8'))
+      return typeof html === 'string' ? { ok: false, why: html } : { ok: true, ...html }
+    } finally {
+      give()
+      await rm(job, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+  return {
+    get(path: string, revision: string, size: number, read: Read): Promise<Conversion> {
+      const key = `${path}\0${revision}`
+      if (failed.has(key)) return Promise.resolve({ ok: false, why: 'failed' })
+      const hit = done.get(key)
+      if (hit) {
+        done.delete(key)
+        done.set(key, hit)
+        return Promise.resolve(hit)
+      }
+      const live = running.get(key)
+      if (live) return live
+      const p = run(path, size, read).then((c) => {
+        running.delete(key)
+        if (!c.ok && c.why === 'failed') failed.add(key)
+        else if (c.ok || c.why !== 'changed') {
+          done.set(key, c)
+          if (done.size > 8) done.delete(done.keys().next().value as string)
+        }
+        return c
       })
       running.set(key, p)
       return p

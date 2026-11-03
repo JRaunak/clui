@@ -3,7 +3,7 @@
 // reaches the live document until the post-pass has run.
 import type { Options } from 'docx-preview'
 import type { NotePart, WordFacts, WordPart } from '../../../shared/office'
-import { flatten, lowerRoman, noteNumbers, type Flat, type Para } from './docxView'
+import { flatten, lowerRoman, noteNumbers, TEXT_CFG, textCss, textSegments, type Flat, type Para } from './docxView'
 
 /** A paragraph of a part, with the text nodes its text came from. */
 export interface Block extends Para { el: HTMLElement; nodes: Text[]; starts: number[] }
@@ -13,6 +13,7 @@ export type Parts = Record<WordPart | 'chrome', Block[]>
 export type Index = { parts: Parts; flats: Record<keyof Parts, Flat> }
 
 export const loadDocx = (): Promise<typeof import('docx-preview')> => import('docx-preview')
+export const loadPurify = (): Promise<typeof import('dompurify')> => import('dompurify')
 
 const inert = document.implementation.createHTMLDocument('')
 
@@ -131,13 +132,7 @@ export function postPass(nodes: Node[], facts: WordFacts, breaks: ('page' | 'sec
       const level = [...p.classList].map((c) => facts.headings[c]).find(Boolean)
       if (level) p.setAttribute('role', 'heading'), p.setAttribute('aria-level', String(level))
     }
-    // A table wider than the page scrolls on its own, with its scrollbar under it and a stop for the keyboard.
-    for (const t of s.querySelectorAll(':scope > article > table')) {
-      const w = inert.createElement('div')
-      w.dataset.scroll = 'table'
-      t.before(w)
-      w.append(t)
-    }
+    scrollTables(s)
   }
   fixNotes(sections, body, notes, facts)
   // Each segment's height until it lays out: its own page height from the document.
@@ -154,6 +149,50 @@ export function postPass(nodes: Node[], facts: WordFacts, breaks: ('page' | 'sec
   })
   for (const ol of notes.footnotes) ol.dataset.part = 'footnotes'
   for (const ol of notes.endnotes) ol.dataset.part = 'endnotes'
+}
+
+/** A table wider than the page scrolls on its own, with its scrollbar under it and a stop for the keyboard. */
+function scrollTables(s: Element): void {
+  for (const t of s.querySelectorAll(':scope > article > table')) {
+    const w = inert.createElement('div')
+    w.dataset.scroll = 'table'
+    t.before(w)
+    w.append(t)
+  }
+}
+
+/** A converted document as the view's segments, built in the inert document with each slice sanitized on its own,
+ *  one task apiece. */
+export async function textNodes(blocks: readonly string[], tick: () => Promise<void>): Promise<HTMLElement[]> {
+  const { default: purify } = await loadPurify()
+  // Unsupported, sanitize hands the input back unchanged.
+  if (!purify.isSupported) throw new Error('DOMPurify is unsupported here')
+  const out: HTMLElement[] = []
+  for (const seg of textSegments(blocks)) {
+    const s = inert.createElement('section')
+    s.className = 'docx'
+    s.dataset.source = 'text'
+    s.style.setProperty('--seg-h', `${seg.h}px`)
+    const a = inert.createElement('article')
+    a.append(purify.sanitize(seg.html, TEXT_CFG))
+    s.append(a)
+    scrollTables(s)
+    out.push(s)
+    await tick()
+  }
+  return out
+}
+
+/** A converted document's stylesheet, parsed off the document and rebuilt rule by rule, never a `<style>`. */
+export function textSheet(css: string): CSSStyleSheet {
+  const src = new CSSStyleSheet()
+  src.replaceSync(css)
+  const rules = [...src.cssRules].flatMap((r) =>
+    r instanceof CSSStyleRule ? [{ selector: r.selectorText, decls: Array.from(r.style, (p): [string, string] => [p, r.style.getPropertyValue(p)]) }] : []
+  )
+  const out = new CSSStyleSheet()
+  out.replaceSync(textCss(rules))
+  return out
 }
 
 /** One mark per reference, each note listed once, numbered as Word does: footnotes 1, 2, 3 through the document across
@@ -209,13 +248,17 @@ export function dropHostRules(root: ShadowRoot): void {
   for (const s of root.querySelectorAll('style')) if (s.sheet) strip(s.sheet.cssRules, (i) => s.sheet!.deleteRule(i))
 }
 
-/** Each part's paragraphs in document order with their own text, note marks and nested paragraphs left out. Sliced
- *  into tasks under 10ms, since a long document has tens of thousands of text nodes. */
-export async function indexOf(root: ShadowRoot, live: () => boolean): Promise<Index | null> {
+/** Each part's paragraphs in document order with their own text, note marks and nested blocks left out. A converted
+ *  document's list items are blocks too: textutil puts their text straight in the `li`. Sliced into tasks under 10ms,
+ *  since a long document has tens of thousands of text nodes. */
+export async function indexOf(root: ShadowRoot, live: () => boolean, text = false): Promise<Index | null> {
   const parts: Parts = { body: [], footnotes: [], endnotes: [], chrome: [] }
-  const own = { acceptNode: (n: Node) => (n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : (n as Element).tagName === 'P' || (n as Element).hasAttribute('data-note') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP) }
+  const own = {
+    acceptNode: (n: Node) =>
+      n.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : ['P', 'LI'].includes((n as Element).tagName) || (n as Element).hasAttribute('data-note') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP
+  }
   const lists: [keyof Parts, string][] = [
-    ['body', 'section.docx > article p'],
+    ['body', text ? 'section.docx > article :is(p, li)' : 'section.docx > article p'],
     ['footnotes', 'section.docx > ol[data-part="footnotes"] p'],
     ['endnotes', 'section.docx > ol[data-part="endnotes"] p'],
     ['chrome', 'section.docx > header p, section.docx > footer p']
@@ -278,6 +321,7 @@ export const BASE_SHEET = `
 :host { display: block; }
 section.docx { content-visibility: auto; contain-intrinsic-size: auto var(--seg-h); }
 section.docx[data-pinned] { content-visibility: visible; }
+section.docx[data-source="text"] { color: var(--color-edge-dark); }
 img { max-width: 100%; height: auto; }
 [data-scroll="table"] { overflow-x: auto; }
 [data-scroll="table"]:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }

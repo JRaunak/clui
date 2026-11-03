@@ -1,8 +1,9 @@
 // A Word view's text model: each part's paragraphs as one whitespace-collapsed string, and the quotes, occurrences and
 // matches found in it. Pure, so it's testable without docx-preview or a DOM. A part can run to a megabyte of text, so
 // it's flattened once into typed arrays rather than an object per character.
+import type { Config } from 'dompurify'
 import { ELISION } from '../../../shared/context'
-import type { NotePart, Unpacks } from '../../../shared/office'
+import { TEXT_HTML_MAX, type NotePart, type Unconverted, type Unpacks } from '../../../shared/office'
 import type { At } from './pdfView'
 
 /** One paragraph's raw text. */
@@ -168,4 +169,56 @@ export function unpackDetail(u: Unpacks): string {
   if (u.bound === 'entries') return `It has ${u.n.toLocaleString('en-US')} internal parts, and Clui opens documents with up to 10,000.`
   if (u.bound === 'unzipped') return `It unpacks to ${(Math.ceil(u.n / 104_857.6) / 10).toLocaleString('en-US', { minimumFractionDigits: 1 })} MB. Clui opens documents that unpack to 512 MB or less.`
   return 'Part of it expands to over 200 times its saved size when unpacked, more than Clui opens.'
+}
+
+/** What survives sanitizing a converted document: text, its emphasis, links, lists and tables. No tag that loads
+ *  anything can survive, so nothing textutil writes can fetch, and no `style` attribute (the writer uses classes). */
+export const TEXT_CFG = {
+  ALLOWED_TAGS: ['p', 'span', 'b', 'i', 'u', 's', 'strike', 'sup', 'sub', 'br', 'a', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'caption', 'colgroup', 'col'],
+  ALLOWED_ATTR: ['class', 'href', 'name', 'colspan', 'rowspan', 'valign', 'start'],
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
+  RETURN_DOM_FRAGMENT: true as const
+} satisfies Config
+
+const SEGMENT_BLOCKS = 40
+/** A converted document's blocks in segments of 40, each with its height until it lays out: one 12pt line at 1.375
+ *  per paragraph and list item. */
+export const textSegments = (blocks: readonly string[]): { html: string; h: number }[] =>
+  Array.from({ length: Math.ceil(blocks.length / SEGMENT_BLOCKS) }, (_, k) => {
+    const html = blocks.slice(k * SEGMENT_BLOCKS, (k + 1) * SEGMENT_BLOCKS).join('\n')
+    return { html, h: Math.max(1, (html.match(/<(p|li)\b/gi) ?? []).length) * 22 }
+  })
+
+const TEXT_SELECTOR = /^(p|li|span|td|th|table|ul|ol)\.[a-z]{1,3}\d{1,5}$/
+const TEXT_PROPS = /^(margin(-.+)?|padding(-.+)?|border(?!-image)(-.+)?|font(-.+)?|text-indent|text-align|text-decoration(-.+)?|color|background-color|line-height|letter-spacing|vertical-align|min-height|list-style-type|border-collapse)$/
+/**
+ * The document's sheet rebuilt from its parsed rules: only class rules of the writer's shape, only the properties a
+ * page of text needs, and nothing that can load. textutil writes points labelled px, so each px becomes pt, which puts
+ * 12pt text at 16px as in a .docx. Priorities are dropped, so Clui's own sheet wins.
+ */
+export function textCss(rules: readonly { selector: string; decls: readonly [string, string][] }[]): string {
+  return rules
+    .flatMap(({ selector, decls }) => {
+      if (!TEXT_SELECTOR.test(selector)) return []
+      const kept = decls
+        .filter(([p, v]) => TEXT_PROPS.test(p) && !/url\(|image-set\(/i.test(v))
+        .map(([p, v]) => `${p}: ${p === 'font-family' ? v : v.replace(/(\d*\.?\d+)px\b/gi, '$1pt')}`)
+      return kept.length ? [`${selector} { ${kept.join('; ')} }`] : []
+    })
+    .join('\n')
+}
+
+/** The glimpse's reason a file Clui would convert shows its first page instead, after `Showing the first page…`. */
+export function unconvertedFact(c: Unconverted): string {
+  switch (c.why) {
+    case 'too-long':
+      return `Clui lays out converted documents with up to ${+(TEXT_HTML_MAX / 1_000_000).toFixed(2)} MB of text and formatting, and this one has ${megabytes(c.bytes)} MB.`
+    case 'timeout':
+      return 'Clui stops converting a document after 10 seconds, and this one took longer.'
+    case 'no-text':
+      return 'macOS found no text in it to convert.'
+    case 'tracked':
+      return "It has tracked changes, and Clui's view would show deleted text as if it were still there."
+  }
 }

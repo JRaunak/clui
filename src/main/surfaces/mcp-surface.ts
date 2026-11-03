@@ -12,7 +12,7 @@ import { CHANGE_REF, relativeTo } from '../../shared/context'
 import type { Refusal } from '../../shared/files'
 import { clean, type SurfaceCommand, type SurfaceTarget } from '../../shared/surface-tools'
 import { isSvg, kindForPath } from '../../shared/surfaces'
-import { isOffice, isWord } from '../../shared/office'
+import { isOffice, isWord, laysOut } from '../../shared/office'
 import { a1Of, isDelimited, isWorkbook, parseA1, qualified, unxml } from '../../shared/sheets'
 import { requestUrl } from '../browser/mcp'
 import type { McpHandler, ToolResult } from '../lib/mcp-route'
@@ -117,9 +117,20 @@ export interface Presenter {
   browserTabs(handleId: string): { id: number; url: string; title: string }[] | null
   /** A workbook's sheet names, or null when they can't be read. */
   sheets(handleId: string, abs: string): Promise<string[] | null>
-  /** Whether a Word file is too long for Clui's own layout, so its tab shows Quick Look's first page instead. */
-  wordTooLong(handleId: string, abs: string): Promise<boolean>
+  /** What a file Clui lays out shows now: its view, Quick Look's first page and why, or the state for a conversion
+   *  that failed. `picture`: the first page, with no text of the file's own to point at. */
+  laidOut(handleId: string, abs: string): Promise<LaidOut>
   request(handleId: string, op: Op): Promise<Delivery>
+}
+
+export type LaidOut = 'view' | 'picture' | 'too-long' | 'timeout' | 'no-text' | 'failed'
+
+/** The tool reply's closing sentence when the tab can't show the words Claude pointed at; none claims found or not. */
+const UNSHOWN: Record<Exclude<LaidOut, 'view' | 'picture'>, (name: string) => string> = {
+  'too-long': (n) => ` ${n} is too long for Clui to lay out, so the tab shows a first-page preview from Quick Look.`,
+  timeout: (n) => ` Converting ${n} took over 10 seconds, so the tab shows a first-page preview from Quick Look.`,
+  'no-text': (n) => ` macOS found no text in ${n}, so the tab shows a first-page preview from Quick Look.`,
+  failed: (n) => ` Clui couldn't convert ${n}; it may be damaged, and the tab says so.`
 }
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError } : {}) })
@@ -130,7 +141,7 @@ const GONE = text(GONE_TEXT, true)
 const TIMEOUT = text("Outcome unknown: Clui didn't confirm in time.", true)
 const CLOSED = text("Clui's window closed.", true)
 const OPEN_ARGS = 'surface_open takes path, kind, browserTab, line, endLine, page, range, sheet, text, nth and focus.'
-const TEXT_DOCS = 'text applies to PDFs and .docx or .docm files.'
+const TEXT_DOCS = 'text applies to PDFs and .docx, .docm, .odt or .rtf files.'
 const RANGE_FORM = 'range is A1 notation: B4, A18:D24, 18:24 or B:D.'
 const RANGE_FILE = 'range and sheet apply to a sheet file.'
 const ONE_PLACE = 'Pass one of line, page and range.'
@@ -243,7 +254,7 @@ export function stateText(v: unknown, c: Facts): string | null {
 
 /** `preview`: the label and closing sentence for lines that landed on a Preview, which marks them only in Source, or
  *  on a CSV's grid, which marks their rows. */
-type Opened = { target: SurfaceTarget; label: string; focus: boolean; preview?: { label: string; note: string }; words?: { name: string; glimpse: boolean } }
+type Opened = { target: SurfaceTarget; label: string; focus: boolean; preview?: { label: string; note: string }; words?: { name: string; shows: LaidOut } }
 
 export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.now): McpHandler & { revoke(handleId: string): void; setPresentation(handleId: string, on: boolean): void } {
   // A rolling window per handle: no turn identity reaches the server, and no result event resets it.
@@ -311,14 +322,18 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     if (sheet !== undefined && !book) return `sheet applies to Excel workbooks, and ${name} isn't one.`
     if (range !== undefined && !grid && !book) return `range applies to CSV, TSV and Excel files, and ${name} isn't one.`
     if (as === 'sheet' && !grid && line !== undefined) return `line applies to text files. ${name} is a workbook.`
-    const office = isOffice(abs)
-    const word = isWord(abs)
-    if (quote !== undefined && office && !word) return `${TEXT_DOCS} Clui shows only the first page of ${name}, as a picture.`
+    const lays = laysOut(abs)
+    const picture = `${TEXT_DOCS} Clui shows only the first page of ${name}, as a picture.`
+    if (quote !== undefined && isOffice(abs) && !lays) return picture
     if (quote !== undefined && as !== 'doc') return TEXT_DOCS
-    if (word && line !== undefined) return `line applies to text files. Pass text to point at words in ${name}.`
+    if (lays && line !== undefined) return `line applies to text files. Pass text to point at words in ${name}.`
     if (as === 'doc' ? line !== undefined : page !== undefined) return PAGE_OR_LINE
-    const glimpse = word && (page !== undefined || quote !== undefined) && (await present.wordTooLong(handleId, abs))
-    if (word && page !== undefined && !glimpse) return `Clui shows ${name} in its own layout, which has no page numbers to rely on. Pass text to point at words in it.`
+    const shows = lays && (page !== undefined || quote !== undefined) ? await present.laidOut(handleId, abs) : 'view'
+    if (quote !== undefined && shows === 'picture') return picture
+    if (lays && page !== undefined && shows === 'view')
+      return isWord(abs)
+        ? `Clui shows ${name} in its own layout, which has no page numbers to rely on. Pass text to point at words in it.`
+        : `Clui shows ${name} converted to text, which has no page numbers. Pass text to point at words in it.`
     if (typeof quote === 'string') {
       const n = int(nth, 0, NTH_MAX) ? nth : 0
       const shown = [...clean(quote.replace(/\s+/g, ' ').trim())]
@@ -327,7 +342,7 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
         target: { kind: 'file', path: abs, text: quote, ...(n ? { nth: n } : {}), ...(int(page, 1, MAX_PAGE) ? { page } : {}) },
         label: `${rel}${int(page, 1, MAX_PAGE) ? ` page ${page}` : ''} at "${clip}"${n ? ` (match ${n + 1})` : ''}`,
         focus,
-        words: { name, glimpse }
+        words: { name, shows }
       }
     }
     if (typeof sheet === 'string') {
@@ -369,8 +384,8 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     const p = v?.preview === true ? o.preview : undefined
     const label = p?.label ?? o.label
     const w = o.words
-    if (w && !w.glimpse && v?.found === false && v.outcome === 'shown') return text(`Opened ${w.name}, but that text isn't in it.`)
-    const note = p ? ` ${p.note}` : w?.glimpse ? ` ${w.name} is too long for Clui to lay out, so the tab shows a first-page preview from Quick Look.` : ''
+    if (w?.shows === 'view' && v?.found === false && v.outcome === 'shown') return text(`Opened ${w.name}, but that text isn't in it.`)
+    const note = p ? ` ${p.note}` : w && w.shows !== 'view' && w.shows !== 'picture' ? UNSHOWN[w.shows](w.name) : ''
     switch (v?.outcome) {
       case 'shown':
         return text(`Shown: ${label}.${note}`)

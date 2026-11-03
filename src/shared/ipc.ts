@@ -6,7 +6,7 @@
  * session id they belong to.
  */
 import type { DomainEvent, ElicitationResponse } from './events'
-import type { Glimpse, OfficeOpen } from './office'
+import type { Converted, Glimpse, OfficeOpen } from './office'
 import type {
   ProjectGroup,
   TranscriptResult,
@@ -325,6 +325,8 @@ export interface CluiApi {
   /** An Office tab's pre-flight, before anything renders it. A Word file it lays out may then be read by `docRead` at
    *  the revision it returns, and no other. */
   officeOpen: (handleId: string, path: string) => Promise<OfficeOpen>
+  /** An .odt's or .rtf's conversion at a revision whose pre-flight returned `text`; any other revision is denied. */
+  officeText: (handleId: string, path: string, revision: string) => Promise<({ ok: true } & Converted) | Refusal>
   /** Quick Look's first page of an Office file at the revision its pre-flight saw. */
   officeGlimpse: (handleId: string, path: string, revision: string) => Promise<Glimpse | Refusal>
   /** Reads a workbook tab's file once and starts its sheet worker, whose port arrives as a window message
@@ -575,6 +577,7 @@ export const IpcChannels = {
   docRead: 'clui:docRead',
   docVersion: 'clui:docVersion',
   officeOpen: 'clui:officeOpen',
+  officeText: 'clui:officeText',
   officeGlimpse: 'clui:officeGlimpse',
   sheetOpen: 'clui:sheetOpen',
   sheetStop: 'clui:sheetStop',

@@ -3,7 +3,7 @@ import { refsOf, useActive, useSession } from '../../store'
 import { quoteOf, refKey, type DraftReference, type RefInput, type SourceVersion } from '../../../../shared/context'
 import { clipName } from '../../../../shared/annotate'
 import { CHUNK_MAX, type Refusal } from '../../../../shared/files'
-import type { OfficeOpen, WordFacts, WordPart } from '../../../../shared/office'
+import type { OfficeOpen, TextFacts, WordFacts, WordPart } from '../../../../shared/office'
 import type { DocPlace } from '../../../../shared/surfaces'
 import { FindField } from '../FindField'
 import { IconTarget } from '../Icon'
@@ -19,7 +19,7 @@ import { setPointing, takePoint, takeSurfaceFocus, usePointing, usePointRequest 
 import { reportFound } from '../../lib/pointedText'
 import { clampScale, FIT_MARGIN, minScale, percent, round4, stepDown, stepUp, type Size } from '../../lib/imageView'
 import { fitPage, fitWidth, PDF_MAX, PDF_STEPS, zoomSaid, type At, type DocZoom } from '../../lib/pdfView'
-import { BASE_SHEET, breaksOf, dropHostRules, FLOW_SHEET, indexOf, loadDocx, offsetIn, OPTIONS, PAGES_SHEET, pageSizes, pointIn, postPass, segmentsIn, type Block, type Index } from '../../lib/docx'
+import { BASE_SHEET, breaksOf, dropHostRules, FLOW_SHEET, indexOf, loadDocx, offsetIn, OPTIONS, PAGES_SHEET, pageSizes, pointIn, postPass, segmentsIn, textNodes, textSheet, type Block, type Index } from '../../lib/docx'
 import { clip40, foldCase, foldMarks, locateIn, matchesIn, occurrences, quoteIn } from '../../lib/docxView'
 
 const STEPS = [0.5, 0.75, 1, 1.5, 2]
@@ -39,7 +39,7 @@ const NOTICE = {
 const LAYOUT_SAID = { pages: 'Showing pages', flow: 'Wrapping to the pane' }
 const KEYS = 'Meta+Shift+A Meta+F Meta+Equal Meta+Minus Shift+ArrowDown Shift+ArrowUp'
 
-type Flight = Extract<OfficeOpen, { t: 'word' }>
+type Flight = Extract<OfficeOpen, { t: 'word' | 'text' }>
 type Layout = 'flow' | 'pages'
 interface View {
   host: HTMLDivElement
@@ -47,7 +47,9 @@ interface View {
   z: HTMLDivElement
   segs: HTMLElement[]
   revision: string
-  facts: WordFacts
+  /** Laid out from textutil's conversion, whose blocks are paragraphs and list items. */
+  text: boolean
+  tracked: Partial<Record<WordPart, true>>
   /** Each segment's page size at 100%, and the widest. */
   sizes: Size[]
   maxW: number
@@ -101,13 +103,27 @@ export function layoutSentences(name: string, f: WordFacts, layout: Layout): str
   ].filter((s): s is string => !!s)
 }
 
+/** The converted view's panel sentences, in order, each only when it applies. */
+export function textSentences(name: string, f: TextFacts): string[] {
+  return [
+    `macOS converted ${name} for Clui. Its words, tables, lists and links are the document's; fonts, spacing and line breaks are Clui's, so it won't look like the app that made it.`,
+    "Converting leaves out pictures, notes, comments, headers, footers and page breaks, and headings aren't marked as headings.",
+    f.tracked && 'It has tracked changes, shown as if accepted: insertions in, deletions out.',
+    f.macros && 'This document contains macros. Clui never runs them.'
+  ].filter((s): s is string => !!s)
+}
+
+/** One segment's own blocks: its paragraphs, and a conversion's list items. */
+const blocksIn = (v: View): string => (v.text ? ':scope > article :is(p, li)' : ':scope > article p, :scope > ol p')
+
 const selLabel = (s: Sel): string =>
   s.part !== 'body' ? `Text in ${s.part === 'footnotes' ? 'a footnote' : 'an endnote'} selected` : s.heading ? `Text under "${clipName(s.heading)}" selected` : 'Text selected'
 
 /**
- * A .docx in the pane, laid out by Clui with docx-preview in a contained shadow root and saying so. One render serves
- * every place it scrolls to; a new version renders beside the old and swaps in whole. Text selects natively and
- * becomes a quote of its part; Claude's words are found in the same text.
+ * A .docx in the pane, laid out by Clui with docx-preview in a contained shadow root and saying so, or an .odt or .rtf
+ * from macOS's conversion in the same root, flow only. One render serves every place it scrolls to; a new version
+ * renders beside the old and swaps in whole. Text selects natively and becomes a quote of its part; Claude's words are
+ * found in the same text.
  */
 export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { handleId: string; tabId: string; flight: Flight; onStale: () => void; onFailed: () => void }): JSX.Element {
   const tab = useActive((s) => s?.surfaces.tabs[tabId])
@@ -127,7 +143,8 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
   const [indexed, setIndexed] = useState(0)
   const [version, setVersion] = useState<{ revision: string; version: SourceVersion } | null>(null)
   const vs0 = tab?.viewState?.kind === 'doc' ? tab.viewState : null
-  const [layout, setLayout] = useState<Layout>(vs0?.layout === 'pages' ? 'pages' : 'flow')
+  // A conversion keeps no page size, margins or breaks, so it has no pages to show.
+  const [layout, setLayout] = useState<Layout>(flight.t === 'word' && vs0?.layout === 'pages' ? 'pages' : 'flow')
   const layoutRef = useRef(layout)
   // Each layout keeps its own zoom: Flow a scale of the text, Pages a scale or a fit. Only the shown one is saved.
   const modes = useRef<{ flow: number; pages: DocZoom }>({
@@ -158,7 +175,7 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
   const highlight = tab?.highlight?.text ? tab.highlight : null
   const location = tab?.location
   const tabNow = () => useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]
-  const sentences = useMemo(() => layoutSentences(name, flight.facts, layout), [name, flight.facts, layout])
+  const sentences = useMemo(() => (flight.t === 'text' ? textSentences(name, flight.facts) : layoutSentences(name, flight.facts, layout)), [name, flight, layout])
 
   // Where the reader is: the segment at the viewport's top and how far down it.
   const segAt = (v: View, y: number): number => {
@@ -262,7 +279,7 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
     const top = c.getBoundingClientRect().top
     const seg = segAt(v, top + 1)
     // This segment's paragraphs only: asking where one in a skipped segment is lays that segment out to answer.
-    const el = [...v.segs[seg].querySelectorAll<HTMLElement>(':scope > article p, :scope > ol p')].find((p) => p.getBoundingClientRect().bottom > top)
+    const el = [...v.segs[seg].querySelectorAll<HTMLElement>(blocksIn(v))].find((p) => p.getBoundingClientRect().bottom > top)
     if (!el) {
       const p = placeNow()
       return () => p && reachPlace(p)
@@ -285,42 +302,59 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
     return r
   }
 
-  // Bytes at the pre-flight's revision, then parse, render and the post-pass, each in its own task; the nodes reach the
-  // live document only once all of it has run.
+  // A .docx's bytes at the pre-flight's revision, then parse, render and the post-pass; or a conversion's blocks,
+  // sanitized a segment at a time. Each step is its own task, and the nodes reach the live document only once all of
+  // it has run.
   useEffect(() => {
     const g = ++loadGen.current
+    const stale = (): boolean => g !== loadGen.current
     void (async () => {
-      const chunks = await Promise.all(
-        Array.from({ length: Math.ceil(flight.size / CHUNK_MAX) }, (_, k) =>
-          window.clui.docRead(handleId, path, flight.revision, k * CHUNK_MAX, Math.min(CHUNK_MAX, flight.size - k * CHUNK_MAX)).catch((): Refusal => ({ ok: false, reason: 'unreadable' }))
-        )
-      )
-      if (g !== loadGen.current) return
-      if (chunks.some((c) => !c.ok)) return onStale()
-      const bytes = new Uint8Array(flight.size)
-      chunks.forEach((c, k) => c.ok && bytes.set(c.bytes, k * CHUNK_MAX))
       let nodes: Node[]
-      try {
-        const lib = await loadDocx()
-        await tick()
-        const doc = await lib.parseAsync(bytes, OPTIONS)
-        await tick()
-        const breaks = breaksOf(doc)
-        nodes = await lib.renderDocument(doc, OPTIONS)
-        await tick()
-        postPass(nodes, flight.facts, breaks)
-      } catch {
-        if (g === loadGen.current) onFailed()
-        return
+      let sheet: CSSStyleSheet | null = null
+      if (flight.t === 'text') {
+        const r = await window.clui.officeText(handleId, path, flight.revision).catch((): Refusal => ({ ok: false, reason: 'unreadable' }))
+        if (stale()) return
+        if (!r.ok) return onStale()
+        try {
+          sheet = textSheet(r.css)
+          nodes = await textNodes(r.blocks, tick)
+        } catch {
+          if (!stale()) onFailed()
+          return
+        }
+      } else {
+        const chunks = await Promise.all(
+          Array.from({ length: Math.ceil(flight.size / CHUNK_MAX) }, (_, k) =>
+            window.clui.docRead(handleId, path, flight.revision, k * CHUNK_MAX, Math.min(CHUNK_MAX, flight.size - k * CHUNK_MAX)).catch((): Refusal => ({ ok: false, reason: 'unreadable' }))
+          )
+        )
+        if (stale()) return
+        if (chunks.some((c) => !c.ok)) return onStale()
+        const bytes = new Uint8Array(flight.size)
+        chunks.forEach((c, k) => c.ok && bytes.set(c.bytes, k * CHUNK_MAX))
+        try {
+          const lib = await loadDocx()
+          await tick()
+          const doc = await lib.parseAsync(bytes, OPTIONS)
+          await tick()
+          const breaks = breaksOf(doc)
+          nodes = await lib.renderDocument(doc, OPTIONS)
+          await tick()
+          postPass(nodes, flight.facts, breaks)
+        } catch {
+          if (!stale()) onFailed()
+          return
+        }
       }
       await tick()
-      if (g !== loadGen.current || !frameEl.current) return
-      mount(nodes, g)
+      if (stale() || !frameEl.current) return
+      mount(nodes, g, sheet)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flight.revision])
 
-  const mount = (nodes: Node[], g: number): void => {
+  /** `sheet`: a conversion's own rules, under Clui's. */
+  const mount = (nodes: Node[], g: number, sheet: CSSStyleSheet | null): void => {
     const frame = frameEl.current!
     const old = viewRef.current
     const host = document.createElement('div')
@@ -328,13 +362,13 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
     if (old) host.style.cssText = 'position:absolute;inset:0 0 auto 0;visibility:hidden'
     frame.append(host)
     const root = host.attachShadow({ mode: 'open' })
-    root.adoptedStyleSheets = sheetsFor(layoutRef.current)
+    root.adoptedStyleSheets = sheet ? [sheet, ...sheetsFor('flow')] : sheetsFor(layoutRef.current)
     const z = document.createElement('div')
     z.id = 'z'
     const styles = nodes.filter((n) => n.nodeName === 'STYLE')
     z.append(...nodes.filter((n) => n.nodeName !== 'STYLE' && n.nodeType === Node.ELEMENT_NODE))
     root.append(...styles, z)
-    dropHostRules(root)
+    if (!sheet) dropHostRules(root)
     for (const a of root.querySelectorAll<HTMLAnchorElement>('a')) {
       const href = a.getAttribute('href') ?? ''
       const scheme = URL.parse(href)?.protocol
@@ -350,7 +384,8 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
     }
     const segs = segmentsIn(root)
     const sizes = pageSizes(segs)
-    const next: View = { host, root, z, segs, revision: flight.revision, facts: flight.facts, sizes, maxW: Math.max(0, ...sizes.map((p) => p.w)) || 816, index: null, order: [], where: new Map(), wide: new ResizeObserver(nameWide) }
+    const tracked = flight.t === 'text' ? (flight.facts.tracked ? { body: true as const } : {}) : flight.facts.tracked
+    const next: View = { host, root, z, segs, revision: flight.revision, text: flight.t === 'text', tracked, sizes, maxW: Math.max(0, ...sizes.map((p) => p.w)) || 816, index: null, order: [], where: new Map(), wide: new ResizeObserver(nameWide) }
     for (const w of root.querySelectorAll('[data-scroll="table"]')) next.wide.observe(w)
     const l = layoutRef.current
     const vs = tabNow()?.viewState
@@ -379,10 +414,10 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
   }
 
   const index = async (v: View): Promise<void> => {
-    const ix = await indexOf(v.root, () => viewRef.current === v)
+    const ix = await indexOf(v.root, () => viewRef.current === v, v.text)
     if (!ix || viewRef.current !== v) return
     for (const part of PARTS) ix.parts[part].forEach((b, i) => v.where.set(b.el, { part, i }))
-    v.order = [...v.root.querySelectorAll<HTMLElement>('p')].flatMap((el) => {
+    v.order = [...v.root.querySelectorAll<HTMLElement>(v.text ? 'p, li' : 'p')].flatMap((el) => {
       const w = v.where.get(el)
       return w ? [{ ...w, el }] : []
     })
@@ -510,7 +545,7 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
     const parts = v.index!.parts
     const el = node instanceof Element ? node : node.parentElement
     if (!el || el.closest('section.docx > header, section.docx > footer')) return null
-    const p = el.closest('p')
+    const p = el.closest(v.text ? 'p, li' : 'p')
     const b = p && v.where.get(p)
     if (b) return { ...b, off: offsetIn(parts[b.part][b.i], node, offset) }
     const r = document.createRange()
@@ -532,7 +567,7 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
           heading = paras[i].text.replace(/\s+/g, ' ').trim().slice(0, 200) || undefined
           break
         }
-    return { part, text: q.text, nth: q.nth, blocks: { start: q.first + 1, end: q.last + 1 }, ...(heading ? { heading } : {}), ...(v.facts.tracked[part] ? { tracked: true as const } : {}) }
+    return { part, text: q.text, nth: q.nth, blocks: { start: q.first + 1, end: q.last + 1 }, ...(heading ? { heading } : {}), ...(v.tracked[part] ? { tracked: true as const } : {}) }
   }
   const selectionNow = (): Sel | 'outside' | 'picture' | null => {
     const v = viewRef.current
@@ -580,7 +615,7 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
       const top = c.getBoundingClientRect().top
       let o: { part: WordPart; i: number } | undefined
       for (let k = segAt(v, top + 1); k < v.segs.length && !o; k++)
-        for (const el of v.segs[k].querySelectorAll<HTMLElement>(':scope > article p, :scope > ol p')) {
+        for (const el of v.segs[k].querySelectorAll<HTMLElement>(blocksIn(v))) {
           const w = v.where.get(el)
           if (w && text(parts[w.part][w.i]) && el.getBoundingClientRect().top >= top) {
             o = w
@@ -634,7 +669,8 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
       blocks: selection.blocks,
       text: { quote: q.quote, nth: selection.nth, ...(q.elided ? { elided: true as const } : {}) },
       ...(selection.heading ? { heading: selection.heading } : {}),
-      ...(selection.tracked ? { tracked: true as const } : {})
+      ...(selection.tracked ? { tracked: true as const } : {}),
+      ...(view.text ? { via: 'textutil' as const } : {})
     }
   }, [view, selection, version, path])
   const key = input ? refKey(input) : null
@@ -902,8 +938,10 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
     const href = a.getAttribute('href')
     if (!v || href === null) return
     if (!href.startsWith('#')) return void openLink(href, meta)
-    const target = v.root.getElementById(decodeURIComponent(href.slice(1)))
-    if (!target) return say("This link's destination isn't in the document.")
+    const id = decodeURIComponent(href.slice(1))
+    // A converted document's bookmarks are named anchors, and textutil drops their targets.
+    const target = v.text ? v.root.querySelector(`a[name="${CSS.escape(id)}"]`) : v.root.getElementById(id)
+    if (!target) return say(v.text ? "This link's destination didn't come through the conversion." : "This link's destination isn't in the document.")
     const from = placeNow()
     const b = useSession.getState().sessions[handleId]?.surfaces.tabs[tabId]?.back
     if (from) setView(handleId, tabId, { back: { revision: v.revision, pages: [...(b?.pages && b.revision === v.revision ? b.pages : []), from].slice(-BACK_MAX) } })
@@ -993,15 +1031,17 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
         </div>
       )}
       <div data-ui="docx-toolbar" className="flex min-h-9 shrink-0 flex-wrap items-center gap-1 border-b border-border px-1">
-        <button type="button" data-ui="docx-layout" {...panel.triggerProps} aria-haspopup="dialog" title="About this layout" className={TEXT_BUTTON}>
-          {flight.facts.macros ? "Clui's layout · macros not run" : "Clui's layout"}
+        <button type="button" data-ui="docx-layout" {...panel.triggerProps} aria-haspopup="dialog" title={flight.t === 'text' ? 'About this view' : 'About this layout'} className={TEXT_BUTTON}>
+          {`${flight.t === 'text' ? 'Simplified' : "Clui's layout"}${flight.facts.macros ? ' · macros not run' : ''}`}
         </button>
         <span className="min-w-0 flex-1" />
         {view && zoom && (
           <div className="flex shrink-0 flex-wrap items-center gap-0.5">
-            <button type="button" data-ui="docx-layout-mode" onClick={switchLayout} className={TEXT_BUTTON}>
-              {layout === 'flow' ? 'Show pages' : 'Wrap to pane'}
-            </button>
+            {flight.t === 'word' ? (
+              <button type="button" data-ui="docx-layout-mode" onClick={switchLayout} className={TEXT_BUTTON}>
+                {layout === 'flow' ? 'Show pages' : 'Wrap to pane'}
+              </button>
+            ) : null}
             <ZoomGroup s={zoom.s} atMin={zoom.s <= zoom.min + 1e-6} atMax={zoom.s >= maxOf(layout) - 1e-6} max={maxOf(layout)} onStep={step}>
               {layout === 'pages' ? (
                 <button type="button" data-ui="docx-fit" title={`${fitLabel} ⌘0`} onClick={toggleFit} className={TEXT_BUTTON}>
@@ -1014,7 +1054,7 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
       </div>
       <div {...panel.popoverProps} role="dialog" aria-labelledby={head} data-ui="docx-layout-panel" className="pop-base pop glass-thick flex w-[320px] flex-col gap-3 rounded-lg p-3">
         <p id={head} className="text-ui font-medium text-content">
-          {"Clui's layout"}
+          {flight.t === 'text' ? 'Simplified view' : "Clui's layout"}
         </p>
         {sentences.map((t) => (
           <p key={t} className="text-ui text-dim">
@@ -1044,7 +1084,7 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
         <div
           ref={viewportEl}
           role="region"
-          aria-label={`${name}, Word document in Clui's layout`}
+          aria-label={flight.t === 'text' ? `${name}, ${flight.facts.as === 'rtf' ? 'RTF document' : 'OpenDocument text'} in a simplified view` : `${name}, Word document in Clui's layout`}
           aria-description={sentences.join(' ')}
           aria-busy={!view || undefined}
           aria-keyshortcuts={KEYS}

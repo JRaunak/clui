@@ -117,6 +117,7 @@ const api: CluiApi = {
   docRead: (handleId, path, revision, offset, length) => ipcRenderer.invoke(IpcChannels.docRead, handleId, path, revision, offset, length),
   docVersion: (handleId, path, revision) => ipcRenderer.invoke(IpcChannels.docVersion, handleId, path, revision),
   officeOpen: (handleId, path) => ipcRenderer.invoke(IpcChannels.officeOpen, handleId, path),
+  officeText: (handleId, path, revision) => ipcRenderer.invoke(IpcChannels.officeText, handleId, path, revision),
   officeGlimpse: (handleId, path, revision) => ipcRenderer.invoke(IpcChannels.officeGlimpse, handleId, path, revision),
   sheetOpen: (handleId, path, id) => ipcRenderer.invoke(IpcChannels.sheetOpen, handleId, path, id),
   sheetStop: (id) => ipcRenderer.invoke(IpcChannels.sheetStop, id),
