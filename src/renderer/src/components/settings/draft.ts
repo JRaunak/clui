@@ -12,6 +12,7 @@ type ImmediateKey =
   | 'surfaceTools'
   | 'fileLinkTarget'
   | 'enableTaskTools'
+  | 'blockOutsideWrites'
   | 'localClassifier'
   | 'classifierModel'
   | 'onboarded'

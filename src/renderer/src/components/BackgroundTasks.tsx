@@ -18,6 +18,7 @@ import {
   type SubagentMessage
 } from '../store'
 import { usePopover } from './Popover'
+import { useStopFocus } from '../lib/useStopFocus'
 import { IconCheck, IconStop, IconWarn, IconNoEntry } from './Icon'
 
 const EMPTY: Record<string, BackgroundTask> = {}
@@ -237,6 +238,7 @@ function Row({
 }): JSX.Element {
   const running = task.status === 'running'
   const isSubagent = task.taskType === 'local_agent'
+  const stopRef = useStopFocus<HTMLButtonElement>(!!task.stopping)
 
   // Fixed width: the dot is 6px and the terminal icons 14px, so an auto-width slot would
   // shift every label 8px the moment a task finishes.
@@ -291,6 +293,7 @@ function Row({
         <span className="text-meta text-dim">stopping…</span>
       ) : (
         <button
+          ref={stopRef}
           // h-6 w-6 is the house pattern for a row's icon button; the 14px glyph alone is an
           // 18px target, under the 24px floor.
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-dim opacity-0 transition-opacity hover:text-content focus-visible:opacity-100 focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-accent group-hover:opacity-100"

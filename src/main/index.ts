@@ -728,6 +728,7 @@ function registerIpc(): void {
       model: opts.model ?? settings.model,
       effort: opts.effort ?? settings.effort,
       enableTaskTools: settings.enableTaskTools,
+      blockOutsideWrites: settings.blockOutsideWrites,
       classifierEnv: classifierEnv(settings, liveModelIds()),
       // Always open the stdio approval channel so any tool the CLI asks about can
       // be answered in the UI (inert when the mode never asks).

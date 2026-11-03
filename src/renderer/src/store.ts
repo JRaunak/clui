@@ -100,7 +100,7 @@ export interface BackgroundTask {
   status: 'running' | 'completed' | 'killed' | 'failed'
   /** Wall-clock ms when started; drives the per-task elapsed timer. */
   startMs: number
-  /** True while a user-requested TaskStop is in flight (tool-mediated; not instant). */
+  /** True while a user-requested stop is in flight over the control protocol. */
   stopping?: boolean
 }
 
@@ -341,6 +341,8 @@ export interface PerSessionState {
   modelMode: PermissionModeChoice | null
   /** The user's selected model choice for this session (drives the picker). */
   modelChoice: ModelChoice
+  /** A model switch is awaiting the CLI's ack; drives the chip's pending ring. */
+  modelPending: boolean
   /** Ultracode on for this session (workflow orchestration at the stored effort). Per-session,
    *  live-toggled, persisted in the session-models sidecar. */
   ultracode: boolean
@@ -1733,6 +1735,7 @@ async function beginSession(
     modeChoice: choice,
     modelMode: null,
     modelChoice,
+    modelPending: false,
     effortChoice,
     ultracode,
     contextPercent: seededPercent,
@@ -2624,6 +2627,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     set((s) =>
       patchSlice(s, active.handleId, {
         modelChoice: model,
+        modelPending: true,
         effortChoice: nextEffort,
         ultracode: nextUltra,
         // Only reflect the window in the ring once we have tokens to scale against
@@ -2638,7 +2642,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     // If the CLI rejected the model change, revert the picker + remembered prefs rather
     // than leave the UI (and a future resume) claiming a model that never applied.
     const res = await window.clui.setModel(active.handleId, model)
-    // A reply that lands after a newer pick belongs to a superseded switch and must not overwrite it.
+    // A reply that lands after a newer pick belongs to a superseded switch and must not overwrite
+    // it, modelPending included: the newer pick clears that when its own reply lands.
     if (get().sessions[active.handleId]?.modelChoice !== model) return
     if (!res.ok) {
       let target = deriveModelInfo(model).label
@@ -2649,7 +2654,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       }
       const reason = res.errorCode === 'check_rejected' ? modelCheckReason(res.reason) : null
       set((s) => ({
-        ...patchSlice(s, active.handleId, prev),
+        ...patchSlice(s, active.handleId, { ...prev, modelPending: false }),
         notice: res.timedOut
           ? {
               message: `The switch to ${target} timed out, so the picker is back on ${current}. If the CLI applies it late, the picker updates on your next message.`,
@@ -2665,6 +2670,7 @@ export const useSession = create<SessionStore>((set, get) => ({
         })
       return
     }
+    set((s) => patchSlice(s, active.handleId, { modelPending: false }))
     // A session spawned in auto on a model that can't run it fell back to default; the new model
     // may run it, so offer the pick again. A refusal leaves the chip on the mode in effect.
     const now = get().sessions[active.handleId]
@@ -2853,20 +2859,18 @@ export const useSession = create<SessionStore>((set, get) => ({
         }
       })
     )
-    // Kill it directly over the control protocol (instant, no model turn). Fall back to
-    // the tool-mediated stop (inject a turn telling the model to call TaskStop, which makes
-    // the session busy) only if the control request errors or times out, since the protocol
-    // drifts across CLI versions.
     const ok = await window.clui.stopTask(handleId, taskId)
-    if (!ok) {
-      set((s) => patchSlice(s, handleId, { busy: true, turnStartMs: Date.now() }))
-      await window.clui.sendMessage(handleId, {
-        text: `Stop the background task with id ${taskId} now using the TaskStop tool. Do not do anything else.`,
-        refs: [],
-        attachments: [],
-        now: false
-      })
-    }
+    if (ok) return
+    // The task may have ended on its own while the request was out; nothing failed then.
+    const now = get().sessions[handleId]?.backgroundTasks[taskId]
+    if (now?.status !== 'running') return
+    const desc = now.description.length > 60 ? `${now.description.slice(0, 59)}…` : now.description
+    set((s) => ({
+      ...patchSlice(s, handleId, {
+        backgroundTasks: { ...(s.sessions[handleId]?.backgroundTasks ?? {}), [taskId]: { ...now, stopping: false } }
+      }),
+      notice: { message: `Couldn't stop "${desc}". It's still running.`, tone: 'error' }
+    }))
   },
 
   backgroundTask: async (toolUseId) => {
@@ -3701,6 +3705,15 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.compacting = false
           patch.exited = true
           patch.modStatus = EMPTY_MOD_STATUS
+          patch.modelPending = false
+          // SIGTERM to the CLI takes its background shells down too, so none is still running.
+          if (Object.values(slice.backgroundTasks).some((t) => t.status === 'running'))
+            patch.backgroundTasks = Object.fromEntries(
+              Object.entries(slice.backgroundTasks).map(([id, t]) => [
+                id,
+                t.status === 'running' ? { ...t, status: 'killed', stopping: false } : t
+              ])
+            )
           // A monitor dies with its process, so its row stops claiming to watch.
           if (Object.values(slice.monitors).some((m) => m.status === 'running'))
             patch.monitors = Object.fromEntries(

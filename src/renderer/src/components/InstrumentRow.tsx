@@ -3,6 +3,8 @@ import { openFileLabel, toolPathIn } from '../lib/fileLinks'
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { activeSlice, useActive, useSession, type MonitorRecord, type ToolCall } from '../store'
 import { formatElapsed } from '../lib/turnEnd'
+import { useDelayedFlag } from '../lib/useDelayedFlag'
+import { useStopFocus } from '../lib/useStopFocus'
 import { formatCost } from '../lib/formatCost'
 import { Lumen } from './Lumen'
 import { lumenSiteOf } from '../lib/lumen'
@@ -200,6 +202,7 @@ export function InstrumentRow({
   const watching = state === 'watching'
   const meta = rec && tool.result !== undefined && !tool.isError ? monitorMeta(rec, watching) : ''
   const canStopMonitor = watching && !stopping && !!rec
+  const stopRef = useStopFocus<HTMLButtonElement>(stopping)
   // Task was renamed Agent in CLI 2.1.63; both mean a subagent.
   const isSubagent = tool.name === 'Task' || tool.name === 'Agent'
   const subType = subagentType(tool.input)
@@ -327,6 +330,7 @@ export function InstrumentRow({
                 )}
                 {canStopMonitor && (
                   <button
+                    ref={stopRef}
                     type="button"
                     data-ui="row-stop-monitor"
                     onClick={() => void stopTask(handleId, rec.taskId)}
@@ -645,20 +649,6 @@ export function AggregateRow({
       </div>
     </div>
   )
-}
-
-/** `on`, once it has held for `ms`. A check that resolves within that never changes the row. */
-function useDelayedFlag(on: boolean, ms = 400): boolean {
-  const [shown, setShown] = useState(false)
-  useEffect(() => {
-    if (!on) {
-      setShown(false)
-      return
-    }
-    const t = setTimeout(() => setShown(true), ms)
-    return () => clearTimeout(t)
-  }, [on, ms])
-  return on && shown
 }
 
 /** Text updates once a second; nothing animates. */

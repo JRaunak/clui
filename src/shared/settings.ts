@@ -83,6 +83,9 @@ export interface CluiSettings {
   /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
    *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
+  /** Spawn sessions with the CLI's blockWritesOutsideWorkingDirectories, fencing Write/Edit/NotebookEdit
+   *  to the workspace in every permission mode. Read at spawn; Quick sessions never get it. */
+  blockOutsideWrites: boolean
   /** Run Adaptive mode's permission classifier in the CLI instead of server-side. Read at spawn, like
    *  enableTaskTools: a running session keeps what it started with. Local classifier tokens are billed
    *  and never reach modelUsage, so the cost meter can't count them. */
@@ -617,6 +620,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   browserDebug: true,
   surfaceTools: true,
   enableTaskTools: false,
+  blockOutsideWrites: false,
   localClassifier: false,
   classifierModel: '',
   // Empty → resolves to ~/.clui in main (getChatDir).

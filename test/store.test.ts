@@ -96,6 +96,58 @@ const st = useSession.getState
   replies.setModel = () => ({ ok: true })
 }
 
+// modelPending covers the wait for the ack, and only the newest pick clears it.
+{
+  let release = (_r: unknown): void => {}
+  replies.setModel = () => new Promise((r) => (release = r))
+  reset({ ultracode: false, modelPending: false })
+  const pick = st().setModel('claude-sonnet-4-6')
+  ok(cur().modelPending, 'model pending: set while the switch is out')
+  release({ ok: true })
+  await pick
+  ok(!cur().modelPending, 'model pending: cleared when the ack lands')
+
+  reset({ ultracode: false, modelPending: false })
+  const failed = st().setModel('claude-sonnet-4-6')
+  release({ ok: false })
+  await failed
+  ok(!cur().modelPending && cur().modelChoice === 'claude-opus-5-5[1m]', 'model pending: cleared by the failure revert')
+
+  reset({ ultracode: false, modelPending: false })
+  const first = st().setModel('claude-sonnet-4-6')
+  const releaseFirst = release
+  const second = st().setModel('claude-opus-4-8[1m]')
+  releaseFirst({ ok: true })
+  await first
+  ok(cur().modelPending, 'model pending: a superseded ack leaves it to the newer pick')
+  release({ ok: true })
+  await second
+  ok(!cur().modelPending, 'model pending: the newer pick clears it')
+
+  const exiting = st().setModel('claude-sonnet-4-6')
+  st().applyEvent('h1', { type: 'process-exit', code: 0 })
+  ok(!cur().modelPending, 'model pending: an exit clears it')
+  release({ ok: true })
+  await exiting
+  replies.setModel = () => ({ ok: true })
+}
+
+// A failed stop puts the Stop button back and says so, and never spends a turn on it.
+{
+  const task = { taskId: 't1', description: 'x'.repeat(80), taskType: 'local_bash', status: 'running', startMs: 0 }
+  replies.stopTask = () => false
+  reset({ busy: false, backgroundTasks: { t1: task } })
+  await st().stopBackgroundTask('h1', 't1')
+  ok(!cur().backgroundTasks.t1.stopping && cur().backgroundTasks.t1.status === 'running', 'stop task: a failure clears stopping')
+  equal(st().notice?.message, `Couldn't stop "${'x'.repeat(59)}…". It's still running.`, 'stop task: a failure raises the truncated notice')
+  ok(!calls.some((c) => c.name === 'sendMessage') && !cur().busy, 'stop task: a failure sends no message')
+  replies.stopTask = () => (st().applyEvent('h1', { type: 'bg-task-notification', taskId: 't1', status: 'completed' }), false)
+  reset({ busy: false, backgroundTasks: { t1: task } })
+  await st().stopBackgroundTask('h1', 't1')
+  ok(st().notice?.message !== `Couldn't stop "${'x'.repeat(59)}…". It's still running.`, 'stop task: a task that ended meanwhile raises nothing')
+  delete replies.stopTask
+}
+
 // A model with no effort keeps the stored one and sends none, so it's still there on the way back.
 {
   reset({ ultracode: false, effortChoice: 'max' })
@@ -644,6 +696,15 @@ const q = (id: string, text: string): any => ({ id, text, refs: [] })
   reset({ monitors: { m: { taskId: 't', description: 'd', status: 'running', startMs: 0, wakes: 0, sharedWakes: 0, costUsd: 0, estimated: false } } })
   st().applyEvent('h1', { type: 'process-exit', code: 0 })
   equal(cur().monitors.m.status, 'completed', 'monitor: an exited session stops watching')
+  reset({
+    backgroundTasks: {
+      a: { taskId: 'a', description: 'sleep', taskType: 'local_bash', status: 'running', startMs: 0, stopping: true },
+      b: { taskId: 'b', description: 'done', taskType: 'local_bash', status: 'completed', startMs: 0 }
+    }
+  })
+  st().applyEvent('h1', { type: 'process-exit', code: 0 })
+  ok(cur().backgroundTasks.a.status === 'killed' && !cur().backgroundTasks.a.stopping, 'bg task: an exit marks a running task killed')
+  equal(cur().backgroundTasks.b.status, 'completed', 'bg task: and leaves a finished one alone')
 }
 equal(wakeCandidates(undefined, [], { m: { taskId: 't', description: 'd', status: 'running', startMs: 0, wakes: 0, sharedWakes: 0, costUsd: 0, estimated: false } }).join(), 'm', 'monitor: a wake with no streamed reply goes to the running monitors')
 equal(wakeCandidates(undefined, [{ kind: 'agent', description: 'a', status: 'completed' }], {}).length, 0, 'monitor: a subagent\'s wake is no monitor\'s')

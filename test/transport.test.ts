@@ -41,6 +41,24 @@ reset()
   ok(r.ok && r.packetId === env?.uuid && r.text === 'hi' && r.joined === false, 'transport: the reply names the envelope uuid')
 }
 
+// One --settings carries ultracode and the write fence; a Quick session never gets the fence.
+reset()
+{
+  const flags = (opts: Record<string, unknown>): string[] => {
+    reset()
+    mk(opts).start()
+    const a: string[] = spawns()[0].spawnargs
+    return a.flatMap((x, i) => (x === '--settings' ? [a[i + 1]] : []))
+  }
+  equal(
+    JSON.stringify(flags({ ultracode: true, blockOutsideWrites: true })),
+    JSON.stringify([JSON.stringify({ ultracode: true, permissions: { blockWritesOutsideWorkingDirectories: true } })]),
+    'transport: ultracode and the fence merge into one --settings'
+  )
+  equal(flags({ blockOutsideWrites: true, ephemeral: true }).length, 0, 'transport: an ephemeral session gets no fence')
+  equal(flags({}).length, 0, 'transport: no settings, no flag')
+}
+
 // reconnect write-safety + fork one-shot
 reset()
 {

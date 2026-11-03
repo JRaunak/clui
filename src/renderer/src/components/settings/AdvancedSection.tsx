@@ -39,6 +39,13 @@ export function AdvancedSection({ active, modelList }: { active: boolean; modelL
   return (
     <Pane section="advanced" active={active} className="flex flex-col gap-5">
       <CheckField
+        setting="blockOutsideWrites"
+        ui="write-fence"
+        label="Edits outside the workspace"
+        hint={`Claude's Write, Edit and NotebookEdit tools refuse paths outside the session's workspace folder, even in Autonomous mode. Shell commands aren't covered, so this stops stray edits but isn't a sandbox. To edit elsewhere, turn it off and start a new session. Quick sessions never use it. ${TIMING}`}
+        text="Block file edits outside the workspace"
+      />
+      <CheckField
         setting="enableTaskTools"
         ui="task-tools"
         label="Task tracking tools"

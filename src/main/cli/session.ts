@@ -60,6 +60,8 @@ export interface ClaudeSessionOptions {
   /** Ultracode on (workflow orchestration at the current effort). Passed at launch via
    *  `--settings {ultracode:true}` so it survives a resume; toggled live otherwise. */
   ultracode?: boolean
+  /** From the `blockOutsideWrites` setting: fence file edits to the cwd via `--settings`. Ignored when ephemeral. */
+  blockOutsideWrites?: boolean
   /** With `resumeSessionId`, pass `--fork-session` → the CLI branches to a NEW
    *  session id carrying the resumed context, leaving the original jsonl untouched
    *  (verified live 2.1.220). Fork-from-HEAD only. Ignored without a resume id. */
@@ -231,11 +233,15 @@ export class ClaudeSession extends EventEmitter {
     if (this.opts.effort) {
       args.push('--effort', this.opts.effort)
     }
-    if (this.opts.ultracode) {
-      // Ultracode is a session setting (not --effort). Pass it at launch via --settings
-      // inline JSON (verified) so a resume restores it. Clui's own arg, never ~/.claude.
-      args.push('--settings', JSON.stringify({ ultracode: true }))
+    // Ultracode is a session setting (not --effort), passed at launch via --settings inline JSON
+    // (verified) so a resume restores it. Clui's own arg, never ~/.claude.
+    const flagSettings = {
+      ...(this.opts.ultracode ? { ultracode: true } : {}),
+      ...(this.opts.blockOutsideWrites && !this.opts.ephemeral
+        ? { permissions: { blockWritesOutsideWorkingDirectories: true } }
+        : {})
     }
+    if (Object.keys(flagSettings).length) args.push('--settings', JSON.stringify(flagSettings))
     if (this.opts.ephemeral) {
       // Quick chat: the CLI streams normally but writes no transcript to disk.
       args.push('--no-session-persistence')

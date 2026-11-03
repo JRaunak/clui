@@ -4,6 +4,7 @@ import { useEscape } from '../lib/useEscape'
 import { IconSliders, IconRefresh, IconLock, IconWarn, IconCheck } from './Icon'
 import { usePopover } from './Popover'
 import { viaOf } from '../lib/motion'
+import { useDelayedFlag } from '../lib/useDelayedFlag'
 import {
   deriveModelInfo,
   groupModels,
@@ -54,6 +55,7 @@ export function ModelEffortPicker(): JSX.Element {
   const modelChoice = useActive((s) => s?.modelChoice ?? 'claude-opus-5-5')
   const effortChoice = useActive((s) => s?.effortChoice ?? 'high')
   const ultracode = useActive((s) => s?.ultracode ?? false)
+  const pending = useDelayedFlag(useActive((s) => !!s?.modelPending))
   // Subscribe so a startup / session-start caps load re-renders the chip and flyout.
   useSession((s) => s.effortCaps)
 
@@ -150,7 +152,7 @@ export function ModelEffortPicker(): JSX.Element {
         data-ui="model-chip"
         {...p.triggerProps}
         aria-haspopup="dialog"
-        title={`${curLabel} · ${noEffort ? 'No effort setting' : EFFORT_LABELS[runningEffort]}`}
+        title={pending ? `Switching to ${curLabel}…` : `${curLabel} · ${noEffort ? 'No effort setting' : EFFORT_LABELS[runningEffort]}`}
         onClick={(e) => {
           p.triggerProps.onClick(e)
           setHover(null)
@@ -173,18 +175,28 @@ export function ModelEffortPicker(): JSX.Element {
             {cappedDown && <IconLock className="h-3 w-3 opacity-80" />}
           </span>
         )}
-        <svg
-          viewBox="0 0 12 12"
-          className={`h-3 w-3 shrink-0 text-dim transition-transform ${open ? '' : 'rotate-180'}`}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M3 4.5 6 7.5 9 4.5" />
-        </svg>
+        {pending ? (
+          <span className="flex h-3 w-3 shrink-0 items-center justify-center">
+            <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-dim mark-spin" />
+          </span>
+        ) : (
+          <svg
+            viewBox="0 0 12 12"
+            className={`h-3 w-3 shrink-0 text-dim transition-transform ${open ? '' : 'rotate-180'}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M3 4.5 6 7.5 9 4.5" />
+          </svg>
+        )}
       </button>
+      {/* Mounted from the start: a live region that mounts with its first message often goes unannounced. */}
+      <span className="sr-only" role="status">
+        {pending ? `Switching to ${curLabel}…` : ''}
+      </span>
 
       <div
         {...p.popoverProps}
