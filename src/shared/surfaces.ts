@@ -73,7 +73,7 @@ export type SurfaceViewState =
   | { kind: 'image'; zoom: number | 'fit'; panX: number; panY: number }
   /** `offset`: 0 to 1 down the current page's box, at the viewport's centre. `pages`: the count it was read with. A Word
    *  file's `page` is the segment at the viewport's top, `offset` how far down it, and `layout` how it's laid out. */
-  | { kind: 'doc'; page: number; zoom: number | 'fit-width' | 'fit-page'; offset: number; pages?: number; find?: string; layout?: 'flow' | 'pages' }
+  | { kind: 'doc'; page: number; zoom: number | 'fit-width' | 'fit-page'; offset: number; pages?: number; find?: string; layout?: 'flow' | 'pages'; converted?: 'page' | 'slide' }
   /** `header` and `delimiter` only when the user overrode the guess. */
   | { kind: 'sheet'; sheet?: string; topRow: number; leftCol: number; rowOffset: number; colOffset: number; header?: boolean; delimiter?: Delimiter; showHidden?: true }
 

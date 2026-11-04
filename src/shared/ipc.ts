@@ -6,7 +6,7 @@
  * session id they belong to.
  */
 import type { DomainEvent, ElicitationResponse } from './events'
-import type { Converted, Glimpse, OfficeOpen } from './office'
+import type { Converted, Glimpse, LoOutcome, LoState, OfficeOpen } from './office'
 import type {
   ProjectGroup,
   TranscriptResult,
@@ -327,11 +327,20 @@ export interface CluiApi {
   officeOpen: (handleId: string, path: string) => Promise<OfficeOpen>
   /** An .odt's or .rtf's conversion at a revision whose pre-flight returned `text`; any other revision is denied. */
   officeText: (handleId: string, path: string, revision: string) => Promise<({ ok: true } & Converted) | Refusal>
+  /** LibreOffice's conversion of an Office file or .ods at the revision its pre-flight saw. Tabs asking for one
+   *  revision share one job; `ticket` names this tab's place on it, and `fresh` skips the cached derivative. */
+  officeConvert: (handleId: string, path: string, revision: string, ticket: string, fresh?: boolean) => Promise<LoOutcome>
+  /** Detaches a tab from its conversion, which stops when no tab is left on it. */
+  officeConvertStop: (ticket: string) => Promise<void>
+  /** A conversion still waiting or running, by ticket. */
+  onOfficeConvertState: (cb: (e: { ticket: string } & LoState) => void) => () => void
+  /** A range of a converted PDF by the id its conversion returned, with the file's size. */
+  officeRead: (handleId: string, id: string, offset: number, length: number) => Promise<{ ok: true; bytes: Uint8Array; size: number } | Refusal>
   /** Quick Look's first page of an Office file at the revision its pre-flight saw. */
   officeGlimpse: (handleId: string, path: string, revision: string) => Promise<Glimpse | Refusal>
   /** Reads a workbook tab's file once and starts its sheet worker, whose port arrives as a window message
    *  `{ cluiSheetPort: id }`. `version` hashes the bytes the worker reads; an empty file starts none. */
-  sheetOpen: (handleId: string, path: string, id: string) => Promise<{ ok: true; revision: string; version: SourceVersion; size: number } | Refusal>
+  sheetOpen: (handleId: string, path: string, id: string, from?: { id: string; revision: string; version: SourceVersion }) => Promise<{ ok: true; revision: string; version: SourceVersion; size: number } | Refusal>
   /** Ends a sheet worker, done or not. */
   sheetStop: (id: string) => Promise<void>
   /** A sheet worker that exited before it said it was done: out of memory, or killed. */
@@ -579,6 +588,11 @@ export const IpcChannels = {
   officeOpen: 'clui:officeOpen',
   officeText: 'clui:officeText',
   officeGlimpse: 'clui:officeGlimpse',
+  officeConvert: 'clui:officeConvert',
+  officeConvertStop: 'clui:officeConvertStop',
+  /** main → renderer push: a conversion is waiting or has started */
+  officeConvertState: 'clui:officeConvertState',
+  officeRead: 'clui:officeRead',
   sheetOpen: 'clui:sheetOpen',
   sheetStop: 'clui:sheetStop',
   /** main → renderer: a sheet worker's port, posted with its open's id */
@@ -675,6 +689,6 @@ export interface MenuState {
   /** An image Preview, a PDF or a Word view is the active tab, so the View menu's zoom items work, and which names the
    *  fit item. `text` is a Word view in Flow, which has no fit. */
   zoom: 'none' | 'image' | 'doc' | 'text'
-  /** A PDF is shown, so Go to Line goes to a page. */
-  pages: boolean
+  /** A PDF is shown, so Go to Line goes to a page; `slide` for a converted presentation. */
+  pages: boolean | 'slide'
 }

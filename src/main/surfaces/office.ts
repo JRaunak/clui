@@ -10,7 +10,7 @@ import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { CHUNK_MAX } from '../../shared/files'
-import { isPresentation, isWord, OFFICE_BYTES_MAX, TEXT_HTML_MAX, WORD_XML_MAX, type Converted, type DamagedAs, type Flight, type Glimpse, type WordFacts, type WordPart } from '../../shared/office'
+import { isOds, isPresentation, isWord, OFFICE_BYTES_MAX, TEXT_HTML_MAX, WORD_XML_MAX, type Converted, type DamagedAs, type Flight, type Glimpse, type LoFacts, type WordFacts, type WordPart } from '../../shared/office'
 import { unxml } from '../../shared/sheets'
 import { zipEntries, zipPart, type Read, type ZipEntry } from './zip'
 
@@ -21,7 +21,7 @@ const RATIO_MAX = 200
 const PART_MAX = 16 * 1024 * 1024
 const OLE = Buffer.from('d0cf11e0a1b11ae1', 'hex')
 
-const damagedAs = (p: string): DamagedAs => (/\.(odt|odp)$/i.test(p) ? 'opendocument' : /\.rtf$/i.test(p) ? 'rtf' : isPresentation(p) ? 'powerpoint' : 'word')
+const damagedAs = (p: string): DamagedAs => (/\.(odt|odp|ods)$/i.test(p) ? 'opendocument' : /\.rtf$/i.test(p) ? 'rtf' : isPresentation(p) ? 'powerpoint' : 'word')
 
 /** The names in an OLE compound file's directory, and a stream's first bytes by name. Null when the header or a
  *  sector chain doesn't hold up. */
@@ -235,9 +235,66 @@ function unpacks(entries: ZipEntry[]): Flight | null {
   return null
 }
 
+/** Whether an ODF `xlink:href` leaves the package: a scheme, an absolute path or a step out of it. */
+const outside = (href: string): boolean => /^([a-z][\w+.-]*:|\/|\.\.\/)/i.test(href)
+
+/** Linked frames, sections and objects in an ODF part, and the sheets an .ods links from other files. */
+function odfLinks(xml: string): { links: boolean; sheets: number } {
+  let links = false
+  for (const m of xml.matchAll(/<(draw:image|draw:object|draw:object-ole|draw:plugin|text:section-source|table:table-source)\b[^>]*>/g)) {
+    const href = attr(m[0], 'xlink:href')
+    if (href && outside(href)) links = true
+  }
+  const sheets = [...xml.matchAll(/<table:table\b(?![-:])[^>]*>([\s\S]*?)<\/table:table>/g)].filter((m) => /<table:table-source\b/.test(m[1])).length
+  return { links: links || sheets > 0, sheets }
+}
+
+/** An .odp's pages and which are hidden, by the page's own attribute or its drawing-page style's. */
+export function odpSlides(content: string, styles = ''): { count: number; hidden: number[] } {
+  const hiddenStyles = new Set<string>()
+  for (const m of `${styles}${content}`.matchAll(/<style:style\b([^>]*)>([\s\S]*?)<\/style:style>/g)) {
+    const name = attr(m[1], 'style:name')
+    if (name && /<style:drawing-page-properties\b[^>]*\bpresentation:visibility="hidden"/.test(m[2])) hiddenStyles.add(name)
+  }
+  const hidden: number[] = []
+  let count = 0
+  for (const m of content.matchAll(/<draw:page\b[^>]*>/g)) {
+    count++
+    const style = attr(m[0], 'draw:style-name')
+    if (attr(m[0], 'presentation:visibility') === 'hidden' || (style && hiddenStyles.has(style))) hidden.push(count)
+  }
+  return { count, hidden }
+}
+
+/** A .pptx's slides in `sldIdLst` order and which have `show="0"`; null when a listed slide's part can't be read. */
+export async function pptxSlides(part: (name: string) => Promise<string | null>): Promise<{ count: number; hidden: number[] } | null> {
+  const pres = await part('ppt/presentation.xml')
+  const rels = (await part('ppt/_rels/presentation.xml.rels')) ?? ''
+  if (!pres) return null
+  const to = new Map<string, string>()
+  for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+    const id = attr(m[0], 'Id')
+    const t = attr(m[0], 'Target')
+    if (id && t) to.set(id, t.startsWith('/') ? t.slice(1) : `ppt/${t}`)
+  }
+  const list = /<p:sldIdLst\b[^>]*>([\s\S]*?)<\/p:sldIdLst>/.exec(pres)?.[1] ?? ''
+  const hidden: number[] = []
+  let count = 0
+  for (const m of list.matchAll(/<p:sldId\b[^>]*>/g)) {
+    count++
+    const target = to.get(attr(m[0], 'r:id') ?? '')
+    const xml = target ? await part(target) : null
+    if (xml === null) return null
+    if (/^(0|false)$/.test(attr(/<p:sld\b[^>]*>/.exec(xml)?.[0] ?? '', 'show') ?? '')) hidden.push(count)
+  }
+  return { count, hidden }
+}
+
 /** The pre-flight of one Office file at one revision, from its size and a ranged reader. A `text` outcome still has
- *  to convert (`converts`). */
-export async function preflight(path: string, size: number, read: Read): Promise<Flight> {
+ *  to convert (`converts`). With `lo`, every file that passes converts through LibreOffice instead; an .ods without it
+ *  is `needs-lo`. */
+export async function preflight(path: string, size: number, read: Read, lo = false): Promise<Flight> {
+  const ods = isOds(path)
   const as = damagedAs(path)
   if (!size) return { t: 'empty' }
   if (size > OFFICE_BYTES_MAX) return { t: 'too-large', bytes: size }
@@ -245,7 +302,8 @@ export async function preflight(path: string, size: number, read: Read): Promise
   if (!head) return { t: 'damaged', as }
   if (as === 'rtf') {
     if (!head.toString('latin1').startsWith('{\\rtf')) return { t: 'damaged', as }
-    // textutil shows a deletion as ordinary text, with nothing marking it.
+    // LibreOffice marks tracked changes as it converts; textutil shows a deletion as ordinary text.
+    if (lo) return { t: 'convert', facts: { macros: false, links: false } }
     const deleted = await rtfDeleted(size, read)
     if (deleted === null) return { t: 'damaged', as }
     return deleted ? { t: 'glimpse', macros: false, convert: { why: 'tracked' } } : { t: 'text', facts: { as, macros: false, tracked: false } }
@@ -258,7 +316,8 @@ export async function preflight(path: string, size: number, read: Read): Promise
     const fib = ppt ? null : await ole.head('WordDocument', 12)
     const locked = ppt ? ole.names.includes('EncryptedSummary') : !!fib && fib.length >= 12 && !!(fib.readUInt16LE(10) & 0x100)
     if (locked || ole.names.includes('EncryptionInfo')) return { t: 'locked' }
-    return { t: 'glimpse', macros: ole.names.some((n) => n === 'Macros' || n === '_VBA_PROJECT_CUR') }
+    const macros = ole.names.some((n) => n === 'Macros' || n === '_VBA_PROJECT_CUR')
+    return lo ? { t: 'convert', facts: { macros, links: false } } : { t: 'glimpse', macros }
   }
   // An encrypted OOXML or ODF package is an OLE container holding the encrypted zip.
   if (ole) return ole.names.includes('EncryptionInfo') ? { t: 'locked' } : { t: 'damaged', as }
@@ -275,12 +334,36 @@ export async function preflight(path: string, size: number, read: Read): Promise
     if (!byName.has('content.xml')) return { t: 'damaged', as }
     if ((await text('META-INF/manifest.xml'))?.includes('encryption-data')) return { t: 'locked' }
     const macros = names.some((n) => n.startsWith('Basic/') || n.startsWith('Scripts/'))
+    if (lo || ods) {
+      const bound = unpacks(entries)
+      if (bound) return bound
+      if (!lo) return { t: 'needs-lo' }
+      const content = (await text('content.xml')) ?? ''
+      const { links, sheets } = odfLinks(content)
+      const facts: LoFacts = { macros, links }
+      if (ods) facts.linkedSheets = sheets
+      if (/\.odp$/i.test(path)) facts.slides = odpSlides(content, (await text('styles.xml')) ?? '')
+      return { t: 'convert', facts }
+    }
     if (!/\.odt$/i.test(path) || (await text('mimetype', 256)) !== 'application/vnd.oasis.opendocument.text') return { t: 'glimpse', macros }
     return unpacks(entries) ?? { t: 'text', facts: { as, macros, tracked: !!(await text('content.xml'))?.includes('<text:changed-region') } }
   }
   const main = as === 'powerpoint' ? 'ppt/presentation.xml' : 'word/document.xml'
   if (!byName.has('[Content_Types].xml') || !byName.has(main)) return { t: 'damaged', as }
   const macros = names.some((n) => /(^|\/)vbaProject\.bin$/i.test(n))
+  if (lo) {
+    const bound = unpacks(entries)
+    if (bound) return bound
+    const relParts = await Promise.all(names.filter((n) => /(^|\/)_rels\/[^/]+\.rels$/.test(n)).map(async (n) => (await text(n)) ?? ''))
+    const links = relParts.some((x) => [...x.matchAll(/<Relationship\b[^>]*>/g)].some((m) => attr(m[0], 'TargetMode') === 'External' && !attr(m[0], 'Type')?.endsWith('/hyperlink')))
+    const facts: LoFacts = { macros, links }
+    if (as === 'powerpoint') {
+      const slides = await pptxSlides((n) => text(n))
+      if (!slides) return { t: 'damaged', as }
+      facts.slides = slides
+    }
+    return { t: 'convert', facts }
+  }
   if (!isWord(path)) return { t: 'glimpse', macros }
   const bound = unpacks(entries)
   if (bound) return bound

@@ -10,6 +10,8 @@ import { takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { megabytes, unconvertedFact, unpackDetail } from '../../lib/docxView'
 import { BANNER, baseOf, DocState, openDefault, REASON, SelectionNotice, SKELETON_MS, STATE_BODY, TEXT_BTN, setStatus, type Doc } from './fileDoc'
 import { DocxSurface } from './DocxSurface'
+import { PdfSurface } from './PdfSurface'
+import { ConvertingBanner, ConvertingBody, useConversion } from './Converting'
 
 const TURN_RELOAD_MS = 300
 const MISSING_POLL_MS = 2000
@@ -132,7 +134,7 @@ export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: st
   // A user open focuses the state's first action once it settles; the views take it themselves.
   const stateEl = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (shown.t === 'loading' || laidOut(shown.t) || shown.t === 'glimpse') return
+    if (shown.t === 'loading' || laidOut(shown.t) || shown.t === 'glimpse' || shown.t === 'convert') return
     const via = takeSurfaceFocus(tabId)
     if (!via) return
     const opts: FocusOptions & { focusVisible?: boolean } = { preventScroll: true, focusVisible: via === 'keyboard' }
@@ -153,6 +155,7 @@ export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: st
       />
     )
   }
+  if (shown.t === 'convert') return <ConvertedView handleId={handleId} tabId={tabId} path={path} flight={shown} onStale={scheduleLoad} onMissing={() => void load()} />
   if (shown.t === 'glimpse') return <GlimpseView handleId={handleId} tabId={tabId} path={path} flight={shown} onStale={scheduleLoad} notice={notice} onDismiss={() => setNotice(null)} />
 
   const app = (
@@ -224,6 +227,8 @@ export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: st
             </div>
           </>
         )
+      case 'needs-lo':
+        return null
       default: {
         const d: Doc = shown.t === 'missing' ? { t: 'missing' } : { t: 'error', reason: shown.reason, message: shown.message }
         return (
@@ -261,6 +266,120 @@ export function OfficeSurface({ handleId, tabId }: { handleId: string; tabId: st
       </div>
       {notice && <SelectionNotice notice={notice} copy={NOTICE} onDismiss={() => setNotice(null)} />}
       <span data-ui="office-live" className="sr-only" aria-live="polite">
+        {said}
+      </span>
+    </div>
+  )
+}
+
+const REBUILDING = 'The pages are being converted again.'
+
+/**
+ * LibreOffice's pages of an Office file, in the PDF view. A new revision converts while the old pages stay up under a
+ * banner; until a first conversion lands the viewport holds the converting state, after a second of nothing.
+ */
+function ConvertedView({ handleId, tabId, path, flight, onStale, onMissing }: {
+  handleId: string
+  tabId: string
+  path: string
+  flight: Extract<OfficeOpen, { t: 'convert' }>
+  onStale: () => void
+  onMissing: () => void
+}): JSX.Element {
+  const name = baseOf(path)
+  const owner = `${handleId}\0${path}`
+  const { conv, done, shown, stop, again } = useConversion(handleId, path, flight.revision, { onStale, onMissing })
+  const stateEl = useRef<HTMLDivElement>(null)
+  const rootEl = useRef<HTMLDivElement>(null)
+  const [said, say] = useSay()
+  const failed = conv.t === 'failed' || conv.t === 'timeout' || conv.t === 'stopped'
+  const stale = !!done && done.revision !== flight.revision
+
+  // A conversion that ends while focus is on Stop moves it to what replaced Stop.
+  const hadStop = useRef(false)
+  hadStop.current = !!(document.activeElement as HTMLElement | null)?.closest('[data-ui="convert-stop"]') && !!rootEl.current?.contains(document.activeElement)
+  useEffect(() => {
+    if (!hadStop.current) return
+    const to = failed ? stateEl.current?.querySelector<HTMLElement>('button') : rootEl.current?.querySelector<HTMLElement>('[data-ui="pdf-viewport"]')
+    to?.focus({ preventScroll: true })
+  }, [failed, done])
+  useEffect(() => {
+    if (conv.t === 'failed') say(`Couldn't convert ${name}`)
+    else if (conv.t === 'timeout') say(`${name} took too long to convert`)
+    else if (conv.t === 'stopped' && !done) say(`Stopped converting ${name}.`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conv.t])
+  useEffect(() => {
+    if (!done) setStatus(owner, failed ? 'error' : 'loading')
+  }, [owner, done, failed])
+
+  if (done && !(failed && conv.t !== 'stopped')) {
+    const busy = stale && (conv.t === 'waiting' || conv.t === 'running')
+    return (
+      <div ref={rootEl} className="contents">
+        <PdfSurface
+          handleId={handleId}
+          tabId={tabId}
+          converted={{
+            id: done.id,
+            revision: done.revision,
+            version: done.version,
+            by: done.by,
+            slides: isPresentation(path),
+            facts: flight.facts,
+            frozen: stale ? REBUILDING : null,
+            banner: stale && ((busy && shown) || conv.t === 'stopped') ? <ConvertingBanner name={name} conv={conv} onStop={stop} onAgain={() => again()} /> : null,
+            onUnreadable: () => again(true)
+          }}
+        />
+      </div>
+    )
+  }
+  const app = (
+    <Button variant="secondary" size="sm" onClick={() => void openDefault(handleId, path)}>
+      Open in default app
+    </Button>
+  )
+  const retry = (
+    <Button variant="secondary" size="sm" onClick={() => again()}>
+      {conv.t === 'stopped' ? 'Convert again' : 'Try again'}
+    </Button>
+  )
+  const [title, detail] =
+    conv.t === 'failed'
+      ? [`Couldn't convert ${name}`, "LibreOffice couldn't turn it into pages. The file may be damaged or use features it can't read."]
+      : conv.t === 'timeout'
+        ? [`${name} took too long to convert`, 'Clui stops a conversion after a minute.']
+        : [`Stopped converting ${name}.`, '']
+  return (
+    <div ref={rootEl} data-ui="office-surface" className="flex h-full min-h-0 flex-col bg-bg pt-(--top-h)">
+      <div className="pdf-frame relative min-h-0 flex-1">
+        <div
+          ref={stateEl}
+          role="region"
+          aria-label={name}
+          aria-busy={!failed || undefined}
+          tabIndex={-1}
+          data-ui="office-state"
+          data-beside-header=""
+          data-pane-title=""
+          className={`absolute inset-0 overflow-auto focus-visible:outline-none ${STATE_BODY}`}
+        >
+          {failed ? (
+            <>
+              <p className="text-ui font-medium text-content">{title}</p>
+              {detail && <p className="max-w-[60ch] text-ui text-dim">{detail}</p>}
+              <div className="flex gap-2">
+                {retry}
+                {app}
+              </div>
+            </>
+          ) : shown ? (
+            <ConvertingBody name={name} conv={conv} onStop={stop} />
+          ) : null}
+        </div>
+      </div>
+      <span className="sr-only" aria-live="polite">
         {said}
       </span>
     </div>

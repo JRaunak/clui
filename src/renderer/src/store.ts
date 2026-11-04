@@ -825,7 +825,8 @@ interface SessionStore {
   clearRefs: (handleId: string, ids: readonly string[]) => void
   dismissReferenceNotice: (handleId: string, resourceId: string) => void
   /** The one place staleness removes references. Returns how many went. */
-  invalidateSource: (handleId: string, resourceId: string, cause: { reason: RefFailure | 'session'; version?: SourceVersion }) => number
+  /** `by`: with `reconverted`, the converter now showing the file; references made under another one go stale. */
+  invalidateSource: (handleId: string, resourceId: string, cause: { reason: RefFailure | 'session'; version?: SourceVersion; by?: string }) => number
   setReferenceEditTarget: (handleId: string, target: RefTarget) => void
   /** Re-checks a queued message's references; true when it may send, and an idle session's head sends now. */
   acceptReview: (handleId: string, queueId: string) => Promise<boolean>
@@ -1395,7 +1396,7 @@ export function paneFacts(handleId: string): SurfaceReply {
         path: t.key,
         claude: t.openedBy === 'claude',
         unseen: !!t.unseen,
-        ...(v ? { page: v.page, ...(v.pages ? { pages: v.pages } : {}) } : {}),
+        ...(v ? { page: v.page, ...(v.pages ? { pages: v.pages } : {}), ...(v.converted ? { converted: true, unit: v.converted } : {}) } : {}),
         ...(s?.page && what ? { selection: { page: s.page, ...(s.endPage ? { endPage: s.endPage } : {}), what } } : {}),
         ...(t.highlight?.page ? { highlight: { page: t.highlight.page, ...(t.highlight.text ? { what: 'text' as const } : {}) } } : t.highlight?.text ? { highlight: { what: 'text' as const } } : {}),
         ...(pend?.page ? { pending: { page: pend.page } } : {})
@@ -4429,6 +4430,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       if (r.kind === 'change') return resourceId === CHANGE_REFS && (cause.reason === 'denied' || cause.reason === 'session')
       if (resourceOf(r) !== resourceId) return false
       if (r.kind === 'browser') return true
+      if (cause.reason === 'reconverted') return (r.kind === 'doc' || r.kind === 'sheet') && !!r.converted && r.converted.by !== cause.by
       if ((r.kind === 'file' && r.lines) || r.kind === 'image' || r.kind === 'doc' || r.kind === 'sheet' || r.kind === 'docx') return cause.reason !== 'changed' || r.sourceVersion !== cause.version
       // A change with no version is an asset's, seen by the page's watcher.
       if (r.kind === 'page') return cause.reason !== 'changed' || !cause.version || r.revision !== cause.version

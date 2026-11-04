@@ -143,6 +143,10 @@ export function Stage({
     const v = office && s?.surfaces.active ? s.surfaces.tabs[s.surfaces.active]?.viewState : undefined
     return v?.kind === 'doc' && v.layout === 'pages'
   })
+  const converted = useActive((s) => {
+    const v = office && s?.surfaces.active ? s.surfaces.tabs[s.surfaces.active]?.viewState : undefined
+    return v?.kind === 'doc' ? v.converted : undefined
+  })
   const fileMode = useActive((s) => (fileKind && s?.surfaces.active ? s.surfaces.tabs[s.surfaces.active]?.mode : undefined))
   const fileStatus = useFileStatus(handleId, filePath)
   const noPreview = !!useNoPreview(handleId, filePath)
@@ -170,14 +174,14 @@ export function Stage({
               ? { kind: 'tree', enabled: true }
               : { kind: 'none', enabled: false },
       fileLines: fileStatus === 'text' && shown !== 'preview',
-      pages: fileKind === 'doc' && fileStatus === 'binary' && !office,
+      pages: fileKind === 'doc' && fileStatus === 'binary' && (!office || !!converted) && (converted === 'slide' ? 'slide' : true),
       presentation: !shown ? 'none' : shown === 'preview' ? 'source' : 'preview',
       // A focused page is main's to report, so this covers only focus in the pane's own DOM.
       reload: shown === 'preview' && !!filePath && isHtml(filePath) && focusInSecondary,
       back: ((shown === 'preview' && !!filePath && isMarkdown(filePath)) || fileKind === 'doc') && hasBack && focusInSecondary,
-      zoom: fileKind === 'image' && shown !== 'source' ? 'image' : fileKind === 'doc' && fileStatus === 'binary' ? (office && !wordPages ? 'text' : 'doc') : 'none'
+      zoom: fileKind === 'image' && shown !== 'source' ? 'image' : fileKind === 'doc' && fileStatus === 'binary' ? (office && !converted && !wordPages ? 'text' : 'doc') : 'none'
     })
-  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, shown, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary, hasBack, fileKind, office, wordPages])
+  }, [hasBrowser, onBrowser, onDiff, onTree, diffOpenable, filePath, fileStatus, shown, kind, wide, state, externalBlocked, cwd, activeKind, focusInSecondary, hasBack, fileKind, office, wordPages, converted])
 
   const pane = useMemo<PaneApi>(
     () => ({

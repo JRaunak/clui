@@ -14,6 +14,7 @@ import { ImageSurface } from './ImageSurface'
 import { PdfSurface } from './PdfSurface'
 import { OfficeSurface } from './OfficeSurface'
 import { isOffice } from '../../../../shared/office'
+import { useFileStatus } from './fileDoc'
 import { SheetSurface } from './SheetSurface'
 import { PresentationButton } from './PresentationButton'
 import { fileLike, isMarkdown, isMermaid, opensDefault, presentationOf, useNoPreview } from '../../lib/presentation'
@@ -32,6 +33,12 @@ export function SurfaceHost(): JSX.Element | null {
   const filePath = useActive((s) => (fileTab && activeId ? (s?.surfaces.tabs[activeId]?.key ?? null) : null))
   const mode = useActive((s) => (fileTab && activeId ? s?.surfaces.tabs[activeId]?.mode : undefined))
   const noPreview = useNoPreview(handleId, filePath)
+  // An Office file shows pages to point at only when LibreOffice converted it and those pages are up.
+  const converted = useActive((s) => {
+    const v = kind === 'doc' && activeId ? s?.surfaces.tabs[activeId]?.viewState : undefined
+    return v?.kind === 'doc' && !!v.converted
+  })
+  const docStatus = useFileStatus(handleId, kind === 'doc' ? filePath : null)
   const shown = presentationOf(fileTab && filePath !== null ? { kind, key: filePath, mode } : undefined, !!noPreview)
   const fileExternal = useFileExternal(handleId, filePath, opensDefault(kind, shown))
   const cwd = useActive((s) => s?.cwd ?? null)
@@ -47,7 +54,7 @@ export function SurfaceHost(): JSX.Element | null {
       <BrowserSettingsButton />
     </>
   ) : kind === 'doc' && activeId ? (
-    filePath && !isOffice(filePath) ? <PointButton kind="doc" id={activeId} /> : null
+    filePath && (!isOffice(filePath) || (converted && docStatus === 'binary')) ? <PointButton kind="doc" id={activeId} /> : null
   ) : image && activeId ? (
     <>
       {shown !== 'source' && <PointButton kind="image" id={activeId} />}

@@ -13,6 +13,7 @@ export const VISUAL_MAX = 2 * 1024 * 1024
 
 /** `sha256:` + the 32 hex chars `readText` returns as `revision`. Never a stat revision. */
 export type SourceVersion = `sha256:${string}`
+export interface DocConverted { by: string; unit: 'page' | 'slide'; hidden?: true }
 /** 1-based, inclusive, start <= end. */
 export interface LineRange { start: number; end: number }
 
@@ -58,12 +59,13 @@ export type ContextReference = RefBase &
     /** Text, a region or a point on `page` of a PDF's `pages`, counted from 1 in file order, from its bytes at
      *  `sourceVersion`. Exactly one of `text`, `region` and `point`. `endPage`: a text selection's last page when it runs
      *  past `page`. `pageSize`: the page in points after its rotation, with a region or point, which are 0 to 1 from the
-     *  top left of the page as shown. */
-    | { kind: 'doc'; path: string; sourceVersion: SourceVersion; pages: number; page: number; endPage?: number; pageSize?: ImageSize; text?: DocText; region?: Region; point?: ImagePoint }
+     *  top left of the page as shown. `converted`: an Office file's pages as LibreOffice laid them out, `by` naming the
+   *  converter; `path` and `sourceVersion` are still the original's. `hidden`: a slide hidden in the presentation. */
+    | { kind: 'doc'; path: string; sourceVersion: SourceVersion; pages: number; page: number; endPage?: number; pageSize?: ImageSize; text?: DocText; region?: Region; point?: ImagePoint; converted?: DocConverted }
     /** A range of a sheet as read from the file's bytes at `sourceVersion`, in A1 notation. `sheet`: a workbook's
      *  sheet name. `lines`: a CSV or TSV range's first record's first line through its last record's last line.
-     *  `values`: a small workbook range's displayed text as TSV. */
-    | { kind: 'sheet'; path: string; sourceVersion: SourceVersion; sheet?: string; range: string; lines?: LineRange; values?: string }
+     *  `values`: a small workbook range's displayed text as TSV. `converted`: an .ods read from LibreOffice's XLSX. */
+    | { kind: 'sheet'; path: string; sourceVersion: SourceVersion; sheet?: string; range: string; lines?: LineRange; values?: string; converted?: { by: string } }
     /** Text in one part of a Word document as Clui laid it out from the file's bytes at `sourceVersion`. `text.nth`
      *  counts earlier occurrences of the quote in the part. `blocks`: the first and last paragraph, counted from 1 in
      *  the part as rendered. `heading`: the nearest heading above it, body only. `tracked`: the part has tracked changes,
@@ -138,7 +140,8 @@ export type ParsedReference =
 
 export interface ParsedMessage { refs: ParsedReference[]; rest: string; packetId: string | null }
 
-export type RefFailure = 'changed' | 'missing' | 'denied' | 'out-of-range' | 'navigated' | 'closed'
+/** `reconverted`: the file's pages or workbook came from a newer LibreOffice than the reference's. */
+export type RefFailure = 'changed' | 'missing' | 'denied' | 'out-of-range' | 'navigated' | 'closed' | 'reconverted'
 export interface RefInvalid { id: string; reason: RefFailure }
 
 /** Kept per resource after the refs are gone. */
@@ -185,9 +188,13 @@ function imageOk(x: Record<string, unknown>, wire: boolean): boolean {
 
 const regionOk = (r: unknown): boolean => isObj(r) && unit(r.x) && unit(r.y) && unit(r.w) && unit(r.h) && r.w > 0 && r.h > 0 && r.x + r.w <= EDGE && r.y + r.h <= EDGE
 
+const BY = /^LibreOffice \d[\w.]{0,31}$/
+const byOk = (c: unknown): c is Record<string, unknown> => isObj(c) && typeof c.by === 'string' && BY.test(c.by)
+
 function docOk(x: Record<string, unknown>, wire: boolean): boolean {
-  const { pages, page, endPage, pageSize: size, text: t, region: r, point: p } = x
+  const { pages, page, endPage, pageSize: size, text: t, region: r, point: p, converted: c } = x
   if (!pathOk(x.path, wire) || typeof x.sourceVersion !== 'string' || !VERSION.test(x.sourceVersion) || !int(pages, 1, PAGES_MAX) || !int(page, 1, pages)) return false
+  if (c !== undefined && !(byOk(c) && (c.unit === 'page' || c.unit === 'slide') && (c.hidden === undefined || (c.hidden === true && c.unit === 'slide')))) return false
   if ([t, r, p].filter((v) => v !== undefined).length !== 1) return false
   if (t !== undefined) {
     if (size !== undefined || (endPage !== undefined && !int(endPage, page + 1, pages))) return false
@@ -219,6 +226,7 @@ function sheetOk(x: Record<string, unknown>, wire: boolean): boolean {
   if (x.sheet !== undefined && (!str(x.sheet, SHEET_NAME_MAX) || !x.sheet)) return false
   // A file has no more lines than bytes.
   if (x.lines !== undefined && !(isObj(x.lines) && int(x.lines.start, 1, CSV_BYTES_MAX) && int(x.lines.end, x.lines.start as number, CSV_BYTES_MAX))) return false
+  if (x.converted !== undefined && !byOk(x.converted)) return false
   return x.values === undefined || str(x.values, RECORD_MAX)
 }
 
@@ -377,10 +385,10 @@ export function refKey(r: RefInput): string {
       return ['image', r.path, r.sourceVersion, r.region ? `r${r.region.x},${r.region.y},${r.region.w},${r.region.h}` : `p${r.point?.x},${r.point?.y}`].join('\0')
     case 'doc': {
       const at = r.text ? `t${r.text.nth}:${r.text.quote}` : r.region ? `r${r.region.x},${r.region.y},${r.region.w},${r.region.h}` : `p${r.point?.x},${r.point?.y}`
-      return ['doc', r.path, r.sourceVersion, r.page, r.endPage ?? '', at].join('\0')
+      return ['doc', r.path, r.sourceVersion, r.converted?.by ?? '', r.page, r.endPage ?? '', at].join('\0')
     }
     case 'sheet':
-      return ['sheet', r.path, r.sourceVersion, r.sheet ?? '', r.range].join('\0')
+      return ['sheet', r.path, r.sourceVersion, r.converted?.by ?? '', r.sheet ?? '', r.range].join('\0')
     case 'docx':
       return ['docx', r.path, r.sourceVersion, r.part, r.text.nth, r.text.quote].join('\0')
     case 'diagram': {
@@ -478,12 +486,19 @@ export function imageTail(r: ImageRef, place = true): string {
   return `region ${p.w}×${p.h}${place ? ` at ${p.x},${p.y}` : ''}`
 }
 
-type DocRef = Pick<Extract<RefInput, { kind: 'doc' }>, 'page' | 'endPage' | 'pageSize' | 'text' | 'region' | 'point'>
+type DocRef = Pick<Extract<RefInput, { kind: 'doc' }>, 'page' | 'endPage' | 'pageSize' | 'text' | 'region' | 'point' | 'converted'>
 
-/** `page 12`, `pages 12 to 14`. */
-export const docPages = ({ page, endPage }: Pick<DocRef, 'page' | 'endPage'>): string => (endPage ? `pages ${page} to ${endPage}` : `page ${page}`)
+/** `page 12`, `pages 12 to 14`, or a presentation's `slide 12`. */
+export const docPages = ({ page, endPage, converted }: Pick<DocRef, 'page' | 'endPage' | 'converted'>): string => {
+  const unit = converted?.unit ?? 'page'
+  return endPage ? `${unit}s ${page} to ${endPage}` : `${unit} ${page}`
+}
 /** `p.12`, `p.12-14`, where space is tight. */
-export const docPagesShort = ({ page, endPage }: Pick<DocRef, 'page' | 'endPage'>): string => (endPage ? `p.${page}-${endPage}` : `p.${page}`)
+export const docPagesShort = ({ page, endPage, converted }: Pick<DocRef, 'page' | 'endPage' | 'converted'>): string =>
+  converted?.unit === 'slide' ? (endPage ? `slides ${page}-${endPage}` : `slide ${page}`) : endPage ? `p.${page}-${endPage}` : `p.${page}`
+/** What follows a converted reference's place: a document's pages are LibreOffice's, a hidden slide says so. */
+export const docCaveat = ({ converted: c }: Pick<DocRef, 'converted'>, spoken = false): string =>
+  c?.unit === 'page' ? ' as converted' : c?.hidden ? (spoken ? ', hidden' : ' (hidden)') : ''
 /** A region or point in the page's own points, rounded and kept inside it. */
 export const docPt = (r: DocRef): ReturnType<typeof imagePx> => imagePx({ size: r.pageSize ?? { w: 1, h: 1 }, region: r.region, point: r.point })
 
@@ -577,6 +592,9 @@ const PAGE_SENTENCE =
 const IMAGE_SENTENCE = 'Image regions and points are 0 to 1 from the top left of the image as shown, after EXIF rotation; size is in pixels.'
 const DOC_SENTENCE =
   'PDF pages count from 1 in file order. Regions and points are 0 to 1 from the top left of the page as shown, after rotation; page sizes are in points. A quote marked elided keeps only its start and end.'
+const OFFICE_SENTENCE =
+  "Office documents are converted to pages by LibreOffice. A document's page numbers are as LibreOffice laid it out and may not match Word's; a presentation's slides map one to one, hidden slides included, in the presentation's order."
+const ODS_SENTENCE = "An OpenDocument spreadsheet's values are as LibreOffice recalculated them and may differ from those saved in the file."
 const DOCX_SENTENCE =
   "A Word reference quotes text from Clui's own layout of a .docx, which keeps the document's structure but not Word's pages. part says where the text is; nth counts earlier occurrences of the quote in that part, from 0; blocks is a rough position, its paragraphs counted from 1 as Clui laid them out with table cells included, and can run slightly ahead of the paragraph count in the XML, so find the text by the quote; heading is the nearest heading above it. tracked marks a document with tracked changes, quoted as if accepted. A quote marked elided keeps only its start and end."
 const TEXTUTIL_SENTENCE =
@@ -645,12 +663,14 @@ function copyRef(r: ContextReference): ContextReference {
       if (t) out.text = { quote: t.quote, nth: t.nth, ...(t.elided ? { elided: true as const } : {}) }
       else if (g) out.region = { x: g.x, y: g.y, w: g.w, h: g.h }
       else if (p) out.point = { x: p.x, y: p.y }
+      if (r.converted) out.converted = { by: r.converted.by, unit: r.converted.unit, ...(r.converted.hidden ? { hidden: true as const } : {}) }
       break
     }
     case 'sheet':
       out = { id: r.id, kind: 'sheet', path: r.path, sourceVersion: r.sourceVersion, ...(r.sheet !== undefined ? { sheet: r.sheet } : {}), range: r.range }
       if (r.lines) out.lines = { start: r.lines.start, end: r.lines.end }
       if (r.values !== undefined) out.values = r.values
+      if (r.converted) out.converted = { by: r.converted.by }
       break
     case 'diagram': {
       const head = { id: r.id, kind: 'diagram' as const, path: r.path, sourceVersion: r.sourceVersion, lines: { start: r.lines.start, end: r.lines.end }, type: r.type }
@@ -723,7 +743,9 @@ export function serializeContext(refs: SentReference[], typed: string, opts: { p
       refs.some((r) => r.ref.kind === 'page') && PAGE_SENTENCE,
       refs.some((r) => r.ref.kind === 'image') && IMAGE_SENTENCE,
       refs.some((r) => r.ref.kind === 'doc') && DOC_SENTENCE,
+      refs.some((r) => r.ref.kind === 'doc' && !!r.ref.converted) && OFFICE_SENTENCE,
       refs.some((r) => r.ref.kind === 'sheet') && SHEET_SENTENCE,
+      refs.some((r) => r.ref.kind === 'sheet' && !!r.ref.converted) && ODS_SENTENCE,
       refs.some((r) => r.ref.kind === 'docx') && DOCX_SENTENCE,
       refs.some((r) => r.ref.kind === 'docx' && r.ref.via === 'textutil') && TEXTUTIL_SENTENCE,
       refs.some((r) => r.ref.kind === 'diagram') && DIAGRAM_SENTENCE,

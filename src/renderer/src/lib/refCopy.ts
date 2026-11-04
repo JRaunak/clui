@@ -1,5 +1,5 @@
 import { clipName, hostOf, pinWords } from '../../../shared/annotate'
-import { changeLabel, changeTail, DIAGRAM_LABELS_MAX, DIAGRAM_PARTS_MAX, diagramTail, docPages, fitsRecord, imagePx, imageTail, isRefInput, MAX_REFS, partPhrase, partWord, refLabel, type ChangeSide, type ContextReference, type DiagramPart, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
+import { changeLabel, changeTail, DIAGRAM_LABELS_MAX, DIAGRAM_PARTS_MAX, diagramTail, docCaveat, docPages, fitsRecord, imagePx, imageTail, isRefInput, MAX_REFS, partPhrase, partWord, refLabel, type ChangeSide, type ContextReference, type DiagramPart, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 import { CHANGE_BYTES_MAX, CHANGE_LINES_MAX, CHANGE_TEXT_BUDGET } from '../../../shared/changes'
 import { WORKSPACE_FILE_CAP } from '../../../shared/files'
 import { parseA1, qualified, spokenA1 } from '../../../shared/sheets'
@@ -62,7 +62,7 @@ export const docxWords = (r: Pick<Extract<RefInput, { kind: 'docx' }>, 'part' | 
   r.part !== 'body' ? `${r.part === 'footnotes' ? 'footnote' : 'endnote'} text` : r.heading ? `text under ${clipName(r.heading)}` : 'text'
 
 /** `text on pages 12 to 14`, `a region on page 12`, `a point on page 12`. */
-export const docWhat = (r: Pick<DocInput, 'page' | 'endPage' | 'text' | 'region'>): string => `${r.text ? 'text' : r.region ? 'a region' : 'a point'} on ${docPages(r)}`
+export const docWhat = (r: Pick<DocInput, 'page' | 'endPage' | 'text' | 'region' | 'converted'>): string => `${r.text ? 'text' : r.region ? 'a region' : 'a point'} on ${docPages(r)}`
 
 export const quoteStart = (quote: string, n: number): string => {
   const cp = [...quote]
@@ -91,7 +91,7 @@ export function spokenRef(r: RefInput): string {
     case 'image':
       return `${baseOf(r.path)}, ${spokenImage(r)}`
     case 'doc':
-      return `${baseOf(r.path)}, ${docPages(r)}, ${r.text ? `text "${quoteStart(r.text.quote, 80)}"` : r.region ? 'region' : 'point'}`
+      return `${baseOf(r.path)}, ${docPages(r)}${docCaveat(r, true)}, ${r.text ? `text "${quoteStart(r.text.quote, 80)}"` : r.region ? 'region' : 'point'}`
     case 'sheet':
       return `${baseOf(r.path)}, ${sheetWhat(r)}${r.values === undefined ? '' : ', with values'}`
     case 'docx':
@@ -322,7 +322,7 @@ function changeWhat(r: ChangeInput): string {
 }
 
 /** Only a source that is still there can be opened to pick again. */
-export const canReopen = (reason: Reason): boolean => reason === 'changed' || reason === 'out-of-range' || reason === 'navigated'
+export const canReopen = (reason: Reason): boolean => reason === 'changed' || reason === 'out-of-range' || reason === 'navigated' || reason === 'reconverted'
 
 /** What happened to the source, with no full stop: `manager.ts changed`. `label` is a basename, a host, or
  *  `The page` for a page with no host. */
@@ -337,6 +337,8 @@ function leadOf(label: string, reason: Reason): string {
       return host ? `The ${host} tab was closed` : 'The tab was closed'
     case 'session':
       return `${label} was open in the previous session`
+    case 'reconverted':
+      return `${label} was converted again`
     default:
       return `${label} changed`
   }

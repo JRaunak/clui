@@ -119,7 +119,15 @@ const api: CluiApi = {
   officeOpen: (handleId, path) => ipcRenderer.invoke(IpcChannels.officeOpen, handleId, path),
   officeText: (handleId, path, revision) => ipcRenderer.invoke(IpcChannels.officeText, handleId, path, revision),
   officeGlimpse: (handleId, path, revision) => ipcRenderer.invoke(IpcChannels.officeGlimpse, handleId, path, revision),
-  sheetOpen: (handleId, path, id) => ipcRenderer.invoke(IpcChannels.sheetOpen, handleId, path, id),
+  officeConvert: (handleId, path, revision, ticket, fresh) => ipcRenderer.invoke(IpcChannels.officeConvert, handleId, path, revision, ticket, fresh),
+  officeConvertStop: (ticket) => ipcRenderer.invoke(IpcChannels.officeConvertStop, ticket),
+  onOfficeConvertState: (cb) => {
+    const listener = (_e: unknown, payload: Parameters<Parameters<CluiApi['onOfficeConvertState']>[0]>[0]): void => cb(payload)
+    ipcRenderer.on(IpcChannels.officeConvertState, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.officeConvertState, listener)
+  },
+  officeRead: (handleId, id, offset, length) => ipcRenderer.invoke(IpcChannels.officeRead, handleId, id, offset, length),
+  sheetOpen: (handleId, path, id, from) => ipcRenderer.invoke(IpcChannels.sheetOpen, handleId, path, id, from),
   sheetStop: (id) => ipcRenderer.invoke(IpcChannels.sheetStop, id),
   onSheetExit: (cb) => {
     const listener = (_e: unknown, payload: { id: string; code: number }): void => cb(payload)

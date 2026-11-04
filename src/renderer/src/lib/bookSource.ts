@@ -35,8 +35,9 @@ export type BookOpen =
   | { t: 'stopped' }
 
 /** Reads a workbook tab's file in a sheet worker process. `onProgress` hears the fraction parsed once the worker can
- *  say; `stop` ends the read, and a source already handed back must be closed by its holder. */
-export function openBook(handleId: string, path: string, onProgress: (f: number) => void): { stop(): void; done: Promise<BookOpen> } {
+ *  say; `stop` ends the read, and a source already handed back must be closed by its holder. `from`: an .ods's
+ *  conversion, which is read in place of the file. */
+export function openBook(handleId: string, path: string, onProgress: (f: number) => void, from?: { id: string; revision: string; version: SourceVersion }): { stop(): void; done: Promise<BookOpen> } {
   const id = crypto.randomUUID()
   let worker: Worker | null = null
   let settle: ((o: BookOpen) => void) | null = null
@@ -116,7 +117,7 @@ export function openBook(handleId: string, path: string, onProgress: (f: number)
     })
   }
   void window.clui
-    .sheetOpen(handleId, path, id)
+    .sheetOpen(handleId, path, id, from)
     .catch((): Refusal => ({ ok: false, reason: 'unreadable' }))
     .then((r) => {
       if (!settle) return

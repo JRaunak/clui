@@ -1,6 +1,7 @@
 import { CHANGE_REFS, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
+import { noticeLead } from '../src/renderer/src/lib/refCopy.ts'
 import { equal, ok } from './support/harness.mjs'
 
 // The store's IPC is stubbed: each call is recorded and resolves true unless `replies` overrides it.
@@ -927,6 +928,19 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   equal(cur().referenceNotices['change:denied'].removed.map((r: any) => r.label).join('|'), 'a.ts · diff L1, added|b.ts · before L40–45', 'change: it lists both files')
   ok(cur().refAnnounce.startsWith("Claude can't read changes in this session. 2 changes were removed from the message."), 'change: announced once for the draft')
   ok(cur().queuedMessages[0].refs.length === 0 && cur().queuedMessages[0].needsReview?.[0].resourceId === 'change:denied', 'change: the queued message pauses under the same key')
+
+  // A newer LibreOffice re-lays the pages, so references made under the old one go stale with the converted-again notice.
+  {
+    reset({ busy: false })
+    const VD = `sha256:${'b'.repeat(32)}`
+    const slide = (by: string): any => ({ kind: 'doc', path: '/tmp/w/deck.pptx', sourceVersion: VD, pages: 30, page: 3, text: { quote: 'Q3', nth: 0 }, converted: { by, unit: 'slide' } })
+    st().addRef('h1', slide('LibreOffice 26.8.2.2'))
+    st().addRef('h1', { kind: 'doc', path: '/tmp/w/paper.pdf', sourceVersion: VD, pages: 3, page: 1, text: { quote: 'x', nth: 0 } } as any)
+    equal(st().invalidateSource('h1', 'doc:/tmp/w/deck.pptx', { reason: 'reconverted', by: 'LibreOffice 26.8.2.2' }), 0, 'reconverted: the same converter keeps the chip')
+    equal(st().invalidateSource('h1', 'doc:/tmp/w/deck.pptx', { reason: 'reconverted', by: 'LibreOffice 26.9.0.1' }), 1, 'reconverted: another converter makes it stale')
+    ok(cur().contextRefs.length === 1 && cur().contextRefs[0].ref.path === '/tmp/w/paper.pdf', 'reconverted: other refs stay')
+    equal(noticeLead(cur().referenceNotices['doc:/tmp/w/deck.pptx']), 'deck.pptx was converted again. Select it again.', 'reconverted: the notice says so')
+  }
 
   // A draft carried to another session leaves its change refs behind: their grants stayed with the old one.
   reset({ busy: false })

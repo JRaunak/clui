@@ -9,7 +9,7 @@ import type { MenuItemConstructorOptions, WebContents } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { basename, dirname, isAbsolute } from 'node:path'
-import { readFile, writeFile, mkdir, realpath, stat } from 'node:fs/promises'
+import { open, readFile, writeFile, mkdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import {
@@ -54,7 +54,8 @@ import { changeMarks, diffSnapshots, editLine, getDiff, parseChangeRefRequest, p
 import { ChangeRefs } from './surfaces/change-refs'
 import { sheetNames, surfaceBridge, surfaceServer } from './surfaces/mcp-surface'
 import { converted, converts, glimpses, preflight, wordXml } from './surfaces/office'
-import { isConvertedText, isOffice, isWord, laysOut, WORD_XML_MAX, type Flight } from '../shared/office'
+import { pdfPages, soffices } from './surfaces/soffice'
+import { isConvertedText, isOds, isOffice, isPresentation, isWord, laysOut, WORD_XML_MAX, type Flight, type LoOutcome } from '../shared/office'
 import { SURFACE_OPEN_TOOL, SURFACE_STATE_TOOL } from '../shared/surface-tools'
 import {
   getResolvedSettings,
@@ -90,6 +91,7 @@ let presentation: ReturnType<typeof surfaceBridge> | null = null
 let sheets: ReturnType<typeof sheetJobs> | null = null
 let quickLook: ReturnType<typeof glimpses>
 let textutil: ReturnType<typeof converts>
+let libre: ReturnType<typeof soffices>
 /** A file's bytes by range at one stat revision, for a reader that parses only the parts it needs. */
 const rangeOf = (r: FileResource, revision: string) => async (offset: number, length: number) => {
   const b = await readBytes(r, { revision, offset, length })
@@ -97,15 +99,27 @@ const rangeOf = (r: FileResource, revision: string) => async (offset: number, le
 }
 /** The newest pre-flights, since every surface_open `text` or `page` asks again and an .rtf's is a scan of the file. */
 const flights = new Map<string, Flight>()
+/** Conversions in flight by their ticket, to the session that asked; and converted files by opaque id. */
+const tickets = new Map<string, string>()
+const derived = new Map<string, { handleId: string; file: string }>()
 /** An Office file's pre-flight, with an .odt or .rtf converted; null when the file changed while it was copied. */
 const flightOf = async (r: FileResource, size: number, revision: string): Promise<Flight | null> => {
   const read = rangeOf(r, revision)
-  const key = `${r.path}\0${revision}`
-  const f = flights.get(key) ?? (await preflight(r.path, size, read))
+  const lo = !!(await libre.find())
+  const key = `${r.path}\0${revision}\0${lo}`
+  const f = flights.get(key) ?? (await preflight(r.path, size, read, lo))
   flights.delete(key)
   flights.set(key, f)
   if (flights.size > 8) flights.delete(flights.keys().next().value as string)
   return f.t === 'text' ? converted(f, await textutil.get(r.path, revision, size, read)) : f
+}
+/** A file's LibreOffice derivative for Claude's ask, converted if no tab has yet (a tab asking later joins the job);
+ *  null when its pre-flight doesn't pass or the conversion fails. */
+const derivativeOf = async (r: FileResource, size: number, revision: string): Promise<Buffer | null> => {
+  const fl = await flightOf(r, size, revision)
+  if (fl?.t !== 'convert') return null
+  const c = await libre.convert({ path: r.path, revision, size, read: rangeOf(r, revision), to: isOds(r.path) ? 'xlsx' : 'pdf', slides: isPresentation(r.path) }, randomUUID(), () => {})
+  return c.ok ? readFile(c.file!).catch(() => null) : null
 }
 const LAUNCHERS = /\.(app|command|terminal|tool|fileloc|webloc|inetloc|workflow|action|jar|pkg|mpkg|scpt|applescript)$/i
 
@@ -258,7 +272,7 @@ function buildMenu(): void {
         { type: 'separator' },
         { label: 'Stop Browser Agent', accelerator: 'CmdOrCtrl+.', click: () => send('browser-stop') },
         { label: 'Point', accelerator: 'CmdOrCtrl+Shift+A', click: () => send('browser-annotate') },
-        { id: 'file-goto', label: menuState.pages ? 'Go to Page…' : 'Go to Line…', accelerator: 'CmdOrCtrl+L', enabled: menuState.fileLines || menuState.pages, click: () => send('file-goto') },
+        { id: 'file-goto', label: menuState.pages === 'slide' ? 'Go to Slide…' : menuState.pages ? 'Go to Page…' : 'Go to Line…', accelerator: 'CmdOrCtrl+L', enabled: menuState.fileLines || !!menuState.pages, click: () => send('file-goto') },
         ...(isMac ? [] : ([{ type: 'separator' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => send('open-settings') }] as MenuItemConstructorOptions[])),
         { type: 'separator' },
         isMac ? closeWindow : { role: 'quit' }
@@ -358,12 +372,14 @@ function createWindow(): void {
     htmlViews?.disposeAll()
     imageCaps?.clear()
     sheets?.disposeAll()
+    libre.stopAll()
   })
   // A reloaded renderer knows none of the HTML views, image caps or sheet workers, which would otherwise stay live.
   mainWindow.webContents.on('did-navigate', () => {
     htmlViews?.disposeAll()
     imageCaps?.clear()
     sheets?.disposeAll()
+    libre.stopAll()
   })
 
   // Probe runs set CLUI_TEST_INACTIVE so the window opens behind whatever the user is working in.
@@ -438,6 +454,10 @@ function registerIpc(): void {
       if (!f.ok) return null
       const s = await statFile(f)
       if (!s.ok) return null
+      if (isOds(f.path)) {
+        const x = await derivativeOf(f, s.size, s.revision)
+        return x ? sheetNames(x.length, async (offset, length) => x.subarray(offset, offset + length)) : null
+      }
       return sheetNames(s.size, async (offset, length) => {
         const b = await readBytes(f, { revision: s.revision, offset, length })
         return b.ok ? b.bytes : null
@@ -447,8 +467,13 @@ function registerIpc(): void {
       const f = await files.resolveAllowed(h, p, { consumer: 'file', operation: 'read-file' })
       const s = f.ok ? await statFile(f) : null
       if (!f.ok || !s?.ok) return 'view'
-      if (isWord(f.path)) return ((await wordXml(s.size, rangeOf(f, s.revision))) ?? 0) > WORD_XML_MAX ? 'too-long' : 'view'
+      if (isWord(f.path) && !(await libre.find())) return ((await wordXml(s.size, rangeOf(f, s.revision))) ?? 0) > WORD_XML_MAX ? 'too-long' : 'view'
       const fl = await flightOf(f, s.size, s.revision)
+      if (fl?.t === 'convert') {
+        if (!fl.facts.slides) return 'pages'
+        const pdf = await derivativeOf(f, s.size, s.revision)
+        return pdf && pdfPages(pdf) !== fl.facts.slides.count ? 'mismatch' : 'pages'
+      }
       if (fl?.t === 'damaged' && fl.converting) return 'failed'
       if (fl?.t !== 'glimpse') return 'view'
       // A tracked-changes .rtf glimpses as a .doc does: there is no text of its own to point at.
@@ -478,6 +503,8 @@ function registerIpc(): void {
     images.dispose(handleId)
     files.dispose(handleId)
     sheets?.dispose(handleId)
+    for (const [t, h] of tickets) if (h === handleId) libre.stop(t), tickets.delete(t)
+    for (const [id, d] of derived) if (d.handleId === handleId) derived.delete(id)
     forgetSession(handleId)
     for (const [id, owner] of watchOwners) if (owner === handleId) watchOwners.delete(id)
   }
@@ -559,6 +586,8 @@ function registerIpc(): void {
   // CLUI_QLMANAGE stands in a failing generator for the probes; a packaged build always runs the system's.
   quickLook = glimpses(join(app.getPath('userData'), 'glimpse'), (!app.isPackaged && process.env.CLUI_QLMANAGE) || '/usr/bin/qlmanage')
   textutil = converts(join(app.getPath('userData'), 'convert'), (!app.isPackaged && process.env.CLUI_TEXTUTIL) || '/usr/bin/textutil')
+  // CLUI_SOFFICE stands in a fake converter for the probes; a packaged build only ever finds the real one.
+  libre = soffices({ dir: join(app.getPath('userData'), 'libreoffice'), home: app.getPath('home'), pathEnv: process.env.PATH, seam: (!app.isPackaged && process.env.CLUI_SOFFICE) || undefined })
   const manager = new SessionManager(
     (handleId, event) => {
       browser.onSessionEvent(handleId, event)
@@ -1111,7 +1140,7 @@ function registerIpc(): void {
   handle(IpcChannels.officeOpen, async (_e, handleId: unknown, path: unknown) => {
     const r = await fileFor(handleId, path, 'read-file')
     if (!r.ok) return r
-    if (!isOffice(r.path)) return { ok: false, reason: 'wrong-type' }
+    if (!isOffice(r.path) && !isOds(r.path)) return { ok: false, reason: 'wrong-type' }
     const s = await statFile(r)
     if (!s.ok) return s
     const f = await flightOf(r, s.size, s.revision)
@@ -1132,6 +1161,49 @@ function registerIpc(): void {
     if (s.revision !== revision) return { ok: false, reason: 'changed' }
     const c = await textutil.get(r.path, revision, s.size, rangeOf(r, revision))
     return c.ok ? { ok: true, css: c.css, blocks: c.blocks } : { ok: false, reason: 'changed' }
+  })
+  // A conversion's derivative is read only by an opaque id the asking session holds, never by a path.
+  handle(IpcChannels.officeConvert, async (e, handleId: unknown, path: unknown, revision: unknown, ticket: unknown, fresh: unknown): Promise<LoOutcome> => {
+    if (typeof ticket !== 'string' || !/^[\w-]{8,64}$/.test(ticket) || typeof revision !== 'string') return { ok: false, reason: 'invalid' }
+    const r = await fileFor(handleId, path, 'read-file')
+    if (!r.ok) return r
+    if (!isOffice(r.path) && !isOds(r.path)) return { ok: false, reason: 'wrong-type' }
+    const s = await statFile(r)
+    if (!s.ok) return s
+    if (s.revision !== revision) return { ok: false, why: 'changed' }
+    tickets.set(ticket, handleId as string)
+    const c = await libre.convert(
+      { path: r.path, revision, size: s.size, read: rangeOf(r, revision), to: isOds(r.path) ? 'xlsx' : 'pdf', slides: isPresentation(r.path), fresh: fresh === true },
+      ticket,
+      (state) => !e.sender.isDestroyed() && e.sender.send(IpcChannels.officeConvertState, { ticket, ...state })
+    )
+    if (tickets.get(ticket) !== handleId) return { ok: false, why: 'stopped' }
+    tickets.delete(ticket)
+    if (!c.ok) return c
+    const id = randomUUID()
+    derived.set(id, { handleId: handleId as string, file: c.file! })
+    if (derived.size > 256) derived.delete(derived.keys().next().value as string)
+    return { ok: true, id, by: c.by, version: c.version }
+  })
+  handle(IpcChannels.officeConvertStop, (_e, ticket: unknown) => {
+    if (typeof ticket !== 'string' || !tickets.has(ticket)) return
+    tickets.delete(ticket)
+    libre.stop(ticket)
+  })
+  handle(IpcChannels.officeRead, async (_e, handleId: unknown, id: unknown, offset: unknown, length: unknown) => {
+    if (!Number.isSafeInteger(length) || (length as number) > CHUNK_MAX || !Number.isSafeInteger(offset) || (offset as number) < 0) return { ok: false, reason: 'invalid' }
+    const d = typeof id === 'string' ? derived.get(id) : undefined
+    if (!d || d.handleId !== handleId) return { ok: false, reason: 'denied' }
+    const f = await open(d.file, 'r').catch(() => null)
+    if (!f) return { ok: false, reason: 'changed' }
+    try {
+      const { size } = await f.stat()
+      const b = Buffer.alloc(Math.max(0, Math.min(length as number, size - (offset as number))))
+      if (b.length) await f.read(b, 0, b.length, offset as number)
+      return { ok: true, bytes: b, size }
+    } finally {
+      await f.close()
+    }
   })
   handle(IpcChannels.officeGlimpse, async (_e, handleId: unknown, path: unknown, revision: unknown) => {
     const r = await fileFor(handleId, path, 'read-file')
@@ -1155,10 +1227,20 @@ function registerIpc(): void {
     return b.ok ? { ok: true, bytes: b.bytes } : b
   })
   // A workbook is read whole, once per open, and parsed in its own process; the bytes it parses are the ones hashed.
-  handle(IpcChannels.sheetOpen, async (e, handleId: unknown, path: unknown, id: unknown) => {
+  handle(IpcChannels.sheetOpen, async (e, handleId: unknown, path: unknown, id: unknown, from: unknown) => {
     if (typeof id !== 'string' || !/^[\w-]{8,64}$/.test(id)) return { ok: false, reason: 'invalid' }
     const r = await fileFor(handleId, path, 'read-file')
     if (!r.ok) return r
+    // An .ods is read from its conversion, which the renderer names with the version over the .ods's own bytes.
+    if (isOds(r.path)) {
+      const d = from && typeof from === 'object' ? derived.get((from as { id?: unknown }).id as string) : undefined
+      const { revision, version } = (from ?? {}) as { revision?: unknown; version?: unknown }
+      if (!d || d.handleId !== handleId || typeof revision !== 'string' || typeof version !== 'string') return { ok: false, reason: 'denied' }
+      const bytes = await readFile(d.file).catch(() => null)
+      if (!bytes) return { ok: false, reason: 'changed' }
+      if (bytes.length) sheets?.start(e.sender, handleId as string, id, bytes)
+      return { ok: true, revision, version, size: bytes.length }
+    }
     if (!isWorkbook(r.path)) return { ok: false, reason: 'wrong-type' }
     const w = await readWhole(r)
     if (!w.ok) return w
@@ -1377,6 +1459,7 @@ if (!gotSingleInstanceLock) {
 app.on('window-all-closed', () => {
   sessionManager?.stopAll()
   sheets?.disposeAll()
+  libre?.stopAll()
   // Stopped sessions emit no exit event, so their pages would outlive the window.
   browserManager?.disposeAll()
   htmlViews?.disposeAll()

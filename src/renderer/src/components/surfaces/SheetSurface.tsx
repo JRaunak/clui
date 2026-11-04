@@ -28,6 +28,7 @@ import {
   type SheetWindow
 } from '../../../../shared/sheets'
 import type { Delimiter } from '../../../../shared/surfaces'
+import { isOds, type Flight, type LoFacts } from '../../../../shared/office'
 import { FindField } from '../FindField'
 import { IconChevron } from '../Icon'
 import { Menu } from '../Menu'
@@ -37,6 +38,8 @@ import { PANE_BTN } from './PaneHeader'
 import { ANNOUNCE_MS, SelectionBar } from './SelectionBar'
 import { BANNER, baseOf, DocState, FIND_MAX, openDefault, REASON, SelectionNotice, setStatus, SKELETON_MS, STATE_BODY, TEXT_BTN, useFind, VIEW_SETTLE_MS, viewSourceAt, type Doc } from './fileDoc'
 import { NotShown, SheetTabs } from './SheetStrip'
+import { ConvertingBody, useConversion, type Done } from './Converting'
+import { unpackDetail } from '../../lib/docxView'
 import { isNumber, oneLine, type CsvFacts } from '../../lib/csv'
 import { openCsv, type CsvSource } from '../../lib/csvSource'
 import { openBook, type BookSource } from '../../lib/bookSource'
@@ -99,7 +102,7 @@ const FILL = 'color-mix(in oklab, var(--color-accent) 12%, transparent)'
 const SAVED_TITLE = 'Clui never calculates formulas. This is the result last saved in the file, and it can be out of date.'
 const UNCALC_TITLE = 'The file has no saved result for this formula, and Clui never calculates formulas.'
 
-type Shown = { t: 'loading' } | { t: 'grid' } | { t: 'empty' } | { t: 'unsupported'; detail: string } | { t: 'doc'; doc: Doc } | { t: 'failed'; failure: BookFailure } | { t: 'stopped' }
+type Shown = { t: 'loading' } | { t: 'grid' } | { t: 'empty' } | { t: 'unsupported'; detail: string } | { t: 'doc'; doc: Doc } | { t: 'failed'; failure: BookFailure } | { t: 'stopped' } | { t: 'needs-lo' } | { t: 'flight'; flight: Flight }
 type Cell = { r: number; c: number }
 /** One open of a CSV: its worker and what it has indexed. */
 type Load = { src: CsvSource | null; facts: CsvFacts | null }
@@ -109,9 +112,16 @@ type Bar = CellDetail & { at: string }
 
 const UNSUPPORTED: Record<string, string> = {
   xls: "It's an older Excel workbook (.xls). Clui shows .xlsx, .xlsm, .csv and .tsv files.",
-  xlsb: "It's a binary Excel workbook (.xlsb). Clui shows .xlsx, .xlsm, .csv and .tsv files.",
-  ods: "Clui doesn't show OpenDocument spreadsheets."
+  xlsb: "It's a binary Excel workbook (.xlsb). Clui shows .xlsx, .xlsm, .csv and .tsv files."
 }
+const LIBREOFFICE = 'https://www.libreoffice.org/'
+/** Spec 13's saved-results sentences would describe LibreOffice's XLSX, not the .ods, so these replace them. */
+const odsGaps = (by: string, f: LoFacts): string[] => [
+  `Converted from OpenDocument by ${by}. Some formatting can differ.`,
+  'LibreOffice recalculated this workbook, so values may differ from the saved ones.',
+  ...(f.linkedSheets ? [f.linkedSheets === 1 ? "1 sheet linked from another file isn't shown." : `${fmt(f.linkedSheets)} sheets linked from other files aren't shown.`] : []),
+  ...bookGaps({ macros: f.macros, links: f.links, recalc: false })
+]
 
 // Text widths at the grid's font, for spills and number fit; cleared when full rather than growing without end.
 const widthCache = new Map<string, number>()
@@ -182,7 +192,8 @@ export function SheetSurface({ handleId, tabId }: { handleId: string; tabId: str
   const tab = useActive((s) => s?.surfaces.tabs[tabId])
   const path = tab?.key ?? ''
   const name = baseOf(path)
-  const xlsx = isWorkbook(path)
+  const ods = isOds(path)
+  const xlsx = isWorkbook(path) || ods
   const owner = `${handleId}\0${path}`
   const busy = useActive((s) => !!s?.busy)
   const setView = useSession((s) => s.setSurfaceView)
@@ -201,6 +212,9 @@ export function SheetSurface({ handleId, tabId }: { handleId: string; tabId: str
   const [sheetI, setSheetI] = useState(0)
   const [geo, setGeo] = useState<SheetGeo | null>(null)
   const [progress, setProgress] = useState<number | null>(null)
+  // An .ods converts to XLSX first, then reads as any workbook does.
+  const [odsFlight, setOdsFlight] = useState<{ revision: string; facts: LoFacts } | null>(null)
+  const libre = useConversion(handleId, path, odsFlight?.revision ?? null, { onStale: () => scheduleLoad(), onMissing: () => void load() })
   const [updating, setUpdating] = useState(false)
   const [version, setVersion] = useState<{ revision: string; version?: SourceVersion; refused?: Refusal['reason'] } | null>(null)
   const [notice, setNotice] = useState<'cleared' | 'removed' | 'copy' | null>(null)
@@ -309,10 +323,10 @@ export function SheetSurface({ handleId, tabId }: { handleId: string; tabId: str
 
   // A workbook's sheet by name, so a re-read and a restored tab keep the one the user was on.
   const sheetWanted = useRef<string | undefined>(view?.sheet)
-  const loadBook = async (gen: number): Promise<void> => {
+  const loadBook = async (gen: number, from?: Done): Promise<void> => {
     opening.current?.stop()
     setProgress(null)
-    const o = openBook(handleId, path, (f) => gen === loadGen.current && setProgress(f))
+    const o = openBook(handleId, path, (f) => gen === loadGen.current && setProgress(f), from)
     opening.current = o
     const r = await o.done
     if (opening.current === o) opening.current = null
@@ -357,6 +371,18 @@ export function SheetSurface({ handleId, tabId }: { handleId: string; tabId: str
   const load = useCallback(async (): Promise<void> => {
     const gen = ++loadGen.current
     lastLoad.current = Date.now()
+    if (isOds(path)) {
+      const r = await window.clui.officeOpen(handleId, path).catch((): Refusal => ({ ok: false, reason: 'unreadable' }))
+      if (gen !== loadGen.current) return
+      noteRead(handleId, path, r.ok ? null : r.reason)
+      if (!r.ok) return settle(refusal(r))
+      if (r.t === 'convert') {
+        if (bookRef.current) setUpdating(true)
+        return setOdsFlight((f) => (f?.revision === r.revision ? f : { revision: r.revision, facts: r.facts }))
+      }
+      setOdsFlight(null)
+      return settle(r.t === 'needs-lo' ? { t: 'needs-lo' } : r.t === 'empty' ? { t: 'empty' } : { t: 'flight', flight: r })
+    }
     if (isWorkbook(path)) {
       if (bookRef.current) setUpdating(true)
       return loadBook(gen)
@@ -451,6 +477,10 @@ export function SheetSurface({ handleId, tabId }: { handleId: string; tabId: str
     opening.current = null
     settle({ t: 'stopped' })
   }
+  useEffect(() => {
+    if (libre.done) void loadBook(++loadGen.current, libre.done)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libre.done])
   const retry = (): void => {
     settle({ t: 'loading' })
     setSlow(false)
@@ -737,7 +767,7 @@ export function SheetSurface({ handleId, tabId }: { handleId: string; tabId: str
     if ((xlsx ? bookRef.current : curRef.current?.src) !== s) return
     addFromSurface(
       handleId,
-      { kind: 'sheet', path, sourceVersion: version.version, ...(sheetName !== undefined ? { sheet: sheetName } : {}), range: a1Of(sel), ...(lines ? { lines } : {}), ...(values !== undefined ? { values } : {}) },
+      { kind: 'sheet', path, sourceVersion: version.version, ...(sheetName !== undefined ? { sheet: sheetName } : {}), range: a1Of(sel), ...(lines ? { lines } : {}), ...(values !== undefined ? { values } : {}), ...(ods && libre.done ? { converted: { by: libre.done.by } } : {}) },
       say
     )
   }
@@ -1435,8 +1465,8 @@ export function SheetSurface({ handleId, tabId }: { handleId: string; tabId: str
   }
 
   const ragged = !!facts && facts.minFields !== facts.cols
-  const gaps = xlsx && geo ? sheetGaps(geo.gaps) : []
-  const wbGaps = xlsx && book ? bookGaps({ ...book.facts, macros: book.facts.macros || /\.xlsm$/i.test(path) }) : []
+  const gaps = xlsx && geo ? sheetGaps(ods ? { ...geo.gaps, uncalculated: 0 } : geo.gaps) : []
+  const wbGaps = !xlsx || !book ? [] : ods && odsFlight && libre.done ? odsGaps(libre.done.by, odsFlight.facts) : bookGaps({ ...book.facts, macros: book.facts.macros || /\.xlsm$/i.test(path) })
   const hiddenText = xlsx && geo ? hiddenSaid(geo.hiddenRows.length, geo.hiddenCols.length) : null
   const status = updating ? 'Updating' : xlsx ? (geo ? bookReadout(geo.rows, geo.cols) : '') : !facts ? '' : readout(rows, exact, facts.cols, ragged, facts.encoding)
   const statusTitle = xlsx || !facts ? status : [status, ragged && `Rows have between ${facts.minFields} and ${facts.cols} fields.`, facts.encoding === 'Windows-1252' && "Not valid UTF-8, so it's read as Windows-1252."].filter(Boolean).join(' ')
@@ -1466,6 +1496,43 @@ export function SheetSurface({ handleId, tabId }: { handleId: string; tabId: str
   if (shown.t === 'doc') body2 = <DocState handleId={handleId} tabId={tabId} path={path} doc={shown.doc} load={load} reopen={() => (void load(), setWatchGen((n) => n + 1))} />
   else if (shown.t === 'unsupported') body2 = state(`Clui can't show ${name}`, shown.detail, openBtn)
   else if (shown.t === 'empty') body2 = state(`${name} is empty`, null)
+  else if (shown.t === 'needs-lo')
+    body2 = state(
+      `${name} needs LibreOffice to show here`,
+      "Clui reads OpenDocument spreadsheets by converting them with LibreOffice, which isn't on this Mac.",
+      openBtn,
+      <button key="about" type="button" className={TEXT_BTN} onClick={() => void window.clui.openExternal(LIBREOFFICE)}>
+        About LibreOffice
+      </button>
+    )
+  else if (shown.t === 'flight') {
+    const f = shown.flight
+    body2 =
+      f.t === 'locked'
+        ? state(`${name} is password protected`, "Clui doesn't open encrypted workbooks.", openBtn)
+        : f.t === 'too-large'
+          ? state(`${name} is too large to convert here`, `It's ${Math.ceil(f.bytes / MB)} MB. Clui converts workbooks up to 100 MB.`, openBtn)
+          : f.t === 'unpacks'
+            ? state(`${name} is too large to open here`, unpackDetail(f, 'workbooks'), openBtn)
+            : state(`Couldn't open ${name}`, "The file is damaged or isn't a valid OpenDocument file.", openBtn)
+  } else if (ods && !book && (libre.conv.t === 'failed' || libre.conv.t === 'timeout' || libre.conv.t === 'stopped')) {
+    const again = (
+      <button key="again" type="button" className={TEXT_BTN} onClick={() => libre.again()}>
+        {libre.conv.t === 'stopped' ? 'Convert again' : 'Try again'}
+      </button>
+    )
+    body2 =
+      libre.conv.t === 'failed'
+        ? state(`Couldn't convert ${name}`, "LibreOffice couldn't convert it. The file may be damaged or use features it can't read.", again, openBtn)
+        : libre.conv.t === 'timeout'
+          ? state(`${name} took too long to convert`, 'Clui stops a conversion after a minute.', again, openBtn)
+          : state(`Stopped converting ${name}.`, null, again, openBtn)
+  } else if (ods && !libre.done && libre.shown && (libre.conv.t === 'waiting' || libre.conv.t === 'running'))
+    body2 = (
+      <div className={STATE_BODY} data-ui="sheet-converting">
+        <ConvertingBody name={name} conv={libre.conv} onStop={libre.stop} />
+      </div>
+    )
   else if (shown.t === 'stopped') body2 = state(`Stopped reading ${name}.`, null, tryAgain, openBtn)
   else if (shown.t === 'failed') {
     const f = shown.failure
@@ -1479,7 +1546,7 @@ export function SheetSurface({ handleId, tabId }: { handleId: string; tabId: str
             : f.t === 'old'
               ? state(`Clui can't show ${name}`, UNSUPPORTED.xls, openBtn)
               : state(`Couldn't open ${name}`, "The workbook is damaged or isn't a valid Excel file.", tryAgain, openBtn)
-  } else if (shown.t === 'loading' && xlsx && slow)
+  } else if (shown.t === 'loading' && xlsx && slow && (!ods || !!libre.done))
     body2 = (
       <div className={STATE_BODY} data-ui="sheet-reading">
         <p className="text-ui font-medium text-content">{`Reading ${name}`}</p>

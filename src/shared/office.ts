@@ -1,4 +1,5 @@
 // Office documents: which files are Word's own view and which glimpse, and what main's pre-flight tells the renderer.
+import type { SourceVersion } from './context'
 import type { Refusal } from './files'
 
 const OFFICE = /\.(docx|docm|doc|odt|rtf|pptx|pptm|ppt|odp)$/i
@@ -10,6 +11,7 @@ export const isConvertedText = (p: string): boolean => /\.(odt|rtf)$/i.test(p)
 /** The files Clui lays out itself. Every other Office file glimpses. */
 export const laysOut = (p: string): boolean => isWord(p) || isConvertedText(p)
 export const isPresentation = (p: string): boolean => /\.(pptx|pptm|ppt|odp)$/i.test(p)
+export const isOds = (p: string): boolean => /\.ods$/i.test(p)
 
 /** The private copy's cap, and so the largest document Clui reads at all. */
 export const OFFICE_BYTES_MAX = 100 * 1024 * 1024
@@ -51,10 +53,24 @@ export type DamagedAs = 'word' | 'powerpoint' | 'opendocument' | 'rtf'
 /** Why a file Clui would convert shows Quick Look's first page instead. */
 export type Unconverted = { why: 'too-long'; bytes: number } | { why: 'timeout' | 'no-text' | 'tracked' }
 
+/** What main reads from a file before LibreOffice converts it. `slides`: a .pptx's or .odp's slide count and its
+ *  hidden slides, counted from 1; absent for a .ppt, which isn't read. `linkedSheets`: an .ods's sheets linked from
+ *  other files, which the conversion to XLSX drops. */
+export interface LoFacts {
+  macros: boolean
+  /** Something outside the package other than a hyperlink; never claimed absent for binary formats and RTF. */
+  links: boolean
+  slides?: { count: number; hidden: number[] }
+  linkedSheets?: number
+}
+
 /** A pre-flight outcome. `word` may read its bytes, `text` its conversion; `glimpse` is Quick Look's first page, with
  *  `xml` set when a Word file is too long to lay out and `convert` when a conversion didn't happen or didn't fit.
  *  `converting` marks a file macOS couldn't convert. */
 export type Flight =
+  | { t: 'convert'; facts: LoFacts }
+  /** An .ods with no LibreOffice to convert it. */
+  | { t: 'needs-lo' }
   | { t: 'word'; facts: WordFacts }
   | { t: 'text'; facts: TextFacts }
   | { t: 'glimpse'; macros: boolean; xml?: number; convert?: Unconverted }
@@ -73,3 +89,10 @@ export interface Converted { css: string; blocks: string[] }
 /** Quick Look's first page as a `data:` URL, or why there's none. `unreadable`: drawn dark with dark text, as Quick
  *  Look draws some formats in Dark Mode. */
 export type Glimpse = { ok: true; url: string; w: number; h: number } | { ok: false; why: 'failed' | 'changed' | 'unreadable' }
+
+/** How a LibreOffice conversion came out. `id` is the derivative's opaque id, readable only by the session that asked;
+ *  `by` is `LibreOffice {version}`, and `version` hashes the original's bytes the converter read. */
+export type LoResult = { ok: true; by: string; version: SourceVersion } | { ok: false; why: 'failed' | 'timeout' | 'stopped' | 'missing' | 'changed' }
+export type LoOutcome = ({ ok: true; id: string; by: string; version: SourceVersion }) | Extract<LoResult, { ok: false }> | Refusal
+/** A conversion that hasn't finished: queued behind `other`, or running since `startedAt` (epoch ms). */
+export type LoState = { t: 'waiting'; other: string } | { t: 'running'; startedAt: number }

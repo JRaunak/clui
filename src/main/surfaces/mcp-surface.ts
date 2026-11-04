@@ -12,7 +12,7 @@ import { CHANGE_REF, relativeTo } from '../../shared/context'
 import type { Refusal } from '../../shared/files'
 import { clean, stripControls, type SurfaceCommand, type SurfaceTarget } from '../../shared/surface-tools'
 import { isSvg, kindForPath } from '../../shared/surfaces'
-import { isOffice, isWord, laysOut } from '../../shared/office'
+import { isOds, isOffice, isWord, laysOut } from '../../shared/office'
 import { a1Of, isDelimited, isWorkbook, parseA1, qualified, unxml } from '../../shared/sheets'
 import { requestUrl } from '../browser/mcp'
 import type { McpHandler, ToolResult } from '../lib/mcp-route'
@@ -43,7 +43,7 @@ export const SURFACE_STATE = {
 export const SURFACE_OPEN = {
   name: 'surface_open',
   description:
-    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), a PDF at a page, words in a PDF or Word document, or a CSV, TSV or workbook at a range of cells, or parts of a Mermaid diagram. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
+    "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), a PDF, document or presentation at a page (a presentation's page is its slide), words in a PDF or Word document, or a CSV, TSV or workbook at a range of cells, or parts of a Mermaid diagram. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -127,15 +127,15 @@ export interface Presenter {
   /** A workbook's sheet names, or null when they can't be read. */
   sheets(handleId: string, abs: string): Promise<string[] | null>
   /** What a file Clui lays out shows now: its view, Quick Look's first page and why, or the state for a conversion
-   *  that failed. `picture`: the first page, with no text of the file's own to point at. */
+   *  that failed. `picture`: the first page, with no text of the file's own to point at. `pages`: LibreOffice's pages; `mismatch`: a deck whose pages don't match its slides. */
   laidOut(handleId: string, abs: string): Promise<LaidOut>
   request(handleId: string, op: Op): Promise<Delivery>
 }
 
-export type LaidOut = 'view' | 'picture' | 'too-long' | 'timeout' | 'no-text' | 'failed'
+export type LaidOut = 'view' | 'pages' | 'mismatch' | 'picture' | 'too-long' | 'timeout' | 'no-text' | 'failed'
 
 /** The tool reply's closing sentence when the tab can't show the words Claude pointed at; none claims found or not. */
-const UNSHOWN: Record<Exclude<LaidOut, 'view' | 'picture'>, (name: string) => string> = {
+const UNSHOWN: Record<Exclude<LaidOut, 'view' | 'pages' | 'mismatch' | 'picture'>, (name: string) => string> = {
   'too-long': (n) => ` ${n} is too long for Clui to lay out, so the tab shows a first-page preview from Quick Look.`,
   timeout: (n) => ` Converting ${n} took over 10 seconds, so the tab shows a first-page preview from Quick Look.`,
   'no-text': (n) => ` macOS found no text in ${n}, so the tab shows a first-page preview from Quick Look.`,
@@ -158,6 +158,7 @@ const MARKDOWN = /\.(md|markdown)$/i
 const TEXT_DOCS = 'text applies to PDFs and .docx, .docm, .odt or .rtf files.'
 const RANGE_FORM = 'range is A1 notation: B4, A18:D24, 18:24 or B:D.'
 const RANGE_FILE = 'range and sheet apply to a sheet file.'
+const MISMATCH = "Slide numbers couldn't be matched to the presentation."
 const ONE_PLACE = 'Pass one of line, page and range.'
 const PAGE_OR_LINE = 'surface_open takes page for a PDF and line for other files.'
 const MAX_PAGE = 1_000_000
@@ -238,7 +239,8 @@ function tabLine(x: unknown, c: Facts): string | null {
   }
   const doc = kind === 'doc'
   const pages = int(f.pages, 1, MAX_PAGE) ? f.pages : null
-  const loc = doc ? (int(f.page, 1, pages ?? MAX_PAGE) ? `page ${f.page}${pages ? ` of ${pages}` : ''}` : null) : at(f.location)
+  const unit = doc && f.converted === true && f.unit === 'slide' ? 'slide' : 'page'
+  const loc = doc ? (int(f.page, 1, pages ?? MAX_PAGE) ? `${unit} ${f.page}${pages ? ` of ${pages}` : ''}` : null) : at(f.location)
   const grid = kind === 'sheet'
   const hl = doc ? (docSpan(f.highlight) ?? textSpan(f.highlight)) : grid ? cells(f.highlight) : lines(f.highlight)
   const sel = doc ? (docSpan(f.selection) ?? textSpan(f.selection)) : grid ? cells(f.selection) : lines(f.selection)
@@ -248,6 +250,7 @@ function tabLine(x: unknown, c: Facts): string | null {
     sel && `user selection ${sel}`,
     hl && (hl === loc ? 'Claude highlight' : `Claude highlight ${hl}`),
     pend && `pending ${pend}`,
+    doc && f.converted === true && 'converted by LibreOffice',
     f.unseen === true && 'unseen',
     f.claude === true && kind !== 'diff' && 'opened by Claude'
   ].filter(Boolean)
@@ -357,19 +360,19 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     const as = kindForPath(abs)
     const name = clean(basename(abs))
     const grid = isDelimited(abs)
-    const book = isWorkbook(abs)
+    const book = isWorkbook(abs) || isOds(abs)
     if (as === 'image' && !isSvg(abs) && line !== undefined) return `line applies to text files. ${name} is an image.`
     if (sheet !== undefined && !book) return `sheet applies to Excel workbooks, and ${name} isn't one.`
     if (range !== undefined && !grid && !book) return `range applies to CSV, TSV and Excel files, and ${name} isn't one.`
     if (as === 'sheet' && !grid && line !== undefined) return `line applies to text files. ${name} is a workbook.`
     const lays = laysOut(abs)
     const picture = `${TEXT_DOCS} Clui shows only the first page of ${name}, as a picture.`
-    if (quote !== undefined && isOffice(abs) && !lays) return picture
     if (quote !== undefined && as !== 'doc') return TEXT_DOCS
     if (lays && line !== undefined) return `line applies to text files. Pass text to point at words in ${name}.`
     if (as === 'doc' ? line !== undefined : page !== undefined) return PAGE_OR_LINE
-    const shows = lays && (page !== undefined || quote !== undefined) ? await present.laidOut(handleId, abs) : 'view'
+    const shows = isOffice(abs) && (page !== undefined || quote !== undefined) ? await present.laidOut(handleId, abs) : 'view'
     if (quote !== undefined && shows === 'picture') return picture
+    if (shows === 'mismatch') return MISMATCH
     if (lays && page !== undefined && shows === 'view')
       return isWord(abs)
         ? `Clui shows ${name} in its own layout, which has no page numbers to rely on. Pass text to point at words in it.`
@@ -429,10 +432,10 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     const p = v?.preview === true ? o.preview : undefined
     const label = p?.label ?? o.label
     const w = o.words
-    if (w?.shows === 'view' && v?.found === false && v.outcome === 'shown') return text(`Opened ${w.name}, but that text isn't in it.`)
+    if ((w?.shows === 'view' || w?.shows === 'pages') && v?.found === false && v.outcome === 'shown') return text(`Opened ${w.name}, but that text isn't in it.`)
     const shown = o.parts && v?.outcome === 'shown' ? partsShown(o, v) : null
     if (shown) return text(shown)
-    const note = p ? ` ${p.note}` : w && w.shows !== 'view' && w.shows !== 'picture' ? UNSHOWN[w.shows](w.name) : ''
+    const note = p ? ` ${p.note}` : w && w.shows !== 'view' && w.shows !== 'pages' && w.shows !== 'mismatch' && w.shows !== 'picture' ? UNSHOWN[w.shows](w.name) : ''
     switch (v?.outcome) {
       case 'shown':
         return text(`Shown: ${label}.${note}`)

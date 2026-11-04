@@ -7,10 +7,10 @@ import type { OfficeOpen, TextFacts, WordFacts, WordPart } from '../../../../sha
 import type { DocPlace } from '../../../../shared/surfaces'
 import { FindField } from '../FindField'
 import { IconTarget } from '../Icon'
-import { usePopover } from '../Popover'
 import { addFromSurface } from '../ContextChips'
 import { ANNOUNCE_MS, SelectionBar } from './SelectionBar'
 import { TEXT_BUTTON, ZoomGroup } from './ImageSurface'
+import { AboutView } from './AboutView'
 import { baseOf, FIND_MAX, openDefault, SelectionNotice, SKELETON_MS, TEXT_BTN, VIEW_SETTLE_MS, setStatus, useFind } from './fileDoc'
 import { useSay } from '../../lib/useSay'
 import { linkTitle, openLink, useLinkTarget } from '../../lib/openLink'
@@ -1004,8 +1004,6 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
     viewportEl.current?.focus(opts)
   }, [view, tabId])
 
-  const panel = usePopover({ placement: 'down', align: 'start' })
-  const head = `docx-layout-head-${tabId}`
   const fitLabel = zoom?.mode === 'fit-width' ? 'Fit page' : 'Fit width'
   const pointedText = highlight?.text ? (pointed?.found === false ? `Claude pointed to text that isn't in ${name}: "${clip40(highlight.text)}"` : pointed ? `Claude pointed to "${clip40(highlight.text)}"` : null) : null
 
@@ -1031,9 +1029,15 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
         </div>
       )}
       <div data-ui="docx-toolbar" className="flex min-h-9 shrink-0 flex-wrap items-center gap-1 border-b border-border px-1">
-        <button type="button" data-ui="docx-layout" {...panel.triggerProps} aria-haspopup="dialog" title={flight.t === 'text' ? 'About this view' : 'About this layout'} className={TEXT_BUTTON}>
-          {`${flight.t === 'text' ? 'Simplified' : "Clui's layout"}${flight.facts.macros ? ' · macros not run' : ''}`}
-        </button>
+        <AboutView
+          ui="docx-layout"
+          label={`${flight.t === 'text' ? 'Simplified' : "Clui's layout"}${flight.facts.macros ? ' · macros not run' : ''}`}
+          title={flight.t === 'text' ? 'About this view' : 'About this layout'}
+          heading={flight.t === 'text' ? 'Simplified view' : "Clui's layout"}
+          sentences={sentences}
+          handleId={handleId}
+          path={path}
+        />
         <span className="min-w-0 flex-1" />
         {view && zoom && (
           <div className="flex shrink-0 flex-wrap items-center gap-0.5">
@@ -1051,26 +1055,6 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
             </ZoomGroup>
           </div>
         )}
-      </div>
-      <div {...panel.popoverProps} role="dialog" aria-labelledby={head} data-ui="docx-layout-panel" className="pop-base pop glass-thick flex w-[320px] flex-col gap-3 rounded-lg p-3">
-        <p id={head} className="text-ui font-medium text-content">
-          {flight.t === 'text' ? 'Simplified view' : "Clui's layout"}
-        </p>
-        {sentences.map((t) => (
-          <p key={t} className="text-ui text-dim">
-            {t}
-          </p>
-        ))}
-        <button
-          type="button"
-          className={`${TEXT_BTN} -ml-2 self-start`}
-          onClick={() => {
-            panel.close({ returnFocus: false })
-            void openDefault(handleId, path)
-          }}
-        >
-          Open in default app
-        </button>
       </div>
       {pointedText && (
         <div data-ui="docx-pointed" className="flex min-h-8 shrink-0 items-center gap-1.5 px-3 text-meta text-dim">

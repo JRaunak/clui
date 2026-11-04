@@ -165,9 +165,9 @@ export function lowerRoman(n: number): string {
 
 /** Why a package is refused before it's unpacked, as the state's detail. MB here are the 1,048,576-byte kind the
  *  512 MB bound is set in, rounded up to one decimal. */
-export function unpackDetail(u: Unpacks): string {
-  if (u.bound === 'entries') return `It has ${u.n.toLocaleString('en-US')} internal parts, and Clui opens documents with up to 10,000.`
-  if (u.bound === 'unzipped') return `It unpacks to ${(Math.ceil(u.n / 104_857.6) / 10).toLocaleString('en-US', { minimumFractionDigits: 1 })} MB. Clui opens documents that unpack to 512 MB or less.`
+export function unpackDetail(u: Unpacks, what: 'documents' | 'workbooks' = 'documents'): string {
+  if (u.bound === 'entries') return `It has ${u.n.toLocaleString('en-US')} internal parts, and Clui opens ${what} with up to 10,000.`
+  if (u.bound === 'unzipped') return `It unpacks to ${(Math.ceil(u.n / 104_857.6) / 10).toLocaleString('en-US', { minimumFractionDigits: 1 })} MB. Clui opens ${what} that unpack to 512 MB or less.`
   return 'Part of it expands to over 200 times its saved size when unpacked, more than Clui opens.'
 }
 

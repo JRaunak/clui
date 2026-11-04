@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import type { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs'
@@ -6,6 +6,7 @@ import { refsOf, useActive, useSession } from '../../store'
 import { CROP_MAX_EDGE } from '../../../../shared/annotate'
 import { docPages, quoteOf, refKey, type DraftReference, type DraftVisual, type RefInput, type SourceVersion } from '../../../../shared/context'
 import { CHUNK_MAX, type Refusal } from '../../../../shared/files'
+import type { LoFacts } from '../../../../shared/office'
 import { stripControls } from '../../../../shared/surface-tools'
 import type { DocPlace, SurfaceSelection } from '../../../../shared/surfaces'
 import { Button } from '../Button'
@@ -16,7 +17,8 @@ import { addFromSurface } from '../ContextChips'
 import { ANNOUNCE_MS, SelectionBar } from './SelectionBar'
 import { RegionPicker, type Picked, type PickerHandle } from './RegionPicker'
 import { TEXT_BUTTON, ZoomGroup } from './ImageSurface'
-import { baseOf, DocState, FIND_MAX, openDefault, REASON, SelectionNotice, SKELETON_MS, STATE_BODY, VIEW_SETTLE_MS, setStatus, useFind, type Doc } from './fileDoc'
+import { AboutView } from './AboutView'
+import { BANNER, baseOf, DocState, FIND_MAX, openDefault, REASON, SelectionNotice, SKELETON_MS, STATE_BODY, VIEW_SETTLE_MS, setStatus, useFind, type Doc } from './fileDoc'
 import { FILE_GOTO_EVENT } from './FileSurface'
 import { useSettings } from '../../lib/settings'
 import { useSay } from '../../lib/useSay'
@@ -64,7 +66,8 @@ const KEYS = 'Meta+Shift+A Meta+F Meta+L Meta+Equal Meta+Minus Meta+0 PageDown P
 
 type Shown =
   | { t: 'loading' }
-  | { t: 'doc'; doc: PDFDocumentProxy; task: PDFDocumentLoadingTask; revision: string; pages: number }
+  /** `src`: what was read, the file's revision or a conversion's id. */
+  | { t: 'doc'; doc: PDFDocumentProxy; task: PDFDocumentLoadingTask; revision: string; src: string; pages: number }
   | { t: 'empty' }
   | { t: 'not-pdf' }
   | { t: 'damaged' }
@@ -95,7 +98,43 @@ type Sel = { page: number; endPage?: number; text?: string; nth?: number; region
 /** A text layer as PageText, with the nodes its text came from. */
 interface Layer extends PageText { el: HTMLElement; nodes: Text[]; starts: number[] }
 
-const pageCount = (n: number): string => `${n.toLocaleString('en-US')} ${n === 1 ? 'page' : 'pages'}`
+const pageCount = (n: number, unit = 'page'): string => `${n.toLocaleString('en-US')} ${unit}${n === 1 ? '' : 's'}`
+
+/** An Office file's pages as LibreOffice converted them, read by the conversion's id; `revision` and `version` are
+ *  the original's. `frozen`: why pointing and text selection are off while new pages convert. */
+export interface PdfConverted {
+  id: string
+  revision: string
+  version: SourceVersion
+  by: string
+  slides: boolean
+  facts: LoFacts
+  frozen: string | null
+  banner: ReactNode
+  onUnreadable(): void
+}
+const MISMATCH = "Slide numbers couldn't be matched to the presentation."
+const NOTICE_DOC = {
+  cleared: 'The document changed on disk, so the selection was cleared.',
+  removed: 'The document changed on disk, so the selection was cleared and removed from the message.'
+}
+
+/** The converted view's panel sentences, in the spec's order, each only where it applies. */
+function aboutConverted(name: string, c: PdfConverted, ppt: boolean): string[] {
+  const hidden = c.facts.slides?.hidden.length ?? 0
+  return [
+    c.slides
+      ? `${c.by} turned ${name} into pages, one per slide. Fonts and layout can differ from the app that made it.`
+      : `${c.by} turned ${name} into pages. Fonts, spacing and page breaks can differ from the app that made it, so page numbers may not match.`,
+    c.facts.macros ? `This ${c.slides ? 'presentation' : 'document'} contains macros. Clui never runs them.` : '',
+    c.facts.links ? "It links to other files or pictures. Clui doesn't load them, so they may be missing here." : '',
+    ppt
+      ? 'Slides hidden in the presentation are shown too, so slide numbers match.'
+      : hidden
+        ? `${hidden} hidden ${hidden === 1 ? 'slide is' : 'slides are'} shown so slide numbers match the presentation.`
+        : ''
+  ].filter(Boolean)
+}
 const isPdf = (head: Uint8Array): boolean => new TextDecoder('latin1').decode(head.subarray(0, 1024)).includes('%PDF-')
 
 function layerOf(page: number, div: HTMLElement): Layer | null {
@@ -145,7 +184,7 @@ function pointOf(l: Layer, off: number): [Node, number] {
  * image viewer's toolbar row. Text selects as in any reader; pointing selects a region or a point of a page. Pages
  * stay as authored, white in both themes, and Clui marks them only with the selection and the two-tone edge.
  */
-export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: string }): JSX.Element {
+export function PdfSurface({ handleId, tabId, converted }: { handleId: string; tabId: string; converted?: PdfConverted }): JSX.Element {
   const tab = useActive((s) => s?.surfaces.tabs[tabId])
   const path = tab?.key ?? ''
   const name = baseOf(path)
@@ -155,6 +194,13 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
   const picture = useSettings((s) => s?.values.annotateScreenshots ?? true)
   const hasBrowser = useActive((s) => !!s?.browser)
   const [said, say] = useSay()
+  const conv = converted ?? null
+  const convRef = useRef(conv)
+  convRef.current = conv
+  const unit = conv?.slides ? 'slide' : 'page'
+  const Unit = conv?.slides ? 'Slide' : 'Page'
+  /** Known hidden only: a .ppt's slides aren't read, so it never marks one. */
+  const hiddenAt = (n: number): boolean => !!conv?.facts.slides?.hidden.includes(n)
 
   const [shown, setShown] = useState<Shown>({ t: 'loading' })
   const shownRef = useRef(shown)
@@ -246,7 +292,8 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
       if (!p) return
       place.current = p
       const find = findRef.current
-      setView(handleId, tabId, { viewState: { kind: 'doc', page: p.page, zoom: mode.current, offset: p.offset, ...(pages ? { pages } : {}), ...(find ? { find } : {}) } })
+      const c = convRef.current
+      setView(handleId, tabId, { viewState: { kind: 'doc', page: p.page, zoom: mode.current, offset: p.offset, ...(pages ? { pages } : {}), ...(find ? { find } : {}), ...(c ? { converted: c.slides ? 'slide' : 'page' } : {}) } })
     }, VIEW_SETTLE_MS)
   }
 
@@ -338,7 +385,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
   const pageSay = useRef<ReturnType<typeof setTimeout>>()
   const sayPage = (n: number, total: number): void => {
     clearTimeout(pageSay.current)
-    pageSay.current = setTimeout(() => say(`Page ${n.toLocaleString('en-US')} of ${total.toLocaleString('en-US')}`), ANNOUNCE_MS)
+    pageSay.current = setTimeout(() => say(`${Unit} ${n.toLocaleString('en-US')} of ${total.toLocaleString('en-US')}${hiddenAt(n) ? ', hidden' : ''}`), ANNOUNCE_MS)
   }
   const focusPage = (page: number): void => viewOf(page - 1)?.div.focus({ preventScroll: true })
   const pushBack = (from: DocPlace | null): void => {
@@ -557,7 +604,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
       const d = viewOf(i)?.div
       if (!d) continue
       d.setAttribute('role', 'group')
-      d.setAttribute('aria-label', `Page ${i + 1}`)
+      d.setAttribute('aria-label', `${Unit} ${i + 1}${hiddenAt(i + 1) ? ', hidden' : ''}`)
       d.removeAttribute('data-l10n-id')
       d.removeAttribute('data-l10n-args')
       d.tabIndex = -1
@@ -589,7 +636,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
       d.append(p)
     }
     if (coverFor.current === s.revision && page === current) uncover()
-    if (version?.revision !== s.revision && !hashing.current) {
+    if (!convRef.current && version?.revision !== s.revision && !hashing.current) {
       hashing.current = true
       void window.clui
         .docVersion(handleId, path, s.revision)
@@ -653,27 +700,38 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
     captureGen.current++
     setView(handleId, tabId, { selection: undefined })
     setNotice(inMessage ? 'removed' : 'cleared')
-    say(NOTICE[inMessage ? 'removed' : 'cleared'])
+    say((convRef.current ? NOTICE_DOC : NOTICE)[inMessage ? 'removed' : 'cleared'])
   }
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastLoad = useRef(0)
+  const convId = conv?.id
   const load = useCallback(async (): Promise<void> => {
     const gen = ++loadGen.current
     lastLoad.current = Date.now()
-    const h = await window.clui.docOpen(handleId, path, HEAD_BYTES).catch((): Refusal => ({ ok: false, reason: 'unreadable' }))
+    const c = convRef.current
+    // A conversion is read by its id; the original's revision stays what references and Add check against.
+    const read = (revision: string, off: number, length: number): Promise<{ ok: true; bytes: Uint8Array } | Refusal> =>
+      c ? window.clui.officeRead(handleId, c.id, off, length) : window.clui.docRead(handleId, path, revision, off, length)
+    const h = c
+      ? await window.clui
+          .officeRead(handleId, c.id, 0, HEAD_BYTES)
+          .then((r) => (r.ok ? { ok: true as const, revision: c.revision, size: r.size, head: r.bytes } : r))
+          .catch((): Refusal => ({ ok: false, reason: 'unreadable' }))
+      : await window.clui.docOpen(handleId, path, HEAD_BYTES).catch((): Refusal => ({ ok: false, reason: 'unreadable' }))
     if (gen !== loadGen.current) return
-    noteRead(handleId, path, h.ok ? null : h.reason)
+    if (!c) noteRead(handleId, path, h.ok ? null : h.reason)
     const prev = shownRef.current
-    if (h.ok && prev.t === 'doc' && prev.revision === h.revision) return
+    const src = c?.id ?? (h.ok ? h.revision : '')
+    if (h.ok && prev.t === 'doc' && prev.src === src) return
     const fail = (next: Shown): void => {
       uncover()
       clearSel()
       settle(next)
     }
-    if (!h.ok) return fail(h.reason === 'missing' ? { t: 'missing' } : { t: 'error', reason: h.reason, message: REASON[h.reason] })
-    if (!h.size) return fail({ t: 'empty' })
+    if (!h.ok) return fail(c ? { t: 'damaged' } : h.reason === 'missing' ? { t: 'missing' } : { t: 'error', reason: h.reason, message: REASON[h.reason] })
+    if (!h.size) return fail(c ? { t: 'damaged' } : { t: 'empty' })
     if (!h.head) return fail({ t: 'too-large', bytes: h.size })
-    if (!isPdf(h.head)) return fail({ t: 'not-pdf' })
+    if (!isPdf(h.head)) return fail(c ? { t: 'damaged' } : { t: 'not-pdf' })
     const { lib } = await loadPdf()
     if (gen !== loadGen.current) return
     const { revision } = h
@@ -683,12 +741,12 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
       override requestDataRange(begin: number, end: number): void {
         for (let at = begin; at < end; at += CHUNK_MAX) {
           const off = at
-          void window.clui
-            .docRead(handleId, path, revision, off, Math.min(CHUNK_MAX, end - off))
+          void read(revision, off, Math.min(CHUNK_MAX, end - off))
             .catch((): Refusal => ({ ok: false, reason: 'unreadable' }))
             .then((r) => {
               if (!task || task.destroyed) return
               if (r.ok) this.onDataRange(off, r.bytes)
+              else if (c) fail({ t: 'damaged' })
               else scheduleLoad()
             })
         }
@@ -712,21 +770,22 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
     if (gen !== loadGen.current) return void task.destroy()
     if (!('numPages' in opened)) {
       void task.destroy()
-      return fail(opened?.name === 'PasswordException' ? { t: 'locked' } : { t: 'damaged' })
+      return fail(opened?.name === 'PasswordException' && !c ? { t: 'locked' } : { t: 'damaged' })
     }
     if (prev.t === 'doc') {
       clearSel()
       setView(handleId, tabId, { back: undefined })
     }
-    setVersion(null)
-    settle({ t: 'doc', doc: opened, task, revision, pages: opened.numPages })
+    setVersion(c ? { revision, version: c.version } : null)
+    settle({ t: 'doc', doc: opened, task, revision, src, pages: opened.numPages })
+    if (c) say(`Converted ${name}, ${pageCount(opened.numPages, c.slides ? 'slide' : 'page')}`)
     // pdf.js draws an XFA form's placeholder page with XFA off; a form that is only XFA is the state instead.
     void opened.getMetadata().then(({ info }) => {
       const i = info as { IsXFAPresent?: boolean; IsAcroFormPresent?: boolean }
       if (gen === loadGen.current && i.IsXFAPresent && !i.IsAcroFormPresent) fail({ t: 'xfa' })
     }, () => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleId, path, tabId])
+  }, [handleId, path, tabId, convId])
 
   const scheduleLoad = useCallback(() => {
     if (timer.current) return
@@ -766,6 +825,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
   )
 
   useEffect(() => {
+    if (convId) return
     let id: string | null = null
     let live = true
     const off = window.clui.onFileChanged((e) => {
@@ -783,7 +843,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
       window.removeEventListener('focus', scheduleLoad)
       if (id) void window.clui.unwatchFile(handleId, id)
     }
-  }, [handleId, path, watchGen, scheduleLoad])
+  }, [handleId, path, watchGen, scheduleLoad, convId])
   useEffect(() => {
     if (shown.t !== 'missing') return
     const t = setInterval(() => {
@@ -961,7 +1021,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
   const emitted = useRef<string | null>(null)
   const setSelection = (next: Sel | null): void => {
     const s = shownRef.current
-    if (s.t !== 'doc' || JSON.stringify(next) === selJson) return
+    if (s.t !== 'doc' || JSON.stringify(next) === selJson || (next && frozenRef.current)) return
     emitted.current = JSON.stringify(next)
     captureGen.current++
     setAdding(false)
@@ -1030,7 +1090,11 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
   const pointing = usePointing(tabId)
   const asked = usePointRequest(tabId)
   const selSay = useRef<ReturnType<typeof setTimeout>>()
-  useEffect(() => setPointBlocked(tabId, shown.t === 'loading' || doc ? null : NO_PAGE), [tabId, shown.t, doc])
+  const mismatch = !!doc && !!conv?.facts.slides && conv.facts.slides.count !== doc.pages
+  const frozen = conv?.frozen ?? (mismatch ? MISMATCH : null)
+  const frozenRef = useRef(frozen)
+  frozenRef.current = frozen
+  useEffect(() => setPointBlocked(tabId, frozen ?? (shown.t === 'loading' || doc ? null : NO_PAGE)), [tabId, shown.t, doc, frozen])
   useEffect(() => () => setPointBlocked(tabId, null), [tabId])
   useLayoutEffect(() => {
     if (!asked || shown.t === 'loading' || !takePoint(tabId)) return
@@ -1065,7 +1129,9 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
   }
   const input = useMemo<RefInput | null>(() => {
     if (!doc || !selection || version?.revision !== doc.revision) return null
-    const base = { kind: 'doc' as const, path, sourceVersion: version.version, pages: doc.pages, page: selection.page }
+    const c = convRef.current
+    const converted = c ? { converted: { by: c.by, unit: c.slides ? ('slide' as const) : ('page' as const), ...(c.facts.slides?.hidden.includes(selection.page) ? { hidden: true as const } : {}) } } : {}
+    const base = { kind: 'doc' as const, path, sourceVersion: version.version, pages: doc.pages, page: selection.page, ...converted }
     if (selection.text) {
       const q = quoteOf(selection.text)
       return { ...base, ...(selection.endPage ? { endPage: selection.endPage } : {}), text: { quote: q.quote, nth: selection.nth ?? 0, ...(q.elided ? { elided: true as const } : {}) } }
@@ -1074,7 +1140,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
     if (!size) return null
     return { ...base, pageSize: size, ...(selection.region ? { region: selection.region } : { point: selection.point! }) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc, selection, version, path])
+  }, [doc, selection, version, path, conv?.by])
   const key = input ? refKey(input) : null
   const isThis = (d: DraftReference): boolean => !!key && refKey(d.ref) === key
   const attached = useActive((s) => !!s && !!key && [s.contextRefs, ...s.queuedMessages.map((q) => q.refs)].some((l) => l.some(isThis)))
@@ -1088,7 +1154,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
     if (prev.selection && !selection && refsHere < prev.refsHere) setNotice('removed')
   }, [selection, refsHere])
 
-  const label = selection ? `${selection.text ? 'Text' : selection.region ? 'Region' : 'Point'} on ${docPages(selection)} selected` : ''
+  const label = selection ? `${selection.text ? 'Text' : selection.region ? 'Region' : 'Point'} on ${docPages({ ...selection, converted: { by: '', unit } })} selected` : ''
   const withPicture = !!selection?.region && picture
   const barLabel = label && `${label}${withPicture ? ' · with picture' : ''}`
   const spoken = label && `${label}${withPicture ? ', with picture' : ''}`
@@ -1472,6 +1538,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
   }, [outline])
 
   const openApp = (): void => void openDefault(handleId, path)
+  const about = conv ? aboutConverted(name, conv, conv.slides && !conv.facts.slides) : []
   const wordsText = !words ? '' : words.found ? `Claude pointed to "${clip40(words.text)}"` : `Claude pointed to text that isn't in ${name}: "${clip40(words.text)}"`
   const z = zoomed
   const atMin = !!z && z.s <= z.min + 1e-6
@@ -1512,9 +1579,9 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
       case 'damaged':
         return (
           <>
-            {head(`Couldn't open ${name}`, "It isn't a readable PDF. The file may be damaged or incomplete.")}
+            {head(`Couldn't open ${name}`, conv ? 'Its converted pages couldn\'t be read. The file may be damaged or incomplete.' : "It isn't a readable PDF. The file may be damaged or incomplete.")}
             <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => void load()}>
+              <Button variant="secondary" size="sm" onClick={() => (conv ? conv.onUnreadable() : void load())}>
                 Try again
               </Button>
               {app}
@@ -1554,7 +1621,9 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
       ? createPortal(
           <>
             <IconTarget className="h-3 w-3" />
-            {highlight > doc.pages ? `Claude pointed to page ${highlight}. This PDF has ${pageCount(doc.pages)}.` : `Claude pointed to page ${highlight}`}
+            {highlight > doc.pages
+              ? `Claude pointed to ${unit} ${highlight}. ${conv ? name : 'This PDF'} has ${pageCount(doc.pages, unit)}.`
+              : `Claude pointed to ${unit} ${highlight}`}
           </>,
           rowHost
         )
@@ -1607,7 +1676,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
               stepDisabled={!total}
               countText={countText}
               statusText={statusText}
-              placeholder="Find in PDF"
+              placeholder={conv ? (conv.slides ? 'Find in presentation' : 'Find in document') : 'Find in PDF'}
               label={`Find in ${name}`}
             />
           ) : (
@@ -1624,27 +1693,30 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
               countText={doc ? (gotoBad ? `Enter 1 to ${doc.pages.toLocaleString('en-US')}` : `of ${doc.pages.toLocaleString('en-US')}`) : ''}
               countId={`goto-hint-${tabId}`}
               countClass={gotoBad ? 'text-err' : 'text-dim'}
-              placeholder="Page number"
-              label="Go to page"
+              placeholder={`${Unit} number`}
+              label={`Go to ${unit}`}
               icon={<IconHash className="h-3.5 w-3.5 shrink-0 text-dim" />}
               invalid={gotoBad}
               numeric
-              closeLabel="Close go to page"
+              closeLabel={`Close go to ${unit}`}
             />
           )}
         </div>
       )}
       <div data-ui="pdf-toolbar" className="flex min-h-9 shrink-0 flex-wrap items-center gap-1 border-b border-border px-1">
+        {conv && doc && (
+          <AboutView ui="pdf-converted" label={`Converted${conv.facts.macros ? ' · macros not run' : ''}`} title="About this converted view" heading="Converted view" sentences={about} handleId={handleId} path={path} />
+        )}
         {doc && (
           <button
             type="button"
             data-ui="pdf-page"
-            aria-label={`Page ${current.toLocaleString('en-US')} of ${doc.pages.toLocaleString('en-US')}, go to page`}
-            title="Go to page ⌘L"
+            aria-label={`${Unit} ${current.toLocaleString('en-US')} of ${doc.pages.toLocaleString('en-US')}${hiddenAt(current) ? ', hidden' : ''}, go to ${unit}`}
+            title={`Go to ${unit} ⌘L`}
             onClick={() => window.dispatchEvent(new Event(FILE_GOTO_EVENT))}
             className={`${TEXT_BUTTON} tabular-nums`}
           >
-            {`Page ${current.toLocaleString('en-US')} of ${doc.pages.toLocaleString('en-US')}`}
+            {`${Unit} ${current.toLocaleString('en-US')} of ${doc.pages.toLocaleString('en-US')}${hiddenAt(current) ? ' · hidden' : ''}`}
           </button>
         )}
         <span className="min-w-0 flex-1" />
@@ -1670,6 +1742,11 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
           </nav>
         </div>
       )}
+      {conv?.banner && (
+        <div data-ui="pdf-converting-banner" className={BANNER}>
+          {conv.banner}
+        </div>
+      )}
       {words && (
         <div data-ui="pdf-pointed-text" className="flex min-h-8 shrink-0 items-center gap-1.5 px-3 text-meta text-dim">
           <IconTarget className="h-3 w-3 shrink-0" />
@@ -1682,7 +1759,8 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
         <div
           ref={viewportEl}
           role="region"
-          aria-label={doc ? `${name}, PDF, ${pageCount(doc.pages)}` : name}
+          aria-label={doc ? `${name}, ${conv ? `converted ${conv.slides ? 'presentation' : 'document'}` : 'PDF'}, ${pageCount(doc.pages, unit)}` : name}
+          aria-description={conv && doc ? about.join(' ') : undefined}
           aria-busy={shown.t === 'loading' || undefined}
           aria-keyshortcuts={KEYS}
           tabIndex={0}
@@ -1729,7 +1807,7 @@ export function PdfSurface({ handleId, tabId }: { handleId: string; tabId: strin
         )}
       </div>
       {pointedRow}
-      {notice && <SelectionNotice notice={notice} copy={NOTICE} onDismiss={() => setNotice(null)} />}
+      {notice && <SelectionNotice notice={notice} copy={conv ? NOTICE_DOC : NOTICE} onDismiss={() => setNotice(null)} />}
       {doc && selection ? (
         <SelectionBar label={barLabel} attached={inTarget} onAdd={() => void add()} busy={adding || !input} />
       ) : doc && pointing ? (

@@ -48,7 +48,7 @@ export function spawn(_cmd, args) {
 // that needs a program to behave sets `globalThis.__execFile__(file, args, opts, done)`.
 export function execFile(_file, _args, _opts, cb) {
   const done = typeof cb === 'function' ? cb : typeof _opts === 'function' ? _opts : () => {}
-  if (globalThis.__execFile__) return void globalThis.__execFile__(_file, _args, typeof _opts === 'object' && _opts ? _opts : {}, done)
+  if (globalThis.__execFile__) return globalThis.__execFile__(_file, _args, typeof _opts === "object" && _opts ? _opts : {}, done)
   queueMicrotask(() => done(new Error('execFile stubbed in tests'), '', ''))
 }
 
