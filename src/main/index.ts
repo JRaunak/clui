@@ -817,6 +817,10 @@ function registerIpc(): void {
     if (!shown.every((p) => Array.isArray(p) && p.length === 2 && keep.includes(p[0]) && int(p[1], 1, MAX_REFS))) return
     await annotator.sync(handleId, { keep, shown, room: room as number })
   })
+  handle(IpcChannels.rehomePins, async (_e, handleId: unknown, from: unknown, to: unknown) => {
+    if (typeof handleId !== 'string' || typeof from !== 'string' || typeof to !== 'string') return
+    await annotator.rehome(handleId, from, to)
+  })
 
   handle(IpcChannels.syncRefWatches, async (_e, handleId: unknown, entries: unknown) => {
     const ok = (x: unknown): boolean => {

@@ -102,6 +102,7 @@ for (const date1904 of [false, true]) {
   equal(styleOf(b, s, 'G10')?.fill, '#63be7b', 'cf: colorScale at the maximum')
   ok(!!styleOf(b, s, 'G6')?.fill && styleOf(b, s, 'G6')?.fill !== '#f8696b' && styleOf(b, s, 'G6')?.fill !== '#63be7b', 'cf: colorScale between')
   equal(JSON.stringify([styleOf(b, s, 'H2')?.bar?.f, styleOf(b, s, 'H10')?.bar?.f, styleOf(b, s, 'H10')?.bar?.color]), '[0,1,"#638ec6"]', 'cf: dataBar lengths from min to max')
+  equal(JSON.stringify([styleOf(b, s, 'I2')?.bar?.f, styleOf(b, s, 'I10')?.bar?.f]), '[0.2,1]', 'cf: an Automatic dataBar runs from zero')
   ok(g.gaps.cf, 'cf: the expression rule is disclosed')
   equal(JSON.stringify(sheetGaps(g.gaps)), JSON.stringify(['2 formulas have no saved result, so they show as formulas.', "Some conditional formatting isn't shown."]), 'gaps: the styled sheet’s sentences')
 }

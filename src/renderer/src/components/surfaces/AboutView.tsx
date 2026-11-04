@@ -32,7 +32,7 @@ export function AboutView({ ui, label, title, heading, sentences, handleId, path
         ))}
         <button
           type="button"
-          className={`${TEXT_BTN} -ml-2 self-start`}
+          className={`${TEXT_BTN} -ml-2 self-start text-ui`}
           onClick={() => {
             panel.close({ returnFocus: false })
             void openDefault(handleId, path)

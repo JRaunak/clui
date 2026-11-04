@@ -53,7 +53,7 @@ equal(outside.hint, '~/', 'pane: outside the folder shows the ~ parent')
   equal(all.map((r) => r.key).join(), 'file:file:/w/src/mcp.ts,change:diff', 'pane: the Diff row joins the File tabs by last view and leaves the file row')
   const [, row] = all
   ok(!row.input && row.mint?.hunkId === H && row.mint.side === 'before' && row.mint.rows?.end === 3 && !('fits' in row.mint), 'pane: the Diff row mints the selection as main takes it')
-  equal(row.label, 'mcp.ts · before L40–45', 'pane: the label carries the side and range')
+  equal(row.label, 'mcp.ts · before L40-45', 'pane: the label carries the side and range')
   equal(row.hint, 'Selected change · src/', 'pane: Diff hint')
   equal(row.aria, 'mcp.ts change, before side, lines 40 to 45, selected, in src', 'pane: Diff name')
   const one = (o: Record<string, unknown>, s = st): any => paneRows([diff(o)], '/w', '/home/me', s)[0]

@@ -1,5 +1,5 @@
 import { clipName, hostOf, pinWords } from '../../../shared/annotate'
-import { changeLabel, changeTail, DIAGRAM_LABELS_MAX, DIAGRAM_PARTS_MAX, diagramTail, docCaveat, docPages, fitsRecord, imagePx, imageTail, isRefInput, MAX_REFS, partPhrase, partWord, refLabel, type ChangeSide, type ContextReference, type DiagramPart, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
+import { changeLabel, changeTail, DIAGRAM_LABELS_MAX, DIAGRAM_PARTS_MAX, diagramTail, docCaveat, docPages, fitsRecord, imagePx, imageTail, isRefInput, lineText, MAX_REFS, partPhrase, partWord, refLabel, type ChangeSide, type ContextReference, type DiagramPart, type LineRange, type RefInput, type ReferenceInvalidation } from '../../../shared/context'
 import { CHANGE_BYTES_MAX, CHANGE_LINES_MAX, CHANGE_TEXT_BUDGET } from '../../../shared/changes'
 import { WORKSPACE_FILE_CAP } from '../../../shared/files'
 import { parseA1, qualified, spokenA1 } from '../../../shared/sheets'
@@ -7,8 +7,6 @@ import { parseA1, qualified, spokenA1 } from '../../../shared/sheets'
 type Reason = ReferenceInvalidation['reason']
 
 export const baseOf = (p: string): string => p.replace(/\/+$/, '').split('/').pop() || p
-
-export const rangeText = ({ start, end }: LineRange): string => `L${start}${end > start ? `–${end}` : ''}`
 
 const spokenRange = ({ start, end }: LineRange): string => (end > start ? `lines ${start} to ${end}` : `line ${start}`)
 const bareRange = ({ start, end }: LineRange): string => (end > start ? `${start} to ${end}` : `${start}`)
@@ -46,7 +44,7 @@ export function shortLabel(r: ContextReference): string {
   if (r.kind === 'sheet') return qualified(r.range, r.sheet)
   if (r.kind === 'docx') return r.part === 'body' && r.heading ? `under "${clipName(r.heading)}"` : 'text'
   if (r.kind === 'diagram') return diagramTail(r)
-  return r.kind === 'file' && r.lines ? rangeText(r.lines) : refLabel(r)
+  return r.kind === 'file' && r.lines ? lineText(r.lines) : refLabel(r)
 }
 
 type DocInput = Extract<RefInput, { kind: 'doc' }>
@@ -191,8 +189,8 @@ export function spokenImage(r: Parameters<typeof imagePx>[0]): string {
 
 const capital = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 
-/** `Lines 142–158 selected`. */
-export const selectedText = ({ start, end }: LineRange): string => `${end > start ? `Lines ${start}–${end}` : `Line ${start}`} selected`
+/** `Lines 142-158 selected`. */
+export const selectedText = ({ start, end }: LineRange): string => `${end > start ? `Lines ${start}-${end}` : `Line ${start}`} selected`
 
 /** `Added lines 142 to 158 of manager.ts to the message.` `unpictured`: the bar promised a picture that couldn't be made. */
 export function addedText(r: RefInput, queued = false, unpictured = false): string {
@@ -358,7 +356,7 @@ export function removalSpoken(lost: readonly ContextReference[], reason: Reason)
   return `${leadOf(resourceLabel(first), reason)}. ${what} removed from the message.`
 }
 
-/** `Removed L142–158 and L200–210.` */
+/** `Removed L142-158 and L200-210.` */
 export function removedText(n: ReferenceInvalidation): string {
   const labels = n.removed.map((r) => r.label)
   const many = isPinNotice(n) ? 'elements' : isChangeNotice(n) ? 'changes' : 'selections'
@@ -374,7 +372,7 @@ export function noticeLead(n: ReferenceInvalidation): string {
   return `${lead} ${isPinNotice(n) ? 'Pick it again.' : 'Select it again.'}`
 }
 
-/** A paused queued row's sentence: `manager.ts changed, so L142–158 was removed.` */
+/** A paused queued row's sentence: `manager.ts changed, so L142-158 was removed.` */
 export function pausedText(n: ReferenceInvalidation): string {
   const labels = n.removed.map((r) => r.label)
   const many = isPinNotice(n) ? 'elements' : isChangeNotice(n) ? 'changes' : 'selections'

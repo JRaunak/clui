@@ -301,6 +301,11 @@ function cfThreshold(cfvo: { type: string; value?: unknown } | undefined, sorted
       return lo
     case 'max':
       return hi
+    // Excel's Automatic bar runs from zero, so a row of positives keeps a visible lowest bar.
+    case 'autoMin':
+      return Math.min(0, lo)
+    case 'autoMax':
+      return Math.max(0, hi)
     case 'num':
       return Number.isFinite(n) ? n : null
     case 'percent':

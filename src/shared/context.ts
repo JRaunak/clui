@@ -450,10 +450,10 @@ export function resourceOf(r: ContextReference): string {
 
 const baseName = (p: string): string => p.replace(/\/+$/, '').split('/').pop() || p
 const pinText = (kind: string, name: string): string => (name ? `${kind} "${clipName(name)}"` : kind)
-const lineText = ({ start, end }: LineRange): string => `L${start}${end > start ? `–${end}` : ''}`
+export const lineText = ({ start, end }: LineRange): string => `L${start}${end > start ? `-${end}` : ''}`
 
-/** What follows the basename in a change's label, numbered in that change: `before L40–45`, `diff L40–45 → L41–53`,
- *  `diff L40–45, removed`. A diff slice with lines on one side only is all removed or all added rows. */
+/** What follows the basename in a change's label, numbered in that change: `before L40-45`, `diff L40-45 → L41-53`,
+ *  `diff L40-45, removed`. A diff slice with lines on one side only is all removed or all added rows. */
 export function changeTail(side: ChangeSide, old?: LineRange, neu?: LineRange): string {
   const at = (r?: LineRange): string => (r ? ` ${lineText(r)}` : '')
   if (side === 'before') return `before${at(old)}`
@@ -462,7 +462,7 @@ export function changeTail(side: ChangeSide, old?: LineRange, neu?: LineRange): 
   return old ? `diff ${lineText(old)}, removed` : `diff${at(neu)}, added`
 }
 
-/** `mcp.ts · before L40–45`. Also labels a selection that isn't minted yet. */
+/** `mcp.ts · before L40-45`. Also labels a selection that isn't minted yet. */
 export function changeLabel(path: string, side: ChangeSide, old?: LineRange, neu?: LineRange): string {
   return `${baseName(path)} · ${changeTail(side, old, neu)}`
 }
@@ -553,7 +553,7 @@ type DiagramRef = Extract<RefInput, { kind: 'diagram' }>
 export const diagramTail = (r: Pick<DiagramRef, 'type' | 'parts' | 'labels'>): string =>
   r.labels ? `area, ${labelCount(r.labels.length)}` : r.parts!.length === 1 ? partPhrase(r.type, r.parts![0]) : `${r.parts!.length} parts`
 
-/** `manager.ts · L142–158`, `manager.ts`, `browser/`, `button "Sign in"`. The one place this copy lives. */
+/** `manager.ts · L142-158`, `manager.ts`, `browser/`, `button "Sign in"`. The one place this copy lives. */
 export function refLabel(r: RefInput): string {
   switch (r.kind) {
     case 'file': {

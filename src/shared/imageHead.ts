@@ -13,7 +13,7 @@ export interface ImageHead {
   orientation?: number
   /** The file can animate: GIF, APNG, animated WebP, an AVIF sequence. ImageDecoder has the last word. */
   animated: boolean
-  /** The bytes reach the format's end marker. JPEG and SVG have none to check, so they always do. */
+  /** The bytes reach the format's end marker. SVG has none to check, so it always does. */
   complete: boolean
 }
 
@@ -110,7 +110,8 @@ async function jpeg(read: ByteReader, head: Uint8Array, size: number): Promise<I
   let orientation = 1
   let w: number | undefined
   let h: number | undefined
-  for (let off = 2, n = 0; off + 4 <= size && n < WALK_MAX && w === undefined; n++) {
+  let off = 2
+  for (let n = 0; off + 4 <= size && n < WALK_MAX && w === undefined; n++) {
     const m = off + 4 <= head.length ? head.subarray(off, off + 4) : await read(off, 4)
     if (m[0] !== 0xff) break
     const marker = m[1]
@@ -140,8 +141,27 @@ async function jpeg(read: ByteReader, head: Uint8Array, size: number): Promise<I
     ...(w !== undefined && h !== undefined ? { w: turned ? h : w, h: turned ? w : h } : {}),
     ...(orientation !== 1 ? { orientation } : {}),
     animated: false,
-    complete: true
+    complete: await reachesEoi(read, off, size)
   }
+}
+
+/** Entropy-coded data stuffs every 0xFF it holds, so an FF D9 past the headers is the EOI marker. Chromium paints a
+ *  JPEG cut before it with grey rows and no error. A trailer such as a motion photo's video can follow the marker. */
+async function reachesEoi(read: ByteReader, from: number, size: number): Promise<boolean> {
+  const has = (b: Uint8Array, prev: number): boolean => {
+    if (prev === 0xff && b[0] === 0xd9) return true
+    for (let i = b.indexOf(0xff); i >= 0 && i + 1 < b.length; i = b.indexOf(0xff, i + 1)) if (b[i + 1] === 0xd9) return true
+    return false
+  }
+  const end = Math.max(from, size - 64)
+  if (has(await read(end, size - end), 0)) return true
+  let prev = 0
+  for (let at = from; at < end; at += HEAD_BYTES) {
+    const b = await read(at, Math.min(HEAD_BYTES, size - at))
+    if (has(b, prev)) return true
+    prev = b[b.length - 1]
+  }
+  return false
 }
 
 function webp(head: Uint8Array, size: number): ImageHead {

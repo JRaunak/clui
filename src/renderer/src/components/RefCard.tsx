@@ -1,8 +1,8 @@
 import { useId, type KeyboardEvent } from 'react'
 import { hostOf, type SentPin } from '../../../shared/annotate'
-import { changeTail, diagramTail, docTail, docxTail, imageTail, refLabel, relativeTo, REF_NOTE_MAX, type ContextReference, type DraftReference, type RefInput } from '../../../shared/context'
+import { changeTail, diagramTail, docTail, docxTail, imageTail, lineText, refLabel, relativeTo, REF_NOTE_MAX, type ContextReference, type DraftReference, type RefInput } from '../../../shared/context'
 import { useActive, useSession, type RefTarget } from '../store'
-import { rangeText, spokenRef } from '../lib/refCopy'
+import { spokenRef } from '../lib/refCopy'
 import { qualified } from '../../../shared/sheets'
 import { viaOf, type Via } from '../lib/motion'
 import { absOf } from '../lib/peek'
@@ -29,7 +29,7 @@ const count = new Intl.NumberFormat()
 function headOf(r: ContextReference, cwd: string | null): { main: string; tail: string } {
   switch (r.kind) {
     case 'file':
-      return { main: relativeTo(cwd, r.path), tail: r.lines ? rangeText(r.lines) : '' }
+      return { main: relativeTo(cwd, r.path), tail: r.lines ? lineText(r.lines) : '' }
     case 'folder':
       return { main: relativeTo(cwd, r.path), tail: '' }
     case 'browser':

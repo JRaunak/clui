@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type InputHTMLAttributes, type ReactNode } from 'react'
 import type { CluiSettings, SettingsKey, SettingsSource } from '../../../../shared/settings'
-import type { SettingsSection } from '../../store'
+import { useSession, type SettingsSection } from '../../store'
 import { useSettings } from '../../lib/settings'
 import { useEscape } from '../../lib/useEscape'
 import { IconCheck } from '../Icon'
@@ -51,9 +51,11 @@ export function Group({ id, label, children }: { id: string; label: string; chil
 export const describedBy = (...ids: (string | false | undefined)[]): string | undefined => ids.filter(Boolean).join(' ') || undefined
 
 /** A setting saved the moment it changes, read from the settings mirror. The new value shows at once and
- *  the saved one comes back if the write fails. `value` and `source` are null until the mirror loads. */
+ *  the saved one comes back if the write fails. `value` and `source` are null until the mirror loads. A write that
+ *  fails after Settings closes has no field left to show it, so `closedFail` words it for the app notice. */
 export function useInstantSetting<K extends SettingsKey>(
-  key: K
+  key: K,
+  closedFail?: (value: CluiSettings[K]) => string
 ): {
   value: CluiSettings[K] | null
   source: SettingsSource | null
@@ -69,6 +71,13 @@ export function useInstantSetting<K extends SettingsKey>(
   const [failed, setFailed] = useState(false)
   // Only the latest write settles the display: main applies them in order, so the last one is what sticks.
   const seq = useRef(0)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   // A reset shows nothing of its own, since the value it falls back to is only known once the mirror updates.
   const write = (next: { value: CluiSettings[K] } | null): void => {
     if (!useSettings.getState()) return
@@ -80,6 +89,7 @@ export function useInstantSetting<K extends SettingsKey>(
       () => n === seq.current && setPending(null),
       () => {
         if (n !== seq.current) return
+        if (!mounted.current && next && closedFail) useSession.getState().setNotice(closedFail(next.value), 'error')
         setPending(null)
         setFailed(true)
       }
@@ -97,6 +107,12 @@ export function useInstantSetting<K extends SettingsKey>(
 }
 
 type TextKey = 'editorCommand' | 'cliPath' | 'defaultWorkspace' | 'defaultChatDir'
+const NAME: Record<TextKey, string> = {
+  editorCommand: 'the editor command',
+  cliPath: 'the Claude CLI path',
+  defaultWorkspace: 'the default workspace',
+  defaultChatDir: 'the workbench folder'
+}
 
 /** A text setting saved on blur and on Enter, trimmed. Esc reverts an edit, and closing Settings mid-edit saves it.
  *  The field follows the saved value except while it's focused or holding a write that failed, which stays for a retry. */
@@ -110,7 +126,8 @@ export function useInstantText(key: TextKey): {
   hintId: string
   errId: string
 } {
-  const s = useInstantSetting(key)
+  // Closing Settings throws the typed value away, so the notice quotes it.
+  const s = useInstantSetting(key, (v) => `Couldn't save ${NAME[key]} "${v}". Open Settings to try again.`)
   const saved = s.value ?? ''
   const [text, setText] = useState(saved)
   const [focused, setFocused] = useState(false)

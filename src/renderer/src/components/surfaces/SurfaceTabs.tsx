@@ -274,7 +274,7 @@ export function SurfaceTabs(): JSX.Element {
                   }}
                   className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border pl-2.5 text-label focus-visible:-outline-offset-2 active:bg-border-strong ${
                     on
-                      ? 'border-control-edge bg-control pr-2.5 font-medium text-content'
+                      ? 'border-control-edge bg-control pr-7 font-medium text-content'
                       : `border-transparent pointer-fine:group-hover/tab:bg-[var(--glass-row-hover)] pointer-fine:group-hover/tab:text-content ${
                           unseenShown ? 'pr-7 text-content' : 'pr-2.5 text-dim'
                         }`
@@ -305,8 +305,7 @@ export function SurfaceTabs(): JSX.Element {
                     <span className="h-1.5 w-1.5 rounded-full bg-content" />
                   </span>
                 )}
-                {/* The keyboard closes with Delete on the tab, so the button stays out of the Tab order. It paints the
-                    tab's own fill over the title's tail, so the active tab's title gets the same room as the rest. */}
+                {/* The keyboard closes with Delete on the tab, so the button stays out of the Tab order. */}
                 <button
                   type="button"
                   data-ui="surface-tab-close"

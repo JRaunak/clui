@@ -36,6 +36,7 @@ const api: CluiApi = {
   sendMessage: (handleId, packet) => ipcRenderer.invoke(IpcChannels.sendMessage, handleId, packet),
   validateRefs: (handleId, refs) => ipcRenderer.invoke(IpcChannels.validateRefs, handleId, refs),
   syncAnnotationOrder: (handleId, order) => ipcRenderer.invoke(IpcChannels.syncAnnotationOrder, handleId, order),
+  rehomePins: (handleId, fromTab, toTab) => ipcRenderer.invoke(IpcChannels.rehomePins, handleId, fromTab, toTab),
   syncRefWatches: (handleId, entries) => ipcRenderer.invoke(IpcChannels.syncRefWatches, handleId, entries),
   onRefSourceChanged: (cb) => {
     const listener = (_e: unknown, ev: RefSourceChanged): void => cb(ev)

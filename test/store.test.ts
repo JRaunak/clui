@@ -925,7 +925,7 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   equal(st().invalidateSource('h1', CHANGE_REFS, { reason: 'denied' }), 3, 'change: losing change_read removes every change ref, draft and queue')
   ok(cur().contextRefs.length === 1 && cur().contextRefs[0].ref.kind === 'file', 'change: other refs stay')
   equal(Object.keys(cur().referenceNotices).join(), 'change:denied', 'change: one notice, keyed by reason')
-  equal(cur().referenceNotices['change:denied'].removed.map((r: any) => r.label).join('|'), 'a.ts · diff L1, added|b.ts · before L40–45', 'change: it lists both files')
+  equal(cur().referenceNotices['change:denied'].removed.map((r: any) => r.label).join('|'), 'a.ts · diff L1, added|b.ts · before L40-45', 'change: it lists both files')
   ok(cur().refAnnounce.startsWith("Claude can't read changes in this session. 2 changes were removed from the message."), 'change: announced once for the draft')
   ok(cur().queuedMessages[0].refs.length === 0 && cur().queuedMessages[0].needsReview?.[0].resourceId === 'change:denied', 'change: the queued message pauses under the same key')
 
@@ -1012,7 +1012,12 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   st().applyAnnotateEvent('h1', { type: 'pinned', pinId: 12, ref: page('#t'), crop: null })
   ok(!cur().referenceNotices['page:/tmp/w/r.html'], 'page: pointing again clears the notice')
   const htmlTab = { id: 'file:/tmp/w/r.html', kind: 'file', key: '/tmp/w/r.html', title: 'r.html', openedBy: 'user', mode: 'auto', openedAt: 0, lastViewedAt: 0 }
-  useSession.setState((x) => ({ sessions: { ...x.sessions, h1: { ...x.sessions.h1, surfaces: { order: [htmlTab.id], active: htmlTab.id, tabs: { [htmlTab.id]: htmlTab }, browserLastViewedAt: {}, browserUnseen: {} } } as any } }))
+  const twinTab = { ...htmlTab, id: 'artifact:/tmp/w/r.html', kind: 'artifact' }
+  useSession.setState((x) => ({ sessions: { ...x.sessions, h1: { ...x.sessions.h1, surfaces: { order: [htmlTab.id, twinTab.id], active: htmlTab.id, tabs: { [htmlTab.id]: htmlTab, [twinTab.id]: twinTab }, browserLastViewedAt: {}, browserUnseen: {} } } as any } }))
+  calls.length = 0
+  st().closeSurface('h1', twinTab.id)
+  ok(cur().contextRefs.length === 2 && !cur().referenceNotices['page:/tmp/w/r.html'], 'page: closing one of two tabs on its path keeps it')
+  equal(JSON.stringify(calls.find((c) => c.name === 'rehomePins')?.args), JSON.stringify(['h1', twinTab.id, htmlTab.id]), "page: the closed tab's pins move to the one still open")
   st().closeSurface('h1', htmlTab.id)
   ok(cur().contextRefs.length === 1 && cur().referenceNotices['page:/tmp/w/r.html']?.reason === 'closed', "page: closing the page's tab removes it")
 
@@ -1059,7 +1064,7 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   ok(cur().surfaces.tabs[tab.id].selection === undefined, "stale: the File tab's selection clears")
   ok(cur().messages[0] === sent, 'stale: sent bubbles are untouched')
   const n = cur().referenceNotices['file:/tmp/w/a.ts']
-  ok(n?.label === 'a.ts' && n.removed[0].label === 'L1–2' && n.removed[0].note === 'check the retry', 'stale: the notice keeps the range and the note')
+  ok(n?.label === 'a.ts' && n.removed[0].label === 'L1-2' && n.removed[0].note === 'check the retry', 'stale: the notice keeps the range and the note')
   ok(cur().refAnnounce.startsWith('a.ts changed. Lines 1 to 2 were removed from the message.'), 'stale: announced once')
   st().addRef('h1', lines(3, 4, V2))
   ok(!cur().referenceNotices['file:/tmp/w/a.ts'] && cur().contextRefs.at(-1).ref.note === 'check the retry', 'stale: reselection clears the notice and brings the note back')

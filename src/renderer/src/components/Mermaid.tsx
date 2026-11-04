@@ -152,6 +152,21 @@ function bindParts(svg: SVGSVGElement, d: Drawn): Map<string, Element[]> {
   const family = familyOf(d.type)
   if (family === 'sequence') {
     for (const el of all('[data-et="participant"][data-id], line[data-et="life-line"][data-id]')) tag(el, `p:${el.getAttribute('data-id')}`)
+    // Mermaid tags only the header box, so a footer takes the participant of the lifeline nearest its centre. Nearest
+    // rather than equal: a boundary's and a collection's boxes sit off their lifelines (16px and 3px in Mermaid 12.2).
+    const lives = all('line[data-et="life-line"][data-id]').map((l) => {
+      const r = l.getBoundingClientRect()
+      return { id: l.getAttribute('data-id'), x: r.left + r.width / 2 }
+    })
+    for (const g of new Set(all('.actor-bottom').map((el) => el.closest('g')))) {
+      const r = g?.getBoundingClientRect()
+      // An undrawn footer measures zero and would land on the first lifeline.
+      if (!g || !r?.width || !lives.length) continue
+      const x = r.left + r.width / 2
+      const near = lives.reduce((a, b) => (Math.abs(b.x - x) < Math.abs(a.x - x) ? b : a))
+      g.setAttribute('data-et', 'participant')
+      tag(g, `p:${near.id}`)
+    }
     const messages = all('[data-et="message"][data-id]')
     for (const el of messages) tag(el, seqId(el) && `m:${seqId(el)}`)
     for (const el of all('[data-et="note"][data-id]')) tag(el, seqId(el) && `t:${seqId(el)}`)

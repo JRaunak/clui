@@ -1,9 +1,9 @@
 import type { CSSProperties, KeyboardEvent, MouseEvent, Ref } from 'react'
 import { hostOf, pinWords, clipName } from '../../../shared/annotate'
-import { changeTail, diagramTail, docCaveat, docPages, docPagesShort, docPt, imageTail, refLabel, type ContextReference } from '../../../shared/context'
+import { changeTail, diagramTail, docCaveat, docPages, docPagesShort, docPt, imageTail, lineText, refLabel, type ContextReference } from '../../../shared/context'
 import type { ProcessedAttachment } from '../lib/images'
 import type { ShownAttachment } from '../store'
-import { baseOf, CHANGE_UNAVAILABLE, noteTitle, quoteStart, rangeText, spokenRef } from '../lib/refCopy'
+import { baseOf, CHANGE_UNAVAILABLE, noteTitle, quoteStart, spokenRef } from '../lib/refCopy'
 import { qualified } from '../../../shared/sheets'
 import { FileIcon } from './FileIcon'
 import { IconClose, IconDiff, IconFile, IconTarget } from './Icon'
@@ -44,9 +44,9 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
       const rel = relTo(cwd, ref.path)
       const dir = parentOf(rel)
       const folder = baseOf(dir.slice(0, -1) || './')
-      const line2 = ref.lines ? `${dupe ? `${folder}/ · ` : ''}${rangeText(ref.lines)}` : dir
+      const line2 = ref.lines ? `${dupe ? `${folder}/ · ` : ''}${lineText(ref.lines)}` : dir
       const where = dir === './' ? '' : `, in ${dir.slice(0, -1)}`
-      const title = ref.lines ? `${rel} · ${rangeText(ref.lines)}` : rel
+      const title = ref.lines ? `${rel} · ${lineText(ref.lines)}` : rel
       return { key, n, glyph: 'file', line1: baseOf(ref.path), line2, title, label: `Reference ${n}: ${spokenRef(ref)}${where}`, spoken: spokenRef(ref) }
     }
     case 'folder': {
@@ -233,6 +233,7 @@ export function ContextChip({
   style?: CSSProperties
 }): JSX.Element {
   const { n, glyph, thumb } = view
+  const width = view.fixed || view.disclose ? 'max-w-56' : 'max-w-40'
   const box = `relative flex items-center gap-2 rounded-md border border-border bg-bg-raised py-1 pl-1 text-left ${onRemove ? 'pr-2' : 'pr-3'} ${
     onOpen ? 'cursor-pointer pointer-fine:hover:border-border-strong' : ''
   }`
@@ -261,9 +262,9 @@ export function ContextChip({
         )}
       </span>
       <span className="flex min-w-0 flex-col" aria-hidden="true">
-        <span className="max-w-40 truncate text-xs text-content">{view.line1}</span>
+        <span className={`${width} truncate text-xs text-content`}>{view.line1}</span>
         {/* The host gives way first: what goes to the model is never cut. */}
-        <span className={`flex min-w-0 ${view.fixed ? 'max-w-56' : 'max-w-40'} font-mono text-meta text-faint`}>
+        <span className={`flex min-w-0 ${width} font-mono text-meta text-faint`}>
           <span className="truncate">{view.line2}</span>
           {view.fixed && <span className="shrink-0 whitespace-pre">{view.fixed}</span>}
           {view.disclose && <span className="shrink-0 whitespace-pre">{`${view.line2 ? ' · ' : ''}${view.disclose}`}</span>}

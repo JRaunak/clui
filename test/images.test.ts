@@ -41,6 +41,8 @@ const png = (w: number, h: number, extra: number[] = [], end = true): Uint8Array
   const jpg = bytes([0xff, 0xd8], [0xff, 0xe1, ...[(app1.length + 2) >> 8, (app1.length + 2) & 255]], app1, [0xff, 0xc0, 0, 17, 8, ...[800 >> 8, 800 & 255], ...[1200 >> 8, 1200 & 255], 3], new Array(9).fill(0), [0xff, 0xd9])
   const j = await head(jpg)
   ok(j.format === 'jpeg' && j.w === 800 && j.h === 1200 && j.orientation === 6 && j.complete, `head: an EXIF-rotated JPEG is its shown size (${JSON.stringify(j)})`)
+  equal((await head(jpg.subarray(0, jpg.length - 2))).complete, false, 'head: a JPEG cut before its EOI is incomplete')
+  equal((await head(bytes(jpg, new Array(70_000).fill(7)))).complete, true, 'head: a JPEG with a trailer past its EOI is complete')
 
   const gif = await head(bytes('GIF89a', le16(120), le16(90), [0, 0, 0], [0x3b]))
   ok(gif.format === 'gif' && gif.w === 120 && gif.h === 90 && gif.animated && gif.complete, 'head: a GIF, which may animate')

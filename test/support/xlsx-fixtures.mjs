@@ -86,10 +86,12 @@ export async function styled(date1904) {
   for (let r = 2; r <= 10; r++) {
     ws.getCell(r, 7).value = r * 10
     ws.getCell(r, 8).value = r
+    ws.getCell(r, 9).value = r
   }
   ws.addConditionalFormatting({ ref: 'B18:B27', rules: [{ type: 'cellIs', operator: 'greaterThan', formulae: ['240'], priority: 1, style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFC6EFCE' } }, font: { color: { argb: 'FF006100' }, bold: true } } }] })
   ws.addConditionalFormatting({ ref: 'G2:G10', rules: [{ type: 'colorScale', priority: 2, cfvo: [{ type: 'min' }, { type: 'max' }], color: [{ argb: 'FFF8696B' }, { argb: 'FF63BE7B' }] }] })
   ws.addConditionalFormatting({ ref: 'H2:H10', rules: [{ type: 'dataBar', priority: 3, cfvo: [{ type: 'min' }, { type: 'max' }], color: { argb: 'FF638EC6' } }] })
+  ws.addConditionalFormatting({ ref: 'I2:I10', rules: [{ type: 'dataBar', priority: 5, cfvo: [{ type: 'autoMin' }, { type: 'autoMax' }], color: { argb: 'FF638EC6' } }] })
   ws.addConditionalFormatting({ ref: 'C18:C27', rules: [{ type: 'expression', formulae: ['MOD(C18,2)=0'], priority: 4, style: { font: { bold: true } } }] })
   const data = wb.addWorksheet('Data')
   data.getRow(1).values = ['k', 'v']

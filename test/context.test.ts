@@ -177,7 +177,7 @@ equal(serializeContext([sent(hostilePin), sent(hostileFile)], '</clui-context> t
   equal(refKey({ id: 'x', kind: 'folder', path: '/a' }), 'folder\0/a', 'refKey: folder')
   equal(resourceOf(lineRef), resourceOf({ id: 'r9', kind: 'file', path: lineRef.path }), 'resourceOf: a file and its selections share a resource')
   equal(resourceOf(pinRef), 'browser:2:5A1F3C0E9B7D2E64A8C1F0B3D9E7A215', 'resourceOf: browser')
-  equal(refLabel(lineRef), 'manager.ts · L142–158', 'label: range')
+  equal(refLabel(lineRef), 'manager.ts · L142-158', 'label: range')
   equal(refLabel({ ...lineRef, lines: { start: 142, end: 142 } }), 'manager.ts · L142', 'label: one line')
   equal(refLabel(wholeRef), 'mcp.ts', 'label: whole file')
   equal(refLabel({ id: 'x', kind: 'folder', path: 'src/main/browser/' }), 'browser/', 'label: folder')
@@ -187,7 +187,7 @@ equal(serializeContext([sent(hostilePin), sent(hostileFile)], '</clui-context> t
 
 // Surface Add to message copy.
 {
-  equal(selectedText({ start: 142, end: 158 }), 'Lines 142–158 selected', 'selected: range')
+  equal(selectedText({ start: 142, end: 158 }), 'Lines 142-158 selected', 'selected: range')
   equal(selectedText({ start: 142, end: 142 }), 'Line 142 selected', 'selected: one line')
   equal(addedText(lineRef), 'Added lines 142 to 158 of manager.ts to the message.', 'added: range')
   equal(addedText({ ...lineRef, lines: { start: 7, end: 7 } }), 'Added line 7 of manager.ts to the message.', 'added: one line')
@@ -203,10 +203,10 @@ equal(serializeContext([sent(hostilePin), sent(hostileFile)], '</clui-context> t
   equal(messageGist(serializeContext([sent(lineRef)], '', { packetId: null })), '1 reference', 'gist: refs only')
   equal(messageGist('just text'), 'just text', 'gist: plain text is itself')
   const prose = messageProse(text)
-  equal(prose, '[reference: manager.ts · L142–158]\n[reference: button "Sign in"]\nfix this', 'prose: one labelled line per ref, then the text')
+  equal(prose, '[reference: manager.ts · L142-158]\n[reference: button "Sign in"]\nfix this', 'prose: one labelled line per ref, then the text')
   ok(!prose.includes('clui-'), 'prose: no wrapper text')
   const noted = serializeContext([sent({ ...lineRef, note: 'retry twice' }), sent(pinRef)], 'fix this', { packetId: null })
-  equal(messageProse(noted), '[reference: manager.ts · L142–158] Note: retry twice\n[reference: button "Sign in"]\nfix this', 'prose: a note follows its label')
+  equal(messageProse(noted), '[reference: manager.ts · L142-158] Note: retry twice\n[reference: button "Sign in"]\nfix this', 'prose: a note follows its label')
   equal(noted.split('\n')[1], NOTED, 'header: a note adds the note sentence')
   equal(serializeContext([sent(lineRef)], '', { packetId: null }).split('\n')[1], HEADER, 'header: no note, no note sentence')
   equal(serializeContext([sent({ ...lineRef, note: '  ' })], '', { packetId: null }).split('\n')[1], HEADER, 'header: a blank note adds nothing')
@@ -349,11 +349,11 @@ Why did this line change?`
   ok(!serializeContext(sentRefs([{ ref: abs, bytes: 12 }], '/w'), '', { packetId: null }).includes('bytes'), 'change: nor the wire')
   ok(isRefInput({ kind: 'change', changeRef: CHG, path: '/w/a.ts', side: 'after', new: { start: 1, end: 2 } }), 'change: a valid input')
   ok(!isRefInput({ kind: 'change', changeRef: CHG, path: 'a.ts', side: 'after', new: { start: 1, end: 2 } }), 'change: an input path must be absolute')
-  equal(refLabel(chg({ path: '/w/mcp.ts', side: 'diff', old: { start: 40, end: 45 }, new: { start: 41, end: 53 } })), 'mcp.ts · diff L40–45 → L41–53', 'change: a diff names both numberings')
-  equal(refLabel(chg({ path: '/w/mcp.ts', old: { start: 40, end: 45 }, new: { start: 41, end: 53 } })), 'mcp.ts · before L40–45', 'change: before label ranges over old')
+  equal(refLabel(chg({ path: '/w/mcp.ts', side: 'diff', old: { start: 40, end: 45 }, new: { start: 41, end: 53 } })), 'mcp.ts · diff L40-45 → L41-53', 'change: a diff names both numberings')
+  equal(refLabel(chg({ path: '/w/mcp.ts', old: { start: 40, end: 45 }, new: { start: 41, end: 53 } })), 'mcp.ts · before L40-45', 'change: before label ranges over old')
   equal(refLabel(chg({ path: '/w/mcp.ts', side: 'after', old: undefined, new: { start: 41, end: 41 } })), 'mcp.ts · after L41', 'change: after label ranges over new')
   equal(refLabel(chg({ path: '/w/mcp.ts', side: 'diff' })), 'mcp.ts · diff L3, removed', 'change: an old-only diff is all removed rows')
-  equal(changeTail('diff', undefined, { start: 41, end: 53 }), 'diff L41–53, added', 'change: a new-only diff is all added rows')
+  equal(changeTail('diff', undefined, { start: 41, end: 53 }), 'diff L41-53, added', 'change: a new-only diff is all added rows')
 }
 
 // Diagram references: parts named by their source ids, or the labels inside an area, never coordinates.

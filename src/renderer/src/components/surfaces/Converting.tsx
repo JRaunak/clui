@@ -130,7 +130,7 @@ export function ConvertingBody({ name, conv, onStop }: { name: string; conv: Con
         )}
         {long && <p className="text-meta text-dim">{LONG}</p>}
       </div>
-      <button type="button" data-ui="convert-stop" className={`${TEXT_BTN} -ml-2`} onClick={onStop}>
+      <button type="button" data-ui="convert-stop" className={`${TEXT_BTN} -ml-2 text-ui`} onClick={onStop}>
         Stop
       </button>
     </>

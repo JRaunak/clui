@@ -106,7 +106,7 @@ export function NotShown({ name, sheet, book, hidden, onHidden, onOpen }: {
             ? [
                 <div key="hidden" className="flex items-center justify-between gap-2">
                   <p className="text-ui text-dim">{hidden.text}</p>
-                  <button type="button" className={`${TEXT_BTN} shrink-0`} onClick={onHidden}>
+                  <button type="button" className={`${TEXT_BTN} shrink-0 text-ui`} onClick={onHidden}>
                     {`${hidden.shown ? 'Hide' : 'Show'} ${hidden.n === 1 ? 'it' : 'them'}`}
                   </button>
                 </div>
@@ -123,7 +123,7 @@ export function NotShown({ name, sheet, book, hidden, onHidden, onOpen }: {
         )}
         <button
           type="button"
-          className={`${TEXT_BTN} self-start`}
+          className={`${TEXT_BTN} self-start text-ui`}
           onClick={() => {
             p.close({ returnFocus: false })
             onOpen()

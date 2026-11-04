@@ -4202,7 +4202,13 @@ export const useSession = create<SessionStore>((set, get) => ({
     } else {
       const { [id]: gone, ...tabs } = set0.tabs
       set(patchSlice(s, handleId, { surfaces: { ...set0, order, active: next, tabs }, ...emptied }))
-      if (gone && fileLike(gone.kind)) get().invalidateSource(handleId, `page:${gone.key}`, { reason: 'closed' })
+      if (gone && fileLike(gone.kind)) {
+        // Another tab on the path still shows the page, so its pins move there instead of going.
+        const twin = order.find((x) => tabs[x]?.key === gone.key)
+        const drop = () => void get().invalidateSource(handleId, `page:${gone.key}`, { reason: 'closed' })
+        if (twin) window.clui.rehomePins(handleId, id, twin).catch(drop)
+        else drop()
+      }
     }
     const st = get()
     const now = st.sessions[handleId]

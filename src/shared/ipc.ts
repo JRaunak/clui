@@ -198,6 +198,8 @@ export interface CluiApi {
   validateRefs: (handleId: string, refs: DraftReference[]) => Promise<RefInvalid[]>
   /** Which pins main keeps and which it outlines, numbered by their chip position. */
   syncAnnotationOrder: (handleId: string, order: AnnotationOrder) => Promise<void>
+  /** Moves an HTML tab's pins to another tab on the same path, as the first one closes. */
+  rehomePins: (handleId: string, fromTab: string, toTab: string) => Promise<void>
   /** The selection references' files to watch, declaratively. */
   syncRefWatches: (handleId: string, entries: RefWatchEntry[]) => Promise<void>
   onRefSourceChanged: (cb: (e: RefSourceChanged) => void) => () => void
@@ -529,6 +531,7 @@ export const IpcChannels = {
   sendMessage: 'clui:sendMessage',
   validateRefs: 'clui:validateRefs',
   syncAnnotationOrder: 'clui:syncAnnotationOrder',
+  rehomePins: 'clui:rehomePins',
   syncRefWatches: 'clui:syncRefWatches',
   refSourceChanged: 'clui:refSourceChanged',
   surfaceCommand: 'clui:surfaceCommand',

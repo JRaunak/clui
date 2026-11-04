@@ -444,6 +444,17 @@ export class Annotator {
     if (pins && at) await this.draw(handleId, at, pins, this.shown.get(handleId) ?? new Map())
   }
 
+  /** The renderer's word that an HTML tab closed while another tab on its path stays open. */
+  async rehome(handleId: string, fromTab: string, toTab: string): Promise<void> {
+    const list = this.pins.get(handleId)
+    if (!list?.some((p) => p.home.kind === 'html' && p.home.tabId === fromTab)) return
+    this.pins.set(
+      handleId,
+      list.map((p) => (p.home.kind === 'html' && p.home.tabId === fromTab ? { ...p, home: { ...p.home, tabId: toTab } } : p))
+    )
+    await this.redraw(handleId, toTab)
+  }
+
   /** The manager's word that the tab's document is gone. Its pins went with it. */
   gone(handleId: string, tab: number, reason: 'navigated' | 'closed'): void {
     const list = this.pins.get(handleId)
