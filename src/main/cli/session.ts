@@ -329,10 +329,6 @@ export class ClaudeSession extends EventEmitter {
       stdio: ['pipe', 'pipe', 'pipe']
     })
     this.child = child
-    // Consume `fork` on respawn: a reconnect resumes the already-forked session, so
-    // re-passing --fork-session would branch again. Keep `name`: without a re-fork the
-    // same `-n` is idempotent and preserves the customTitle mirror the CLI else re-derives.
-    if (this.opts.fork) this.opts = { ...this.opts, fork: false }
 
     // stdin errors (EPIPE from a crashed child, write-after-end during a reconnect) are
     // emitted asynchronously; without a listener Node throws them as uncaught. Swallow
@@ -809,13 +805,11 @@ export class ClaudeSession extends EventEmitter {
     this.respawned = true
     this.initAcked = false
     this.cancelElicitations()
-    // Resume the CURRENT confirmed id (not one snapshotted before init arrived); never
-    // re-fork. Keep `name`: the idempotent `-n` preserves the peer name / mirror.
-    this.opts = {
-      ...this.opts,
-      resumeSessionId: this.sessionId ?? this.opts.resumeSessionId,
-      fork: false
-    }
+    // Once init has confirmed an id, resume that id without --fork-session, since forking it
+    // again would branch a second time. A fork that never reported its id resumes the source
+    // and forks again, so the user's turns never land in the original conversation. Keep
+    // `name`: the same `-n` is idempotent and preserves the customTitle mirror.
+    this.opts = this.sessionId ? { ...this.opts, resumeSessionId: this.sessionId, fork: false } : this.opts
     try {
       this.child.stdin.end()
     } catch {

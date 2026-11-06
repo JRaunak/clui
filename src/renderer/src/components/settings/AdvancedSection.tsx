@@ -219,7 +219,7 @@ export function AdvancedSection({ modelList }: { modelList: ModelListResult | nu
           <input
             aria-label="Claude CLI path"
             data-ui="cli-path"
-            className="flex-1 rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
+            className="flex-1 rounded border border-control-edge bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent focus:shadow-[0_0_0_1px_var(--color-accent)]"
             placeholder="(auto-detect)"
             {...cli.inputProps}
           />

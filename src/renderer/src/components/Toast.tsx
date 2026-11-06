@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { flushSync } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import { create } from 'zustand'
 import { occludeIfIntersects } from '../lib/nativeOcclusion'
 import { IconClose } from './Icon'
@@ -381,10 +381,13 @@ export function ToastStack({
     else cardRefs.current.delete(id)
   }
 
-  return (
+  // The sidebar mounts the stack, but a dialog inerts the sidebar, and Settings raises cards whose Undo
+  // has to stay reachable. On body it is never inside an inerted region.
+  return createPortal(
     <>
       <div
         ref={containerRef}
+        data-overlay-host
         role="group"
         aria-label="Notifications"
         tabIndex={-1}
@@ -425,6 +428,7 @@ export function ToastStack({
           <Toast toast={e} durationMs={durationMs} exiting />
         </div>
       ))}
-    </>
+    </>,
+    document.body
   )
 }

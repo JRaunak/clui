@@ -48,7 +48,7 @@ export interface CluiSettings {
   onboarded: boolean
   /**
    * Collapsed session sidebar (focus mode). When true the left column shrinks to a
-   * status rail. Default false so first-run and the design-capture harness start
+   * status rail. Default false so first run and a fresh userData dir start
    * expanded. Toggled by ⌘B or the header/rail button; persisted like `onboarded`.
    */
   sidebarCollapsed: boolean

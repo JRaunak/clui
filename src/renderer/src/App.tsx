@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useActive, useSession, ensureModelPrefsLoaded } from './store'
 import { SessionsSidebar } from './components/SessionsSidebar'
 import { GateAnnouncer } from './components/Gate'
@@ -8,8 +8,8 @@ import { CommandPalette, type PaletteMode } from './components/CommandPalette'
 import { GlobalSearch } from './components/GlobalSearch'
 import { Stage } from './components/Stage'
 import { Hero } from './components/Hero'
-import { SplitNewSession } from './components/SplitNewSession'
-import { Onboarding, cliHealth } from './components/Onboarding'
+import { SplitNewSession, type CliUnavailable } from './components/SplitNewSession'
+import { Onboarding, cliHealth, type CliHealth } from './components/Onboarding'
 import { IconSettings, IconPlus, IconSidebar } from './components/Icon'
 import { applyTheme } from './lib/theme'
 import { useKeyboardShortcuts } from './lib/useKeyboardShortcuts'
@@ -20,16 +20,22 @@ import { watchSettings } from './lib/settings'
 import { useOccludeWhile } from './lib/nativeOcclusion'
 import type { CliInfo } from '../../shared/ipc'
 
-/** Shown on the new-session controls while the CLI can't start a session. */
-const NEW_SESSION_DISABLED_HINT = 'Claude CLI unavailable. Set the path in Settings.'
+/** Why the new-session controls are inert while the CLI can't start a session. */
+const CLI_UNAVAILABLE: Record<Exclude<CliHealth, 'ok'>, CliUnavailable> = {
+  missing: { reason: 'Claude CLI not found.', hint: 'Claude CLI not found. Set its path in Settings.' },
+  broken: { reason: "Claude CLI didn't report a version.", hint: "Claude CLI didn't report a version. Check its path in Settings." }
+}
 
 export function App(): JSX.Element {
   const cwd = useActive((s) => s?.cwd ?? null)
   const startSession = useSession((s) => s.startSession)
   const chatDir = useSession((s) => s.chatDir)
   const [cliInfo, setCliInfo] = useState<CliInfo | null>(null)
+  // null until detectCli first resolves: that's "checking", not "missing", so nothing renders as unavailable yet.
+  const cliChecking = cliInfo === null
+  const health = cliInfo && cliHealth(cliInfo)
   // No workable CLI, so nothing can start; the new-session controls go inert below.
-  const cliUnavailable = cliHealth(cliInfo) !== 'ok'
+  const unavailable = health && health !== 'ok' ? CLI_UNAVAILABLE[health] : null
   // First-run intro flag; `null` until loaded, so the intro doesn't flash before we know.
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -144,10 +150,15 @@ export function App(): JSX.Element {
     }
   }, [cwd, onboarded])
 
-  const recheckCli = useCallback(() => {
-    setCliInfo(null) // brief "checking" gap; getCliInfo re-detects live
-    void window.clui.getCliInfo().then(setCliInfo)
-  }, [])
+  // Keeps the old result up until the live re-detect lands: null means "checking", which would swap Onboarding out.
+  const recheckCli = useCallback(
+    () =>
+      window.clui.getCliInfo().then((info) => {
+        setCliInfo(info)
+        return info
+      }),
+    []
+  )
 
   // A file dropped outside the composer would navigate the webview to its file:// URL and
   // white-screen the app; cancel any drop the composer didn't handle. passive:false to preventDefault.
@@ -193,10 +204,13 @@ export function App(): JSX.Element {
   const startNew = useCallback(() => void spawnSession('new'), [spawnSession])
   const startQuick = useCallback(() => void spawnSession('quick'), [spawnSession])
   const startInDir = useCallback(() => void spawnSession('pick'), [spawnSession])
+  const newPending = spawnPending || cliChecking
+  const railReasonId = useId()
 
   // ⌘N new session · ⌘⇧N new session in a directory · ⌘W close · ⌘, settings · ⌘K palette · ⌘⇧K commands
   // (native menu) + ⌃Tab / ⌃C.
   const openSettings = useCallback(() => openSettingsAt(), [openSettingsAt])
+  const openCliSettings = useCallback(() => openSettingsAt('advanced'), [openSettingsAt])
   const openPalette = useCallback(
     (mode: PaletteMode) => setPalette((p) => ({ mode, seq: (p?.seq ?? 0) + 1 })),
     []
@@ -240,7 +254,8 @@ export function App(): JSX.Element {
   })
 
   const emptyPane =
-    onboarded !== null && (cliHealth(cliInfo) !== 'ok' || !onboarded) ? (
+    // A first run checking the CLI shows nothing yet: the Hero would flash before Onboarding replaces it.
+    cliChecking && !onboarded ? null : onboarded !== null && !cliChecking && (!!unavailable || !onboarded) ? (
       <Onboarding
         cliInfo={cliInfo}
         onboarded={onboarded}
@@ -250,7 +265,7 @@ export function App(): JSX.Element {
         onDismissIntro={dismissIntro}
       />
     ) : (
-      <Hero onNew={startNew} onNewInDir={startInDir} busy={spawnPending} />
+      <Hero onNew={startNew} onNewInDir={startInDir} busy={spawnPending || cliChecking} />
     )
 
   return (
@@ -292,27 +307,33 @@ export function App(): JSX.Element {
               <button
                 data-new-session
                 className={`flex h-[30px] w-[30px] items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg ${
-                  cliUnavailable
-                    ? 'cursor-default border border-border text-faint'
-                    : `border border-control-edge text-content hover:bg-bg-raised ${spawnPending ? 'pointer-events-none opacity-60' : ''}`
+                  unavailable
+                    ? 'cursor-default border border-dashed border-faint/50 text-faint'
+                    : `border border-control-edge text-content hover:bg-bg-raised ${newPending ? 'pointer-events-none opacity-60' : ''}`
                 }`}
-                onClick={cliUnavailable ? undefined : startNew}
-                aria-disabled={cliUnavailable || undefined}
-                aria-busy={spawnPending || undefined}
+                onClick={unavailable || newPending ? undefined : startNew}
+                aria-disabled={!!unavailable || undefined}
+                aria-busy={newPending || undefined}
+                aria-describedby={unavailable ? railReasonId : undefined}
                 aria-label="New session"
-                title={cliUnavailable ? NEW_SESSION_DISABLED_HINT : 'New session'}
+                title={unavailable?.hint ?? 'New session'}
               >
                 <IconPlus className="h-4 w-4" />
               </button>
+              {unavailable && (
+                <span id={railReasonId} className="sr-only">
+                  {unavailable.reason}
+                </span>
+              )}
             </>
           ) : (
             <>
               <SplitNewSession
                 onNew={startNew}
                 onQuick={startQuick}
-                disabled={cliUnavailable}
-                pending={spawnPending}
-                disabledTitle={NEW_SESSION_DISABLED_HINT}
+                onFixCli={openCliSettings}
+                unavailable={unavailable}
+                pending={newPending}
               />
             </>
           )}

@@ -46,7 +46,7 @@ const QUICK_PERMISSION_DESCRIPTIONS: Record<CluiSettings['permissionMode'], stri
 }
 
 const INHERITING = 'Currently inheriting from ~/.claude/settings.json.'
-const INPUT = 'flex-1 rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent'
+const INPUT = 'flex-1 rounded border border-control-edge bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent focus:shadow-[0_0_0_1px_var(--color-accent)]'
 const BROWSE = 'rounded border border-border px-3 text-xs text-dim hover:text-content'
 
 export function SessionsSection({ modelList }: { modelList: ModelListResult | null }): JSX.Element {
@@ -85,8 +85,10 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
     ? modelOptions
     : [{ value: modelId, label: defaultModel.label, description: modelList?.live ? 'Not in the current model list' : undefined }, ...modelOptions]
 
-  const pick = async (set: (dir: string) => void): Promise<void> => {
-    const dir = await window.clui.pickWorkspace()
+  // The field's text, not its saved value: the blur commit is async, so a just-typed path hasn't saved yet.
+  const shown = (x: { inputProps: { value?: unknown } }): string => String(x.inputProps.value ?? '').trim()
+  const pick = async (set: (dir: string) => void, start: string | undefined): Promise<void> => {
+    const dir = await window.clui.pickWorkspace(start)
     if (dir) set(dir)
   }
 
@@ -159,7 +161,7 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
         >
           <div className="flex gap-2">
             <input aria-label="Default workspace" data-ui="default-workspace" className={INPUT} placeholder="(none)" {...workspace.inputProps} />
-            <button className={BROWSE} onClick={() => void pick(workspace.set)}>
+            <button className={BROWSE} onClick={() => void pick(workspace.set, shown(workspace) || undefined)}>
               Browse…
             </button>
           </div>
@@ -174,7 +176,7 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
         >
           <div className="flex gap-2">
             <input aria-label="Workbench folder" data-ui="workbench-folder" className={INPUT} placeholder="~/.clui" {...chatDir.inputProps} />
-            <button className={BROWSE} onClick={() => void pick(chatDir.set)}>
+            <button className={BROWSE} onClick={() => void pick(chatDir.set, shown(chatDir) || `${window.clui.homeDir}/.clui`)}>
               Browse…
             </button>
           </div>

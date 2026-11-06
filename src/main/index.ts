@@ -714,13 +714,23 @@ function registerIpc(): void {
     })
   }
 
-  handle(IpcChannels.pickWorkspace, async () => {
+  // `start` only seeds where the dialog opens, never a read, so the type and length checks are the whole gate.
+  handle(IpcChannels.pickWorkspace, async (_e, start?: unknown) => {
     if (!mainWindow) return null
     const { defaultWorkspace } = await getSettings()
+    const asked = typeof start === 'string' && start.length <= 4096 ? start.replace(/^~(?=\/)/, homedir()) : ''
+    let defaultPath: string | undefined
+    for (const dir of [asked, defaultWorkspace]) {
+      if (!dir || !isAbsolute(dir)) continue
+      if (await stat(dir).then((s) => s.isDirectory(), () => false)) {
+        defaultPath = dir
+        break
+      }
+    }
     const res = await dialog.showOpenDialog(mainWindow, {
       title: 'Pick a workspace folder',
       properties: ['openDirectory', 'createDirectory'],
-      ...(defaultWorkspace ? { defaultPath: defaultWorkspace } : {})
+      ...(defaultPath ? { defaultPath } : {})
     })
     if (res.canceled || res.filePaths.length === 0) return null
     return res.filePaths[0]

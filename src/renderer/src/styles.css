@@ -1139,6 +1139,17 @@ body {
   bottom: calc(anchor(--composer-dock top, calc(100% - 96px)) + 8px);
   translate: -50% 0;
 }
+[data-ui='settings-footer'] {
+  anchor-name: --settings-footer;
+}
+/* Over Settings, cards sit in its footer left of Done rather than over its rows. 8rem keeps them clear of Done. */
+:root:has([data-ui='settings']) .toast-stack {
+  left: calc(anchor(--settings-footer left) + 1.25rem);
+  bottom: calc(anchor(--settings-footer bottom) + 0.5rem);
+  translate: none;
+  align-items: flex-start;
+  max-width: calc(anchor-size(--settings-footer width) - 8rem);
+}
 
 /* Welcome hero, played on the first welcome render of a launch. SVG transforms are in viewBox
    units, so the bar's 8 screen px is 74 units at the 64px mark size. */
@@ -1503,7 +1514,8 @@ body {
   fill: var(--color-bg-raised) !important;
 }
 /* Mermaid paints a page-coloured rect behind every node label and edge label. Inside a marked node it takes the
-   node's fill, and fill only, since a stroke would box the text. Under a band, edge labels take the band's colour. */
+   node's fill, and fill only, since a stroke would box the text. Under a band, edge labels take the band's colour.
+   Edge labels sit outside their subgraph's group, so they're matched to it by position and take what's behind them. */
 [data-ui='mermaid'] g.node[data-sel] > g.label > rect {
   fill: var(--color-line-selected) !important;
 }
@@ -1515,6 +1527,19 @@ body {
 }
 [data-ui='mermaid'][data-band='pointed'] g.edgeLabel rect.background {
   fill: var(--color-bg-raised) !important;
+}
+[data-ui='mermaid'] g.edgeLabel[data-seat] rect.background {
+  fill: var(--seat) !important;
+}
+[data-ui='mermaid'] g.edgeLabel[data-seat-mark='sel'] rect.background {
+  fill: var(--color-line-selected) !important;
+}
+[data-ui='mermaid'] g.edgeLabel[data-seat-mark='pointed'] rect.background {
+  fill: var(--color-bg-raised) !important;
+}
+/* A marked chip no longer shows the author's fill, so the page ink chosen for that fill no longer applies. */
+[data-ui='mermaid'] g.edgeLabel[data-ink]:is([data-seat-mark], [data-sel], [data-pointed]) :is(text, tspan) {
+  fill: var(--color-content) !important;
 }
 [data-ui='mermaid'] g.edgeLabel[data-sel] rect.background {
   fill: var(--color-line-selected) !important;

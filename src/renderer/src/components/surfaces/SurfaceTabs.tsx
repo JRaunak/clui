@@ -244,7 +244,7 @@ export function SurfaceTabs(): JSX.Element {
                 key={v.id}
                 data-kind={v.kind}
                 data-enter={v.fade || undefined}
-                className={`group/tab @container relative flex h-7 w-[200px] min-w-[96px] shrink items-center rounded-md ${
+                className={`group/tab @container relative flex h-7 w-[200px] min-w-[120px] shrink items-center rounded-md ${
                   v.fade ? 'transition-opacity duration-fast ease-out starting:opacity-0 motion-reduce:transition-none' : ''
                 }`}
               >

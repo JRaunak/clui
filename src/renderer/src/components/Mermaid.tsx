@@ -16,6 +16,7 @@ import {
 import {
   cached,
   cancel,
+  contrast,
   enqueue,
   familyOf,
   hexOf,
@@ -34,7 +35,8 @@ import {
   type Job,
   type LabelCandidate,
   type Outcome,
-  type Theme
+  type Theme,
+  type Tokens
 } from '../lib/mermaid'
 import { meets, parseSpan, type Span } from '../lib/markdownDoc'
 import { viaOf, type Via } from '../lib/motion'
@@ -200,6 +202,48 @@ function bindParts(svg: SVGSVGElement, d: Drawn): Map<string, Element[]> {
   return out
 }
 
+/**
+ * Mermaid draws edge labels outside their subgraph's group, so each one's chip is matched to the innermost cluster
+ * under its centre and takes the fill painted there (`--seat`), when a label reads on that fill in either ink.
+ * Returns each seated label's cluster, whose marks the chip then mirrors.
+ */
+function seatEdgeLabels(svg: SVGSVGElement, t: Tokens): Map<SVGGElement, Element> {
+  const out = new Map<SVGGElement, Element>()
+  const labels = [...svg.querySelectorAll<SVGGElement>('g.edgeLabel')]
+  for (const g of labels) {
+    for (const a of ['data-seat', 'data-seat-mark', 'data-ink']) g.removeAttribute(a)
+    g.style.removeProperty('--seat')
+  }
+  const clusters = [...svg.querySelectorAll('g.cluster, g.statediagram-cluster')]
+    .map((el) => ({ el, r: el.getBoundingClientRect() }))
+    .filter((c) => c.r.width)
+  if (!clusters.length) return out
+  const holds = (r: DOMRect, x: number, y: number): boolean => r.left <= x && x <= r.right && r.top <= y && y <= r.bottom
+  for (const g of labels) {
+    if (!g.querySelector('rect.background')) continue
+    const r = g.getBoundingClientRect()
+    const x = r.left + r.width / 2
+    const y = r.top + r.height / 2
+    const seat = clusters.filter((c) => holds(c.r, x, y)).sort((a, b) => a.r.width * a.r.height - b.r.width * b.r.height)[0]
+    if (!seat) continue
+    // The last shape under the centre paints on top: a state composite's inner rect over its outer one.
+    const shape = [...seat.el.querySelectorAll(':is(rect, polygon, path):not(.label *, .cluster-label *)')]
+      .filter((s) => holds(s.getBoundingClientRect(), x, y))
+      .at(-1)
+    const cs = shape && getComputedStyle(shape)
+    if (!cs || cs.fill === 'none' || cs.fill.startsWith('url') || cs.fillOpacity !== '1' || /rgba|\//.test(cs.fill)) continue
+    const fill = hexOf(cs.fill)
+    const ink = contrast(t.content, fill) < 4.5
+    // A page chip on a fill neither ink reads on beats an illegible label.
+    if (ink && !(pageInkOn(fill, t.content, t.bg) && contrast(t.bg, fill) >= 4.5)) continue
+    g.setAttribute('data-seat', '')
+    g.toggleAttribute('data-ink', ink)
+    g.style.setProperty('--seat', fill)
+    out.set(g, seat.el)
+  }
+  return out
+}
+
 /** The drawing's visible labels as candidates for an area, boxes from the SVG's top left. */
 function candidates(svg: SVGSVGElement): LabelCandidate[] {
   const at = svg.getBoundingClientRect()
@@ -314,6 +358,7 @@ export function MermaidDiagram({
   const svgRef = useRef<SVGSVGElement | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const els = useRef<Map<string, Element[]>>(new Map())
+  const seats = useRef<Map<SVGGElement, Element>>(new Map())
   const [view, setView] = useState<{ width: number; height: number; label: string } | null>(null)
   useLayoutEffect(() => {
     const svg = svgHost.current?.querySelector('svg')
@@ -353,6 +398,7 @@ export function MermaidDiagram({
       if (hexOf(getComputedStyle(label).fill) !== t.content) continue
       g.toggleAttribute('data-ink', pageInkOn(hexOf(fill), t.content, t.bg))
     }
+    seats.current = themed ? seatEdgeLabels(svg, t) : new Map()
     const vb = svg.viewBox.baseVal
     const width = vb?.width || parseFloat(svg.getAttribute('width') ?? '') || 0
     setView(width ? { width, height: vb?.height || 0, label: title || typeName(drawn.type) } : null)
@@ -396,8 +442,14 @@ export function MermaidDiagram({
       g.toggleAttribute('data-sel', (!!selection && !covered && selection.start <= n && n <= selection.end) || (!!k && sel.has(k)))
       g.toggleAttribute('data-pointed', (!!pointedLines && g.matches('g.node') && pointedLines.start <= n && n <= pointedLines.end) || (!!k && pointedKeys.has(k)))
     }
+    for (const [label, cluster] of seats.current) {
+      const mark = cluster.hasAttribute('data-sel') ? 'sel' : cluster.hasAttribute('data-pointed') ? 'pointed' : null
+      if (mark) label.dataset.seatMark = mark
+      else delete label.dataset.seatMark
+    }
+    // A theme or line-span change reseats the labels above, which clears their marks, so it reruns this too.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drawn, selection, pointedLines, keys, pointedKeys])
+  }, [drawn, selection, pointedLines, keys, pointedKeys, theme, firstLine, lastLine])
 
   // Claude's parts: what the drawing doesn't have goes back in the reply, once per highlight, and the first found part
   // comes into view.

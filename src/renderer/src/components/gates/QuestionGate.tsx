@@ -296,7 +296,7 @@ export function QuestionGate({ request, count }: { request: PendingPermission; c
               value={note[qi] ?? ''}
               onChange={(e) => setNote((p) => ({ ...p, [qi]: e.target.value }))}
               placeholder="Add a note for Claude…"
-              className="rounded-md border border-border bg-tool px-3 py-2 text-ui text-content outline-none placeholder:text-dim focus:border-accent"
+              className="rounded-md border border-control-edge bg-tool px-3 py-2 text-ui text-content outline-none placeholder:text-dim focus:border-accent focus:shadow-[0_0_0_1px_var(--color-accent)]"
             />
           </label>
         )}

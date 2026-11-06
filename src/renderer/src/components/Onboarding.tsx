@@ -18,6 +18,7 @@
  * When the CLI is healthy and the user is already onboarded, this renders nothing
  * (App falls through to its normal Welcome pane).
  */
+import { useRef, useState } from 'react'
 import { AppMark } from './AppMark'
 import { Button } from './Button'
 import { IconPlus, IconSettings, IconRefresh } from './Icon'
@@ -48,11 +49,25 @@ export function Onboarding({
   cliInfo: CliInfo | null
   onboarded: boolean
   onOpenSettings: () => void
-  onRecheck: () => void
+  onRecheck: () => Promise<CliInfo>
   onPickWorkspace: () => void
   onDismissIntro: () => void
 }): JSX.Element | null {
   const health = cliHealth(cliInfo)
+  const [checking, setChecking] = useState(false)
+  const [said, setSaid] = useState('')
+  const seq = useRef(0)
+  // A repeat of the same result has to differ by a character or the live region stays silent.
+  const recheck = async (): Promise<void> => {
+    if (checking) return
+    setChecking(true)
+    try {
+      const next = cliHealth(await onRecheck())
+      if (next !== 'ok') setSaid(`${next === 'missing' ? 'Still not found.' : 'Still not reporting a version.'}${'\u200b'.repeat(++seq.current % 2)}`)
+    } finally {
+      setChecking(false)
+    }
+  }
 
   // 1) Blocking CLI setup card; takes precedence over everything.
   if (health !== 'ok') {
@@ -107,11 +122,14 @@ export function Onboarding({
             <IconSettings className="h-4 w-4" />
             Set path manually
           </Button>
-          <Button variant="secondary" size="md" onClick={onRecheck}>
+          <Button variant="secondary" size="md" onClick={() => void recheck()} busy={checking}>
             <IconRefresh className="h-4 w-4" />
             Re-check
           </Button>
         </div>
+        <span className="sr-only" role="status" aria-live="polite">
+          {said}
+        </span>
       </div>
     )
   }

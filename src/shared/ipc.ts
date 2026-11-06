@@ -179,8 +179,8 @@ export interface CliInfo {
 }
 
 export interface CluiApi {
-  /** Pick a workspace folder via the native dialog. Returns null if cancelled. */
-  pickWorkspace: () => Promise<string | null>
+  /** Pick a folder via the native dialog, opening at `start` when it's a directory. Returns null if cancelled. */
+  pickWorkspace: (start?: string) => Promise<string | null>
   /** Resolve + create the "no directory" session cwd (~/.clui or the configured default). */
   getChatDir: () => Promise<string>
   /** Detect / report the claude CLI binary. */

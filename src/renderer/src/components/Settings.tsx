@@ -146,7 +146,7 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
         </div>
       </div>
 
-      <div className="flex items-center justify-end border-t border-border px-5 py-3">
+      <div data-ui="settings-footer" className="flex items-center justify-end border-t border-border px-5 py-3">
         <Button variant="primary" size="md" onClick={closeSettings}>
           Done
         </Button>

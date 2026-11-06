@@ -24,7 +24,7 @@ import type { FileChangedEvent } from '../shared/files'
 import type { SurfaceCommand } from '../shared/surface-tools'
 
 const api: CluiApi = {
-  pickWorkspace: () => ipcRenderer.invoke(IpcChannels.pickWorkspace),
+  pickWorkspace: (start) => ipcRenderer.invoke(IpcChannels.pickWorkspace, start),
   getChatDir: () => ipcRenderer.invoke(IpcChannels.getChatDir),
   getCliInfo: () => ipcRenderer.invoke(IpcChannels.getCliInfo),
   getFullscreen: () => ipcRenderer.invoke(IpcChannels.getFullscreen),

@@ -470,11 +470,12 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
     }
   }, [context])
   return (
-    // Bottom clearance = the floating composer stack's height, so the tail scrolls clear of it.
+    // Bottom clearance = the floating composer stack's height, so the tail scrolls clear of it. While the
+    // puck shows it sits over the last turn's cost button, so the tail clears its top (dock-h + 48px) too.
     <div
       ref={rootRef}
       className="mx-auto max-w-5xl px-7"
-      style={{ paddingBottom: 'calc(var(--dock-h, 0px) + 1.5rem)' }}
+      style={{ paddingBottom: `calc(var(--dock-h, 0px) + ${taskMerged ? '3.5rem' : '1.5rem'})` }}
     >
       <span className="sr-only" role="status" aria-live="polite">
         {statusAnnounce}

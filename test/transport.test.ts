@@ -85,6 +85,24 @@ reset()
   ok(W(c2).some((o: any) => o.type === 'user' && o.message.content === 'during-reconnect'), 'transport: queued send flushed to new child')
 }
 
+// A fork that respawns before its init reported an id forks the source again instead of resuming it.
+reset()
+{
+  const s = mk({ resumeSessionId: 'ORIG', fork: true })
+  s.start()
+  const c1 = spawns()[0]
+  ackInit(c1)
+  s.setEffort('max')
+  await tick()
+  respond(c1, 'apply_flag_settings', 'error')
+  await tick()
+  c1.emit('close', 0)
+  await tick()
+  const c2 = spawns()[1]
+  ok(c2.spawnargs[c2.spawnargs.indexOf('--resume') + 1] === 'ORIG' && c2.spawnargs.includes('--fork-session'), 'transport: a pre-init fork respawn re-forks the source')
+  s.stop()
+}
+
 // background_tasks false payload
 reset()
 {

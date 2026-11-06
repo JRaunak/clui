@@ -47,7 +47,7 @@ export function GeneralSection(): JSX.Element {
         <input
           aria-label="Editor command"
           data-ui="editor-command"
-          className="w-full rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent"
+          className="w-full rounded border border-control-edge bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent focus:shadow-[0_0_0_1px_var(--color-accent)]"
           {...editor.inputProps}
         />
       </Field>
