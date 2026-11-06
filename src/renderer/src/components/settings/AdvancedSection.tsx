@@ -230,6 +230,14 @@ export function AdvancedSection({ modelList }: { modelList: ModelListResult | nu
         <div className="mt-1 text-meta" role="status" data-ui="cli-status">
           {checking ? (
             <span className="text-dim">checking…</span>
+          ) : cli.value && cliInfo?.path && cliInfo.source !== 'settings' ? (
+            <p className="flex items-start gap-1.5 text-meta text-warn">
+              <IconWarn className="mt-px h-3.5 w-3.5 shrink-0" />
+              <span>
+                <span className="font-mono">{cli.value}</span> isn't on disk, so Clui is using the auto-detected{' '}
+                <span className="font-mono">{cliInfo.path}</span>.
+              </span>
+            </p>
           ) : cliInfo?.path ? (
             <span className="text-ok">
               ✓ <span className="font-mono">claude {cliInfo.version ?? '?'}</span> ·{' '}
