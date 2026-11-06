@@ -10,7 +10,6 @@ import { useOverlayEnter, useOverlayCovered } from '../lib/overlayOrigin'
 import { Pane } from './settings/shared'
 import { GeneralSection } from './settings/GeneralSection'
 import { SessionsSection } from './settings/SessionsSection'
-import { PermissionsSection } from './settings/PermissionsSection'
 import { PaneSection } from './settings/PaneSection'
 import { BrowserSection } from './settings/BrowserSection'
 import { AdvancedSection } from './settings/AdvancedSection'
@@ -18,7 +17,6 @@ import { AdvancedSection } from './settings/AdvancedSection'
 const SECTIONS: { key: SettingsSection; label: string }[] = [
   { key: 'general', label: 'General' },
   { key: 'sessions', label: 'Sessions' },
-  { key: 'permissions', label: 'Permissions' },
   { key: 'pane', label: 'Pane' },
   { key: 'browser', label: 'Browser' },
   { key: 'advanced', label: 'Advanced' }
@@ -126,9 +124,6 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
               </Pane>
               <Pane section="sessions" active={section === 'sessions'} className="flex flex-col gap-10">
                 <SessionsSection modelList={modelList} />
-              </Pane>
-              <Pane section="permissions" active={section === 'permissions'} className="flex flex-col gap-5">
-                <PermissionsSection />
               </Pane>
               <Pane section="pane" active={section === 'pane'} className="flex flex-col gap-10">
                 <PaneSection />

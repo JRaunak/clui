@@ -41,7 +41,7 @@ export function PermissionsSection(): JSX.Element {
     <>
       <Field
         label="Permission mode"
-        hint="New sessions start in this mode, and you can change it in the composer. System Default follows ~/.claude/settings.json, and a project's own settings can override it. Clui never writes that file."
+        hint="System Default follows ~/.claude/settings.json, and a project's own settings can override it. Clui never writes that file."
         hintId={`${uid}-mode-hint`}
         onReset={mode.overridden ? mode.reset : undefined}
         note={
@@ -60,7 +60,7 @@ export function PermissionsSection(): JSX.Element {
       >
         <Dropdown<ModeChoice>
           value={value}
-          ariaLabel="Permission mode"
+          ariaLabel="Default permission mode for new sessions"
           ariaDescribedBy={describedBy(`${uid}-mode-hint`, mode.failed && `${uid}-mode-err`)}
           dataUi="permission-mode"
           options={PERMISSION_MODES.map((m) => ({

@@ -60,7 +60,7 @@ import { fileLike, noPreview, presentationOf } from './lib/presentation'
 import { isHtml } from '../../shared/html-view'
 import { colName, isDelimited, parseA1 } from '../../shared/sheets'
 
-export type SettingsSection = 'general' | 'sessions' | 'permissions' | 'pane' | 'browser' | 'advanced'
+export type SettingsSection = 'general' | 'sessions' | 'pane' | 'browser' | 'advanced'
 /** A group heading Settings can scroll to and focus on open. */
 export type SettingsAnchor = 'artifacts'
 

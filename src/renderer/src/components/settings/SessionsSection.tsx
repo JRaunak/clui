@@ -19,6 +19,7 @@ import {
 import { Dropdown } from '../Dropdown'
 import { IconWarn } from '../Icon'
 import { FieldError } from '../LoginFields'
+import { PermissionsSection } from './PermissionsSection'
 import { Field, Group, SAVE_FAILED, describedBy, useInstantSetting, useInstantText } from './shared'
 
 /** What to tell the user when the model list is the bundled fallback. Only Bedrock can be queried
@@ -103,7 +104,7 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
     <>
       <Group id="settings-group-new" label="New sessions">
         <p className="text-meta text-dim">
-          Used when a session starts. Model and effort can also be changed in the composer during a session.
+          Used when a session starts. Model, effort and permission mode can also be changed in the composer during a session.
         </p>
         <Field
           label="Model"
@@ -151,6 +152,8 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
             onChange={effort.set}
           />
         </Field>
+
+        <PermissionsSection />
 
         <Field
           label="Default workspace"
