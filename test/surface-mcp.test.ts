@@ -271,8 +271,13 @@ equal((await call({ path: path(b1.url), token: b1.token, body: list })).status, 
   for (const h of ['p1', 'p2', 'gone', 'nob']) srv.setPresentation(h, true)
   equal(JSON.stringify(srv.tools('p1')), JSON.stringify([CHANGE_READ, SURFACE_STATE, SURFACE_OPEN]), 'presentation: on adds the pair')
   equal(JSON.stringify(srv.tools('q1')), JSON.stringify([CHANGE_READ]), 'presentation: per handle (a Quick handle is never turned on)')
+  equal(
+    srv.tools('p1').map((t) => `${t.name}=${JSON.stringify((t as { _meta?: unknown })._meta)}`).join(' '),
+    'change_read=undefined surface_state={"anthropic/searchHint":"pane state what is open"} surface_open={"anthropic/searchHint":"show open display file diff pane"}',
+    'presentation: search hints on the pair only'
+  )
   const sizes = [SURFACE_STATE, SURFACE_OPEN].map((x) => JSON.stringify(x).length)
-  equal(sizes.join('+'), '280+1758', 'presentation: the schema JSON lengths, recorded')
+  equal(sizes.join('+'), '339+1826', 'presentation: the schema JSON lengths, recorded')
 
   const refusals: [Record<string, unknown>, string, string][] = [
     [{ path: 'a.ts', mode: 'source' }, 'surface_open takes path, kind, browserTab, line, endLine, page, range, sheet, text, nth, parts and focus.', 'an unknown key'],

@@ -205,7 +205,17 @@ equal(init.json?.result?.protocolVersion, '2099-01-01', 'mcp: initialize echoes 
 equal((await call({ headers: auth, body: rpc('server/discover') })).json?.error?.code, -32601, 'mcp: an unknown method is -32601')
 const listed = await call({ headers: auth, body: rpc('tools/list') })
 equal(listed.json?.result?.tools?.map((t: { name: string }) => t.name).join(','), 'navigate,snapshot,screenshot,click,type,scroll,press,hover,back,autofill_login,console,network,network_body,cookies,storage,tabs,new_tab,close_tab', 'mcp: tools/list')
-const called = await call({ headers: auth, body: rpc('tools/call', { name: 'snapshot', arguments: {} }) })
+{
+  const metas = listed.json?.result?.tools?.flatMap((t: { name: string; _meta?: Record<string, unknown> }) => (t._meta ? [`${t.name}=${JSON.stringify(t._meta)}`] : []))
+  equal(
+    metas.join(' '),
+    'screenshot={"anthropic/searchHint":"look visual layout"} click={"anthropic/searchHint":"click button link page"} type={"anthropic/searchHint":"type text input form field"} ' +
+      'console={"anthropic/searchHint":"console errors logs javascript"} network={"anthropic/searchHint":"requests failed api xhr status"} ' +
+      'network_body={"anthropic/searchHint":"response body request payload"} cookies={"anthropic/searchHint":"cookie"} storage={"anthropic/searchHint":"localStorage sessionStorage"}',
+    'mcp: search hints on exactly the listed tools, and nothing is always loaded'
+  )
+}
+const called =await call({ headers: auth, body: rpc('tools/call', { name: 'snapshot', arguments: {} }) })
 equal(called.json?.result?.content?.[0]?.text, 'The browser is off for this session.', 'mcp: a refused call answers with text')
 mcp.revoke('h1')
 equal((await call({ headers: auth, body: rpc('tools/list') })).status, 401, 'mcp: a revoked token is 401')
@@ -345,10 +355,12 @@ equal(siteFromInput('   '), null, 'site input: blank is not a site')
   let spots: Spot[] = []
   const clicks: string[] = []
   const worldCode: string[] = []
+  let url = 'https://example.com/b'
+  let enterGoesTo = url
   const wc = {
     isLoading: () => false,
     isDestroyed: () => false,
-    getURL: () => 'https://example.com/b',
+    getURL: () => url,
     getTitle: () => 'B',
     executeJavaScriptInIsolatedWorld: (_w: number, [{ code }]: { code: string }[]) => (worldCode.push(code), Promise.resolve(false))
   }
@@ -358,6 +370,7 @@ equal(siteFromInput('   '), null, 'site input: blank is not a site')
     hover: (x: number, y: number) => (clicks.push(`hover ${x},${y}`), Promise.resolve()),
     focusedIsPassword: () => Promise.resolve(false),
     insertText: () => Promise.resolve(),
+    key: (k: string) => ((url = k === 'Enter' ? enterGoesTo : url), Promise.resolve()),
     observe: () =>
       Promise.resolve({ doc: '0123abcd', vw: 1280, vh: 800, sx: 0, sy: 0, epoch: 0, sh: 2000, lines: ['t1:d0123abcd:e3 button "Go"', 'Some text', 't1:d0123abcd:e7 textbox "Q"'], focus: 'textbox "Q" (t1:d0123abcd:e7)', above: 0, below: 2, headings: ['Legacy'], cut: false, keys: 0, shown: false }),
     view: () => Promise.resolve({ ...view }),
@@ -406,6 +419,11 @@ equal(siteFromInput('   '), null, 'site input: blank is not a site')
   ok(worldCode.some((c) => c.includes(`pill(${refTarget(3)}, `)), 'act: the refusal pill points at the ref')
   ok((await go('press', { keys: 'x', ref }, [{ x: 1, y: 1, password: false }, { x: 1, y: 1, password: true }])).startsWith('error: Pressing keys in password fields is blocked.') && clicks.length === 0, 'act: a field that turned into a password field is refused at the re-read')
   equal(await go('type', { ref, text: 'x' }, [{ x: 1, y: 1, password: false }, { x: 1, y: 1, password: false }]), 'Typed into 3.', 'act: type by ref')
+  const typeAt = (): Spot[] => [{ x: 1, y: 1, password: false }, { x: 1, y: 1, password: false }]
+  equal(await go('type', { ref, text: 'x', submit: true }, typeAt()), 'Typed into 3 and pressed Enter.', 'act: a submit that stays on the page says only that')
+  enterGoesTo = 'https://example.com/results'
+  equal(await go('type', { ref, text: 'x', submit: true }, typeAt()), 'Typed into 3 and pressed Enter. The page is now https://example.com/results', 'act: a submit that navigates names the new page')
+  url = enterGoesTo = 'https://example.com/b'
 
   // Coordinates are a screenshot's pixels, mapped through the shot's scale and offset, and only while the page still
   // matches it: every mismatch is refused before any input goes out.

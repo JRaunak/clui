@@ -57,6 +57,7 @@ import { converted, converts, glimpses, preflight, wordXml } from './surfaces/of
 import { pdfPages, soffices } from './surfaces/soffice'
 import { isConvertedText, isOds, isOffice, isPresentation, isWord, laysOut, WORD_XML_MAX, type Flight, type LoOutcome } from '../shared/office'
 import { SURFACE_OPEN_TOOL, SURFACE_STATE_TOOL } from '../shared/surface-tools'
+import { systemAppend } from '../shared/native-awareness'
 import {
   getResolvedSettings,
   getSettings,
@@ -755,9 +756,10 @@ function registerIpc(): void {
     const authEnv = await loginShellAuthEnv()
     // The token in the config is bound to the handle, so the handle exists before the process does.
     const handleId = randomUUID()
-    const withBrowser = settings.browserEnabled && !opts.ephemeral
+    const withBrowser = !opts.ephemeral
     const servers = { 'clui-surface': await surfaceRoute.entry(handleId), ...(withBrowser ? { 'clui-browser': await mcp.entry(handleId) } : {}) }
-    const presents = settings.surfaceTools && !opts.ephemeral
+    // Quick has no pane-backed session to present into.
+    const presents = !opts.ephemeral
     surface.setPresentation(handleId, presents)
     // Tool-level for the surface, so a disabled presentation tool never rides a server-wide rule.
     const allow = [CHANGE_READ_TOOL, ...(presents ? [SURFACE_STATE_TOOL, SURFACE_OPEN_TOOL] : []), ...(withBrowser ? ['mcp__clui-browser'] : [])]
@@ -785,6 +787,7 @@ function registerIpc(): void {
       // Per-session override wins over the global default; 'inherit' → no flag
       // (honor ~/.claude/settings.json). Never writes any settings file.
       permissionMode: modeToFlag(opts.permissionMode ?? settings.permissionMode),
+      appendSystemPrompt: systemAppend({ quick: !!opts.ephemeral, additional: settings.additionalInstructions }) ?? undefined,
       cluiMcp: { config: JSON.stringify({ mcpServers: servers }), allow },
       mcpConfigPath: process.env.CLUI_TEST_MCP_CONFIG
     })

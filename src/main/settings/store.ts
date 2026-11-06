@@ -29,6 +29,7 @@ import {
   type ResolvedSettings,
   type SettingsKey
 } from '../../shared/settings'
+import { ADDITIONAL_INSTRUCTIONS_MAX } from '../../shared/native-awareness'
 import { atomicWriteFile } from '../lib/atomic'
 import { readCliSettings, type CliSettings } from './cli-settings'
 
@@ -53,6 +54,7 @@ function isValidValue(key: SettingsKey, v: unknown): boolean {
   if (key === 'effort') return isEffortChoice(v)
   if (key === 'quickModelFamily') return (QUICK_MODEL_FAMILIES as readonly string[]).includes(v as string)
   if (key === 'quickPermissionMode') return (QUICK_PERMISSION_MODES as readonly string[]).includes(v as string)
+  if (key === 'additionalInstructions') return (v as string).length <= ADDITIONAL_INSTRUCTIONS_MAX
   return true
 }
 
@@ -271,6 +273,10 @@ export async function updateSettings(
   patch: Partial<CluiSettings>,
   clear: SettingsKey[] = []
 ): Promise<ResolvedSettings> {
+  // A silent skip would read as saved, so this one rejects.
+  if ((patch.additionalInstructions?.length ?? 0) > ADDITIONAL_INSTRUCTIONS_MAX) {
+    throw new Error(`additionalInstructions exceeds ${ADDITIONAL_INSTRUCTIONS_MAX} characters`)
+  }
   // Outside the queue: load() enqueues its own migration write and would wait on itself.
   await getResolvedSettings()
   // The whole read/modify/persist/publish runs in the queue, so a concurrent update builds on

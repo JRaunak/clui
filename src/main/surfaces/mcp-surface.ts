@@ -36,12 +36,14 @@ const PARTS_MAX = 20
 const PART_MAX = 120
 export const SURFACE_STATE = {
   name: 'surface_state',
+  _meta: { 'anthropic/searchHint': 'pane state what is open' },
   description: "What the user's Clui side pane shows for this session: tabs, the active one, line selections and highlights. No file contents.",
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   annotations: { readOnlyHint: true }
 }
 export const SURFACE_OPEN = {
   name: 'surface_open',
+  _meta: { 'anthropic/searchHint': 'show open display file diff pane' },
   description:
     "Open a file, folder, browser tab or Claude's changes in the user's Clui side pane, optionally at lines (shown as your highlight, not the user's selection), a PDF, document or presentation at a page (a presentation's page is its slide), words in a PDF or Word document, or a CSV, TSV or workbook at a range of cells, or parts of a Mermaid diagram. Default prepares it without moving the user; focus:true shows it now; use it when the user asks to see something. Not a way to read files.",
   inputSchema: {

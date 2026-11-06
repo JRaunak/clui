@@ -4,7 +4,7 @@ import { useBrowserToasts } from '../Toast'
 import { FieldError, LOGIN_INPUT } from '../LoginFields'
 import { IconEdit, IconPlus, IconTrash } from '../Icon'
 import { useEscape } from '../../lib/useEscape'
-import { CheckBox, Field, SAVE_FAILED, TIMING, useInstantSetting } from './shared'
+import { CheckBox, Field, SAVE_FAILED, TIMING, describedBy, useInstantSetting } from './shared'
 import { LINK } from '../../lib/openLink'
 import { LoginForm } from './LoginForm'
 import { ClearBrowsingData } from './ClearBrowsingData'
@@ -57,7 +57,6 @@ const CHILDREN = [
 /** Browser access, approved sites and saved logins. A removal commits once its undo toast runs out.
  *  The toasts sit outside the pane, so a pending removal stays undoable from another section. */
 export function BrowserSection(): JSX.Element {
-  const enabled = useInstantSetting('browserEnabled')
   const [sites, setSites] = useState<ApprovedSite[]>([])
   const [netSites, setNetSites] = useState<LocalNetSite[]>([])
   const [logins, setLogins] = useState<SavedLoginInfo[]>([])
@@ -207,38 +206,14 @@ export function BrowserSection(): JSX.Element {
 
   return (
     <>
-      <Field
-        label="Browser access"
-        hint={`Reading pages, going to sites and switching tabs come with access. ${TIMING}`}
-        hintId={`${uid}-enabled`}
-        note={enabled.failed && <FieldError id={`${uid}-enabled-err`} text={SAVE_FAILED} />}
-      >
-        <div className="flex flex-col gap-1">
-          <button
-            type="button"
-            role="checkbox"
-            data-ui="browser-enabled"
-            aria-checked={!!enabled.value}
-            aria-disabled={enabled.value === null || undefined}
-            aria-describedby={`${uid}-enabled${enabled.failed ? ` ${uid}-enabled-err` : ''}`}
-            onClick={() => enabled.value !== null && enabled.set(!enabled.value)}
-            className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
-          >
-            <CheckBox checked={!!enabled.value} />
-            <span id={`${uid}-access`} className="text-label text-content">
-              Claude can use the browser
-            </span>
-          </button>
-          <div role="group" aria-labelledby={`${uid}-access`} className="flex flex-col gap-1 pl-6">
-            {CHILDREN.map((c) => (
-              <BrowserChild key={c.setting} {...c} on={!!enabled.value} reasonId={`${uid}-reason`} />
-            ))}
-          </div>
-          {!enabled.value && (
-            <p id={`${uid}-reason`} className="mt-1 pl-6 text-meta text-faint">
-              Turn on browser access above to change these.
-            </p>
-          )}
+      <Field label="Browser access">
+        <div role="group" aria-label="Browser access" aria-describedby={`${uid}-intro`} className="flex flex-col gap-2">
+          <p id={`${uid}-intro`} className="text-meta text-dim">
+            Claude can always read pages, go to sites and switch tabs. These let it do more. {TIMING}
+          </p>
+          {CHILDREN.map((c) => (
+            <BrowserChild key={c.setting} {...c} />
+          ))}
         </div>
       </Field>
       <section className="flex flex-col gap-2" aria-labelledby={`${uid}-sites`}>
@@ -481,13 +456,11 @@ function BrowserChild({
   setting,
   ui,
   label,
-  hint,
-  on,
-  reasonId
-}: (typeof CHILDREN)[number] & { on: boolean; reasonId: string }): JSX.Element {
+  hint
+}: (typeof CHILDREN)[number]): JSX.Element {
   const s = useInstantSetting(setting)
   const id = useId()
-  const off = !on || s.value === null
+  const off = s.value === null
   return (
     <div className="flex flex-col">
       <button
@@ -496,14 +469,14 @@ function BrowserChild({
         data-ui={ui}
         aria-checked={!!s.value}
         aria-disabled={off || undefined}
-        aria-describedby={`${on ? '' : `${reasonId} `}${id}-hint${s.failed ? ` ${id}-err` : ''}`}
+        aria-describedby={describedBy(`${id}-hint`, s.failed && `${id}-err`)}
         onClick={() => off || s.set(!s.value)}
         className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
       >
         <CheckBox checked={!!s.value} />
         <span className="text-label text-content group-aria-disabled:text-faint">{label}</span>
       </button>
-      <p id={`${id}-hint`} className={`pl-6 text-meta ${off ? 'text-faint' : 'text-dim'}`}>
+      <p id={`${id}-hint`} className="pl-6 text-meta text-dim">
         {hint}
       </p>
       {s.failed && <FieldError id={`${id}-err`} text={SAVE_FAILED} />}

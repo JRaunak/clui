@@ -1,28 +1,18 @@
 import { useId } from 'react'
 import type { FileLinkTarget, LinkTarget } from '../../../../shared/settings'
 import { LINK_MOD } from '../../lib/openLink'
-import { useSettings } from '../../lib/settings'
 import { Dropdown } from '../Dropdown'
 import { FieldError } from '../LoginFields'
-import { CheckField, Field, Group, SAVE_FAILED, TIMING, describedBy, useInstantSetting } from './shared'
+import { CheckField, Field, Group, SAVE_FAILED, describedBy, useInstantSetting } from './shared'
 
 const APPLY = 'Open pages reload with the new setting.'
 
 export function PaneSection(): JSX.Element {
   const files = useInstantSetting('fileLinkTarget')
   const web = useInstantSetting('linkTarget')
-  const browser = useSettings((s) => !!s?.values.browserEnabled)
   const uid = useId()
   return (
     <>
-      <CheckField
-        setting="surfaceTools"
-        ui="surface-tools"
-        label="Pane access"
-        hint={`Claude can see what the pane shows and open files, folders, browser tabs and changes there. References you send still work with this off. Quick sessions never have it. ${TIMING}`}
-        text="Claude can show things in the pane"
-      />
-
       <Group id="settings-group-links" label="Links">
         <Field
           label="Open file links in"
@@ -45,11 +35,7 @@ export function PaneSection(): JSX.Element {
         </Field>
         <Field
           label="Open web links in"
-          hint={
-            browser
-              ? `Applies to web links in Claude's replies and tool output. ${LINK_MOD}-click opens the other way.`
-              : 'Takes effect when browser access is on. Until then, links open in your default browser.'
-          }
+          hint={`Applies to web links in Claude's replies and tool output. ${LINK_MOD}-click opens the other way. Quick sessions always use your default browser.`}
           hintId={`${uid}-links-hint`}
           onReset={web.value && web.value !== 'clui' ? web.reset : undefined}
           note={web.failed && <FieldError id={`${uid}-links-err`} text={SAVE_FAILED} />}

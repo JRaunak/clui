@@ -68,6 +68,8 @@ export interface ClaudeSessionOptions {
   fork?: boolean
   /** Session title → `-n` (see buildArgs). */
   name?: string
+  /** Text for `--append-system-prompt-file`. A respawn passes it again from opts. */
+  appendSystemPrompt?: string
   /** Clui's own MCP servers: the config JSON (tokens inside, so it goes to a 0600 file) and the exact allow rules. */
   cluiMcp?: { config: string; allow: string[] }
   /** An MCP config file passed as-is next to Clui's (the elicitation probe's stub server). */
@@ -172,8 +174,8 @@ export class ClaudeSession extends EventEmitter {
   private writers: { resolve: () => void; reject: (e: Error) => void }[] = []
   /** True while the effort-fallback respawn is in progress (suppresses exit event). */
   private respawning = false
-  /** Holds the browser tools' MCP config for the spawn that hasn't reported init yet. */
-  private mcpDir: string | null = null
+  /** Holds the MCP config and appended prompt for the spawn that hasn't reported init yet. */
+  private spawnDir: string | null = null
   /** Partial trailing stderr line held until its newline arrives, so classification
    *  runs per complete line, not per arbitrary transport chunk. */
   private stderrBuf = ''
@@ -203,6 +205,7 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private buildArgs(): string[] {
+    this.dropSpawnDir()
     const args = [
       '-p',
       '--input-format',
@@ -242,6 +245,8 @@ export class ClaudeSession extends EventEmitter {
         : {})
     }
     if (Object.keys(flagSettings).length) args.push('--settings', JSON.stringify(flagSettings))
+    // Ahead of the variadic flags below, which would swallow it as a list item.
+    if (this.opts.appendSystemPrompt) args.push('--append-system-prompt-file', this.privateFile('append.md', this.opts.appendSystemPrompt))
     if (this.opts.ephemeral) {
       // Quick chat: the CLI streams normally but writes no transcript to disk.
       args.push('--no-session-persistence')
@@ -249,7 +254,7 @@ export class ClaudeSession extends EventEmitter {
       // following flag (--resume) or the end of the bare args terminates the list.
       args.push('--disallowedTools', ...EPHEMERAL_DISALLOWED_TOOLS)
     }
-    const mcp = this.opts.cluiMcp ? [this.writeMcpConfig(this.opts.cluiMcp.config)] : []
+    const mcp = this.opts.cluiMcp ? [this.privateFile('config.json', this.opts.cluiMcp.config)] : []
     if (this.opts.mcpConfigPath) mcp.push(this.opts.mcpConfigPath)
     // Both flags are variadic; the --resume that follows (or the end of args) closes each list.
     if (mcp.length) args.push('--mcp-config', ...mcp)
@@ -263,19 +268,18 @@ export class ClaudeSession extends EventEmitter {
     return args
   }
 
-  /** The config carries the tools' bearer token, and argv is readable by other processes, so it goes
-   *  in a file only this user can read. The CLI has loaded it by the time its init arrives. */
-  private writeMcpConfig(json: string): string {
-    this.dropMcpConfig()
-    this.mcpDir = mkdtempSync(join(tmpdir(), 'clui-mcp-'))
-    const file = join(this.mcpDir, 'config.json')
-    writeFileSync(file, json, { mode: 0o600 })
+  /** The MCP config carries the tools' bearer token and the prompt carries the user's own text. Argv is readable by
+   *  other processes, so both go in files only this user can read. The CLI has read them by the time its init arrives. */
+  private privateFile(name: string, content: string): string {
+    this.spawnDir ??= mkdtempSync(join(tmpdir(), 'clui-spawn-'))
+    const file = join(this.spawnDir, name)
+    writeFileSync(file, content, { mode: 0o600 })
     return file
   }
 
-  private dropMcpConfig(): void {
-    if (this.mcpDir) rmSync(this.mcpDir, { recursive: true, force: true })
-    this.mcpDir = null
+  private dropSpawnDir(): void {
+    if (this.spawnDir) rmSync(this.spawnDir, { recursive: true, force: true })
+    this.spawnDir = null
   }
 
   start(): void {
@@ -418,7 +422,7 @@ export class ClaudeSession extends EventEmitter {
       clearTimeout(this.initTimer)
       this.initTimer = null
     }
-    this.dropMcpConfig()
+    this.dropSpawnDir()
     this.cancelElicitations()
     if (this.stderrBuf.trim()) this.classifyStderrLine(this.stderrBuf)
     this.stderrBuf = ''
@@ -446,7 +450,7 @@ export class ClaudeSession extends EventEmitter {
       }
       for (const ev of this.mapper.map(raw)) {
         if (ev.type === 'session-init' && ev.sessionId) this.sessionId = ev.sessionId
-        if (ev.type === 'session-init') this.dropMcpConfig()
+        if (ev.type === 'session-init') this.dropSpawnDir()
         if (ev.type === 'elicitation-request') this.elicitations.add(ev.requestId)
         if (ev.type === 'permission-cancel') this.elicitations.delete(ev.requestId)
         this.emitEvent(ev)
@@ -893,7 +897,7 @@ export class ClaudeSession extends EventEmitter {
     // down for good. (The 'close' handler also guards on `closed` first; this is the
     // belt to that suspenders, since a pending respawn must not survive an explicit stop.)
     this.respawning = false
-    this.dropMcpConfig()
+    this.dropSpawnDir()
     this.cancelElicitations()
     // Resolve any awaited control_requests as failed + clear their timers.
     for (const [, p] of this.pendingControl) {

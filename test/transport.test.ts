@@ -1,7 +1,7 @@
 // Boundary: the CLI transport (`ClaudeSession`) driven against a fake child.
 // Covers reconnect, generation, and settlement.
 import { ClaudeSession } from '../src/main/cli/session.ts'
-import { readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { CHANGE_READ_TOOL } from '../src/shared/context.ts'
 import { equal, ok } from './support/harness.mjs'
 
@@ -226,6 +226,45 @@ reset()
   const c2 = spawns()[1]
   ok(!!c2 && readFileSync(file(c2), 'utf8') === config, 'transport: an effort respawn reuses the same config contents')
   s.stop()
+}
+
+// The appended prompt: one 0600 file flag ahead of the first variadic flag, gone once the CLI has read it, written again on a respawn.
+reset()
+{
+  const cluiMcp = { config: '{"mcpServers":{}}', allow: [CHANGE_READ_TOOL] }
+  const flag = '--append-system-prompt-file'
+  const file = (c: any): string => c.spawnargs[c.spawnargs.indexOf(flag) + 1]
+  const s = mk({ cluiMcp, appendSystemPrompt: 'BLOCK' })
+  s.start()
+  const c1 = spawns()[0]
+  const a: string[] = c1.spawnargs
+  ok(a.filter((x) => x === flag).length === 1 && a.indexOf(flag) < a.indexOf('--mcp-config'), 'transport: one append flag, before --mcp-config')
+  equal(readFileSync(file(c1), 'utf8'), 'BLOCK', 'transport: the append file holds the text')
+  equal(statSync(file(c1)).mode & 0o777, 0o600, 'transport: the append file is 0600')
+  ackInit(c1)
+  c1.stdout.emit('data', JSON.stringify({ type: 'system', subtype: 'init', session_id: 'S', cwd: '/tmp', tools: [], model: 'orig' }) + '\n')
+  ok(!existsSync(file(c1)), 'transport: the append file is removed after init')
+  s.setEffort('max')
+  await tick()
+  respond(c1, 'apply_flag_settings', 'error')
+  await tick()
+  c1.emit('close', 0)
+  await tick()
+  const c2 = spawns()[1]
+  equal(readFileSync(file(c2), 'utf8'), 'BLOCK', 'transport: an effort respawn passes the same text')
+  s.stop()
+  ok(!existsSync(file(c2)), 'transport: stop removes the append file')
+
+  const args = (opts: Record<string, unknown>): string[] => {
+    reset()
+    const t = mk({ cluiMcp, ...opts })
+    t.start()
+    t.stop()
+    return spawns()[0].spawnargs
+  }
+  const q = args({ appendSystemPrompt: 'Q', ephemeral: true })
+  ok(q.indexOf(flag) >= 0 && q.indexOf(flag) < q.indexOf('--disallowedTools'), 'transport: Quick puts it before --disallowedTools')
+  ok(!args({}).includes(flag), 'transport: no text, no flag')
 }
 
 // onWritten: once, right after its envelope is written; never for a send that wasn't.

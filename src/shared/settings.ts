@@ -58,9 +58,6 @@ export interface CluiSettings {
   /** The subagent pane's size when the Stage can split, false = half, app-wide. Persisted like
    *  `sidebarCollapsed`. */
   subagentPaneFull: boolean
-  /** Give new and resumed sessions Claude's browser tools. Read once at spawn: a running session
-   *  keeps whatever it started with, because MCP servers are fixed for the life of the process. */
-  browserEnabled: boolean
   /** Where a link Clui renders opens: a new tab in the session's own browser, or the default browser.
    *  'clui' takes effect only in a session with the browser tools; elsewhere links go to the default browser. */
   linkTarget: LinkTarget
@@ -73,13 +70,11 @@ export interface CluiSettings {
   /** The same pages may fetch files in their own folder and connect over HTTPS, WSS and to localhost. */
   artifactNetworkRequests: boolean
   /** Browser tool bundles past observing (snapshot, tabs, navigate): screenshot, page input, and the
-   *  console/network/storage readers. Read at spawn, like browserEnabled. */
+   *  console/network/storage readers. Read once at spawn: a running session keeps whatever it started with,
+   *  because MCP servers are fixed for the life of the process. */
   browserVisual: boolean
   browserInteract: boolean
   browserDebug: boolean
-  /** Give new and resumed sessions surface_state and surface_open, which show files, folders, browser tabs and
-   *  Claude changes in the pane. Read at spawn, like browserEnabled. Quick sessions never get them. */
-  surfaceTools: boolean
   /** Offer the CLI task-tracking tools (they feed the task puck) to the model. Default off:
    *  the CLI gates them off on Opus 4.8+, so leave it to an explicit opt-in. */
   enableTaskTools: boolean
@@ -90,6 +85,10 @@ export interface CluiSettings {
    *  enableTaskTools: a running session keeps what it started with. Local classifier tokens are billed
    *  and never reach modelUsage, so the cost meter can't count them. */
   localClassifier: boolean
+  /** The user's standing instructions, appended to every session's system prompt, Quick included. Read at spawn;
+   *  a resumed session keeps the text it first launched with, because the CLI freezes the prompt on its first
+   *  request. At most ADDITIONAL_INSTRUCTIONS_MAX characters. */
+  additionalInstructions: string
   /** The classifier's model when localClassifier is on, a base id with no [1m]. Empty lets the CLI choose. */
   classifierModel: string
   /** Directory a "no directory" session spawns in. Empty resolves to ~/.clui, a dedicated,
@@ -609,7 +608,6 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   sidebarCollapsed: false,
   sidebarWidth: 288,
   subagentPaneFull: false,
-  browserEnabled: false,
   linkTarget: 'clui',
   fileLinkTarget: 'clui',
   annotateScreenshots: true,
@@ -618,10 +616,10 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   browserVisual: true,
   browserInteract: true,
   browserDebug: true,
-  surfaceTools: true,
   enableTaskTools: false,
   blockOutsideWrites: false,
   localClassifier: false,
+  additionalInstructions: '',
   classifierModel: '',
   // Empty → resolves to ~/.clui in main (getChatDir).
   defaultChatDir: '',

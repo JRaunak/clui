@@ -44,6 +44,7 @@ const PAGE_TOOLS = [
   },
   {
     name: 'screenshot',
+    _meta: { 'anthropic/searchHint': 'look visual layout' },
     description:
       'See the viewport, a ref, or region [x,y,w,h] of screenshot shotId; detail high costs more. Gives a shotId for click/hover x,y in its pixels.',
     inputSchema: {
@@ -58,6 +59,7 @@ const PAGE_TOOLS = [
   },
   {
     name: 'click',
+    _meta: { 'anthropic/searchHint': 'click button link page' },
     description: "Click a ref, or x,y of screenshot shotId. button right opens the page's own context menu.",
     inputSchema: {
       type: 'object',
@@ -66,6 +68,7 @@ const PAGE_TOOLS = [
   },
   {
     name: 'type',
+    _meta: { 'anthropic/searchHint': 'type text input form field' },
     description: 'Click a ref and type text; submit presses Enter. Refuses password fields: use autofill_login.',
     inputSchema: {
       type: 'object',
@@ -102,12 +105,14 @@ const PAGE_TOOLS = [
   },
   {
     name: 'console',
+    _meta: { 'anthropic/searchHint': 'console errors logs javascript' },
     description:
       "Page console. A tab's first call starts recording and returns what Chromium kept. since: entries after that number.",
     inputSchema: { type: 'object', properties: { level: { type: 'string', enum: ['error', 'warn', 'all'] }, since: { type: 'number' } } }
   },
   {
     name: 'network',
+    _meta: { 'anthropic/searchHint': 'requests failed api xhr status' },
     description:
       "Page requests with status, size, time and failures. A tab's first call starts recording, empty: " +
       'navigate again to capture a load. failedOnly: failures and 4xx/5xx. filter: URL text.',
@@ -115,16 +120,19 @@ const PAGE_TOOLS = [
   },
   {
     name: 'network_body',
+    _meta: { 'anthropic/searchHint': 'response body request payload' },
     description: "A localhost request's body, by network number.",
     inputSchema: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] }
   },
   {
     name: 'cookies',
+    _meta: { 'anthropic/searchHint': 'cookie' },
     description: "Cookie metadata for the page's URL, never values.",
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'storage',
+    _meta: { 'anthropic/searchHint': 'localStorage sessionStorage' },
     description: 'local/session storage keys (values on localhost only), or indexeddb databases.',
     inputSchema: { type: 'object', properties: { area: { type: 'string', enum: ['local', 'session', 'indexeddb'] } } }
   }
@@ -157,10 +165,6 @@ const BUNDLES = {
   debug: ['console', 'network', 'network_body', 'cookies', 'storage']
 }
 export type Bundles = Record<keyof typeof BUNDLES, boolean>
-
-/** Listed straight to the model instead of behind ToolSearch: every browsing task starts with them,
- *  and skipping the search round trip brought the first browser action from 7-9s to 5-6s. */
-const ALWAYS_LOAD = new Set(['snapshot', 'navigate', 'tabs', 'back'])
 
 export const toolsFor = (b: Bundles): typeof TOOLS => {
   const off = new Set((Object.keys(BUNDLES) as (keyof Bundles)[]).flatMap((k) => (b[k] ? [] : BUNDLES[k])))
@@ -338,8 +342,7 @@ export class BrowserMcpServer {
     this.browser = browser
     this.route = listener.route('mcp', {
       name: 'clui-browser',
-      tools: (handleId) =>
-        toolsFor(this.bundles.get(handleId) ?? ALL_ON).map((t) => (ALWAYS_LOAD.has(t.name) ? { ...t, _meta: { 'anthropic/alwaysLoad': true } } : t)),
+      tools: (handleId) => toolsFor(this.bundles.get(handleId) ?? ALL_ON),
       call: (handleId, name, args, toolUseId) => this.callTool(handleId, name, args, toolUseId)
     })
   }
@@ -627,16 +630,18 @@ export class BrowserMcpServer {
       case 'type': {
         const typed = args.text
         if (args.ref == null || typeof typed !== 'string') return text('type needs a ref and text.', true)
+        const before = wc.getURL()
         return this.actOnRef(handleId, tab, page, args.ref, async (box, ref) => {
           void clickRing(wc, box.x, box.y)
           await cdp.click(box.x, box.y)
           if (await cdp.focusedIsPassword()) return this.refusePassword(wc, 'document.activeElement')
           await cdp.insertText(typed)
-          if (args.submit === true) {
-            await cdp.key('Enter')
-            await settle(wc)
-          }
-          return text(args.submit === true ? `Typed into ${ref.n} and pressed Enter.` : `Typed into ${ref.n}.`)
+          if (args.submit !== true) return text(`Typed into ${ref.n}.`)
+          await cdp.key('Enter')
+          await settle(wc)
+          const after = wc.getURL()
+          const done = `Typed into ${ref.n} and pressed Enter.`
+          return text(after === before ? done : `${done} The page is now ${this.shownUrl(handleId, after)}`)
         }, 'Typing into')
       }
 
