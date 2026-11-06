@@ -29,6 +29,21 @@ type Prepared = { ok: true; content: string | unknown[]; text: string; onWritten
 
 const GONE = 'This session is no longer running.'
 
+// These print on every spawn, effort and model respawns included.
+const shownNotices = new Set<string>()
+
+function rewriteConfigNotice(text: string): string | undefined {
+  if (/^Claude Code ignored all of the NODE_EXTRA_CA_CERTS file\b/i.test(text)) {
+    return "Claude Code ignored NODE_EXTRA_CA_CERTS: the file holds no PEM certificate it can read. Fix or replace the file, or unset the variable if you don't need it."
+  }
+  if (/^Two Claude Code config files exist\b/i.test(text)) {
+    const m = /this run uses (\S+), not (\S+?)\. The file/.exec(text)
+    if (!m) return 'Two Claude Code config files exist in your config home. Run claude in a terminal for the cleanup steps.'
+    return `Two Claude Code config files exist. This run uses ${m[1]}, not ${m[2]}. To clean up, update every host sharing this home to 2.1.319 or later, quit every Claude process, then move the unwanted file aside.`
+  }
+  return undefined
+}
+
 export interface ClaudeSessionOptions {
   cliPath: string
   cwd: string
@@ -492,6 +507,14 @@ export class ClaudeSession extends EventEmitter {
     // Clui's come from Bedrock, where updating the CLI is the fix.
     if (/^Claude Code doesn't recognize the model\b/i.test(text)) {
       this.emitEvent({ type: 'error', severity: 'info', message: text.replace(/, or see \S+ to set the window\.$/, '.') })
+      return
+    }
+    const notice = rewriteConfigNotice(text)
+    if (notice) {
+      if (!shownNotices.has(notice)) {
+        shownNotices.add(notice)
+        this.emitEvent({ type: 'error', severity: 'info', message: notice })
+      }
       return
     }
     this.emitEvent({ type: 'error', message: text })
