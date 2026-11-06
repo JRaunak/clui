@@ -122,13 +122,12 @@ function InstructionsField(): JSX.Element {
       <textarea
         aria-label="Additional instructions"
         data-ui="additional-instructions"
-        rows={5}
         spellCheck
         autoComplete="off"
         aria-keyshortcuts="Meta+Enter"
         aria-invalid={over || undefined}
         aria-describedby={describedBy(hintId, countId, over && overId, s.failed && errId)}
-        className="block max-h-96 min-h-[7.5rem] w-full resize-y rounded border border-control-edge bg-bg px-2.5 py-2 text-ui leading-normal text-content outline-none focus:border-accent focus:shadow-[0_0_0_1px_var(--color-accent)] aria-invalid:border-err aria-invalid:focus:shadow-[0_0_0_1px_var(--color-err)]"
+        className="block max-h-96 min-h-20 w-full resize-none [field-sizing:content] rounded border border-control-edge bg-bg px-2.5 py-2 text-ui leading-normal text-content outline-none focus:border-accent focus:shadow-[0_0_0_1px_var(--color-accent)] aria-invalid:border-err aria-invalid:focus:shadow-[0_0_0_1px_var(--color-err)]"
         value={text}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setFocused(true)}
@@ -207,7 +206,6 @@ export function AdvancedSection({ modelList }: { modelList: ModelListResult | nu
 
   return (
     <>
-      <InstructionsField />
       <Field
         label="Claude CLI path"
         hint="Leave blank to detect Claude automatically. Set a path only if it lives somewhere unusual. Sessions already running keep the CLI they started with."
@@ -292,6 +290,7 @@ export function AdvancedSection({ modelList }: { modelList: ModelListResult | nu
           />
         </Field>
       )}
+      <InstructionsField />
     </>
   )
 }
