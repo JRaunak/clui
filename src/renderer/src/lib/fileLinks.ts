@@ -37,19 +37,20 @@ export function splitLineSuffix(s: string): { path: string; line?: number; endLi
   return { path: s.slice(0, m.index), line, ...(end > line ? { endLine: end } : {}) }
 }
 
-function segments(p: string): string[] | null {
+/** `clamp`: a `..` at the root stays there, as a browser resolves a URL, instead of failing. */
+function segments(p: string, clamp = false): string[] | null {
   const out: string[] = []
   for (const x of p.split('/')) {
     if (!x || x === '.') continue
     if (x !== '..') out.push(x)
-    else if (!out.pop()) return null
+    else if (!out.pop() && !clamp) return null
   }
   return out
 }
 
 /** `p` against the session's folder with `.` and `..` resolved; null when it lands outside. */
 export function relativeTo(cwd: string, p: string): string | null {
-  const parts = segments(p)
+  const parts = segments(p, p.startsWith('/'))
   if (!parts) return null
   if (!p.startsWith('/')) return parts.join('/')
   const root = segments(cwd) ?? []
@@ -82,7 +83,7 @@ export function resolveHref(href: string, cwd: string, base?: string): HrefRef |
   const abs = base && !decoded.startsWith('/') ? `${base}/${decoded}` : decoded
   const rel = relativeTo(cwd, abs)
   if (rel === null) {
-    const norm = base ? segments(abs) : null
+    const norm = base ? segments(abs, true) : null
     return { kind: 'outside', path: norm ? `/${norm.join('/')}` : decoded }
   }
   if (!rel) return null

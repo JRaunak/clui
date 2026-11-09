@@ -69,6 +69,7 @@ import { listModels } from './models/list'
 import { BrowserManager } from './browser/manager'
 import { BrowserMcpServer } from './browser/mcp'
 import { mcpListener } from './lib/mcp-route'
+import { nearestDir } from './lib/start-dir'
 import { Annotator } from './browser/annotate'
 import { isPoint, type PointAt } from '../shared/annotate'
 import { changeRefStatus, classifyRefPaths, parseOutgoing, preparePacket, validateRefs, type PacketDeps } from './cli/packet'
@@ -483,6 +484,10 @@ function registerIpc(): void {
       // A tracked-changes .rtf glimpses as a .doc does: there is no text of its own to point at.
       return !fl.convert || fl.convert.why === 'tracked' ? 'picture' : fl.convert.why
     },
+    pageRefused: async (h, p) => {
+      const r = await files.resolveAllowed(h, p, { consumer: 'web', operation: 'read-file' })
+      return !r.ok && r.reason !== 'missing'
+    },
     request: (h, op) => bridge.request(h, op)
   })
   const surfaceRoute = listener.route('mcp-surface', surface)
@@ -722,14 +727,7 @@ function registerIpc(): void {
     if (!mainWindow) return null
     const { defaultWorkspace } = await getSettings()
     const asked = typeof start === 'string' && start.length <= 4096 ? start.replace(/^~(?=\/)/, homedir()) : ''
-    let defaultPath: string | undefined
-    for (const dir of [asked, defaultWorkspace]) {
-      if (!dir || !isAbsolute(dir)) continue
-      if (await stat(dir).then((s) => s.isDirectory(), () => false)) {
-        defaultPath = dir
-        break
-      }
-    }
+    const defaultPath = await nearestDir(asked, defaultWorkspace, (p) => stat(p).then((s) => s.isDirectory(), () => false))
     const res = await dialog.showOpenDialog(mainWindow, {
       title: 'Pick a workspace folder',
       properties: ['openDirectory', 'createDirectory'],

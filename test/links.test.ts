@@ -27,6 +27,9 @@ equal(href('../secrets.txt'), '{"kind":"outside","path":"../secrets.txt"}', 'hre
 equal(href('%2e%2e/%2e%2e/etc/passwd'), '{"kind":"outside","path":"../../etc/passwd"}', 'href: encoded traversal is outside')
 equal(href('/tmp/ws/../other/x.ts'), '{"kind":"outside","path":"/tmp/ws/../other/x.ts"}', 'href: absolute climbing out is outside')
 equal(href('/tmp/wsx/a.ts'), '{"kind":"outside","path":"/tmp/wsx/a.ts"}', 'href: a sibling with the same prefix is outside')
+equal(JSON.stringify(resolveHref('../../../x', '/a', '/a/b')), '{"kind":"outside","path":"/x"}', 'href: a climb past / from a base stops at /')
+equal(JSON.stringify(resolveHref('../../../a/x', '/a', '/a/b')), '{"kind":"file","ref":{"rel":"x"}}', 'href: a climb past / that comes back in is inside')
+equal(href('/../tmp/ws/a.ts'), '{"kind":"file","ref":{"rel":"a.ts"}}', 'href: an absolute .. at / stays at /')
 for (const h of ['https://example.com/a.ts', 'mailto:a@b.c', '#section', 'javascript:alert(1)', 'java%73cript:alert(1)', 'file://evil.host/tmp/ws/a', 'file://', '//cdn/x.js', '?q=1', './', '%E0%A4%A'])
   equal(resolveHref(h, cwd), null, `href: ${h} keeps the existing handling`)
 

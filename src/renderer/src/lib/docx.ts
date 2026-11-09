@@ -248,6 +248,22 @@ export function dropHostRules(root: ShadowRoot): void {
   for (const s of root.querySelectorAll('style')) if (s.sheet) strip(s.sheet.cssRules, (i) => s.sheet!.deleteRule(i))
 }
 
+/** A note's number in its run's font. The marker inherits from the `li`, whose font is the host's: docx-preview puts
+ *  the document's font on each run's `span`. Read every style before writing any, or each write forces a restyle. */
+export function matchNoteMarkers(root: ShadowRoot): void {
+  const text = { acceptNode: (n: Node) => (/\S/.test(n.nodeValue ?? '') && !n.parentElement?.closest('sup, sub') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP) }
+  const fonts = [...root.querySelectorAll<HTMLLIElement>('ol[data-part] > li')].flatMap((li) => {
+    const el = document.createTreeWalker(li, NodeFilter.SHOW_TEXT, text).nextNode()?.parentElement
+    if (!el) return []
+    const cs = getComputedStyle(el)
+    return [{ li, family: cs.fontFamily, size: cs.fontSize }]
+  })
+  for (const { li, family, size } of fonts) {
+    li.style.fontFamily = family
+    li.style.fontSize = size
+  }
+}
+
 /** Each part's paragraphs in document order with their own text, note marks and nested blocks left out. A converted
  *  document's list items are blocks too: textutil puts their text straight in the `li`. Sliced into tasks under 10ms,
  *  since a long document has tens of thousands of text nodes. */

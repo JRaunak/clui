@@ -12,6 +12,7 @@ import { CHANGE_REF, relativeTo } from '../../shared/context'
 import type { Refusal } from '../../shared/files'
 import { clean, stripControls, type SurfaceCommand, type SurfaceTarget } from '../../shared/surface-tools'
 import { isSvg, kindForPath } from '../../shared/surfaces'
+import { isHtml } from '../../shared/html-view'
 import { isOds, isOffice, isWord, laysOut } from '../../shared/office'
 import { a1Of, isDelimited, isWorkbook, parseA1, qualified, unxml } from '../../shared/sheets'
 import { requestUrl } from '../browser/mcp'
@@ -131,6 +132,8 @@ export interface Presenter {
   /** What a file Clui lays out shows now: its view, Quick Look's first page and why, or the state for a conversion
    *  that failed. `picture`: the first page, with no text of the file's own to point at. `pages`: LibreOffice's pages; `mismatch`: a deck whose pages don't match its slides. */
   laidOut(handleId: string, abs: string): Promise<LaidOut>
+  /** Whether main's page policy refuses to preview this HTML page, so the tab shows Source. */
+  pageRefused(handleId: string, abs: string): Promise<boolean>
   request(handleId: string, op: Op): Promise<Delivery>
 }
 
@@ -411,9 +414,12 @@ export function surfaceServer(refs: ChangeRefs, present: Presenter, now = Date.n
     }
     if (!int(line, 1, MAX_LINE)) return { target: { kind: 'file', path: abs }, label: rel, focus }
     const end = int(endLine, line + 1, MAX_LINE) ? endLine : undefined
+    // The renderer learns of a refused page only after it replies, so it would still report a Preview.
     const preview = grid
       ? { label: `${rel} in Grid`, note: end ? `Lines ${line} to ${end} are marked as the rows that hold them.` : `Line ${line} is marked as the row that holds it.` }
-      : { label: `${rel} in Preview`, note: end ? `Lines ${line} to ${end} are marked in Source.` : `Line ${line} is marked in Source.` }
+      : isHtml(abs) && (await present.pageRefused(handleId, abs))
+        ? undefined
+        : { label: `${rel} in Preview`, note: end ? `Lines ${line} to ${end} are marked in Source.` : `Line ${line} is marked in Source.` }
     return { target: { kind: 'file', path: abs, line, ...(end ? { endLine: end } : {}) }, label: `${rel} ${span(line, end)}`, focus, preview }
   }
 

@@ -19,7 +19,7 @@ import { setPointing, takePoint, takeSurfaceFocus, usePointing, usePointRequest 
 import { reportFound } from '../../lib/pointedText'
 import { clampScale, FIT_MARGIN, minScale, percent, round4, stepDown, stepUp, type Size } from '../../lib/imageView'
 import { fitPage, fitWidth, PDF_MAX, PDF_STEPS, zoomSaid, type At, type DocZoom } from '../../lib/pdfView'
-import { BASE_SHEET, breaksOf, dropHostRules, FLOW_SHEET, indexOf, loadDocx, offsetIn, OPTIONS, PAGES_SHEET, pageSizes, pointIn, postPass, segmentsIn, textNodes, textSheet, type Block, type Index } from '../../lib/docx'
+import { BASE_SHEET, breaksOf, dropHostRules, FLOW_SHEET, indexOf, loadDocx, matchNoteMarkers, offsetIn, OPTIONS, PAGES_SHEET, pageSizes, pointIn, postPass, segmentsIn, textNodes, textSheet, type Block, type Index } from '../../lib/docx'
 import { clip40, foldCase, foldMarks, locateIn, matchesIn, occurrences, quoteIn } from '../../lib/docxView'
 
 const STEPS = [0.5, 0.75, 1, 1.5, 2]
@@ -369,6 +369,7 @@ export function DocxSurface({ handleId, tabId, flight, onStale, onFailed }: { ha
     z.append(...nodes.filter((n) => n.nodeName !== 'STYLE' && n.nodeType === Node.ELEMENT_NODE))
     root.append(...styles, z)
     if (!sheet) dropHostRules(root)
+    if (!sheet) matchNoteMarkers(root)
     for (const a of root.querySelectorAll<HTMLAnchorElement>('a')) {
       const href = a.getAttribute('href') ?? ''
       const scheme = URL.parse(href)?.protocol
