@@ -44,6 +44,10 @@ export const parentOf = (rel: string): string => rel.slice(0, Math.max(0, rel.la
 export const nameOf = (rel: string): string => rel.slice(rel.lastIndexOf('/') + 1)
 export const join = (dir: string, name: string): string => (dir ? `${dir}/${name}` : name)
 export const tilde = (p: string, home: string): string => (home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p)
+// The CLI reports macOS's resolved /private paths; show the /tmp, /var or /etc the user typed.
+const FIRMLINK = /^\/private(?=\/(?:tmp|var|etc)(?:\/|$))/
+export const unfirmlink = (p: string): string => p.replace(FIRMLINK, '')
+export const shownPath = (p: string, home: string): string => tilde(unfirmlink(p), home)
 
 /** The fewest trailing directory names that tell apart file tabs sharing a basename. */
 export function suffixes(paths: string[]): Map<string, string> {

@@ -9,7 +9,7 @@ import { IconChevron, IconDiff } from '../Icon'
 import { describe, Figure, figureWidth, MINUS } from '../ChangedFiles'
 import type { PaneExternal } from './PaneHeader'
 import { openEditor } from './fileDoc'
-import { ancestorsOf, changeIndex, flatten, nameOf, parentOf, sortEntries, survivor, tilde, typeahead, vetExpanded, type DirState, type TreeRow } from '../../lib/tree'
+import { ancestorsOf, changeIndex, flatten, nameOf, parentOf, sortEntries, survivor, shownPath, typeahead, vetExpanded, type DirState, type TreeRow } from '../../lib/tree'
 import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { reducedMotion, viaOf, type Via } from '../../lib/motion'
 import { closeTab } from './SurfaceTabs'
@@ -587,7 +587,7 @@ export function TreeSurface({ handleId, cwd }: { handleId: string; cwd: string }
       root.reason === 'missing' ? (
         <div className={STATE_BODY}>
           <p className="text-ui font-medium text-content">Folder not found</p>
-          <p className="max-w-[60ch] text-meta text-dim">{`${tilde(cwd, window.clui.homeDir)} isn't on disk anymore.`}</p>
+          <p className="max-w-[60ch] text-meta text-dim">{`${shownPath(cwd, window.clui.homeDir)} isn't on disk anymore.`}</p>
           {restored.fromSidecar && (
             <Button variant="secondary" size="sm" onClick={() => closeTab(TAB, true)}>
               Close tab

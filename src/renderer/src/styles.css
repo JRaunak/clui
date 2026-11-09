@@ -139,6 +139,7 @@
   --color-control-danger-hover: color-mix(in oklab, var(--color-err) 14%, #121213);
   /* Menu-row hover for the composer cards. In dark it lifts; in light there's nothing brighter than the white surface, so it's a soft darken. Scoped to these cards. */
   --color-row-hover: var(--color-bg-raised);
+  --color-outline-hover: var(--color-bg-raised);
   /* The message you navigated to: the jump wash, and the active find match's fill. The light theme's accent label on it is the tightest pair (4.56:1), so it can't get lighter here or darker in light. */
   --color-flash: #262627;
   --color-content: var(--paper-100);
@@ -413,6 +414,7 @@
   --color-row-selected: if(style(--window-material: glass): #323234; else: var(--ink-820));
   --color-err: if(style(--window-material: glass): #f25555; else: var(--red-400));
   --color-control-edge: if(style(--window-material: glass): #6e6e73; else: #6b6b70);
+  --color-outline-hover: var(--color-bg-raised);
 }
 
 /* bg-raised is a fixed near-white gray, so hover:bg-bg-raised lands ~7 CIELAB L* below the white main area (a strong,
@@ -424,6 +426,8 @@
 :root[data-theme='light'] .surface-sidebar {
   --color-bg-raised: if(style(--window-material: glass): #dcdcdd; else: #e2e2e2);
   --color-row-selected: #ffffff;
+  /* Outlined controls carry a 3.4:1 edge, so their hover fill takes a deeper step than a bare row to read as a change. */
+  --color-outline-hover: if(style(--window-material: glass): #d3d3d4; else: #d9d9da);
 }
 
 /* The composer's recessed config pills darken only from 3% to 4% black on hover: on white that is ~1.2 L*, near-invisible,
@@ -1149,6 +1153,10 @@ body {
   translate: none;
   align-items: flex-start;
   max-width: calc(anchor-size(--settings-footer width) - 8rem);
+}
+/* The footer holds about 45px of stack before cards cross into the rows, so the pane pads by the overflow and can scroll its last row clear. */
+[data-ui='settings'] [role='tabpanel'] {
+  padding-bottom: max(1rem, calc(var(--toast-stack-h, 0px) - 2.8125rem));
 }
 
 /* Welcome hero, played on the first welcome render of a launch. SVG transforms are in viewBox

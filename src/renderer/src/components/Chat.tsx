@@ -760,7 +760,7 @@ function JumpToLatest({
       onClick={onClick}
       aria-label={label + taskLabel}
       style={{ bottom: 'calc(1rem + var(--dock-h, 0px))' }}
-      className={`absolute right-5 z-20 flex h-11 items-center justify-center rounded-full glass-thick text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+      className={`absolute left-1/2 z-20 flex h-11 -translate-x-1/2 items-center justify-center rounded-full glass-thick text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
         taskCount ? 'gap-1.5 px-3' : 'w-11'
       }`}
     >

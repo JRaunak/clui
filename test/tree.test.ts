@@ -16,7 +16,7 @@ const { createFileAccess, listDir, LIST_MAX, COUNT_MAX } = await import('../src/
 const { listTree, treeTarget, validRel } = await import('../src/main/surfaces/tree.ts')
 const { ignoredNames } = await import('../src/main/workspace/git-status.ts')
 const { parseMenuItems, parseAnchor } = await import('../src/main/context-menu.ts')
-const { flatten, sortEntries, typeahead, changeIndex, survivor, ancestorsOf, tilde, vetExpanded } = await import('../src/renderer/src/lib/tree.ts')
+const { flatten, sortEntries, typeahead, changeIndex, survivor, ancestorsOf, tilde, shownPath, vetExpanded } = await import('../src/renderer/src/lib/tree.ts')
 
 const fx = mkdtempSync('/tmp/clui-tree-')
 const ws = join(fx, 'ws')
@@ -197,6 +197,11 @@ const within = <T,>(p: Promise<T>, ms: number): Promise<T | 'timeout'> => Promis
   equal(survivor(prev, collapsed, 'src/x.ts'), 'src', 'tree: else to the nearest shown parent')
   equal(ancestorsOf('a/b/c.ts').join(), 'a,a/b', 'tree: ancestors outermost first')
   equal(tilde('/Users/me/code', '/Users/me') + tilde('/Users/meow', '/Users/me'), '~/code/Users/meow', 'tree: tilde only on a path boundary')
+  equal(
+    ['/private/tmp/x', '/private/var/f', '/private/etc', '/private/other/x', '/private/tmpx', '/Users/me/p'].map((p) => shownPath(p, '/Users/me')).join(),
+    '/tmp/x,/var/f,/etc,/private/other/x,/private/tmpx,~/p',
+    'tree: shownPath drops the /private firmlink only for tmp, var and etc',
+  )
 }
 
 rmSync(fx, { recursive: true, force: true })

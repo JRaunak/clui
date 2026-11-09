@@ -33,9 +33,9 @@ export function SplitNewSession({
     'focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar focus-visible:z-10'
   // Dashed so unavailable reads by shape, not only by the fainter ink.
   const seg = unavailable
-    ? `${base} cursor-default border border-dashed border-faint/50 text-faint`
-    : `${base} border border-control-edge bg-transparent text-content hover:bg-bg-raised active:scale-[0.98] ${
-        pending ? 'pointer-events-none opacity-60' : ''
+    ? `${base} cursor-default border border-dashed border-faint/75 text-faint`
+    : `${base} border border-control-edge bg-transparent text-content pointer-fine:hover:bg-outline-hover active:scale-[0.98] ${
+        pending ? 'pointer-events-none opacity-70' : ''
       }`
   const disabledProps = unavailable
     ? { 'aria-disabled': true, 'aria-describedby': reasonId, title: unavailable.hint }
@@ -71,7 +71,7 @@ export function SplitNewSession({
           <span id={reasonId}>{unavailable.reason}</span>
           <button
             type="button"
-            className="min-h-6 text-content underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
+            className="min-h-6 shrink-0 whitespace-nowrap text-content underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"
             onClick={onFixCli}
           >
             Set CLI path

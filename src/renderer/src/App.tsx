@@ -308,8 +308,8 @@ export function App(): JSX.Element {
                 data-new-session
                 className={`flex h-[30px] w-[30px] items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg ${
                   unavailable
-                    ? 'cursor-default border border-dashed border-faint/50 text-faint'
-                    : `border border-control-edge text-content hover:bg-bg-raised ${newPending ? 'pointer-events-none opacity-60' : ''}`
+                    ? 'cursor-default border border-dashed border-faint/75 text-faint'
+                    : `border border-control-edge text-content pointer-fine:hover:bg-outline-hover ${newPending ? 'pointer-events-none opacity-70' : ''}`
                 }`}
                 onClick={unavailable || newPending ? undefined : startNew}
                 aria-disabled={!!unavailable || undefined}
@@ -372,7 +372,7 @@ export function App(): JSX.Element {
                 claude {cliInfo.version ?? ''}
               </span>
             ) : (
-              <span className="truncate text-err">claude CLI not found</span>
+              <span className="truncate text-err">Claude CLI not found</span>
             )}
             <button
               className="absolute right-1.5 flex h-7 w-7 items-center justify-center rounded-md text-dim transition-colors hover:bg-bg-raised hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-sidebar"

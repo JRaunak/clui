@@ -4,7 +4,7 @@ import { blockedOf, recheck, useBlockedVersion, type Blocked } from '../../lib/b
 import { siteKeyOf, type TabState } from '../../../../shared/browser'
 import type { SurfaceKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
-import { suffixes, tilde } from '../../lib/tree'
+import { shownPath, suffixes } from '../../lib/tree'
 import { fileLike } from '../../lib/presentation'
 import { FileIcon } from '../FileIcon'
 import { Menu } from '../Menu'
@@ -140,7 +140,7 @@ export function SurfaceTabs(): JSX.Element {
     const label = surfaceLabel(t)
     const common = { id, kind: t.kind, label, suffix: '', mark: false, more: '', tip: label, closeName: `Close ${label}`, state: null, unseen: !!t.unseen, fade: (t.openedBy === 'claude' || t.openedBy === 'change') && !initial.has(id) }
     if (t.kind === 'diff') return [{ ...common, tip: 'What Claude changed in this session' }]
-    if (t.kind === 'tree') return [{ ...common, more: ', file tree', tip: cwd ? tilde(cwd, window.clui.homeDir) : label }]
+    if (t.kind === 'tree') return [{ ...common, more: ', file tree', tip: cwd ? shownPath(cwd, window.clui.homeDir) : label }]
     if (!fileLike(t.kind)) return [common]
     const suffix = dup.get(t.key) ?? ''
     const named = suffix ? `${label} ${suffix}` : label
@@ -244,7 +244,7 @@ export function SurfaceTabs(): JSX.Element {
                 key={v.id}
                 data-kind={v.kind}
                 data-enter={v.fade || undefined}
-                className={`group/tab @container relative flex h-7 w-[200px] min-w-[120px] shrink items-center rounded-md ${
+                className={`group/tab @container relative flex h-7 w-[200px] min-w-[120px] ${on ? 'shrink-0' : 'shrink'} items-center rounded-md ${
                   v.fade ? 'transition-opacity duration-fast ease-out starting:opacity-0 motion-reduce:transition-none' : ''
                 }`}
               >

@@ -226,6 +226,18 @@ export function ToastStack({
     return () => document.removeEventListener('visibilitychange', sync)
   }, [])
 
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const root = document.documentElement
+    const ro = new ResizeObserver(() => root.style.setProperty('--toast-stack-h', `${el.offsetHeight}px`))
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      root.style.removeProperty('--toast-stack-h')
+    }
+  }, [])
+
   // Spacers are taken in the same render that drops the card, so the survivors never see the closed layout.
   const idKey = items.map((i) => i.id).join('\n')
   const [seen, setSeen] = useState({ key: idKey, items })
