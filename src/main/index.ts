@@ -23,7 +23,7 @@ import {
   type StartSessionOptions
 } from '../shared/ipc'
 import type { ElicitationResponse } from '../shared/events'
-import { classifierEnv, type EffortChoice, type ModelChoice } from '../shared/settings'
+import type { EffortChoice, ModelChoice } from '../shared/settings'
 import { detectCli } from './cli/detect'
 import { loginShellAuthEnv } from './cli/shell-env'
 import { SessionManager } from './sessions/manager'
@@ -65,7 +65,7 @@ import {
   updateSettings
 } from './settings/store'
 import { readCliSettings } from './settings/cli-settings'
-import { listModels, liveModelIds } from './models/list'
+import { listModels } from './models/list'
 import { BrowserManager } from './browser/manager'
 import { BrowserMcpServer } from './browser/mcp'
 import { mcpListener } from './lib/mcp-route'
@@ -790,7 +790,6 @@ function registerIpc(): void {
       effort: opts.effort ?? settings.effort,
       enableTaskTools: settings.enableTaskTools,
       blockOutsideWrites: settings.blockOutsideWrites,
-      classifierEnv: classifierEnv(settings, liveModelIds()),
       // Always open the stdio approval channel so any tool the CLI asks about can
       // be answered in the UI (inert when the mode never asks).
       gated: true,

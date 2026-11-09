@@ -18,9 +18,6 @@ const execFileP = promisify(execFile)
 
 let cache: string[] | null = null
 
-/** The cached live list, null until a live query has succeeded this process. Never the fallback. */
-export const liveModelIds = (): string[] | null => cache
-
 /**
  * Bedrock's inference-profile ids, kept VERBATIM as `--model` values and deduped in list
  * order. Non-Anthropic profiles and the legacy claude-3 family (not effort-capable) are

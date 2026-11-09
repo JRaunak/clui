@@ -91,24 +91,18 @@ export interface ClaudeSessionOptions {
   mcpConfigPath?: string
   /** Extra env for the child (merged over process.env). */
   env?: Record<string, string>
-  /** From `classifierEnv`. Merged last, over the shell's values. */
-  classifierEnv?: Record<string, string>
 }
 
 /**
- * The child's env. The task-tools default goes under process.env so an explicit shell value wins,
- * while the classifier vars go over it: once the user turns the local classifier on in Clui, a stray
- * shell value must not change which model gets billed, including a shell pin when Clui chose none.
+ * The child's env. The task-tools default goes under process.env so an explicit shell value wins.
  * Runtime markers are stripped from the final merge so a Clui launched inside a Claude Code session
  * doesn't leak its own markers into the child.
  */
 export function childEnv(
-  opts: Pick<ClaudeSessionOptions, 'enableTaskTools' | 'env' | 'classifierEnv'>,
+  opts: Pick<ClaudeSessionOptions, 'enableTaskTools' | 'env'>,
   base: NodeJS.ProcessEnv = process.env
 ): Record<string, string | undefined> {
-  const env = stripRuntimeMarkers({ CLAUDE_CODE_ENABLE_TODO_TOOLS: opts.enableTaskTools ? '1' : '0', ...base, ...opts.env })
-  if (opts.classifierEnv?.CLAUDE_CODE_AUTO_MODE_SERVER) delete env.CLAUDE_CODE_AUTO_MODE_MODEL
-  return { ...env, ...opts.classifierEnv }
+  return stripRuntimeMarkers({ CLAUDE_CODE_ENABLE_TODO_TOOLS: opts.enableTaskTools ? '1' : '0', ...base, ...opts.env })
 }
 
 export declare interface ClaudeSession {

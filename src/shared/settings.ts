@@ -81,16 +81,10 @@ export interface CluiSettings {
   /** Spawn sessions with the CLI's blockWritesOutsideWorkingDirectories, fencing Write/Edit/NotebookEdit
    *  to the workspace in every permission mode. Read at spawn; Quick sessions never get it. */
   blockOutsideWrites: boolean
-  /** Run Adaptive mode's permission classifier in the CLI instead of server-side. Read at spawn, like
-   *  enableTaskTools: a running session keeps what it started with. Local classifier tokens are billed
-   *  and never reach modelUsage, so the cost meter can't count them. */
-  localClassifier: boolean
   /** The user's standing instructions, appended to every session's system prompt, Quick included. Read at spawn;
    *  a resumed session keeps the text it first launched with, because the CLI freezes the prompt on its first
    *  request. At most ADDITIONAL_INSTRUCTIONS_MAX characters. */
   additionalInstructions: string
-  /** The classifier's model when localClassifier is on, a base id with no [1m]. Empty lets the CLI choose. */
-  classifierModel: string
   /** Directory a "no directory" session spawns in. Empty resolves to ~/.clui, a dedicated,
    *  contained location so a directoryless session can't touch the whole home tree. */
   defaultChatDir: string
@@ -359,42 +353,7 @@ export function isModelSelector(id: string): boolean {
   return id.toLowerCase().replace(/\[1m\]$/, '') in SELECTOR_LABELS
 }
 
-/**
- * Models the CLI refuses as the Adaptive classifier: a pin on one is ignored with a debug-log-only
- * warning and the CLI uses its own default. Matched with the region prefix and [1m] stripped.
- * Verified in the binary on CLI 2.1.306; re-verify on every CLI bump, it drifts like the effort gates.
- */
-export const CLASSIFIER_REFUSED_MODELS: readonly string[] = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-opus-5']
-
 const stripWindow = (id: string): string => id.replace(/\[1m\]$/i, '')
-
-export function classifierRefuses(id: string): boolean {
-  return CLASSIFIER_REFUSED_MODELS.includes(modelKey(id))
-}
-
-/** Classifier picker ids from a model list: base ids, since a classifier call never needs a 1M window
- *  and a model that needs the suffix is listed only at its [1m] id. Selectors and refused models are dropped. */
-export function classifierModelIds(ids: readonly string[]): string[] {
-  return [...new Set(ids.map(stripWindow))].filter((id) => !isModelSelector(id) && !classifierRefuses(id))
-}
-
-/**
- * Spawn env for the local classifier. `liveIds` is main's live model list, or null when only the
- * fallback (or nothing) is known. A pin missing from a live list is dropped, because the CLI fails
- * closed on an unavailable classifier model and denies every classified action. A refused pin is
- * dropped too, since the CLI ignores it anyway.
- */
-export function classifierEnv(
-  s: Pick<CluiSettings, 'localClassifier' | 'classifierModel'>,
-  liveIds: readonly string[] | null
-): Record<string, string> {
-  if (!s.localClassifier) return {}
-  const pin = s.classifierModel
-  const usable = !!pin && !classifierRefuses(pin) && (!liveIds || classifierModelIds(liveIds).includes(stripWindow(pin)))
-  return usable
-    ? { CLAUDE_CODE_AUTO_MODE_SERVER: '0', CLAUDE_CODE_AUTO_MODE_MODEL: stripWindow(pin) }
-    : { CLAUDE_CODE_AUTO_MODE_SERVER: '0' }
-}
 
 /**
  * The `--model` value a Quick session should spawn: the highest-version model of `family`
@@ -618,9 +577,7 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   browserDebug: true,
   enableTaskTools: false,
   blockOutsideWrites: false,
-  localClassifier: false,
   additionalInstructions: '',
-  classifierModel: '',
   // Empty → resolves to ~/.clui in main (getChatDir).
   defaultChatDir: '',
   // Quick sessions default to the leanest family + an asking mode: a throwaway chat should

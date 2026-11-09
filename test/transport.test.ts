@@ -1,9 +1,13 @@
 // Boundary: the CLI transport (`ClaudeSession`) driven against a fake child.
-// Covers reconnect, generation, and settlement.
-import { ClaudeSession } from '../src/main/cli/session.ts'
+// Covers reconnect, generation, settlement, and the child's env.
+import { ClaudeSession, childEnv } from '../src/main/cli/session.ts'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { CHANGE_READ_TOOL } from '../src/shared/context.ts'
 import { equal, ok } from './support/harness.mjs'
+
+equal(childEnv({ enableTaskTools: true }, { CLAUDE_CODE_ENABLE_TODO_TOOLS: '0' }).CLAUDE_CODE_ENABLE_TODO_TOOLS, '0', 'env: a shell task-tools value wins')
+equal('CLAUDE_CODE_SESSION_ID' in childEnv({}, { CLAUDE_CODE_SESSION_ID: 'x' }), false, 'env: runtime markers are stripped')
+equal(childEnv({}, { CLAUDE_CODE_AUTO_MODE_SERVER: '0' }).CLAUDE_CODE_AUTO_MODE_SERVER, '0', "env: the shell's own classifier choice passes through")
 
 const spawns = (): any[] => (globalThis as any).__spawns__ || []
 const reset = (): void => {

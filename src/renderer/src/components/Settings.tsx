@@ -28,7 +28,7 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
   const closeSettings = useSession((s) => s.closeSettings)
   const loaded = useSettings((s) => !!s)
 
-  // Null until listModels resolves, so a loading list can't read as a live list missing the classifier pin.
+  // Null until listModels resolves, so a loading list can't read as a live list missing the default model.
   const [modelList, setModelList] = useState<ModelListResult | null>(null)
   useEffect(() => {
     void window.clui.listModels().then(setModelList)
@@ -132,7 +132,7 @@ export function Settings({ covered }: { covered: boolean }): JSX.Element {
                 <BrowserSection />
               </Pane>
               <Pane section="advanced" active={section === 'advanced'} className="flex flex-col gap-5">
-                <AdvancedSection modelList={modelList} />
+                <AdvancedSection />
               </Pane>
             </>
           ) : (
