@@ -16,10 +16,10 @@ type Tab = 'agents' | 'skills' | 'hooks' | 'mcp'
 const TABS: Tab[] = ['agents', 'skills', 'hooks', 'mcp']
 
 // Scope-picker sentinels. Real scopes are absolute paths, so these can't collide.
-const SCOPE_ALL = '__clui_scope_all__'
+const SCOPE_GLOBAL = '__clui_scope_global__'
 const SCOPE_PICK = '__clui_scope_pick__'
-const CHAT_DIR_PICKED = "That's the folder no-project sessions use. Showing all projects."
-const LOCKED = 'Off for all projects. Switch the scope to All projects to turn it on.'
+const CHAT_DIR_PICKED = "That's the folder no-project sessions use. Scope: Global."
+const LOCKED = 'Off in Global. Switch the scope to Global to turn it on.'
 const PENDING = 'Applies to new and resumed sessions. This session keeps its current setting.'
 
 /** One on/off control, resolved for the picked scope. `inert` is aria-disabled: settings not loaded, or locked by global.
@@ -35,7 +35,7 @@ interface Switch {
 
 /**
  * CONFIGURATION browser: the Agents / Skills / Hooks / MCP
- * servers that apply in the picked scope (one project, or user + plugin only), merged across
+ * servers that apply in the picked scope (one project, or Global: user + plugin), merged across
  * project > user > plugin with origin badges. Its unique job is the cross-scope precedence AUDIT + jumping to the source
  * file (the CLI scatters this across `claude agents` / `/mcp` / `/hooks`). It never writes the
  * config files: a stale writer would corrupt the user's real ~/.claude / .mcp.json (catastrophic
@@ -49,7 +49,7 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
   const cwd = useActive((s) => s?.cwd ?? null)
   const chatDir = useSession((s) => s.chatDir)
   const projectDirs = useProjectDirs()
-  const [scope, setScope] = useState(() => (cwd && cwd !== chatDir ? cwd : SCOPE_ALL))
+  const [scope, setScope] = useState(() => (cwd && cwd !== chatDir ? cwd : SCOPE_GLOBAL))
   const [picked, setPicked] = useState<string | null>(null)
   const [bundle, setBundle] = useState<ConfigBundle | null>(null)
   const [busy, setBusy] = useState(true)
@@ -66,7 +66,7 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
   const [showPlugins, setShowPlugins] = useState(false)
 
   const label = scopeLabel(scope)
-  const all = scope === SCOPE_ALL
+  const all = scope === SCOPE_GLOBAL
 
   const disabled = useInstantSetting('disabledConfig')
   const cfg = disabled.value
@@ -77,12 +77,12 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
   const target = all ? null : scope
   // The CLI reports a symlink-resolved cwd (/private/tmp/x for /tmp/x), so either spelling is the same folder.
   const here = cwd && chatDir && sameDir(cwd, chatDir) ? chatDir : cwd
-  // All projects covers every session; a project covers its own.
+  // Global covers every session; a project covers its own.
   const sessionOff =
     cfg && here && launched && (all || sameDir(here, scope))
       ? new Set(effectiveDisabled(cfg, here, chatDir ?? '', Object.keys(cfg.projects).filter((k) => sameDir(k, here))))
       : null
-  // A chat-dir session's config is the user-level bundle, so it's the one All projects lists.
+  // A chat-dir session's config is the user-level bundle, so it's the one Global lists.
   const liveHere = !!here && !!liveMcp && (all ? here === chatDir : sameDir(here, scope))
 
   const switchFor = (token: string, name: string): Switch => {
@@ -110,13 +110,13 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
   useEffect(() => {
     let live = true
     setBusy(true)
-    window.clui.readConfig(scope === SCOPE_ALL ? null : scope).then(
+    window.clui.readConfig(scope === SCOPE_GLOBAL ? null : scope).then(
       (b) => {
         if (!live) return
         setBundle(b)
         setFailed(false)
         setBusy(false)
-        if (announceNext.current) setAnnouncement(`Showing ${scopeLabel(scope)}`)
+        if (announceNext.current) setAnnouncement(`Scope: ${scopeLabel(scope)}`)
         announceNext.current = false
       },
       () => {
@@ -144,7 +144,7 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
 
   const dirs = picked && !projectDirs.some((d) => sameDir(d, picked)) ? [...projectDirs, picked] : projectDirs
   const scopeOptions: DropdownOption<string>[] = [
-    { value: SCOPE_ALL, label: 'All projects', description: 'Your user and plugin config' },
+    { value: SCOPE_GLOBAL, label: 'Global', description: 'Your user and plugin config, for every session' },
     ...dirs.map((d, i) => ({ value: d, label: basename(d), description: d, divider: i === 0 })),
     { value: SCOPE_PICK, label: 'Other folder…', icon: <IconFolderOpen className="h-4 w-4" />, divider: true }
   ]
@@ -162,7 +162,7 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
     if (!dir) return
     if (chatDir && sameDir(dir, chatDir)) {
       announceNext.current = false
-      setScope(SCOPE_ALL)
+      setScope(SCOPE_GLOBAL)
       setAnnouncement(CHAT_DIR_PICKED)
       return
     }
@@ -321,23 +321,25 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
             <>
               {tab === 'agents' &&
                 (visibleAgents.length ? (
-                  visibleAgents.map((a) => (
-                    <ItemRow
-                      key={a.filePath}
-                      title={a.name}
-                      description={a.description}
-                      origin={a.origin}
-                      inline={agentMeta(a.model, splitTools(a.tools).length)}
-                      chips={splitTools(a.tools)}
-                      onOpen={() => void window.clui.openInEditor(null, a.filePath)}
-                      toggle={switchFor(agentToken(a.name), a.name)}
-                    />
-                  ))
+                  <Groups items={visibleAgents} split={!all}>
+                    {(a) => (
+                      <ItemRow
+                        key={a.filePath}
+                        title={a.name}
+                        description={a.description}
+                        origin={a.origin}
+                        inline={agentMeta(a.model, splitTools(a.tools).length)}
+                        chips={splitTools(a.tools)}
+                        onOpen={() => void window.clui.openInEditor(null, a.filePath)}
+                        toggle={switchFor(agentToken(a.name), a.name)}
+                      />
+                    )}
+                  </Groups>
                 ) : (
                   <Empty
                     what="agents"
                     project={all ? null : label}
-                    hint="Agents defined in .claude/agents (user or a plugin) appear here."
+                    hint="Agents in ~/.claude/agents or an enabled plugin appear here."
                   />
                 ))}
               {tab === 'skills' && (
@@ -345,63 +347,69 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
               )}
               {tab === 'skills' &&
                 (visibleSkills.length ? (
-                  visibleSkills.map((s) => (
-                    <ItemRow
-                      key={s.filePath}
-                      title={s.name}
-                      description={s.description}
-                      origin={s.origin}
-                      inline={s.version && `v${s.version}`}
-                      onOpen={() => void window.clui.openInEditor(null, s.filePath)}
-                    />
-                  ))
+                  <Groups items={visibleSkills} split={!all}>
+                    {(s) => (
+                      <ItemRow
+                        key={s.filePath}
+                        title={s.name}
+                        description={s.description}
+                        origin={s.origin}
+                        inline={s.version && `v${s.version}`}
+                        onOpen={() => void window.clui.openInEditor(null, s.filePath)}
+                      />
+                    )}
+                  </Groups>
                 ) : (
                   <Empty
                     what="skills"
                     project={all ? null : label}
-                    hint="Skills in .claude/skills (user or a plugin) appear here."
+                    hint="Skills in ~/.claude/skills or an enabled plugin appear here."
                   />
                 ))}
-              {tab === 'hooks' && <HooksSwitch s={hooks} />}
+              {tab === 'hooks' && <HooksSwitch s={hooks} global={all} />}
               {tab === 'hooks' &&
                 (bundle.hooks.length ? (
-                  bundle.hooks.map((h, i) => (
-                    <ItemRow
-                      key={`${h.event}-${i}`}
-                      title={h.event}
-                      description={h.matcher && `matcher: ${h.matcher}`}
-                      origin={h.origin}
-                      off={hooks.off}
-                      commands={h.commands}
-                      onOpen={h.filePath ? () => void window.clui.openInEditor(null, h.filePath) : undefined}
-                    />
-                  ))
+                  <Groups items={bundle.hooks} split={!all}>
+                    {(h, i) => (
+                      <ItemRow
+                        key={`${h.event}-${i}`}
+                        title={h.event}
+                        description={h.matcher && `matcher: ${h.matcher}`}
+                        origin={h.origin}
+                        off={hooks.off}
+                        commands={h.commands}
+                        onOpen={h.filePath ? () => void window.clui.openInEditor(null, h.filePath) : undefined}
+                      />
+                    )}
+                  </Groups>
                 ) : (
                   <Empty
                     what="hooks"
                     project={all ? null : label}
-                    hint="Hooks configured in your user settings.json appear here."
+                    hint="Hooks in ~/.claude/settings.json appear here."
                   />
                 ))}
               {tab === 'mcp' &&
                 (bundle.mcpServers.length ? (
-                  bundle.mcpServers.map((m) => (
-                    <ItemRow
-                      key={m.name}
-                      title={m.name}
-                      description={m.target}
-                      mono
-                      origin={m.origin}
-                      inline={m.transport}
-                      onOpen={m.filePath ? () => void window.clui.openInEditor(null, m.filePath) : undefined}
-                      toggle={switchFor(mcpToken(m.name), m.name)}
-                    />
-                  ))
+                  <Groups items={bundle.mcpServers} split={!all}>
+                    {(m) => (
+                      <ItemRow
+                        key={m.name}
+                        title={m.name}
+                        description={m.target}
+                        mono
+                        origin={m.origin}
+                        inline={m.transport}
+                        onOpen={m.filePath ? () => void window.clui.openInEditor(null, m.filePath) : undefined}
+                        toggle={switchFor(mcpToken(m.name), m.name)}
+                      />
+                    )}
+                  </Groups>
                 ) : (
                   <Empty
                     what="MCP servers"
                     project={all ? null : label}
-                    hint="MCP servers configured in ~/.claude.json or your user settings.json appear here."
+                    hint="MCP servers in ~/.claude.json or ~/.claude/settings.json appear here."
                   />
                 ))}
               {tab === 'mcp' && liveHere && (
@@ -424,7 +432,7 @@ export function Customizations({ onClose, covered }: { onClose: () => void; cove
 const sameDir = (a: string, b: string): boolean => unfirmlink(a) === unfirmlink(b)
 
 function scopeLabel(scope: string): string {
-  return scope === SCOPE_ALL ? 'All projects' : basename(scope)
+  return scope === SCOPE_GLOBAL ? 'Global' : basename(scope)
 }
 
 /** Split a frontmatter `tools` string ("Read, Grep, Bash") into one label per tool. */
@@ -631,6 +639,36 @@ function ItemRow({
   )
 }
 
+/** A project scope's rows, split into This project and Global when both have any. `items` arrive sorted project-first,
+ *  so the first non-project row is the cut. `i` is the index in `items`, stable across the split. */
+function Groups<T extends { origin: ConfigOrigin }>({
+  items,
+  split,
+  children
+}: {
+  items: T[]
+  split: boolean
+  children: (item: T, i: number) => ReactNode
+}): JSX.Element {
+  const id = useId()
+  const cut = split ? items.findIndex((it) => it.origin !== 'project') : -1
+  if (cut <= 0) return <>{items.map(children)}</>
+  const group = (key: string, label: string, from: number, to?: number): JSX.Element => (
+    <section aria-labelledby={`${id}-${key}`} className="group/sec">
+      <h3 id={`${id}-${key}`} className="mb-2 mt-4 text-caps uppercase text-dim group-first/sec:mt-0">
+        {label}
+      </h3>
+      {items.slice(from, to).map((it, j) => children(it, from + j))}
+    </section>
+  )
+  return (
+    <>
+      {group('project', 'This project', 0, cut)}
+      {group('global', 'Global', cut)}
+    </>
+  )
+}
+
 /** Where a row comes from: a config scope, or (live MCP only) Clui itself or the running session. */
 type Origin = ConfigOrigin | 'clui' | 'session'
 
@@ -643,7 +681,7 @@ function Badge({ text, ok }: { text: string; ok?: boolean }): JSX.Element {
 }
 
 /** The whole-scope hooks switch: the CLI has one `disableAllHooks` and no per-hook control. */
-function HooksSwitch({ s }: { s: Switch }): JSX.Element {
+function HooksSwitch({ s, global }: { s: Switch; global: boolean }): JSX.Element {
   const id = useId()
   return (
     <div className="mb-4 flex flex-col gap-1">
@@ -660,7 +698,9 @@ function HooksSwitch({ s }: { s: Switch }): JSX.Element {
         <span className="text-label text-content group-aria-disabled:text-faint">Run hooks</span>
       </button>
       <p id={`${id}-hint`} className="text-meta text-dim">
-        Turns every hook in this scope on or off. The CLI has no per-hook switch.
+        {global
+          ? 'Off stops every hook in every session. The CLI has no per-hook switch.'
+          : "Off stops every hook in this project's sessions, global hooks included. The CLI has no per-hook switch."}
       </p>
       {s.status.length > 0 && (
         <p id={`${id}-status`} className="text-meta text-dim">
@@ -728,7 +768,7 @@ function Empty({ what, project, hint }: { what: string; project: string | null; 
     <div className="flex min-h-[40vh] flex-col items-center justify-center gap-1.5 text-center">
       {project ? (
         <div className="text-ui text-dim">
-          No {what} in {project} or your user config.
+          No {what} in {project} or Global.
         </div>
       ) : (
         <>

@@ -278,28 +278,20 @@ export async function readConfig(cwd: string | null): Promise<ConfigBundle> {
   return {
     agents: dedupeByName(agents),
     skills: dedupeByName(skills),
-    hooks,
-    mcpServers: dedupeMcp(mcpServers)
+    // Stable, so a repeated event keeps its file order.
+    hooks: hooks.sort((a, b) => RANK[a.origin] - RANK[b.origin] || a.event.localeCompare(b.event)),
+    mcpServers: dedupeByName(mcpServers)
   }
 }
+
+const RANK: Record<ConfigOrigin, number> = { project: 0, user: 1, plugin: 2 }
 
 /** Keep the highest-precedence entry per name (project > user > plugin). */
 function dedupeByName<T extends { name: string; origin: ConfigOrigin }>(items: T[]): T[] {
-  const rank: Record<ConfigOrigin, number> = { project: 0, user: 1, plugin: 2 }
   const best = new Map<string, T>()
   for (const item of items) {
     const cur = best.get(item.name)
-    if (!cur || rank[item.origin] < rank[cur.origin]) best.set(item.name, item)
+    if (!cur || RANK[item.origin] < RANK[cur.origin]) best.set(item.name, item)
   }
-  return [...best.values()].sort((a, b) => a.name.localeCompare(b.name))
-}
-
-function dedupeMcp(items: McpServerInfo[]): McpServerInfo[] {
-  const rank: Record<ConfigOrigin, number> = { project: 0, user: 1, plugin: 2 }
-  const best = new Map<string, McpServerInfo>()
-  for (const item of items) {
-    const cur = best.get(item.name)
-    if (!cur || rank[item.origin] < rank[cur.origin]) best.set(item.name, item)
-  }
-  return [...best.values()].sort((a, b) => a.name.localeCompare(b.name))
+  return [...best.values()].sort((a, b) => RANK[a.origin] - RANK[b.origin] || a.name.localeCompare(b.name))
 }
