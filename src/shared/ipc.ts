@@ -150,13 +150,29 @@ export interface TaggedEvent {
   event: DomainEvent
 }
 
-/** Result of a model-list query: the ids plus whether they actually came from Bedrock. */
+/** The CLI's `account.apiProvider` from its initialize response (CLI 2.1.319). */
+export type ApiProvider =
+  | 'firstParty'
+  | 'bedrock'
+  | 'vertex'
+  | 'foundry'
+  | 'anthropicAws'
+  | 'anthropicGoogleCloud'
+  | 'mantle'
+  | 'gateway'
+
+/** Result of a model-list query: the ids plus where they came from. */
 export interface ModelListResult {
   ids: string[]
-  /** True only when this call's ids came LIVE from Bedrock (or from a cached live
-   *  result). False means `ids` is Clui's bundled fallback. */
+  /** True when this call's ids came live, from Bedrock's inference profiles or the CLI's
+   *  own model catalog (or a cached live result). False means `ids` is Clui's bundled fallback. */
   live: boolean
-  /** Coarse cause when `live` is false, so the UI can name the fix. */
+  /** The provider the CLI reported. Absent when the CLI couldn't be asked. */
+  provider?: ApiProvider
+  /** Bedrock's query failed and the CLI's catalog stood in. That catalog is the CLI's /model
+   *  picker list, so models the account has can be missing; `reason` names the Bedrock failure. */
+  partial?: true
+  /** Coarse cause when `live` is false or `partial` is set, so the UI can name the fix. */
   reason?: 'no-cli' | 'expired-creds' | 'other'
 }
 
@@ -397,10 +413,10 @@ export interface CluiApi {
    */
   getEffortCaps: () => Promise<EffortCaps>
   /**
-   * List available model ids. `live` is true when these ids came from Bedrock (a
-   * successful query, or the cache of one) and false when they're Clui's bundled
-   * fallback, with `reason` naming the cause. Only success is cached, so `live` is a
-   * PER-CALL fact: a later call can go live again; never latch it as app state.
+   * List available model ids. `live` is true when these ids came from Bedrock or the CLI's
+   * catalog (a successful query, or the cache of one) and false when they're Clui's bundled
+   * fallback, with `reason` naming the cause. Only a full live list is cached, so `live` and
+   * `partial` are PER-CALL facts: a later call can do better; never latch them as app state.
    */
   listModels: (refresh?: boolean) => Promise<ModelListResult>
   /** Resolve a dropped/picked File's absolute path (Electron 33 `webUtils`). Synchronous;

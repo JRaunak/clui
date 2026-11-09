@@ -22,15 +22,27 @@ import { FieldError } from '../LoginFields'
 import { PermissionModeField } from './PermissionModeField'
 import { Field, Group, OUTLINE_BUTTON, SAVE_FAILED, describedBy, useInstantSetting, useInstantText } from './shared'
 
-/** What to tell the user when the model list is the bundled fallback. Only Bedrock can be queried
- *  for a list; on other providers the CLI reads its own built-in catalog, so a missing `aws` is normal. */
-const FALLBACK_NOTES: Record<NonNullable<ModelListResult['reason']>, string> = {
+type Reason = NonNullable<ModelListResult['reason']>
+
+/** A partial list is the CLI's catalog standing in for a failed Bedrock query, so its fix is the aws side
+ *  alone. The fallback means the CLI couldn't be asked either, so its fix starts with the claude CLI. */
+const PARTIAL_NOTES: Record<Reason, string> = {
   'no-cli':
-    "Showing Clui's built-in model list. A live list needs the aws CLI on Clui's PATH, which only applies if you use Bedrock.",
+    "Showing the claude CLI's model list, which leaves out some Bedrock models. For the full list, put the aws CLI on Clui's PATH, then reopen Settings.",
   'expired-creds':
-    'Your AWS credentials have expired, so newer models may be missing. Run aws sso login, then reopen Settings.',
+    "Your AWS credentials have expired, so this is the claude CLI's shorter model list. Run aws sso login, then reopen Settings.",
   other:
-    "Showing Clui's built-in list. The live Bedrock query failed, so newer models may be missing. Check the aws CLI and your credentials, then reopen Settings."
+    "The Bedrock model query failed, so this is the claude CLI's shorter list. Check the aws CLI and your credentials, then reopen Settings."
+}
+
+const FALLBACK_UNREACHABLE =
+  "Showing Clui's built-in model list. Newer models may be missing. Check the claude CLI and, if you use Bedrock, the aws CLI and your credentials, then reopen Settings."
+
+const FALLBACK_NOTES: Record<Reason, string> = {
+  'no-cli': FALLBACK_UNREACHABLE,
+  'expired-creds':
+    "Your AWS credentials have expired, so this is Clui's built-in model list. Newer models may be missing. Run aws sso login, then reopen Settings.",
+  other: FALLBACK_UNREACHABLE
 }
 
 const QUICK_FAMILY_LABELS: Record<CluiSettings['quickModelFamily'], string> = {
@@ -60,7 +72,7 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
   const modelId = model.value ?? DEFAULT_SETTINGS.model
   const defaultModel = deriveModelInfo(modelId)
 
-  // Group + version-sort the unordered live Bedrock list into the composer picker's shape.
+  // Group + version-sort the unordered live list into the composer picker's shape.
   // Headers only when there's more than one family; the context-size column only for known ones.
   const modelOptions = useMemo(
     () =>
@@ -116,10 +128,10 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
               <FieldError id={`${uid}-model-err`} text={SAVE_FAILED} />
             ) : (
               modelList &&
-              !modelList.live && (
+              (modelList.partial || !modelList.live) && (
                 <p className="flex items-start gap-1.5 text-meta text-warn" role="status">
                   <IconWarn className="mt-px h-3.5 w-3.5 shrink-0" />
-                  {FALLBACK_NOTES[modelList.reason ?? 'other']}
+                  {(modelList.partial ? PARTIAL_NOTES : FALLBACK_NOTES)[modelList.reason ?? 'other']}
                 </p>
               )
             )

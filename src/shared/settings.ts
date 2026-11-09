@@ -190,9 +190,9 @@ export interface ModelInfo {
 }
 
 /**
- * Base model ids for when the live Bedrock query hasn't landed or fails (no `aws`, creds
- * refreshing, a non-Bedrock provider). Base ids only: `withVariants` synthesizes the [1m]
- * twins on both the live and fallback paths, so the 1M rule lives in one place. Each entry
+ * Base model ids for when no live list has landed: the CLI couldn't be asked for its catalog and
+ * Bedrock (if configured) couldn't be queried. Base ids only: `withVariants` synthesizes the [1m]
+ * twins on the Bedrock and fallback paths, so the 1M rule lives in one place. Each entry
  * must be a working `--model` value on Bedrock as written, so a model Bedrock lists only
  * date-suffixed (Haiku 4.5) stays out. Re-check against `aws bedrock list-inference-profiles`
  * when a new family ships.
@@ -275,6 +275,29 @@ export function effortsFromCatalog(models: unknown): Record<string, EffortChoice
     return [{ ids: typeof resolvedModel === 'string' ? [value, resolvedModel] : [value], efforts }]
   })
   for (const pass of [0, 1]) for (const { ids, efforts } of rows) if (ids[pass]) out[modelKey(ids[pass])] ??= efforts
+  return out
+}
+
+/**
+ * The picker ids in an initialize response's `models[]`, in list order. An alias row becomes the model it
+ * resolves to, since a session started on an alias reports that model anyway; a resolution that carries no
+ * version (an alias resolving to an alias) keeps the row's own value. `[1m]` rows stay distinct from their
+ * base model and none is synthesized: off Bedrock the suffix's validity is unverified.
+ */
+export function catalogIds(models: unknown): string[] {
+  if (!Array.isArray(models)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const m of models) {
+    if (!m || typeof m !== 'object') continue
+    const { value, resolvedModel } = m as Record<string, unknown>
+    if (typeof value !== 'string' || !value || value === 'default') continue
+    const id = typeof resolvedModel === 'string' && parseModelId(resolvedModel).versioned ? resolvedModel : value
+    const key = modelKey(id) + (/\[1m\]$/i.test(id) ? '[1m]' : '')
+    if (key.startsWith('claude-3-') || seen.has(key)) continue
+    seen.add(key)
+    out.push(id)
+  }
   return out
 }
 

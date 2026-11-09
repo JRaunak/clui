@@ -1,22 +1,29 @@
 /**
- * Live model discovery (avoids a stale hardcoded list). Queries Bedrock inference
- * profiles via the AWS CLI using the user's configured profile/region (from
- * ~/.claude/settings.json `bedrock`) and returns their ids unchanged, since only the
- * full id is a valid `--model` value. Falls back to a bundled list if the query fails (no aws
- * CLI, non-Bedrock provider, etc.), flagged `live: false` so the UI can say so
- * instead of claiming a live list. Only a SUCCESSFUL result is cached, so a
- * transient failure retries rather than pinning the fallback for the process.
+ * Live model discovery (avoids a stale hardcoded list). Two sources, asked in parallel:
+ * the CLI's own model catalog (its initialize response, zero tokens, which also names the
+ * provider), and on Bedrock the account's inference profiles via the AWS CLI. Bedrock's
+ * profiles win on Bedrock because the catalog is only the CLI's /model picker list, not the
+ * account's inventory; every other provider takes the catalog. Ids are returned unchanged,
+ * since only the full id is a valid `--model` value. With neither source, Clui's bundled list
+ * comes back flagged `live: false` so the UI can say so instead of claiming a live list. Only
+ * a full live result is cached, so a transient failure retries rather than pinning the
+ * fallback for the process.
  */
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import type { ModelListResult } from '../../shared/ipc'
-import { FALLBACK_MODEL_IDS, deriveModelInfo, takes1mSuffix } from '../../shared/settings'
+import { app } from 'electron'
+import type { ApiProvider, ModelListResult } from '../../shared/ipc'
+import { FALLBACK_MODEL_IDS, catalogIds, deriveModelInfo, takes1mSuffix } from '../../shared/settings'
+import { detectCli } from '../cli/detect'
+import { NdjsonParser } from '../cli/ndjson'
+import { childEnv } from '../cli/session'
 import { loginShellAuthEnv } from '../cli/shell-env'
-import { readCliSettings } from '../settings/cli-settings'
+import { awsTarget, readCliSettings } from '../settings/cli-settings'
+import { getSettings } from '../settings/store'
 
 const execFileP = promisify(execFile)
 
-let cache: string[] | null = null
+let cache: ModelListResult | null = null
 
 /**
  * Bedrock's inference-profile ids, kept VERBATIM as `--model` values and deduped in list
@@ -82,58 +89,146 @@ function failureReason(e: unknown): NonNullable<ModelListResult['reason']> {
   return /expired|ExpiredToken|sso/i.test(text) ? 'expired-creds' : 'other'
 }
 
-/** The app's warm-up and an opening Settings page ask at once, so one `aws` query answers both. */
+const API_PROVIDERS: ApiProvider[] = [
+  'firstParty',
+  'bedrock',
+  'vertex',
+  'foundry',
+  'anthropicAws',
+  'anthropicGoogleCloud',
+  'mantle',
+  'gateway'
+]
+
+type InitReply =
+  | { type?: unknown; response?: { subtype?: unknown; response?: { account?: { apiProvider?: unknown }; models?: unknown } } }
+  | null
+
+const isApiProvider = (p: string | null): p is ApiProvider => (API_PROVIDERS as (string | null)[]).includes(p)
+
+/** Initialize answered in 3 to 5s warm and 10.4s on a cold first start (CLI 2.1.319, this machine). */
+const PROBE_TIMEOUT_MS = 20000
+
+/**
+ * The CLI's provider and catalog from its initialize response, or null if it didn't answer. No `--model`:
+ * a session's catalog echoes its own `--model` as an extra row, which must not reach the shared list. Hooks
+ * and MCP servers are off and nothing is persisted, so the probe costs no tokens and leaves no transcript.
+ */
+async function probeCatalog(authEnv: Record<string, string>): Promise<{ provider: string; models: unknown } | null> {
+  const { cliPath } = await getSettings()
+  const cli = (await detectCli(cliPath || null)).path
+  if (!cli) return null
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
+  args.push('--no-session-persistence', '--strict-mcp-config', '--settings', '{"disableAllHooks":true}')
+  return new Promise((resolve) => {
+    const child = spawn(cli, args, { cwd: app.getPath('userData'), env: childEnv({ env: authEnv }) })
+    const parser = new NdjsonParser()
+    const done = (v: { provider: string; models: unknown } | null): void => {
+      clearTimeout(timer)
+      child.kill()
+      resolve(v)
+    }
+    const timer = setTimeout(() => done(null), PROBE_TIMEOUT_MS)
+    child.on('error', () => done(null))
+    child.on('close', () => done(null))
+    child.stdin.on('error', () => {})
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      for (const msg of parser.push(chunk) as InitReply[]) {
+        if (msg?.type !== 'control_response') continue
+        const res = msg.response?.subtype === 'success' ? msg.response.response : undefined
+        const provider = res?.account?.apiProvider
+        return done(typeof provider === 'string' ? { provider, models: res?.models } : null)
+      }
+    })
+    child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: 'models-probe', request: { subtype: 'initialize' } })}\n`)
+  })
+}
+
+type BedrockOutcome = { ids: string[] } | { reason: NonNullable<ModelListResult['reason']> }
+
+/**
+ * Which list a query returns. `provider` is null when the CLI didn't answer; `hinted` is whether the
+ * config names Bedrock, which decides if Bedrock's ids stand in for the CLI's answer.
+ */
+export function pickModelList({
+  provider,
+  catalog,
+  bedrock,
+  hinted
+}: {
+  provider: string | null
+  catalog: string[]
+  bedrock: BedrockOutcome
+  hinted: boolean
+}): ModelListResult {
+  const known = isApiProvider(provider) ? { provider } : {}
+  if ((provider === 'bedrock' || (provider === null && hinted)) && 'ids' in bedrock) {
+    return { ids: withVariants(bedrock.ids), live: true, ...known }
+  }
+  if (catalog.length && provider !== null) {
+    return provider === 'bedrock' && 'reason' in bedrock
+      ? { ids: catalog, live: true, ...known, partial: true, reason: bedrock.reason }
+      : { ids: catalog, live: true, ...known }
+  }
+  return { ids: withVariants(FALLBACK_MODEL_IDS), live: false, ...known, reason: 'reason' in bedrock ? bedrock.reason : 'other' }
+}
+
+async function queryBedrock(env: NodeJS.ProcessEnv, region: string | undefined): Promise<BedrockOutcome> {
+  try {
+    const args = ['bedrock', 'list-inference-profiles']
+    if (region) args.push('--region', region)
+    args.push('--query', 'inferenceProfileSummaries[].inferenceProfileId', '--output', 'text')
+    const { stdout } = await execFileP(await resolveAws(), args, { env, timeout: 15000, encoding: 'utf8' })
+    const ids = pickableProfileIds(stdout.split(/\s+/).filter(Boolean))
+    if (ids.length === 0) throw new Error('no anthropic models returned')
+    return { ids }
+  } catch (e) {
+    return { reason: failureReason(e) }
+  }
+}
+
+/** The app's warm-up and an opening Settings page ask at once, so one query answers both. */
 let pending: Promise<ModelListResult> | null = null
 
 /**
- * List available model ids. Live-queries Bedrock; caches ONLY successful results;
- * falls back to the bundled list on failure WITHOUT caching it, so a transient
- * failure (aws not yet on PATH, creds refreshing, network blip) is retried on the
- * next call instead of pinning the stale fallback for the whole process lifetime.
- * `live` is therefore a per-call fact, never a process-wide "offline" state.
+ * List available model ids. Caches ONLY a full live result; a fallback or partial list is
+ * returned WITHOUT caching, so a transient failure (aws not yet on PATH, creds refreshing,
+ * network blip) is retried on the next call instead of pinning a worse list for the whole
+ * process lifetime. `live` is therefore a per-call fact, never a process-wide "offline" state.
  */
 export function listModels(refresh = false): Promise<ModelListResult> {
-  if (cache && !refresh) return Promise.resolve({ ids: cache, live: true })
+  if (cache && !refresh) return Promise.resolve(cache)
   pending ??= query().finally(() => (pending = null))
   return pending
 }
 
 async function query(): Promise<ModelListResult> {
-  const { profile, region } = (await readCliSettings()).bedrock
-  try {
-    // A Finder-launched app inherits a minimal env, so `aws` here fails with
-    // NoCredentials and every list silently degrades to FALLBACK_MODEL_IDS. Re-source
-    // the login shell for the same auth vars the CLI subprocess gets.
-    const authEnv = await loginShellAuthEnv()
-    const env = {
-      ...process.env,
-      ...authEnv,
-      // When no credentials resolve, botocore probes the EC2 metadata service: two attempts
-      // at a hard-coded 1s connect timeout against 169.254.169.254, which macOS blackholes
-      // via ARP rather than refusing. That is ~2.4s of a ~2.6s doomed call; without it the
-      // failure path is ~0.5s, most of which is `aws` startup. Clui ships macOS-only, so
-      // instance metadata can never be a real credential source here.
-      AWS_EC2_METADATA_DISABLED: 'true',
-      ...(profile ? { AWS_PROFILE: profile } : {})
-    }
-    const args = ['bedrock', 'list-inference-profiles']
-    if (region) args.push('--region', region)
-    args.push('--query', 'inferenceProfileSummaries[].inferenceProfileId', '--output', 'text')
-    const { stdout } = await execFileP(await resolveAws(), args, {
-      env,
-      timeout: 15000,
-      encoding: 'utf8'
-    })
-    const ids = pickableProfileIds(stdout.split(/\s+/).filter(Boolean))
-    if (ids.length === 0) throw new Error('no anthropic models returned')
-    cache = withVariants(ids)
-    return { ids: cache, live: true }
-  } catch (e) {
-    // Do NOT cache the fallback: leave `cache` null so the next call retries the
-    // live query. Return the bundled list for this call only, through `withVariants`
-    // too so off-Bedrock users see identical picker ids.
-    return { ids: withVariants(FALLBACK_MODEL_IDS), live: false, reason: failureReason(e) }
+  // A Finder-launched app inherits a minimal env, so the CLI and `aws` would miss the user's
+  // auth vars. Re-source the login shell for the same vars a session's CLI gets.
+  const [cli, authEnv] = await Promise.all([readCliSettings(), loginShellAuthEnv()])
+  const shell = { ...process.env, ...authEnv }
+  const { profile, region, useBedrock } = awsTarget(cli, shell)
+  const awsEnv = {
+    ...shell,
+    // When no credentials resolve, botocore probes the EC2 metadata service: two attempts
+    // at a hard-coded 1s connect timeout against 169.254.169.254, which macOS blackholes
+    // via ARP rather than refusing. That is ~2.4s of a ~2.6s doomed call; without it the
+    // failure path is ~0.5s, most of which is `aws` startup. Clui ships macOS-only, so
+    // instance metadata can never be a real credential source here.
+    AWS_EC2_METADATA_DISABLED: 'true',
+    ...(profile ? { AWS_PROFILE: profile } : {})
   }
+  // The provider is unknown until the CLI answers, so Bedrock is asked regardless and discarded off it.
+  const [probe, bedrock] = await Promise.all([probeCatalog(authEnv).catch(() => null), queryBedrock(awsEnv, region)])
+  const result = pickModelList({
+    provider: probe?.provider ?? null,
+    catalog: catalogIds(probe?.models),
+    bedrock,
+    hinted: useBedrock
+  })
+  if (result.live && !result.partial) cache = result
+  return result
 }
 
 /**

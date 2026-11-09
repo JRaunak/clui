@@ -18,6 +18,7 @@ import {
   type ModelChoice,
   type ModelInfo
 } from '../../../shared/settings'
+import type { ModelListResult } from '../../../shared/ipc'
 
 /** Effort → color, matching the statusline's per-level coloring. */
 const EFFORT_COLORS: Record<EffortChoice, string> = {
@@ -49,6 +50,36 @@ const COMMIT_KEYS = new Set([
  *  as a flicker rather than a retry; the project bans sub-400ms spinners. */
 const MIN_SPIN = 350
 
+type Reason = NonNullable<ModelListResult['reason']>
+
+const EXPIRED = 'AWS credentials expired. Run aws sso login, then refresh.'
+
+const PARTIAL_DETAIL: Record<Reason, string> = {
+  'no-cli': "Bedrock's full list needs the aws CLI on Clui's PATH. Refresh to retry.",
+  'expired-creds': EXPIRED,
+  other: 'The Bedrock query failed. Check the aws CLI and your credentials, then refresh.'
+}
+
+/** The warning under the header, partial winning over fallback; null for a full live list. */
+function listBanner(list: ModelListResult | null): { text: string; detail: string } | null {
+  if (!list || (list.live && !list.partial)) return null
+  const reason = list.reason ?? 'other'
+  if (list.partial) return { text: "Claude CLI's list, may be incomplete", detail: PARTIAL_DETAIL[reason] }
+  return {
+    text: 'Built-in list, may be incomplete',
+    detail:
+      reason === 'expired-creds'
+        ? EXPIRED
+        : "Couldn't load a live model list. This is Clui's built-in list and may be missing newer models. Refresh to retry."
+  }
+}
+
+function refreshLabel(list: ModelListResult | null): string {
+  if (list?.partial) return 'Retry the Bedrock model query'
+  if (list && !list.live) return 'Retry loading the model list'
+  return list?.provider === 'bedrock' ? 'Refresh model list from Bedrock' : 'Refresh model list'
+}
+
 /** Composer control: model + effort picker. Applies to THIS session only; never
  *  writes any settings file. */
 export function ModelEffortPicker(): JSX.Element {
@@ -68,9 +99,9 @@ export function ModelEffortPicker(): JSX.Element {
   const setModel = useSession((s) => s.setModel)
   const setEffort = useSession((s) => s.setEffort)
   const [models, setModels] = useState<ModelInfo[]>([])
-  // Per-call, not app state: only a SUCCESSFUL list is cached in main, so a later call
-  // (or the refresh button) can go live again.
-  const [live, setLive] = useState(true)
+  // Per-call, not app state: only a full live list is cached in main, so a later call
+  // (or the refresh button) can do better.
+  const [list, setList] = useState<ModelListResult | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [hover, setHover] = useState<ModelChoice | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -95,17 +126,17 @@ export function ModelEffortPicker(): JSX.Element {
   const open = p.open
   const checkedRef = useRef<HTMLButtonElement>(null)
 
-  // Load the live model list once the popover first opens.
+  // Load the model list once the popover first opens.
   useEffect(() => {
     if (!open || models.length) return
     window.clui.listModels().then((res) => {
       setModels(res.ids.map(deriveModelInfo))
-      setLive(res.live)
+      setList(res)
     })
   }, [open, models.length])
 
-  // Force a fresh live query (Bedrock may have gained a model, or the first query
-  // hit a transient failure and returned the bundled fallback).
+  // Force a fresh query. It re-asks the CLI on every provider, plus Bedrock where it applies (the account
+  // may have gained a model, or the first query hit a transient failure and returned a fallback).
   const refresh = async (): Promise<void> => {
     setRefreshing(true)
     try {
@@ -115,7 +146,7 @@ export function ModelEffortPicker(): JSX.Element {
         new Promise((r) => setTimeout(r, MIN_SPIN))
       ])
       setModels(res.ids.map(deriveModelInfo))
-      setLive(res.live)
+      setList(res)
     } finally {
       setRefreshing(false)
     }
@@ -140,6 +171,8 @@ export function ModelEffortPicker(): JSX.Element {
     if (open && models.length) checkedRef.current?.scrollIntoView({ block: 'nearest' })
   }, [open, models.length])
 
+  const banner = listBanner(list)
+  const refreshTitle = refreshLabel(list)
   const cur = deriveModelInfo(modelChoice)
   const curLabel = cur.label
   const noEffort = !cur.efforts.length
@@ -209,7 +242,8 @@ export function ModelEffortPicker(): JSX.Element {
             <button
               type="button"
               className="-my-1 flex h-6 w-6 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              title={live ? 'Refresh model list from Bedrock' : 'Retry the live model query'}
+              title={refreshTitle}
+              aria-label={refreshTitle}
               onClick={(e) => {
                 e.stopPropagation()
                 void refresh()
@@ -218,16 +252,14 @@ export function ModelEffortPicker(): JSX.Element {
               <IconRefresh className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
           </div>
-          {/* Its own line under the header, since the header row has no room for it. Wraps
-              to two lines at w-[180px]; shrinking it below the meta size would fail the
-              contrast/size floor. */}
-          {!live && (
-            <div
-              className="flex shrink-0 items-start gap-1 px-3 pb-1 text-meta text-warn"
-              title="Couldn't reach Bedrock. This is Clui's built-in list and may be missing newer models. Refresh to retry."
-            >
+          {/* Its own line under the header, since the header row has no room for it; shrinking it below the
+              meta size would fail the contrast/size floor. The div isn't focusable, so the title's next step
+              reaches keyboard and screen-reader users through the sr-only copy. */}
+          {banner && (
+            <div className="flex shrink-0 items-start gap-1 px-3 pb-1 text-meta text-warn" title={banner.detail}>
               <IconWarn className="mt-px h-3 w-3 shrink-0" />
-              <span>Built-in list, may be incomplete</span>
+              <span>{banner.text}</span>
+              <span className="sr-only">{`. ${banner.detail}`}</span>
             </div>
           )}
           {models.length === 0 && <div className="px-3 py-2 text-dim">Loading models…</div>}

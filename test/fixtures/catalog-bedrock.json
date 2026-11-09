@@ -1,0 +1,130 @@
+{
+  "claude_code_version": "2.1.319",
+  "account": {
+    "apiProvider": "bedrock"
+  },
+  "models": [
+    {
+      "value": "default",
+      "resolvedModel": "us.anthropic.claude-opus-5-5",
+      "displayName": "Default",
+      "description": "Use the default model (currently Opus 5.5)",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": false
+    },
+    {
+      "value": "us.anthropic.claude-fable-5-1",
+      "resolvedModel": "us.anthropic.claude-fable-5-1",
+      "displayName": "Fable",
+      "description": "Fable 5.1 · Most capable for your hardest and longest-running tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": false
+    },
+    {
+      "value": "us.anthropic.claude-sonnet-5-5",
+      "resolvedModel": "us.anthropic.claude-sonnet-5-5",
+      "displayName": "Sonnet",
+      "description": "Sonnet 5.5 · Efficient for routine tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": false
+    },
+    {
+      "value": "us.anthropic.claude-sonnet-5",
+      "resolvedModel": "us.anthropic.claude-sonnet-5",
+      "displayName": "Sonnet 5",
+      "description": "Sonnet 5 · Previous Sonnet version",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": true
+    },
+    {
+      "value": "us.anthropic.claude-sonnet-4-6",
+      "resolvedModel": "us.anthropic.claude-sonnet-4-6",
+      "displayName": "Sonnet 4.6",
+      "description": "Sonnet 4.6 · Legacy",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsThinkingOff": true
+    },
+    {
+      "value": "us.anthropic.claude-sonnet-4-6[1m]",
+      "resolvedModel": "us.anthropic.claude-sonnet-4-6[1m]",
+      "displayName": "Sonnet 4.6 (1M context)",
+      "description": "Sonnet 4.6 for long sessions",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsThinkingOff": true
+    },
+    {
+      "value": "opus",
+      "resolvedModel": "us.anthropic.claude-opus-5-5",
+      "displayName": "Opus 5.5",
+      "description": "Custom Opus model (us.anthropic.claude-opus-5-5[1m])",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": false
+    },
+    {
+      "value": "haiku",
+      "resolvedModel": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "displayName": "Haiku",
+      "description": "Haiku 4.5 · Fastest for quick answers",
+      "supportsThinkingOff": true
+    }
+  ]
+}
