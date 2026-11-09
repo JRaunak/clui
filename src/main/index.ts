@@ -23,7 +23,7 @@ import {
   type StartSessionOptions
 } from '../shared/ipc'
 import type { ElicitationResponse } from '../shared/events'
-import type { EffortChoice, ModelChoice } from '../shared/settings'
+import { effectiveDisabled, type EffortChoice, type ModelChoice } from '../shared/settings'
 import { detectCli } from './cli/detect'
 import { loginShellAuthEnv } from './cli/shell-env'
 import { SessionManager } from './sessions/manager'
@@ -141,6 +141,9 @@ function modeToFlag(choice: PermissionModeChoice): string | undefined {
   // 'inherit' → undefined = pass no flag = honor ~/.claude/settings.json.
   return choice === 'inherit' ? undefined : choice
 }
+
+/** The cwd of a "no directory" session. */
+const chatDirOf = (s: CluiSettings): string => s.defaultChatDir.trim() || join(homedir(), '.clui')
 
 /** Window background per theme. Matches the renderer's --color-bg so there's no
  *  flash of the wrong color before the React/CSS paint. Keep in sync with styles.css. */
@@ -739,8 +742,7 @@ function registerIpc(): void {
   // The cwd for a "no directory" session: a dedicated ~/.clui (configurable), created on
   // demand so it always exists before spawn. Contained on purpose so it never touches the home tree.
   handle(IpcChannels.getChatDir, async () => {
-    const { defaultChatDir } = await getSettings()
-    const dir = defaultChatDir.trim() || join(homedir(), '.clui')
+    const dir = chatDirOf(await getSettings())
     await mkdir(dir, { recursive: true })
     return dir
   })
@@ -775,6 +777,7 @@ function registerIpc(): void {
     const allow = [CHANGE_READ_TOOL, ...(presents ? [SURFACE_STATE_TOOL, SURFACE_OPEN_TOOL] : []), ...(withBrowser ? ['mcp__clui-browser'] : [])]
     const restore: SurfacesRestore = opts.resumeSessionId && !opts.ephemeral ? await loadSurfaces(opts.resumeSessionId) : { status: 'none' }
     const saved = restore.status === 'ok' ? restore.entry : null
+    const disabled = effectiveDisabled(settings.disabledConfig, opts.cwd, chatDirOf(settings), [await realpath(opts.cwd).catch(() => opts.cwd)])
     if (withBrowser) mcp.setBundles(handleId, { visual: settings.browserVisual, interact: settings.browserInteract, debug: settings.browserDebug })
     manager.start(handleId, {
       cliPath: info.path,
@@ -790,6 +793,7 @@ function registerIpc(): void {
       effort: opts.effort ?? settings.effort,
       enableTaskTools: settings.enableTaskTools,
       blockOutsideWrites: settings.blockOutsideWrites,
+      disabledConfig: disabled,
       // Always open the stdio approval channel so any tool the CLI asks about can
       // be answered in the UI (inert when the mode never asks).
       gated: true,
@@ -804,7 +808,7 @@ function registerIpc(): void {
     trackSession(handleId, { quick: !!opts.ephemeral, sessionId: opts.fork ? null : (opts.resumeSessionId ?? null), seed: opts.fork ? saved : null })
     if (withBrowser) browser.enable(handleId, saved?.browserTabs)
     const surfaces: SurfacesRestore = saved ? { status: 'ok', entry: { ...saved, browserTabs: withBrowser ? browser.records(handleId) : null } } : restore
-    return { handleId, browser: withBrowser, surfaces }
+    return { handleId, browser: withBrowser, surfaces, disabled }
   })
 
   handle(IpcChannels.sendMessage, async (_e, handleId: unknown, raw: unknown) => {

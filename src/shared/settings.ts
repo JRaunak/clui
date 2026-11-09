@@ -93,6 +93,48 @@ export interface CluiSettings {
   quickModelFamily: 'opus' | 'sonnet' | 'haiku'
   /** Permission mode a Quick session launches with. 'inherit' honors ~/.claude/settings.json. */
   quickPermissionMode: CluiSettings['permissionMode']
+  /** Config switched off in the Configuration panel, as CLI tokens (see DisabledConfig). Read at spawn. */
+  disabledConfig: DisabledConfig
+}
+
+/**
+ * Agents, MCP servers and hooks switched off, as literal launch tokens: `mcp__<server>` and
+ * `Agent(<name>)` go to `--disallowedTools`, `hooks` becomes `disableAllHooks` in `--settings`.
+ * `projects` is keyed by cwd and never holds an empty list.
+ */
+export interface DisabledConfig {
+  global: string[]
+  projects: Record<string, string[]>
+}
+
+export const HOOKS_TOKEN = 'hooks'
+export const mcpToken = (server: string): string => `mcp__${server}`
+export const agentToken = (name: string): string => `Agent(${name})`
+
+const isStringList = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string')
+
+export function isDisabledConfig(v: unknown): v is DisabledConfig {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
+  const { global, projects } = v as Record<string, unknown>
+  if (!isStringList(global) || !projects || typeof projects !== 'object' || Array.isArray(projects)) return false
+  return Object.values(projects).every(isStringList)
+}
+
+/** What a session launched in `cwd` runs without. `aliases` are other spellings of the same folder (/tmp/x is
+ *  /private/tmp/x), whose project keys apply too. The chat dir means "no project", so it gets the global list only. */
+export function effectiveDisabled(cfg: DisabledConfig, cwd: string, chatDir: string, aliases: string[] = []): string[] {
+  const dirs = [cwd, ...aliases]
+  if (dirs.includes(chatDir)) return [...new Set(cfg.global)]
+  return [...new Set([...cfg.global, ...dirs.flatMap((d) => (Object.hasOwn(cfg.projects, d) ? cfg.projects[d] : []))])]
+}
+
+/** Turn `token` off or on in one scope: null is global, else a project cwd. */
+export function toggleDisabled(cfg: DisabledConfig, scope: string | null, token: string, off: boolean): DisabledConfig {
+  const flip = (list: string[]): string[] => (off ? [...new Set([...list, token])] : list.filter((t) => t !== token))
+  if (scope === null) return { ...cfg, global: flip(cfg.global) }
+  const list = flip(Object.hasOwn(cfg.projects, scope) ? cfg.projects[scope] : [])
+  const { [scope]: _, ...rest } = cfg.projects
+  return { ...cfg, projects: list.length ? { ...rest, [scope]: list } : rest }
 }
 
 /** A settings key (used by the per-field reset affordance). */
@@ -606,7 +648,8 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   // Quick sessions default to the leanest family + an asking mode: a throwaway chat should
   // be cheap and, by default, still ask before acting.
   quickModelFamily: 'haiku',
-  quickPermissionMode: 'default'
+  quickPermissionMode: 'default',
+  disabledConfig: { global: [], projects: {} }
 }
 
 // Ordered by the risk ramp (safest concrete mode → riskiest), with System Default

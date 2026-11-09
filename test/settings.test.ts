@@ -16,6 +16,9 @@ import {
   effortLabel,
   deriveModelInfo,
   modelCheckReason,
+  effectiveDisabled,
+  toggleDisabled,
+  isDisabledConfig,
   DEFAULT_SETTINGS
 } from '../src/shared/settings.ts'
 import { ADDITIONAL_INSTRUCTIONS_MAX, NATIVE_AWARENESS, systemAppend } from '../src/shared/native-awareness.ts'
@@ -204,6 +207,39 @@ ok(!supportsUltracodeToggle('claude-haiku-4-5'), 'supportsUltracodeToggle: haiku
   equal(readFileSync(SP, 'utf8'), before, 'settings: and leave the file untouched')
   writeFileSync(SP, JSON.stringify({ schemaVersion: 1, additionalInstructions: 'a'.repeat(ADDITIONAL_INSTRUCTIONS_MAX + 1) }))
   equal((await (await fresh()).getResolvedSettings()).values.additionalInstructions, '', 'settings: an over-limit stored value is dropped')
+}
+// disabledConfig: what a launch runs without, per-scope writes, and validation of the stored value.
+{
+  const cfg = { global: ['hooks', 'mcp__a'], projects: { '/p': ['mcp__a', 'Agent(x)'], '/chat': ['Agent(y)'] } }
+  equal(JSON.stringify(effectiveDisabled(cfg, '/p', '/chat')), JSON.stringify(['hooks', 'mcp__a', 'Agent(x)']), 'disabled: a project launch gets global plus its own, deduped')
+  equal(JSON.stringify(effectiveDisabled(cfg, '/chat', '/chat')), JSON.stringify(['hooks', 'mcp__a']), 'disabled: the chat dir gets global only')
+  equal(JSON.stringify(effectiveDisabled(cfg, '/other', '/chat')), JSON.stringify(['hooks', 'mcp__a']), 'disabled: an unlisted project gets global only')
+  equal(effectiveDisabled({ global: [], projects: {} }, 'toString', '/chat').length, 0, 'disabled: a cwd named like a prototype key reads nothing')
+  const linked = { global: ['hooks'], projects: { '/tmp/x': ['mcp__a'], '/private/tmp/x': ['Agent(x)'] } }
+  equal(JSON.stringify(effectiveDisabled(linked, '/tmp/x', '/chat', ['/private/tmp/x'])), JSON.stringify(['hooks', 'mcp__a', 'Agent(x)']), 'disabled: keys under the cwd and its realpath both apply')
+  equal(JSON.stringify(effectiveDisabled(linked, '/tmp/x', '/chat', ['/tmp/x'])), JSON.stringify(['hooks', 'mcp__a']), 'disabled: a realpath equal to the cwd adds nothing')
+  equal(JSON.stringify(effectiveDisabled(linked, '/tmp/c', '/private/tmp/c', ['/private/tmp/c'])), JSON.stringify(['hooks']), 'disabled: a cwd whose realpath is the chat dir gets global only')
+
+  const off = toggleDisabled({ global: [], projects: {} }, '/p', 'mcp__a', true)
+  equal(JSON.stringify(off), JSON.stringify({ global: [], projects: { '/p': ['mcp__a'] } }), 'disabled: turning off in a project writes that project')
+  equal(JSON.stringify(toggleDisabled(off, '/p', 'mcp__a', true)), JSON.stringify(off), 'disabled: turning off twice keeps one token')
+  equal(JSON.stringify(toggleDisabled(off, '/p', 'mcp__a', false)), JSON.stringify({ global: [], projects: {} }), 'disabled: an emptied project key is removed')
+  equal(JSON.stringify(toggleDisabled(off, null, 'hooks', true)), JSON.stringify({ global: ['hooks'], projects: { '/p': ['mcp__a'] } }), 'disabled: All projects writes global')
+
+  ok(isDisabledConfig(cfg) && isDisabledConfig(DEFAULT_SETTINGS.disabledConfig), 'disabled: a well-formed value validates')
+  ok(
+    ![null, [], { global: 'x', projects: {} }, { global: [1], projects: {} }, { global: [], projects: [] }, { global: [], projects: { '/p': 'x' } }, { global: [] }].some(isDisabledConfig),
+    'disabled: malformed values are rejected'
+  )
+
+  writeFileSync(SP, JSON.stringify({ schemaVersion: 1, disabledConfig: { global: ['hooks'], projects: { '/p': [3] } } }))
+  equal(JSON.stringify((await (await fresh()).getResolvedSettings()).values.disabledConfig), JSON.stringify(DEFAULT_SETTINGS.disabledConfig), 'disabled: a malformed stored value is dropped')
+  writeFileSync(SP, JSON.stringify({ schemaVersion: 1 }))
+  const m = await fresh()
+  await m.updateSettings({ disabledConfig: { global: ['hooks'], projects: {} } })
+  equal(JSON.stringify(onDisk().disabledConfig), JSON.stringify({ global: ['hooks'], projects: {} }), 'disabled: a change saves')
+  await m.updateSettings({ disabledConfig: { global: [], projects: {} } })
+  ok(!('disabledConfig' in onDisk()), 'disabled: emptied back to the default, it stops being an override')
 }
 // The appended prompt. The hashes pin its exact text, so a change to it is deliberate.
 {

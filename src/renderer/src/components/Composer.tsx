@@ -36,6 +36,8 @@ import {
 } from './Icon'
 import { processDroppedFiles, toWireAttachment, type ProcessedAttachment } from '../lib/images'
 import { routeDrop } from '../lib/composerRefs'
+import { tilde } from '../lib/tree'
+import { basename, useProjectDirs } from '../lib/useProjectDirs'
 import { dropText, skippedNote } from '../lib/refCopy'
 import {
   PERMISSION_MODES,
@@ -91,7 +93,7 @@ export function Composer(): JSX.Element {
   // fork/new session, out of scope). A directoryless session runs in the chat dir.
   const noMessages = useActive((s) => (s?.messages.length ?? 0) === 0)
   const chatDir = useSession((s) => s.chatDir)
-  const sessionGroups = useSession((s) => s.sessionGroups)
+  const projectDirs = useProjectDirs()
   const closeSession = useSession((s) => s.closeSession)
   const startSession = useSession((s) => s.startSession)
   const isDirectoryless = !!cwd && cwd === chatDir
@@ -265,26 +267,20 @@ export function Composer(): JSX.Element {
     if (dir) await respawnIn(dir)
   }
 
-  // The current cwd is forced in first so its ✓ shows even before it has an on-disk row; the rest
-  // are the distinct project cwds the sidebar knows, minus the chat dir (that's "Workbench").
-  const dirOptions = useMemo<DropdownOption<string>[]>(() => {
-    const seen = new Set<string>()
-    const recents: DropdownOption<string>[] = []
-    if (!isDirectoryless && cwd) {
-      seen.add(cwd)
-      recents.push({ value: cwd, label: basename(cwd), description: cwd })
-    }
-    for (const g of sessionGroups) {
-      if (g.cwd === chatDir || seen.has(g.cwd)) continue
-      seen.add(g.cwd)
-      recents.push({ value: g.cwd, label: basename(g.cwd), description: g.cwd })
-    }
-    return [
-      ...recents,
-      { value: DIR_PICK, label: 'Choose a directory…', icon: <IconFolderOpen className="h-4 w-4" /> },
-      { value: DIR_NONE, label: 'Workbench', divider: true }
-    ]
-  }, [sessionGroups, chatDir, cwd, isDirectoryless])
+  // The chat dir never lists as a project; picking it is "No project".
+  const dirOptions = useMemo<DropdownOption<string>[]>(
+    () => [
+      ...projectDirs.map((d) => ({ value: d, label: basename(d), description: d })),
+      { value: DIR_PICK, label: 'Choose a folder…', icon: <IconFolderOpen className="h-4 w-4" /> },
+      {
+        value: DIR_NONE,
+        label: 'No project',
+        ...(chatDir ? { description: `Runs in ${tilde(chatDir, window.clui.homeDir)}` } : {}),
+        divider: true
+      }
+    ],
+    [projectDirs, chatDir]
+  )
 
   const onSelectDir = (v: string): void => {
     if (v === DIR_PICK) {
@@ -556,16 +552,10 @@ export function Composer(): JSX.Element {
   )
 }
 
-/** Basename of an absolute path. Pure string math, no node `path` in the renderer. */
-function basename(p: string): string {
-  const parts = p.replace(/\/+$/, '').split('/')
-  return parts[parts.length - 1] || p
-}
-
 /**
- * The session's working directory, state legible by glyph AND text. Before the first turn 
+ * The session's working directory, state legible by glyph AND text. Before the first turn
  * it's a dropdown to bind/rebind/unbind the dir
- * (recent dirs · choose a folder · "Workbench"); after, the folder is locked at the CLI's
+ * (recent dirs · choose a folder · "No project"); after, the folder is locked at the CLI's
  * spawn-time slug, so it renders a static bound label or nothing when directoryless.
  */
 function DirectoryChip({
@@ -592,7 +582,7 @@ function DirectoryChip({
       value={value}
       options={options}
       onChange={onSelect}
-      ariaLabel={`Session directory: ${options.find((o) => o.value === value)?.label ?? value}`}
+      ariaLabel={`Project: ${options.find((o) => o.value === value)?.label ?? value}`}
       title={directoryless ? undefined : (cwd ?? undefined)}
       direction="up"
       variant="pill"

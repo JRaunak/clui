@@ -24,6 +24,7 @@ import {
   QUICK_PERMISSION_MODES,
   canonicalModelId,
   clampEffort,
+  isDisabledConfig,
   isEffortChoice,
   type CluiSettings,
   type ResolvedSettings,
@@ -55,6 +56,7 @@ function isValidValue(key: SettingsKey, v: unknown): boolean {
   if (key === 'quickModelFamily') return (QUICK_MODEL_FAMILIES as readonly string[]).includes(v as string)
   if (key === 'quickPermissionMode') return (QUICK_PERMISSION_MODES as readonly string[]).includes(v as string)
   if (key === 'additionalInstructions') return (v as string).length <= ADDITIONAL_INSTRUCTIONS_MAX
+  if (key === 'disabledConfig') return isDisabledConfig(v)
   return true
 }
 
@@ -300,7 +302,8 @@ export async function updateSettings(
       // `next` has the key removed, so this is the value the user would see after a
       // reset, including the clamp, since that clamped value is what the picker shows.
       // Re-picking it means "inherit", not "override with the same thing".
-      if (v === resolveInherited(next, cli).values[key]) continue
+      // Compared as JSON so an object value equal to its default (disabledConfig emptied) un-overrides too.
+      if (JSON.stringify(v) === JSON.stringify(resolveInherited(next, cli).values[key])) continue
       Object.assign(next, { [key]: v })
     }
 

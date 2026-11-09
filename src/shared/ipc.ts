@@ -92,6 +92,8 @@ export interface StartSessionResult {
   /** A resume's or fork's saved pane. With the browser tools, its browser tabs are the ones main
    *  restored; without them they're null here and stay saved for a later resume. */
   surfaces: SurfacesRestore
+  /** The DisabledConfig tokens this process launched without. */
+  disabled: string[]
 }
 
 /**

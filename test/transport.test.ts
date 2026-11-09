@@ -61,6 +61,25 @@ reset()
   )
   equal(flags({ blockOutsideWrites: true, ephemeral: true }).length, 0, 'transport: an ephemeral session gets no fence')
   equal(flags({}).length, 0, 'transport: no settings, no flag')
+  equal(JSON.stringify(flags({ disabledConfig: ['hooks', 'mcp__a'] })), JSON.stringify([JSON.stringify({ disableAllHooks: true })]), 'transport: hooks off rides --settings')
+}
+
+// One --disallowedTools carries Quick's set and the switched-off config; hooks never lands in it.
+reset()
+{
+  const argv = (opts: Record<string, unknown>): string[] => {
+    reset()
+    mk({ cluiMcp: { config: '{}', allow: ['x'] }, resumeSessionId: 'R', ...opts }).start()
+    return spawns()[0].spawnargs
+  }
+  const a = argv({ ephemeral: true, disabledConfig: ['hooks', 'mcp__srv', 'Agent(rev)'] })
+  equal(a.filter((x) => x === '--disallowedTools').length, 1, 'transport: one --disallowedTools')
+  const list = a.slice(a.indexOf('--disallowedTools') + 1, a.indexOf('--mcp-config'))
+  ok(list.includes('Task') && list.includes('mcp__srv') && list.includes('Agent(rev)') && !list.includes('hooks'), 'transport: it holds Quick tools and config tokens, not hooks')
+  ok(list.every((x) => !x.startsWith('--')), 'transport: the next flag closes the list')
+  const b = argv({ disabledConfig: ['Agent(rev)'] })
+  equal(JSON.stringify(b.slice(b.indexOf('--disallowedTools') + 1, b.indexOf('--mcp-config'))), JSON.stringify(['Agent(rev)']), 'transport: a full session carries only its config tokens')
+  ok(!argv({ disabledConfig: ['hooks'] }).includes('--disallowedTools'), 'transport: hooks alone adds no --disallowedTools')
 }
 
 // reconnect write-safety + fork one-shot

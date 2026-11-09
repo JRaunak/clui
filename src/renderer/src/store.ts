@@ -480,6 +480,10 @@ export interface PerSessionState {
   referenceNotices: Record<string, ReferenceInvalidation>
   /** Whether this session's CLI has the change_read tool, from its init; null before the first one. */
   changeRead: boolean | null
+  /** The DisabledConfig tokens the process launched without, so Configuration can tell a change it hasn't picked up. */
+  launchedDisabled: string[]
+  /** The MCP servers from the latest init, with their connection status. Empty before the first one. */
+  liveMcp: { name: string; status: string }[]
   /** Where File, Tree and page adds land: null is the draft, else a queued message under review. */
   referenceEditTarget: RefTarget
   /** The composer's polite announcement for its chips row and notices. */
@@ -1718,7 +1722,7 @@ async function beginSession(
   // values (from the sidecar). Verified: --model/--effort ARE honored on a --resume
   // spawn, and the CLI otherwise reverts to the settings.json default (dropping the
   // user's mid-session switch). On a fresh session they're the Settings default.
-  const { handleId, browser, surfaces } = await window.clui.startSession({
+  const { handleId, browser, surfaces, disabled } = await window.clui.startSession({
     ...opts,
     permissionMode: choice,
     model: modelChoice,
@@ -1793,6 +1797,8 @@ async function beginSession(
     contextRefs: EMPTY_REFS,
     referenceNotices: EMPTY_NOTICES,
     changeRead: null,
+    launchedDisabled: disabled,
+    liveMcp: [],
     referenceEditTarget: null,
     refAnnounce: ''
   })
@@ -3053,6 +3059,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.model = e.model
           patch.permissionMode = e.permissionMode
           patch.changeRead = e.tools.includes(CHANGE_READ_TOOL)
+          patch.liveMcp = e.mcpServers
           // Reconcile the PICKER (modelChoice) to the model the CLI actually reports.
           // On resume, the CLI keeps the model the session last used (a mid-session
           // set_model survives --resume), but beginSession seeded modelChoice from the

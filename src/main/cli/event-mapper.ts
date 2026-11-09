@@ -37,6 +37,8 @@ interface RawEnvelope {
   cwd?: string
   permissionMode?: string
   tools?: string[]
+  /** init: `{name, status, source}` per server (verified 2.1.319). Untrusted, so typed loosely. */
+  mcp_servers?: unknown
   estimated_tokens?: number
   /** `system/informational`: the notice text, and whether it ended the turn. */
   content?: string
@@ -572,7 +574,8 @@ export class EventMapper {
           model: env.model ?? '',
           cwd: env.cwd ?? '',
           permissionMode: env.permissionMode ?? '',
-          tools: env.tools ?? []
+          tools: env.tools ?? [],
+          mcpServers: liveMcp(env.mcp_servers)
         }
       ]
     }
@@ -1100,6 +1103,13 @@ export class EventMapper {
 const STOP_KINDS = new Set(['user-rejected', 'interrupted', 'cancelled'])
 
 /** Turn ends the CLI reports as non-errors (2.1.296): the turn stopped short, and nothing failed. */
+function liveMcp(raw: unknown): { name: string; status: string }[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((m) =>
+    m && typeof m.name === 'string' && typeof m.status === 'string' ? [{ name: m.name, status: m.status }] : []
+  )
+}
+
 const EARLY_ENDS = new Set(['max_turns', 'aborted_streaming', 'aborted_tools', 'stop_hook_prevented', 'hook_stopped', 'tool_deferred', 'background_requested'])
 
 /** Only a safety check and the classifier need the user to step in; everything else the CLI

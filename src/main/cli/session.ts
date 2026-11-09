@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { DomainEvent, ElicitationResponse } from '../../shared/events'
 import type { DispatchResult, ModeChangeResult, ModelSwitchResult } from '../../shared/ipc'
-import { clampEffort, deriveModelInfo, effortsFromCatalog, isEffortChoice, setLiveEfforts } from '../../shared/settings'
+import { HOOKS_TOKEN, clampEffort, deriveModelInfo, effortsFromCatalog, isEffortChoice, setLiveEfforts } from '../../shared/settings'
 import { NdjsonParser } from './ndjson'
 import { EventMapper } from './event-mapper'
 import { stripRuntimeMarkers } from './shell-env'
@@ -91,6 +91,8 @@ export interface ClaudeSessionOptions {
   mcpConfigPath?: string
   /** Extra env for the child (merged over process.env). */
   env?: Record<string, string>
+  /** Config switched off for this launch, as DisabledConfig tokens (see effectiveDisabled). */
+  disabledConfig?: string[]
 }
 
 /**
@@ -251,7 +253,8 @@ export class ClaudeSession extends EventEmitter {
       ...(this.opts.ultracode ? { ultracode: true } : {}),
       ...(this.opts.blockOutsideWrites && !this.opts.ephemeral
         ? { permissions: { blockWritesOutsideWorkingDirectories: true } }
-        : {})
+        : {}),
+      ...(this.opts.disabledConfig?.includes(HOOKS_TOKEN) ? { disableAllHooks: true } : {})
     }
     if (Object.keys(flagSettings).length) args.push('--settings', JSON.stringify(flagSettings))
     // Ahead of the variadic flags below, which would swallow it as a list item.
@@ -259,10 +262,14 @@ export class ClaudeSession extends EventEmitter {
     if (this.opts.ephemeral) {
       // Quick chat: the CLI streams normally but writes no transcript to disk.
       args.push('--no-session-persistence')
-      // Locked-down tool set for a throwaway session. --disallowedTools is variadic, so a
-      // following flag (--resume) or the end of the bare args terminates the list.
-      args.push('--disallowedTools', ...EPHEMERAL_DISALLOWED_TOOLS)
     }
+    // One list: Quick's locked-down tool set plus the agents and MCP servers switched off. It's
+    // variadic, so the next flag (--mcp-config, --resume) or the end of the bare args terminates it.
+    const disallowed = [
+      ...(this.opts.ephemeral ? EPHEMERAL_DISALLOWED_TOOLS : []),
+      ...(this.opts.disabledConfig ?? []).filter((t) => t !== HOOKS_TOKEN)
+    ]
+    if (disallowed.length) args.push('--disallowedTools', ...disallowed)
     const mcp = this.opts.cluiMcp ? [this.privateFile('config.json', this.opts.cluiMcp.config)] : []
     if (this.opts.mcpConfigPath) mcp.push(this.opts.mcpConfigPath)
     // Both flags are variadic; the --resume that follows (or the end of args) closes each list.

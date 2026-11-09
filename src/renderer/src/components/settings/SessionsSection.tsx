@@ -182,14 +182,14 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
         </Field>
 
         <Field
-          label="Workbench folder"
-          hint="Where sessions started without a project folder run. Leave blank for ~/.clui. Open Workbench sessions stay where they are."
+          label="Folder for no-project sessions"
+          hint="No-project sessions run here. Leave blank for ~/.clui. Sessions already open keep their folder."
           hintId={chatDir.hintId}
           onReset={chatDir.overridden ? chatDir.reset : undefined}
           note={chatDir.failed && <FieldError id={chatDir.errId} text={SAVE_FAILED} />}
         >
           <div className="flex gap-2">
-            <input aria-label="Workbench folder" data-ui="workbench-folder" className={INPUT} placeholder="~/.clui" {...chatDir.inputProps} />
+            <input aria-label="Folder for no-project sessions" data-ui="workbench-folder" className={INPUT} placeholder="~/.clui" {...chatDir.inputProps} />
             <button className={OUTLINE_BUTTON} onClick={() => void pick(chatDir.set, shown(chatDir) || `${window.clui.homeDir}/.clui`)}>
               Browse…
             </button>

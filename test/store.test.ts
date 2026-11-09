@@ -47,6 +47,8 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   contextRefs: [],
   referenceNotices: {},
   changeRead: null,
+  launchedDisabled: [],
+  liveMcp: [],
   referenceEditTarget: null,
   refAnnounce: '',
   surfaces: { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} },
@@ -1120,4 +1122,15 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   equal(JSON.stringify(await open('p2')), JSON.stringify({ outcome: 'prepared' }), 'claude parts: input in the pane holds the focus, so the tab is prepared and nothing is checked')
   ok(cur().surfaces.active === 'file:/w/seq.mmd' && cur().surfaces.tabs['file:/w/flow.mmd']?.unseen && JSON.stringify(cur().surfaces.tabs['file:/w/flow.mmd'].highlight) === JSON.stringify({ parts: ['A', 'G'] }), 'claude parts: the prepared tab keeps the parts to mark when it draws')
   notePaneInput(0)
+}
+
+// The scope picker's folders: one per folder across /tmp and /private/tmp spellings, never the chat dir.
+{
+  const { projectDirs } = await import('../src/renderer/src/lib/useProjectDirs.ts')
+  equal(
+    JSON.stringify(projectDirs(['/tmp/x', '/private/tmp/x', '/p', '/private/tmp/chat', '/p', '/q'], '/tmp/chat')),
+    JSON.stringify(['/tmp/x', '/p', '/q']),
+    'dirs: deduped by firmlink spelling, first one kept, chat dir dropped'
+  )
+  equal(projectDirs(['/a'], null).length, 1, 'dirs: no chat dir yet drops nothing')
 }

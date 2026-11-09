@@ -525,3 +525,16 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   const after = feed(m2, [result(['b1'])]).find((e) => e.type === 'result')?.denials ?? []
   equal(after[0]?.source, 'safety', "mapper: a bg result doesn't wipe the user turn's join")
 }
+
+// init's mcp_servers (shape verified on 2.1.319) reaches session-init as name + status; junk entries drop.
+{
+  const m = new EventMapper()
+  const [init] = m.map({
+    type: 'system',
+    subtype: 'init',
+    session_id: 's',
+    mcp_servers: [{ name: 'clui-surface', status: 'connected', source: 'dynamic' }, { name: 3 }, null]
+  } as any) as any[]
+  equal(JSON.stringify(init.mcpServers), JSON.stringify([{ name: 'clui-surface', status: 'connected' }]), 'mapper: init carries the live MCP servers')
+  equal((m.map({ type: 'system', subtype: 'init', session_id: 's' }) as any[])[0].mcpServers.length, 0, 'mapper: no mcp_servers, empty list')
+}

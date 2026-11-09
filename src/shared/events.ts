@@ -134,6 +134,8 @@ export type DomainEvent =
       cwd: string
       permissionMode: string
       tools: string[]
+      /** The MCP servers the CLI loaded for this session, and each one's connection status. */
+      mcpServers: { name: string; status: string }[]
     }
   /** The live slash-command list from the `initialize` control_response. Lets the
    *  composer's `/` menu track the CLI's real commands instead of a hardcoded list.
