@@ -4,7 +4,7 @@ import { useBrowserToasts } from '../Toast'
 import { FieldError, LOGIN_INPUT } from '../LoginFields'
 import { IconEdit, IconPlus, IconTrash } from '../Icon'
 import { useEscape } from '../../lib/useEscape'
-import { CheckBox, Field, SAVE_FAILED, TIMING, describedBy, useInstantSetting } from './shared'
+import { Field, SAVE_FAILED, SwitchTrack, TIMING, describedBy, useInstantSetting } from './shared'
 import { LINK } from '../../lib/openLink'
 import { LoginForm } from './LoginForm'
 import { ClearBrowsingData } from './ClearBrowsingData'
@@ -465,18 +465,18 @@ function BrowserChild({
     <div className="flex flex-col">
       <button
         type="button"
-        role="checkbox"
+        role="switch"
         data-ui={ui}
         aria-checked={!!s.value}
         aria-disabled={off || undefined}
         aria-describedby={describedBy(`${id}-hint`, s.failed && `${id}-err`)}
         onClick={() => off || s.set(!s.value)}
-        className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
+        className="group flex min-h-6 items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
       >
-        <CheckBox checked={!!s.value} />
+        <SwitchTrack on={!!s.value} />
         <span className="text-label text-content group-aria-disabled:text-faint">{label}</span>
       </button>
-      <p id={`${id}-hint`} className="pl-6 text-meta text-dim">
+      <p id={`${id}-hint`} className="pl-9 text-meta text-dim">
         {hint}
       </p>
       {s.failed && <FieldError id={`${id}-err`} text={SAVE_FAILED} />}

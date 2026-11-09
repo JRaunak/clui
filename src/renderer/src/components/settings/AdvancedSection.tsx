@@ -5,7 +5,7 @@ import { IconChevron, IconWarn } from '../Icon'
 import { FieldError } from '../LoginFields'
 import { useEscape } from '../../lib/useEscape'
 import { useSession } from '../../store'
-import { CheckField, Field, OUTLINE_BUTTON, SAVE_FAILED, TIMING, describedBy, useInstantSetting, useInstantText } from './shared'
+import { Field, OUTLINE_BUTTON, SAVE_FAILED, SwitchField, TIMING, describedBy, useInstantSetting, useInstantText } from './shared'
 
 const NEAR_AT = 3_700
 const num = (v: number): string => v.toLocaleString('en-US')
@@ -216,7 +216,7 @@ export function AdvancedSection(): JSX.Element {
           )}
         </div>
       </Field>
-      <CheckField
+      <SwitchField
         setting="enableTaskTools"
         ui="task-tools"
         label="Task list"

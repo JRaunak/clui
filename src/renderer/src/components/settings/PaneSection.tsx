@@ -3,7 +3,7 @@ import type { FileLinkTarget, LinkTarget } from '../../../../shared/settings'
 import { LINK_MOD } from '../../lib/openLink'
 import { Dropdown } from '../Dropdown'
 import { FieldError } from '../LoginFields'
-import { CheckField, Field, Group, SAVE_FAILED, describedBy, useInstantSetting } from './shared'
+import { Field, Group, SAVE_FAILED, SwitchField, describedBy, useInstantSetting } from './shared'
 
 const APPLY = 'Open pages reload with the new setting.'
 
@@ -55,7 +55,7 @@ export function PaneSection(): JSX.Element {
       </Group>
 
       <Group id="settings-group-point" label="Point">
-        <CheckField
+        <SwitchField
           setting="annotateScreenshots"
           ui="annotate-screenshots"
           hint="Off sends only the text of what you point at, its HTML on web pages, and its position on images."
@@ -68,14 +68,14 @@ export function PaneSection(): JSX.Element {
           HTML pages Claude creates in a session open as artifacts, marked Made by Claude. These settings apply only to them; other HTML files always
           run offline.
         </p>
-        <CheckField
+        <SwitchField
           setting="artifactRemoteResources"
           ui="artifact-remote"
           label="Web resources"
           hint={`Lets pages use libraries and fonts from CDNs over HTTPS. Those scripts run with the page's access and can send what it shows to their servers. ${APPLY}`}
           text="Load scripts, styles and fonts from the web"
         />
-        <CheckField
+        <SwitchField
           setting="artifactNetworkRequests"
           ui="artifact-network"
           label="Data requests"

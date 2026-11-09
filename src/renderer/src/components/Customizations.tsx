@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useActive, useSession } from '../store'
 import { IconClose, IconExternal, IconFolderOpen } from './Icon'
 import { Dropdown, type DropdownOption } from './Dropdown'
-import { CheckBox, OUTLINE_BUTTON, SAVE_FAILED, describedBy, useInstantSetting } from './settings/shared'
+import { OUTLINE_BUTTON, SAVE_FAILED, SwitchTrack, describedBy, useInstantSetting } from './settings/shared'
 import { FieldError } from './LoginFields'
 import { HOOKS_TOKEN, agentToken, effectiveDisabled, mcpToken, toggleDisabled } from '../../../shared/settings'
 import { basename, useProjectDirs } from '../lib/useProjectDirs'
@@ -586,15 +586,15 @@ function ItemRow({
         {toggle && (
           <button
             type="button"
-            role="checkbox"
+            role="switch"
             aria-checked={toggle.on}
             aria-disabled={toggle.inert || undefined}
-            aria-label={`${title} on`}
+            aria-label={title}
             aria-describedby={describedBy(status.length > 0 && statusId, toggle.failed && errId)}
             onClick={toggle.flip}
-            className="group flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="group flex h-8 min-w-11 shrink-0 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
-            <CheckBox checked={toggle.on} />
+            <SwitchTrack on={toggle.on} />
           </button>
         )}
       </div>
@@ -687,14 +687,14 @@ function HooksSwitch({ s, global }: { s: Switch; global: boolean }): JSX.Element
     <div className="mb-4 flex flex-col gap-1">
       <button
         type="button"
-        role="checkbox"
+        role="switch"
         aria-checked={s.on}
         aria-disabled={s.inert || undefined}
         aria-describedby={describedBy(`${id}-hint`, s.status.length > 0 && `${id}-status`, s.failed && `${id}-err`)}
         onClick={s.flip}
-        className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
+        className="group flex min-h-6 items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
       >
-        <CheckBox checked={s.on} />
+        <SwitchTrack on={s.on} />
         <span className="text-label text-content group-aria-disabled:text-faint">Run hooks</span>
       </button>
       <p id={`${id}-hint`} className="text-meta text-dim">

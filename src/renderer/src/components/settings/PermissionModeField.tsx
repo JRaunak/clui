@@ -11,7 +11,7 @@ import { Dropdown } from '../Dropdown'
 import { PermissionIcon } from '../Composer'
 import { FieldError } from '../LoginFields'
 import { useSession } from '../../store'
-import { CheckField, Field, SAVE_FAILED, TIMING, describedBy, useInstantSetting } from './shared'
+import { Field, SAVE_FAILED, SwitchField, TIMING, describedBy, useInstantSetting } from './shared'
 
 type ModeChoice = CluiSettings['permissionMode']
 
@@ -80,7 +80,7 @@ export function PermissionModeField(): JSX.Element {
         />
       </Field>
 
-      <CheckField
+      <SwitchField
         setting="blockOutsideWrites"
         ui="write-fence"
         label="Edits outside the workspace"

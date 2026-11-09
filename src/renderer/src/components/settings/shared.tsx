@@ -194,6 +194,24 @@ export function CheckBox({ checked }: { checked: boolean }): JSX.Element {
   )
 }
 
+/** The track of a switch row; the row itself is the `role="switch"` button and a `group`. */
+export function SwitchTrack({ on }: { on: boolean }): JSX.Element {
+  return (
+    <span
+      aria-hidden
+      className={`flex h-4 w-7 flex-none items-center rounded-full border p-0.5 group-aria-disabled:opacity-50 ${
+        on ? 'border-content bg-content' : 'border-control-edge pointer-fine:group-hover:border-dim'
+      }`}
+    >
+      <span
+        className={`size-2.5 rounded-full transition-transform duration-150 ease-[cubic-bezier(0.2,0,0,1)] ${
+          on ? 'translate-x-3 bg-bg-elev' : 'bg-control-edge pointer-fine:group-hover:bg-dim'
+        }`}
+      />
+    </span>
+  )
+}
+
 export function Field({
   label,
   hint,
@@ -247,24 +265,24 @@ export function Field({
 
 type BoolKey = { [K in SettingsKey]: CluiSettings[K] extends boolean ? K : never }[SettingsKey]
 
-/** A field holding one checkbox that saves the moment it's flipped. */
-export function CheckField({ setting, label, hint, text, ui }: { setting: BoolKey; label?: string; hint: string; text: string; ui?: string }): JSX.Element {
+/** A field holding one switch that saves the moment it's flipped. */
+export function SwitchField({ setting, label, hint, text, ui }: { setting: BoolKey; label?: string; hint: string; text: string; ui?: string }): JSX.Element {
   const s = useInstantSetting(setting)
   const id = useId()
   return (
     <Field label={label} hint={hint} hintId={`${id}-hint`} note={s.failed && <FieldError id={`${id}-err`} text={SAVE_FAILED} />}>
       <button
         type="button"
-        role="checkbox"
+        role="switch"
         data-ui={ui}
         aria-checked={!!s.value}
         aria-disabled={s.value === null || undefined}
         aria-describedby={`${id}-hint${s.failed ? ` ${id}-err` : ''}`}
         onClick={() => s.value !== null && s.set(!s.value)}
-        className="group flex items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
+        className="group flex min-h-6 items-center gap-2 self-start rounded-md py-1 pr-1 text-left"
       >
-        <CheckBox checked={!!s.value} />
-        <span className="text-label text-content">{text}</span>
+        <SwitchTrack on={!!s.value} />
+        <span className="text-label text-content group-aria-disabled:text-faint">{text}</span>
       </button>
     </Field>
   )
