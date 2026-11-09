@@ -17,6 +17,7 @@ import { SourcePointedParts } from './PreviewPointed'
 import { BANNER, baseOf, DocState, FIND_MAX, FLASH_MS, openDefault, openEditor, rangeText, SelectionNotice, TEXT_BTN, toLines, useFileDoc, useFileStatus, useFind, VIEW_SETTLE_MS, type Lines } from './fileDoc'
 import { clearNoPreview, useNoPreview } from '../../lib/presentation'
 import { findRe } from '../../lib/find'
+import { firstItemOf } from './landing'
 
 const SKELETON = [62, 48, 71, 35, 80, 54, 66, 40, 58, 44, 75, 50]
 /** ⌘L from the File menu. */
@@ -26,6 +27,7 @@ const MARK_ACTIVE = 'rounded-[2px] bg-content text-bg [&_*]:text-bg'
 
 const lines = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'line' : 'lines'}`
 const NO_LINES = 'This file has no lines to point at.'
+let linePx = 0
 
 
 /** `page`: the tab shows a Preview, which opens in the file's default app rather than the editor. */
@@ -216,12 +218,12 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     const index = lineIndex[Math.max(1, Math.min(count, n))]
     virtuoso.current?.scrollToIndex({ index, align })
   }
-  // A destination that fits is centred whole; a taller one starts at the row above its first line, which is Claude's
-  // "pointed to" row when it's Claude's.
-  const landing = (r: Lines): FlatIndexLocationWithAlign => {
-    const row = scroller?.querySelector<HTMLElement>('[data-line]')?.offsetHeight || 20
-    if ((r.end - r.start + 2) * row <= (scroller?.clientHeight ?? 0)) return { index: lineIndex[Math.max(1, Math.min(count, (r.start + r.end) >> 1))] ?? 0, align: 'center' }
-    return { index: Math.max(0, (lineIndex[Math.max(1, Math.min(count, r.start))] ?? 0) - 1), align: 'start' }
+  // A destination lands with its first line, plus Claude's pointed row when there is one, three lines below the top.
+  // Lines wrap, so a line is the text's line-height, never a rendered row's height.
+  const landing = (start: number): FlatIndexLocationWithAlign => {
+    const cell = linePx ? null : scroller?.querySelector('[data-line]')
+    if (cell) linePx = parseFloat(getComputedStyle(cell).lineHeight) || 0
+    return { index: firstItemOf(lineIndex, start, count), align: 'start', offset: -3 * (linePx || 20) }
   }
   const rangeOf = (line: number, endLine = line): Lines => ({ start: line, end: Math.max(line, endLine) })
 
@@ -273,7 +275,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     if (!location?.line || applied.current === location) return
     applied.current = location
     const r = rangeOf(location.line, location.endLine)
-    if (!mounting) virtuoso.current?.scrollToIndex(landing(r))
+    if (!mounting) virtuoso.current?.scrollToIndex(landing(r.start))
     // The Claude highlight already marks its own range.
     if (highlight && highlight.start === r.start && highlight.end === r.end) return
     setFlash({ range: r, via: openVia.current === 'pointer' && !reducedMotion() ? 'pointer' : 'keyboard' })
@@ -563,7 +565,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
         customScrollParent={scroller}
         data={items}
         initialTopMostItemIndex={
-          location?.line ? landing(rangeOf(location.line, location.endLine)) : restoreAt > 1 ? (lineIndex[Math.min(count, restoreAt)] ?? 0) : 0
+          location?.line ? landing(location.line) : restoreAt > 1 ? (lineIndex[Math.min(count, restoreAt)] ?? 0) : 0
         }
         computeItemKey={(_i, it) => (it.t === 'line' ? `l${it.n}` : it.t === 'chip' ? it.key : it.t === 'banner' ? `b${it.end}` : it.t)}
         rangeChanged={(r) => {
