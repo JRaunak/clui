@@ -8,7 +8,7 @@ import { FieldError } from '../LoginFields'
 import { useSettings } from '../../lib/settings'
 import { useEscape } from '../../lib/useEscape'
 import { useSession } from '../../store'
-import { CheckField, Field, SAVE_FAILED, TIMING, describedBy, useInstantSetting, useInstantText } from './shared'
+import { CheckField, Field, OUTLINE_BUTTON, SAVE_FAILED, TIMING, describedBy, useInstantSetting, useInstantText } from './shared'
 
 const NEAR_AT = 3_700
 const num = (v: number): string => v.toLocaleString('en-US')
@@ -221,11 +221,11 @@ export function AdvancedSection({ modelList }: { modelList: ModelListResult | nu
             placeholder="(auto-detect)"
             {...cli.inputProps}
           />
-          <button className="rounded border border-border px-3 text-xs text-dim hover:text-content" onClick={() => setRecheck((n) => n + 1)}>
+          <button className={OUTLINE_BUTTON} onClick={() => setRecheck((n) => n + 1)}>
             Check
           </button>
         </div>
-        <div className="mt-1 text-meta" role="status" data-ui="cli-status">
+        <div className="mt-1 text-meta [overflow-wrap:anywhere]" role="status" data-ui="cli-status">
           {checking ? (
             <span className="text-dim">checking…</span>
           ) : cli.value && cliInfo?.path && cliInfo.source !== 'settings' ? (

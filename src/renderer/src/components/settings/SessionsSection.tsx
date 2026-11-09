@@ -19,8 +19,8 @@ import {
 import { Dropdown } from '../Dropdown'
 import { IconWarn } from '../Icon'
 import { FieldError } from '../LoginFields'
-import { PermissionsSection } from './PermissionsSection'
-import { Field, Group, SAVE_FAILED, describedBy, useInstantSetting, useInstantText } from './shared'
+import { PermissionModeField } from './PermissionModeField'
+import { Field, Group, OUTLINE_BUTTON, SAVE_FAILED, describedBy, useInstantSetting, useInstantText } from './shared'
 
 /** What to tell the user when the model list is the bundled fallback. Only Bedrock can be queried
  *  for a list; on other providers the CLI reads its own built-in catalog, so a missing `aws` is normal. */
@@ -48,7 +48,6 @@ const QUICK_PERMISSION_DESCRIPTIONS: Record<CluiSettings['permissionMode'], stri
 
 const INHERITING = 'Currently inheriting from ~/.claude/settings.json.'
 const INPUT = 'flex-1 rounded border border-control-edge bg-bg px-2 py-1.5 font-mono text-xs text-content outline-none focus:border-accent focus:shadow-[0_0_0_1px_var(--color-accent)]'
-const BROWSE = 'rounded border border-border px-3 text-xs text-dim hover:text-content'
 
 export function SessionsSection({ modelList }: { modelList: ModelListResult | null }): JSX.Element {
   const uid = useId()
@@ -153,7 +152,7 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
           />
         </Field>
 
-        <PermissionsSection />
+        <PermissionModeField />
 
         <Field
           label="Default workspace"
@@ -164,7 +163,7 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
         >
           <div className="flex gap-2">
             <input aria-label="Default workspace" data-ui="default-workspace" className={INPUT} placeholder="(none)" {...workspace.inputProps} />
-            <button className={BROWSE} onClick={() => void pick(workspace.set, shown(workspace) || undefined)}>
+            <button className={OUTLINE_BUTTON} onClick={() => void pick(workspace.set, shown(workspace) || undefined)}>
               Browse…
             </button>
           </div>
@@ -179,7 +178,7 @@ export function SessionsSection({ modelList }: { modelList: ModelListResult | nu
         >
           <div className="flex gap-2">
             <input aria-label="Workbench folder" data-ui="workbench-folder" className={INPUT} placeholder="~/.clui" {...chatDir.inputProps} />
-            <button className={BROWSE} onClick={() => void pick(chatDir.set, shown(chatDir) || `${window.clui.homeDir}/.clui`)}>
+            <button className={OUTLINE_BUTTON} onClick={() => void pick(chatDir.set, shown(chatDir) || `${window.clui.homeDir}/.clui`)}>
               Browse…
             </button>
           </div>

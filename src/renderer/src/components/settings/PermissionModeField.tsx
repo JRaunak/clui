@@ -30,7 +30,7 @@ function systemNote(raw: string | null): string {
     : `Currently ${label}, from ~/.claude/settings.json.`
 }
 
-export function PermissionsSection(): JSX.Element {
+export function PermissionModeField(): JSX.Element {
   const uid = useId()
   const mode = useInstantSetting('permissionMode')
   const system = useSession((s) => s.systemPermissionMode)

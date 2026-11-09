@@ -8,6 +8,7 @@ import { FieldError } from '../LoginFields'
 
 export const TIMING = 'Applies to new and resumed sessions. Running sessions keep what they started with.'
 export const SAVE_FAILED = "Couldn't save this setting. Try again."
+export const OUTLINE_BUTTON = 'rounded border border-border px-3 text-xs text-dim transition-colors pointer-fine:hover:text-content'
 
 const SCROLL = 'overflow-y-auto [scrollbar-gutter:stable] py-4 pl-5 pr-3'
 
