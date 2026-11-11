@@ -5,7 +5,7 @@
  * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
  * drift skips the envelope instead of crashing the app.
  */
-import { parseCliMessage, type DenialSource, type DomainEvent, type PermissionDenial, type PermissionSuggestion, type RateLimit, type TurnEnd, type TurnUsage } from '../../shared/events'
+import { normalizeSlashCommands, parseCliMessage, type DenialSource, type DomainEvent, type PermissionDenial, type PermissionSuggestion, type RateLimit, type TurnEnd, type TurnUsage } from '../../shared/events'
 import { contextWindowForModel, deriveModelInfo } from '../../shared/settings'
 
 type ModelUsage = Record<
@@ -28,6 +28,7 @@ type ModelUsage = Record<
 interface RawEnvelope {
   type?: string
   subtype?: string
+  commands?: unknown
   status?: string
   /** Present on envelopes forwarded from a RUNNING subagent (the id of the
    *  Agent tool_use that launched it). Routes the message to a subagent card. */
@@ -850,6 +851,10 @@ export class EventMapper {
         if (now - this.lastThinkingEmitMs < 500) return []
         this.lastThinkingEmitMs = now
         return [{ type: 'thinking-tokens', estimated: env.estimated_tokens }]
+      }
+      case 'commands_changed': {
+        const commands = normalizeSlashCommands(env.commands)
+        return commands.length ? [{ type: 'slash-commands', commands }] : []
       }
       default:
         return []

@@ -87,3 +87,24 @@ equal(skippedNote(1), '20 references max. 1 file was not added.', 'drop text: on
   const n = { resourceId: 'page:/w/docs/report.html', label: 'report.html', oldVersion: V, at: 0, reason: 'changed' as const, removed: [{ id: 'r2', label: 'a' }, { id: 'r3', label: 'b' }, { id: 'r4', label: 'c' }] }
   ok(noticeLead(n) === 'report.html changed. Pick it again.' && removedText(n) === 'Removed 3 elements.', 'page notice: picked again, counted as elements')
 }
+
+// The `/` menu's skill rows come from the live list's non-built-ins, the CLI's scope suffix turned into a scope.
+{
+  const { resolveSkillCommands, resolveSlashCommands } = await import('../src/renderer/src/lib/slashCommands.ts')
+  const live = [
+    { name: 'compact', description: 'Free context', builtin: true },
+    { name: 'ship', description: 'Ship it (project)', argumentHint: '<msg>' },
+    { name: 'ship', description: 'Ship it globally (user)' },
+    { name: 'bare', description: ' (user)' },
+    { name: 'acme:lint', description: 'Lint', plugin: 'acme' },
+    { name: 'odd', description: 'No suffix' }
+  ]
+  const skills = resolveSkillCommands(live)
+  equal(skills.map((s) => `${s.scope}:${s.name}`).join(','), 'project:ship,user:ship,user:bare,plugin:acme:lint,undefined:odd', 'skills: non-built-ins only, scoped')
+  equal(skills[0].description, 'Ship it', 'skills: project suffix stripped')
+  equal(skills[1].description, 'Ship it globally', 'skills: user suffix stripped')
+  equal(skills[2].description, '', 'skills: a suffix-only description empties')
+  equal(skills[0].argumentHint, '<msg>', 'skills: arg hint kept')
+  equal(skills[3].plugin, 'acme', 'skills: plugin name kept')
+  equal(resolveSlashCommands(live).map((c) => c.name).join(','), 'compact', 'skills: built-ins still curate to the allowlist')
+}

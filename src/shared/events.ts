@@ -53,6 +53,29 @@ export interface SlashCommandInfo {
   /** Hint for arguments (e.g. "<model>"), may be empty. */
   argumentHint?: string
   aliases?: string[]
+  builtin?: boolean
+  /** The owning plugin's name, set only on plugin commands. */
+  plugin?: string
+}
+
+/** Normalize the CLI's raw `commands[]` (initialize response, `commands_changed`), dropping malformed entries. */
+export function normalizeSlashCommands(raw: unknown): SlashCommandInfo[] {
+  if (!Array.isArray(raw)) return []
+  const out: SlashCommandInfo[] = []
+  for (const entry of raw as unknown[]) {
+    if (!entry || typeof entry !== 'object') continue
+    const c = entry as Record<string, unknown>
+    if (typeof c.name !== 'string') continue
+    out.push({
+      name: c.name,
+      description: typeof c.description === 'string' ? c.description : '',
+      argumentHint: typeof c.argumentHint === 'string' ? c.argumentHint : undefined,
+      aliases: Array.isArray(c.aliases) ? c.aliases.filter((a): a is string => typeof a === 'string') : undefined,
+      builtin: c.builtin === true,
+      plugin: typeof c.plugin === 'string' && c.plugin ? c.plugin : undefined
+    })
+  }
+  return out
 }
 
 /** An action the CLI suggests alongside a permission request (2.1.245+), e.g.

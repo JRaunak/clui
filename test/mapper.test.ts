@@ -310,10 +310,13 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   writeFileSync(file, [
     rec({ type: 'user', uuid: 'u1', message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/' } }, { type: 'text', text: 'what are these?' }] } }),
     rec({ type: 'user', uuid: 'u2', isMeta: true, message: { role: 'user', content: [{ type: 'text', text: '[Image: source: /tmp/x/images/8.jpg][Image: source: /tmp/x/images/9.jpg]' }] } }),
-    rec({ type: 'user', uuid: 'u3', isMeta: true, message: { role: 'user', content: '<cross-session-message from-name="peer">hi</cross-session-message>' } })
+    rec({ type: 'user', uuid: 'u3', isMeta: true, message: { role: 'user', content: '<cross-session-message from-name="peer">hi</cross-session-message>' } }),
+    // Verbatim shape from a 2.1.322 transcript: logged before a background agent's task-notification.
+    rec({ type: 'user', uuid: 'u4', isMeta: true, message: { role: 'user', content: '<system-reminder>\n<tools-used-before-summary>Read</tools-used-before-summary>\n</system-reminder>' } })
   ].join('\n') + '\n')
   const { messages } = await readTranscriptAtPath(file)
   ok(!messages.some((m) => m.text.includes('[Image: source:')), 'resume: the CLI image-source note is not a bubble')
+  ok(!messages.some((m) => m.text.includes('<system-reminder>')), 'resume: a meta system-reminder is not a bubble')
   ok(messages.some((m) => m.text === 'what are these?'), 'resume: the real message stays')
   ok(messages.length === 2, 'resume: the peer message still renders', `${messages.length}`)
 }
@@ -537,4 +540,32 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   } as any) as any[]
   equal(JSON.stringify(init.mcpServers), JSON.stringify([{ name: 'clui-surface', status: 'connected' }]), 'mapper: init carries the live MCP servers')
   equal((m.map({ type: 'system', subtype: 'init', session_id: 's' }) as any[])[0].mcpServers.length, 0, 'mapper: no mcp_servers, empty list')
+}
+
+// The live command list (initialize response and commands_changed, shape verified on 2.1.322) keeps builtin and
+// plugin; malformed entries drop.
+{
+  const { normalizeSlashCommands } = await import('../src/shared/events.ts')
+  const raw = [
+    { name: 'compact', description: 'Free context', argumentHint: '', builtin: true },
+    { name: 'ship', description: 'Ship it (project)', argumentHint: '<msg>' },
+    { name: 'acme:lint', description: 'Lint', plugin: 'acme', aliases: ['l', 3] },
+    { name: 7 },
+    null,
+    'x'
+  ]
+  const cmds = normalizeSlashCommands(raw)
+  equal(cmds.map((c) => c.name).join(','), 'compact,ship,acme:lint', 'commands: malformed entries drop')
+  equal(cmds[0].builtin, true, 'commands: builtin kept')
+  equal(cmds[1].builtin, false, 'commands: a skill is not builtin')
+  equal(cmds[2].plugin, 'acme', 'commands: plugin kept')
+  equal(JSON.stringify(cmds[2].aliases), '["l"]', 'commands: non-string aliases drop')
+  equal(normalizeSlashCommands({}).length, 0, 'commands: a non-array is empty')
+
+  const m = new EventMapper()
+  const evs = m.map({ type: 'system', subtype: 'commands_changed', commands: raw, session_id: 's', uuid: 'u' }) as any[]
+  equal(evs.length, 1, 'mapper: commands_changed maps to one event')
+  equal(evs[0].type, 'slash-commands', 'mapper: commands_changed is a slash-commands event')
+  equal(JSON.stringify(evs[0].commands), JSON.stringify(cmds), 'mapper: commands_changed uses the shared normalizer')
+  equal((m.map({ type: 'system', subtype: 'commands_changed', commands: [] }) as any[]).length, 0, 'mapper: an empty commands_changed is dropped')
 }

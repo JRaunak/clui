@@ -13,7 +13,7 @@ import { CAP_NOTE, refKey, type RefInput } from '../../../shared/context'
 import type { ChangeRefRequest } from '../../../shared/ipc'
 import { denyChangeRead, useActive, useSession, EMPTY_REFS, EMPTY_SLASH_COMMANDS } from '../store'
 import { fuzzyMatch, highlightRuns, rankPaths } from '../lib/fuzzy'
-import { resolveSlashCommands } from '../lib/slashCommands'
+import { resolveSkillCommands, resolveSlashCommands, type SkillCommand } from '../lib/slashCommands'
 import { paneRows, removeToken } from '../lib/composerRefs'
 import { useWorkspaceListing } from '../lib/openLink'
 import { mintedRef, recordMint } from '../lib/changeRefs'
@@ -29,6 +29,8 @@ interface Item {
   hint?: string
   args?: string
   kind: 'command' | 'skill' | 'file' | 'agent'
+  scope?: SkillCommand['scope']
+  plugin?: string
   /** Full literal replacement (incl. trigger char), overriding the default
    *  `trigger.char + value`. Agents need the quoted `@"name (agent)"` form. */
   insert?: string
@@ -128,18 +130,31 @@ export function useComposerAutocomplete(
   const files = useMemo(() => (listing ? [...listing.files] : []), [listing])
 
   // Build candidate items for the active trigger.
-  const skills = useActiveSkills(trigger?.char === '/')
   const agents = useActiveAgents(trigger?.char === '@')
-  // The CLI's live command list (from the initialize response), curated to the
-  // headless-safe allowlist + hydrated with real descriptions/arg-hints.
+  // The CLI's live command list (initialize response, then commands_changed): built-ins curated to the
+  // headless-safe allowlist, everything else listed as skills. Skills come from disk until it arrives, or if
+  // the CLI stops marking built-ins, since then the split would list every built-in as a skill.
   const liveCommands = useActive((s) => s?.slashCommands ?? EMPTY_SLASH_COMMANDS)
   const commands = useMemo(() => resolveSlashCommands(liveCommands), [liveCommands])
+  const marked = useMemo(() => liveCommands.some((c) => c.builtin), [liveCommands])
+  const liveSkills = useMemo(() => resolveSkillCommands(liveCommands), [liveCommands])
+  const diskSkills = useActiveSkills(trigger?.char === '/' && !marked)
+  const skills = marked ? liveSkills : diskSkills
   const attached = useMemo(() => new Set(refs.map((d) => refKey(d.ref))), [refs])
 
   const commandItems = useMemo<Item[]>(
     () => [
       ...commands.map((c) => ({ key: `command:${c.name}`, value: c.name, label: `/${c.name}`, hint: c.description, args: c.argumentHint, kind: 'command' as const })),
-      ...skills.map((s) => ({ key: `skill:${s.name}`, value: s.name, label: `/${s.name}`, hint: s.description, kind: 'skill' as const }))
+      ...skills.map((s) => ({
+        key: `skill:${s.scope ?? 'skill'}:${s.name}`,
+        value: s.name,
+        label: `/${s.name}`,
+        hint: s.description || undefined,
+        args: s.argumentHint || undefined,
+        kind: 'skill' as const,
+        scope: s.scope,
+        plugin: s.plugin
+      }))
     ],
     [commands, skills]
   )
@@ -201,15 +216,22 @@ export function useComposerAutocomplete(
     [trigger?.char, truncated, menu]
   )
 
-  useEffect(() => {
-    setSel((s) => (flat.length ? Math.min(s, flat.length - 1) : 0))
-  }, [flat.length])
+  // The selection follows its row when the list changes under it (a commands_changed row landing above it),
+  // so Enter runs what is highlighted. Adjusted during render so no frame paints the stale index.
+  const [prevFlat, setPrevFlat] = useState(flat)
+  if (prevFlat !== flat) {
+    setPrevFlat(flat)
+    const key = prevFlat[sel]?.it.key
+    const at = key ? flat.findIndex((r) => r.it.key === key) : -1
+    setSel(at >= 0 ? at : flat.length ? Math.min(sel, flat.length - 1) : 0)
+  }
   // Reset selection to the top whenever the query changes.
   useEffect(() => setSel(0), [trigger?.query, trigger?.char])
-  // Keep the selected row in view as the user arrows through a long list.
+  // Keep the selected row in view as the user arrows through a long list, but not when it only shifted.
+  const selKey = flat[sel]?.it.key
   useEffect(() => {
-    listRef.current?.querySelector(`[data-idx="${sel}"]`)?.scrollIntoView({ block: 'nearest' })
-  }, [sel])
+    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [selKey])
   // Esc dismissal: hide until the query changes again.
   useEffect(() => setDismissed(false), [trigger?.query, trigger?.char, trigger?.start])
 
@@ -396,8 +418,8 @@ export function useComposerAutocomplete(
                         </span>
                       )}
                       {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
-                        <span className="shrink-0 rounded bg-[var(--glass-row-hover)] px-1.5 py-0.5 text-badge text-dim">
-                          {r.it.kind}
+                        <span className="shrink-0 rounded bg-[var(--glass-row-hover)] px-1.5 py-0.5 text-badge text-dim" title={r.it.plugin && `Plugin: ${r.it.plugin}`}>
+                          {r.it.scope ?? r.it.kind}
                         </span>
                       )}
                       {r.it.hint && (
@@ -433,10 +455,10 @@ export function useComposerAutocomplete(
   return { open: menuOpen, render, onKeyDown, listboxId, activeId, describedBy }
 }
 
-/** Load the workspace's skills (once per cwd) for the `/` menu. */
-function useActiveSkills(active: boolean): { name: string; description: string }[] {
+/** Load the workspace's skills (once per cwd) for the `/` menu until the CLI's live list arrives. */
+function useActiveSkills(active: boolean): SkillCommand[] {
   const cwd = useActive((s) => s?.cwd ?? null)
-  const [skills, setSkills] = useState<{ name: string; description: string }[]>([])
+  const [skills, setSkills] = useState<SkillCommand[]>([])
   const loadedFor = useRef<string | null>(null)
   useEffect(() => {
     if (!active || loadedFor.current === cwd) return

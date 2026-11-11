@@ -87,3 +87,25 @@ export function resolveSlashCommands(live: SlashCommandInfo[]): SlashCommand[] {
   }
   return out
 }
+
+export interface SkillCommand extends SlashCommand {
+  scope?: 'project' | 'user' | 'plugin'
+  plugin?: string
+}
+
+/** The live list's non-built-ins (skills, custom and plugin commands). The CLI marks a project or user
+ *  one with a " (project)" / " (user)" description suffix, which becomes the scope badge instead. */
+export function resolveSkillCommands(live: SlashCommandInfo[]): SkillCommand[] {
+  return live
+    .filter((c) => !c.builtin)
+    .map((c): SkillCommand => {
+      const m = /\s*\((project|user)\)$/.exec(c.description)
+      return {
+        name: c.name,
+        description: m ? c.description.slice(0, m.index) : c.description,
+        argumentHint: c.argumentHint,
+        scope: c.plugin ? 'plugin' : (m?.[1] as 'project' | 'user' | undefined),
+        plugin: c.plugin
+      }
+    })
+}

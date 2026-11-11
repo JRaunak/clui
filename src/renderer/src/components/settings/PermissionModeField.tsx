@@ -41,7 +41,7 @@ export function PermissionModeField(): JSX.Element {
     <>
       <Field
         label="Permission mode"
-        hint="System Default follows ~/.claude/settings.json, and a project's own settings can override it. Clui never writes that file."
+        hint="System Default follows ~/.claude/settings.json, and a project's own settings can override it. Clui never writes that file. In Adaptive and Autonomous, mods Claude writes turn on without asking; Silent Deny doesn't load them. A mod's own tool calls never prompt in any mode, though deny rules and organization policy still apply."
         hintId={`${uid}-mode-hint`}
         onReset={mode.overridden ? mode.reset : undefined}
         note={

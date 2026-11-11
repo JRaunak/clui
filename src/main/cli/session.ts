@@ -16,7 +16,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
-import type { DomainEvent, ElicitationResponse } from '../../shared/events'
+import { normalizeSlashCommands, type DomainEvent, type ElicitationResponse } from '../../shared/events'
 import type { DispatchResult, ModeChangeResult, ModelSwitchResult } from '../../shared/ipc'
 import { HOOKS_TOKEN, clampEffort, deriveModelInfo, effortsFromCatalog, isEffortChoice, setLiveEfforts } from '../../shared/settings'
 import { NdjsonParser } from './ndjson'
@@ -550,23 +550,10 @@ export class ClaudeSession extends EventEmitter {
         clearTimeout(this.initTimer)
         this.initTimer = null
       }
-      // The initialize response carries the CLI's live slash-command list. Surface
-      // it so the composer's `/` menu tracks the real commands (drift-proof) instead of
-      // a hardcoded list. Defensive: only emit well-formed {name,description} entries.
-      const cmds = env.response?.response?.commands
-      if (Array.isArray(cmds)) {
-        const commands = cmds
-          .filter((c): c is { name: string; description?: string; argumentHint?: string; aliases?: string[] } =>
-            Boolean(c && typeof c === 'object' && typeof (c as { name?: unknown }).name === 'string')
-          )
-          .map((c) => ({
-            name: c.name,
-            description: typeof c.description === 'string' ? c.description : '',
-            argumentHint: typeof c.argumentHint === 'string' ? c.argumentHint : undefined,
-            aliases: Array.isArray(c.aliases) ? c.aliases.filter((a) => typeof a === 'string') : undefined
-          }))
-        if (commands.length) this.emitEvent({ type: 'slash-commands', commands })
-      }
+      // The initialize response carries the CLI's live slash-command list; `commands_changed`
+      // (event-mapper) replaces it mid-session.
+      const commands = normalizeSlashCommands(env.response?.response?.commands)
+      if (commands.length) this.emitEvent({ type: 'slash-commands', commands })
       const efforts = effortsFromCatalog(env.response?.response?.models)
       if (Object.keys(efforts).length) {
         setLiveEfforts(efforts)

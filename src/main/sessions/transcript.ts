@@ -81,9 +81,16 @@ function isCommandPlumbing(text: string): boolean {
   )
 }
 
+function contentText(content: unknown): string {
+  return typeof content === 'string' ? content : Array.isArray(content) ? content.map((c) => (c && typeof c === 'object' && 'text' in c ? String(c.text) : '')).join('') : ''
+}
+
 function isImageSourceNote(content: unknown): boolean {
-  const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((c) => (c && typeof c === 'object' && 'text' in c ? String(c.text) : '')).join('') : ''
-  return /^(\[Image: source: [^\]]+\]\s*)+$/.test(text.trim())
+  return /^(\[Image: source: [^\]]+\]\s*)+$/.test(contentText(content).trim())
+}
+
+function isSystemReminder(content: unknown): boolean {
+  return /^<system-reminder>[\s\S]*<\/system-reminder>$/.test(contentText(content).trim())
 }
 
 /**
@@ -470,6 +477,9 @@ async function parseTranscriptFile(
       // The CLI notes where it saved a message's images as a meta "user" record of bare `[Image: source: …]`
       // placeholders. The images are already on the real message, so the note isn't something the user said.
       if (entry.isMeta && entry.type === 'user' && isImageSourceNote(entry.message?.content)) continue
+      // A meta `<system-reminder>` record (e.g. the tools a background agent used, logged before its report)
+      // is context for the model; the live stream never shows it, so resume mustn't render it as a user bubble.
+      if (entry.isMeta && entry.type === 'user' && isSystemReminder(entry.message?.content)) continue
       // A skill's instructions reach the model as a meta "user" record tied to the Skill call; the live
       // stream never renders them, so a resumed transcript mustn't show them as the user's words.
       if (entry.isMeta && entry.type === 'user' && entry.sourceToolUseID && toolCallsById.get(entry.sourceToolUseID)?.name === 'Skill') continue
