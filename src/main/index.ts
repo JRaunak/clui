@@ -984,12 +984,16 @@ function registerIpc(): void {
   handle(IpcChannels.readTranscript, async (_e, sessionId: string) =>
     readTranscript(sessionId)
   )
-  handle(IpcChannels.readAgentTranscript, async (_e, agentId: string) =>
-    readAgentTranscript(agentId)
-  )
-  handle(IpcChannels.readAgentTranscriptByToolUseId, async (_e, toolUseId: string) =>
-    readAgentTranscriptByToolUseId(toolUseId)
-  )
+  // The finders compare readdir names, so this guards no traversal; it stops a huge string walking the whole tree.
+  const agentIdOk = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(v)
+  handle(IpcChannels.readAgentTranscript, async (_e, agentId: unknown) => {
+    if (!agentIdOk(agentId)) throw new Error('bad agent id')
+    return readAgentTranscript(agentId)
+  })
+  handle(IpcChannels.readAgentTranscriptByToolUseId, async (_e, toolUseId: unknown) => {
+    if (!agentIdOk(toolUseId)) throw new Error('bad tool use id')
+    return readAgentTranscriptByToolUseId(toolUseId)
+  })
 
   // Title/cwd lookup for search results, from the same source the sidebar uses. Cached
   // with a short TTL: listSessions scans every file's first lines (~500ms on a big

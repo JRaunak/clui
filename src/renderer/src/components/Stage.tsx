@@ -14,7 +14,6 @@ import { browserTabOf, surfaceKindOf, useActive, useSession, viewedTabOf, EMPTY_
 import { Chat } from './Chat'
 import { Composer } from './Composer'
 import { ChangedFiles } from './ChangedFiles'
-import { SubagentView } from './SubagentView'
 import { SurfacePane } from './surfaces/SurfacePane'
 import { SurfaceHost } from './surfaces/SurfaceHost'
 import { browserExternalBlock } from './surfaces/BrowserSurface'
@@ -32,12 +31,10 @@ import { isHtml } from '../../../shared/html-view'
 export type PaneState = 'collapsed' | 'half' | 'full'
 
 interface PaneApi {
-  kind: 'subagent' | 'surfaces' | null
   state: PaneState
   /** Half only exists when the Stage is at least SPLIT_MIN wide. */
   canToggleSize: boolean
   toggleSize: () => void
-  close: () => void
   /** A Gate is waiting in the dock, and the dock is unmounted behind a full pane. */
   needsYou: boolean
   resolveNeedsYou: () => void
@@ -108,10 +105,6 @@ export function Stage({
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const cwd = useActive((s) => s?.cwd ?? null)
-  const viewingSubagent = useSession((s) => s.viewingSubagent)
-  const closeSubagentView = useSession((s) => s.closeSubagentView)
-  const paneFull = useSession((s) => s.paneFull)
-  const setPaneFull = useSession((s) => s.setPaneFull)
   const primaryScrolled = useSession((s) => s.primaryScrolled)
   const secondaryScrolled = useSession((s) => s.secondaryScrolled)
   const gatePending = useActive((s) => (s?.pendingPermissions ?? EMPTY_PENDING).length > 0)
@@ -122,8 +115,8 @@ export function Stage({
 
   const paneOpen = useActive(selectPaneOpen)
   const surfacePaneFull = useActive((s) => !!s?.surfacePaneFull)
-  const kind: 'subagent' | 'surfaces' | null = cwd && viewingSubagent ? 'subagent' : cwd && paneOpen ? 'surfaces' : null
-  const full = kind === 'surfaces' ? surfacePaneFull : paneFull
+  const kind = cwd && paneOpen ? 'surfaces' : null
+  const full = surfacePaneFull
   const state: PaneState = !kind ? 'collapsed' : wide && !full ? 'half' : 'full'
   useEffect(() => {
     if (!kind) setFocusInSecondary(false)
@@ -185,28 +178,23 @@ export function Stage({
 
   const pane = useMemo<PaneApi>(
     () => ({
-      kind,
       state,
       canToggleSize: wide,
       toggleSize: () => {
         const goingFull = !full
         const fromTranscript = !!document.activeElement?.closest('[data-ui="pane-primary"]')
-        if (kind === 'surfaces') useSession.getState().setPane(goingFull ? 'full' : 'half')
-        else setPaneFull(goingFull)
+        useSession.getState().setPane(goingFull ? 'full' : 'half')
         // Going full unmounts the transcript, so focus that was in it moves to the pane's title.
         if (goingFull && fromTranscript) requestAnimationFrame(focusPaneTitle)
       },
-      close: closeSubagentView,
       needsYou: state === 'full' && gatePending,
       resolveNeedsYou: () => {
-        if (kind === 'surfaces') useSession.getState().setPane(wide ? 'half' : 'collapsed')
-        else if (wide) setPaneFull(false)
-        else closeSubagentView()
+        if (state === 'full') useSession.getState().setPane(wide ? 'half' : 'collapsed')
         requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="gate-title"]')?.focus())
       },
       escapeActive: state === 'full' || focusInSecondary
     }),
-    [state, wide, full, kind, gatePending, focusInSecondary, closeSubagentView, setPaneFull]
+    [state, wide, full, gatePending, focusInSecondary]
   )
 
   return (
@@ -235,14 +223,8 @@ export function Stage({
           <div className="relative flex min-h-0 flex-1">
             {state !== 'full' && <PrimaryPane split={state === 'half'} />}
             {kind && (
-              <SurfacePane
-                key={kind}
-                id={kind === 'surfaces' ? 'surface-pane-region' : undefined}
-                label={kind === 'surfaces' ? 'Pane' : 'Detail pane'}
-                split={state === 'half'}
-                onFocusWithin={setFocusInSecondary}
-              >
-                {kind === 'surfaces' ? <SurfaceHost /> : <SubagentView />}
+              <SurfacePane id="surface-pane-region" label="Pane" split={state === 'half'} onFocusWithin={setFocusInSecondary}>
+                <SurfaceHost />
               </SurfacePane>
             )}
           </div>

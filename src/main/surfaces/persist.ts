@@ -29,7 +29,11 @@ const TEXT_MAX = 1024
 const ID_MAX = 200
 const URL_MAX = 8192
 const EXPANDED_MAX = 200
-const KINDS = ['tree', 'file', 'diff', 'image', 'doc', 'sheet', 'artifact'] as const
+const KINDS = ['tree', 'file', 'diff', 'image', 'doc', 'sheet', 'artifact', 'agent', 'agents', 'workflows'] as const
+type Kind = (typeof KINDS)[number]
+const AGENT_KEY = /^(tool|agent):[A-Za-z0-9_-]{1,128}$/
+/** Ancestors an agent tab's trail keeps; deeper agents keep their last 8. */
+const TRAIL_MAX = 8
 const DELIMITERS = [',', ';', '\t', '|'] as const
 const LAYOUTS = ['flow', 'pages'] as const
 const UNITS = ['page', 'slide'] as const
@@ -93,7 +97,7 @@ function fileView(v: unknown): Extract<SurfaceViewState, { kind: 'file' }> {
   }
 }
 
-function viewOf(v: unknown, kind: SavedTab['kind']): SurfaceViewState {
+function viewOf(v: unknown, kind: Kind): SurfaceViewState {
   const o = obj(v)
   if (o.kind !== kind) fail()
   const find = some('find', o.find, (x) => str(x, TEXT_MAX))
@@ -122,9 +126,17 @@ function viewOf(v: unknown, kind: SavedTab['kind']): SurfaceViewState {
         ...some('showHidden', o.showHidden, (x): true => (x === true ? true : fail()))
       }
     case 'artifact':
+    case 'agent':
+    case 'agents':
+    case 'workflows':
       return fail()
   }
 }
+
+const keyOf = (kind: Kind, v: unknown): string =>
+  kind === 'tree' || kind === 'diff' || kind === 'agents' || kind === 'workflows' ? (v === '' ? '' : fail())
+  : kind === 'agent' ? (AGENT_KEY.test(str(v, ID_MAX)) ? (v as string) : fail())
+  : abs(v)
 
 function tabOf(v: unknown): SavedTab {
   const o = obj(v)
@@ -132,7 +144,7 @@ function tabOf(v: unknown): SavedTab {
   const tab: SavedTab = {
     id: str(o.id, PATH_MAX + ID_MAX),
     kind,
-    key: kind === 'tree' || kind === 'diff' ? (o.key === '' ? '' : fail()) : abs(o.key),
+    key: keyOf(kind, o.key),
     title: str(o.title, TEXT_MAX),
     openedBy: oneOf(o.openedBy, OPENERS),
     openedAt: num(o.openedAt),
@@ -147,7 +159,8 @@ function tabOf(v: unknown): SavedTab {
       }
     }),
     ...some('viewState', o.viewState, (x) => viewOf(x, kind)),
-    ...some('sourceView', o.sourceView, fileView)
+    ...some('sourceView', o.sourceView, fileView),
+    ...some('trail', o.trail, (x) => (kind === 'agent' ? list(x, TRAIL_MAX).map((y) => str(y, PATH_MAX + ID_MAX)) : fail()))
   }
   return tab.id === surfaceIdOf(tab) ? tab : fail()
 }

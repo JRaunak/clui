@@ -1,0 +1,227 @@
+import type { AgentMeta, HistoryMessage } from '../../../shared/sessions'
+import { agentRefOf, type AgentRef, type SurfaceTab } from '../../../shared/surfaces'
+import type { PerSessionState, SubagentMessage, ToolCall, WorkflowAgent, WorkflowState } from '../store'
+import { assignFaces, type Launch } from './faces'
+
+export const isAgentTool = (name: string): boolean => name === 'Task' || name === 'Agent'
+
+export function subagentType(input: unknown): string | null {
+  if (input && typeof input === 'object') {
+    const t = (input as Record<string, unknown>).subagent_type
+    if (typeof t === 'string' && t) return t
+  }
+  return null
+}
+
+export function agentDescription(input: unknown): string {
+  if (input && typeof input === 'object') {
+    const o = input as Record<string, unknown>
+    if (typeof o.description === 'string') return o.description
+    if (typeof o.prompt === 'string') return o.prompt
+  }
+  return ''
+}
+
+/** An agent tab's label: the launch's description, else its type, else "Agent". */
+export const agentLabel = (input: unknown): string => agentDescription(input).trim() || subagentType(input) || 'Agent'
+
+export function findAgentTool(messages: readonly { tools: ToolCall[] }[], id: string): ToolCall | null {
+  for (const m of messages) {
+    const t = m.tools.find((tc) => tc.id === id)
+    if (t) return t
+  }
+  return null
+}
+
+/** The launching Agent call for a subagent: main's card, else the entry in its parent's live stream (which
+ *  `subagent-tool-result` completes), else the call in its parent's transcript read from disk. */
+export function launcherOf(slice: Pick<PerSessionState, 'messages' | 'subagentMessages' | 'nestedLaunches'>, id: string): ToolCall | null {
+  const main = findAgentTool(slice.messages, id)
+  if (main) return main
+  for (const entries of Object.values(slice.subagentMessages)) for (const e of entries) if (e.kind === 'tool' && e.tool.id === id) return e.tool
+  for (const tools of Object.values(slice.nestedLaunches)) for (const t of tools) if (t.id === id) return t
+  return null
+}
+
+/** The agent that launched a nested one, by tool_use id, else null for main's own. */
+function parentOf(slice: Pick<PerSessionState, 'subagentMessages' | 'nestedLaunches' | 'subagentChildren'>, id: string): string | null {
+  for (const [p, list] of Object.entries(slice.subagentChildren)) if (list.some((c) => c.childToolUseId === id)) return p
+  for (const [p, entries] of Object.entries(slice.subagentMessages)) if (entries.some((e) => e.kind === 'tool' && e.tool.id === id)) return p
+  for (const [p, tools] of Object.entries(slice.nestedLaunches)) if (tools.some((t) => t.id === id)) return p
+  return null
+}
+
+/** A nested agent's ancestor tab ids, root first, as far as the session knows them; at most 8. */
+export function trailOf(slice: Pick<PerSessionState, 'subagentMessages' | 'nestedLaunches' | 'subagentChildren'>, id: string): string[] {
+  const out: string[] = []
+  for (let p = parentOf(slice, id); p && out.length < 8 && !out.includes(`agent:tool:${p}`); p = parentOf(slice, p)) out.unshift(`agent:tool:${p}`)
+  return out
+}
+
+/** An Agent-tool subagent's label, type and launch input, from its launching call or its parent's child record. */
+export function agentInfo(slice: Pick<PerSessionState, 'messages' | 'subagentMessages' | 'nestedLaunches' | 'subagentChildren'>, id: string): { label: string; subtype: string | null; input: unknown } {
+  const tool = launcherOf(slice, id)
+  if (tool) return { label: agentLabel(tool.input), subtype: subagentType(tool.input), input: tool.input }
+  for (const list of Object.values(slice.subagentChildren)) {
+    const c = list.find((x) => x.childToolUseId === id)
+    if (c) return { label: c.description?.trim() || c.subagentType || 'Agent', subtype: c.subagentType ?? null, input: null }
+  }
+  return { label: 'Agent', subtype: null, input: null }
+}
+
+export type RunState = 'queued' | 'running' | 'background' | 'done' | 'failed' | 'stopped' | 'interrupted' | 'needs' | 'stopping'
+export type InterruptReason = 'quit' | 'no-result'
+export interface RunStatusOf {
+  state: RunState
+  reason?: InterruptReason
+  startMs?: number
+  durationMs?: number
+}
+
+export const RUN_WORDS: Record<RunState, { word: string; spoken: string }> = {
+  queued: { word: 'Queued', spoken: 'queued' },
+  running: { word: 'Running', spoken: 'running' },
+  background: { word: 'In background', spoken: 'running in background' },
+  done: { word: 'Done', spoken: 'done' },
+  failed: { word: 'Failed', spoken: 'failed' },
+  stopped: { word: 'Stopped', spoken: 'stopped' },
+  interrupted: { word: 'Interrupted', spoken: 'interrupted' },
+  needs: { word: 'Needs you', spoken: 'needs you' },
+  stopping: { word: 'Stopping…', spoken: 'stopping' }
+}
+
+export const REASON_COPY: Record<InterruptReason, string> = {
+  quit: 'Clui quit while it was running',
+  'no-result': 'It ended without a result'
+}
+
+export const isLive = (s: RunState): boolean => s === 'running' || s === 'background' || s === 'needs' || s === 'stopping'
+
+/** A workflow agent's state word as a run state. A workflow stop cuts its running agents off as `error`, and the user
+ *  asked for that stop, so it reads stopped. */
+export function runStateOf(state: string, workflowEnded: string | null): 'queued' | 'running' | 'done' | 'failed' | 'stopped' {
+  const cut = workflowEnded === 'killed' || workflowEnded === 'stopped'
+  if (state === 'done') return 'done'
+  if (state === 'error') return cut ? 'stopped' : 'failed'
+  if (state === 'start' || state === 'running') return workflowEnded === null ? 'running' : 'stopped'
+  return 'queued'
+}
+
+/** A workflow's own status. A record gone from the session reads as ended without a result. */
+export function workflowRunState(w: WorkflowState | undefined): RunStatusOf {
+  if (!w) return { state: 'interrupted', reason: 'no-result' }
+  const e = w.endedStatus
+  return { state: e === null ? 'running' : e === 'completed' ? 'done' : e === 'killed' || e === 'stopped' ? 'stopped' : 'failed' }
+}
+
+export function workflowOfAgent(workflows: Record<string, WorkflowState>, agentId: string): { workflow: WorkflowState; agent: WorkflowAgent } | null {
+  for (const workflow of Object.values(workflows)) {
+    const agent = workflow.agents.find((a) => a.agentId === agentId)
+    if (agent) return { workflow, agent }
+  }
+  return null
+}
+
+const span = (start: number | undefined, end: number | undefined): number | undefined => (start !== undefined && end !== undefined ? end - start : undefined)
+
+function toolRunState(slice: PerSessionState, id: string, meta: AgentMeta | null | undefined): RunStatusOf {
+  const bg = Object.values(slice.backgroundTasks).find((t) => t.taskType === 'local_agent' && t.toolUseId === id)
+  if (bg) {
+    const state = bg.stopping ? 'stopping' : bg.status === 'running' ? 'background' : bg.status === 'killed' ? 'stopped' : bg.status === 'failed' ? 'failed' : 'done'
+    return { state, startMs: bg.startMs, durationMs: span(bg.startMs, bg.endMs) }
+  }
+  const tool = launcherOf(slice, id)
+  if (tool && tool.startMs !== undefined) {
+    const state = tool.result === undefined ? (slice.interrupting ? 'stopping' : 'running') : tool.stopped ? 'stopped' : tool.isError ? 'failed' : 'done'
+    return { state, startMs: tool.startMs, durationMs: span(tool.startMs, tool.endMs) }
+  }
+  const durationMs = tool?.durationMs
+  if (tool && !tool.background && meta?.shape !== 'background') {
+    if (tool.result === 'User rejected tool use') return { state: 'stopped', durationMs }
+    if (tool.result === undefined) return { state: 'interrupted', reason: 'quit' }
+    return { state: tool.isError ? 'failed' : 'done', durationMs }
+  }
+  if (meta) return meta.finished ? { state: meta.stoppedByUser ? 'stopped' : 'done', durationMs } : { state: 'interrupted', reason: 'quit' }
+  // A background launch whose sidecar hasn't been read yet: its completion notice is the only word on it.
+  if (tool?.notifiedAt !== undefined) return { state: 'done', durationMs }
+  if (tool) return { state: 'interrupted', reason: 'quit' }
+  return slice.busy ? { state: 'running' } : { state: 'interrupted', reason: 'no-result' }
+}
+
+/** One status for an agent everywhere it shows. `meta` is its sidecar's outcome, undefined until read. */
+export function agentRunState(slice: PerSessionState, ref: AgentRef, meta?: AgentMeta | null): RunStatusOf {
+  if (ref.by === 'agent') {
+    const hit = workflowOfAgent(slice.workflows, ref.id)
+    return hit ? { state: runStateOf(hit.agent.state, hit.workflow.endedStatus) } : { state: 'interrupted', reason: 'quit' }
+  }
+  const s = toolRunState(slice, ref.id, meta === undefined ? slice.agentMetas[ref.id] : meta)
+  const asks = (s.state === 'running' || s.state === 'background') && slice.pendingPermissions.some((p) => p.agentToolUseId === ref.id)
+  return asks ? { ...s, state: 'needs' } : s
+}
+
+/** A disk transcript as the live stream shape. Disk keeps no block order inside a message, so thinking, then text,
+ *  then tools, as the main transcript's rebuilt fallback does. */
+export function entriesOf(history: readonly HistoryMessage[]): SubagentMessage[] {
+  return history.flatMap((m): SubagentMessage[] =>
+    m.peer
+      ? []
+      : [
+          ...(m.thinking ? [{ kind: 'thinking' as const, role: m.role, text: m.thinking }] : []),
+          ...(m.text ? [{ kind: 'text' as const, role: m.role, text: m.text }] : []),
+          ...m.tools.map((t) => ({ kind: 'tool' as const, tool: { ...t } }))
+        ]
+  )
+}
+
+const mainFaces = new WeakMap<PerSessionState['messages'], { bg: PerSessionState['backgroundTasks']; faces: Map<string, number> }>()
+
+/** Main's Agent calls in message order. A foreground agent is over before main's next message; a background one
+ *  holds its face until its completion notice. */
+function mainScope(slice: PerSessionState): Map<string, number> {
+  const hit = mainFaces.get(slice.messages)
+  if (hit && hit.bg === slice.backgroundTasks) return hit.faces
+  const bgIds = new Set(Object.values(slice.backgroundTasks).map((t) => t.toolUseId))
+  const launches: Launch[] = slice.messages.flatMap((m, at) =>
+    m.tools
+      .filter((t) => isAgentTool(t.name))
+      .map((t) => {
+        const bg = t.background || t.sentToBackground || t.notifiedAt !== undefined || bgIds.has(t.id)
+        return { key: t.id, at, end: !bg ? at + 0.5 : t.notifiedAt !== undefined ? t.notifiedAt + 0.5 : null }
+      })
+  )
+  const faces = assignFaces(launches)
+  mainFaces.set(slice.messages, { bg: slice.backgroundTasks, faces })
+  return faces
+}
+
+/** The children an agent launched, in order: its live stream's, else the ones its transcript recorded. */
+const childrenOf = (slice: PerSessionState, parent: string): string[] | null =>
+  slice.subagentChildren[parent]?.length ? slice.subagentChildren[parent].map((c) => c.childToolUseId) : (slice.nestedLaunches[parent]?.map((t) => t.id) ?? null)
+
+function toolFace(slice: PerSessionState, id: string, trail: readonly string[]): number | null {
+  const parentRef = trail.length ? agentRefOf(trail[trail.length - 1].replace(/^agent:/, '')) : null
+  if (!parentRef || parentRef.by !== 'tool') return mainScope(slice).get(id) ?? null
+  const parentFace = toolFace(slice, parentRef.id, trail.slice(0, -1))
+  const kids = childrenOf(slice, parentRef.id)
+  if (parentFace === null || !kids) return null
+  // ponytail: nested faces ignore top-level holds; merge scopes by record timestamp if users report a clash
+  return assignFaces(kids.map((key, at) => ({ key, at, end: null })), parentFace + 1, new Set([parentFace])).get(id) ?? null
+}
+
+/** The face an agent tab wears, or null for the generic mark while its scope's launch list isn't known. */
+export function faceOf(slice: PerSessionState, tab: Pick<SurfaceTab, 'key' | 'trail'>): number | null {
+  const ref = agentRefOf(tab.key)
+  if (!ref) return null
+  if (ref.by === 'tool') return toolFace(slice, ref.id, tab.trail ?? [])
+  const hit = workflowOfAgent(slice.workflows, ref.id)
+  if (!hit) return null
+  const agents = hit.workflow.agents.filter((a) => a.agentId).sort((a, b) => a.index - b.index)
+  return assignFaces(agents.map((a) => ({ key: a.agentId!, at: a.index, end: null }))).get(ref.id) ?? null
+}
+
+/** Labeled tabs need 120px each and 4px between. Dense mode leaves only once they fit with 24px to spare, so a
+ *  resize hovering at the edge doesn't flap. */
+export function denseNext(n: number, width: number, wasDense: boolean): boolean {
+  const need = 120 * n + 4 * Math.max(0, n - 1)
+  return wasDense ? need > width - 24 : need > width
+}

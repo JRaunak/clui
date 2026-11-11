@@ -26,23 +26,24 @@ import { FILE_GOTO_EVENT } from '../components/surfaces/FileSurface'
 import { FILE_FIND_EVENT } from '../components/surfaces/fileDoc'
 import { TRANSCRIPT_FIND_EVENT } from '../components/FindBar'
 import { fileLike, hasFind } from './presentation'
+import { isTranscriptKind, isViewKind } from '../../../shared/surfaces'
 
 /** Focus is in the Surfaces pane: its DOM, or a native page in it, which only main can report. */
 function inPane(page: boolean): boolean {
   const st = useSession.getState()
-  return !!activeSlice(st)?.paneOpen && !st.viewingSubagent && (page || !!document.activeElement?.closest('[data-ui="pane-secondary"]'))
+  return !!activeSlice(st)?.paneOpen && (page || !!document.activeElement?.closest('[data-ui="pane-secondary"]'))
 }
 
 /**
- * Find, Find Next and Find Previous go to one target. A file tab with a find, Source or a Markdown Preview, owns
- * them while focus is in the pane showing it, and an HTML Preview there takes none. Anywhere else, a native page included, they search the
- * conversation, matching the menu's labels. Only one find is open at a time, so ⌘G never steps two.
+ * Find, Find Next and Find Previous go to one target. A file or transcript tab owns them while focus is in the pane
+ * showing it; one with no find, such as an HTML Preview, takes none. Anywhere else, a native page included, they
+ * search the conversation, matching the menu's labels. Only one find is open at a time, so ⌘G never steps two.
  */
 function routeFind(what: 'open' | 'next' | 'prev', page: boolean): void {
   const store = useSession.getState()
   const slice = activeSlice(store)
   const tab = slice?.surfaces.active ? slice.surfaces.tabs[slice.surfaces.active] : undefined
-  if (inPane(page) && fileLike(tab?.kind)) {
+  if (inPane(page) && (fileLike(tab?.kind) || isTranscriptKind(tab?.kind))) {
     if (!hasFind(store.activeHandleId, tab)) return
     if (store.findOpen) store.setFindOpen(false)
     window.dispatchEvent(new CustomEvent(FILE_FIND_EVENT, { detail: what }))
@@ -196,9 +197,9 @@ export function useKeyboardShortcuts(opts: {
           break
         // A hidden pane has nothing to point at, so Point opens it first.
         case 'browser-annotate': {
-          if (store.viewingSubagent) break
           const s = activeSlice(store)
           const kind = s && surfaceKindOf(s.surfaces, s.surfaces.active)
+          if (isViewKind(kind)) break
           if (s && !s.paneOpen && (kind === 'browser' || kind === 'diff' || fileLike(kind))) {
             store.setPane('half')
             requestAnimationFrame(point)

@@ -48,7 +48,7 @@ function openSingleton(spec: SurfaceSpec & { kind: 'tree' | 'diff' }): void {
   const st = useSession.getState()
   const slice = activeSlice(st)
   if (!slice) return
-  const shown = slice.paneOpen && !st.viewingSubagent && slice.surfaces.active === spec.kind
+  const shown = slice.paneOpen && slice.surfaces.active === spec.kind
   if (!shown) requestSurfaceFocus(spec.kind)
   st.openSurface(slice.handleId, spec, 'focus', 'user', 'user')
   if (shown) document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-pane-title]')?.focus()

@@ -83,6 +83,26 @@ const withSet = (patch: Record<string, unknown>): any => {
   ok(parseEntry(withSet({ order: Object.keys(many), active: null, tabs: many })) === null, 'persist: more than 24 non-browser tabs is not a set Clui wrote')
 }
 
+// View kinds: agent tabs keep their key and trail; nothing else takes a trail; side tabs are never saved.
+{
+  const agent = (key: string, over: Record<string, unknown> = {}): any => ({ id: `agent:${key}`, kind: 'agent', key, title: 'Map the IPC', openedBy: 'user', openedAt: 1, lastViewedAt: 2, ...over })
+  const withTab = (t: any): any => withSet({ order: ['tree', t.id], active: t.id, tabs: { tree, [t.id]: t } })
+  const nested = parseEntry(withTab(agent('tool:toolu_x', { trail: ['agent:tool:toolu_p'] })))
+  ok(nested?.set.tabs['agent:tool:toolu_x'].trail?.[0] === 'agent:tool:toolu_p', 'persist: an agent tab and its trail round-trip')
+  ok(!!parseEntry(withTab({ id: 'agents', kind: 'agents', key: '', title: 'Subagents', openedBy: 'user', openedAt: 1, lastViewedAt: 2 })), "persist: a Subagents tab keyed '' parses")
+  const bad: [string, unknown][] = [
+    ['a traversing agent key', withTab(agent('tool:../x'))],
+    ['an unknown agent key scheme', withTab(agent('run:x'))],
+    ['a 4 KB agent key', withTab(agent(`tool:${'a'.repeat(4096)}`))],
+    ['a trail on a file tab', withSet({ tabs: { tree, 'file:/w/a.ts': file('/w/a.ts', { trail: ['agent:tool:t'] }) } })],
+    ['a trail past 8', withTab(agent('tool:t', { trail: Array.from({ length: 9 }, (_, i) => `agent:tool:t${i}`) }))],
+    ['a Subagents tab with a path', withTab({ id: 'agents', kind: 'agents', key: '/x', title: 'Subagents', openedBy: 'user', openedAt: 1, lastViewedAt: 2 })],
+    ['a side tab', withTab({ id: 'side', kind: 'side', key: '', title: 'Side chat', openedBy: 'user', openedAt: 1, lastViewedAt: 2 })],
+    ['an agent view state', withTab(agent('tool:t', { viewState: { kind: 'agent' } }))]
+  ]
+  for (const [why, v] of bad) ok(parseEntry(v) === null, `persist: refuses ${why}`)
+}
+
 // URLs: no userinfo, no off-machine query or fragment, and nothing but http(s) or a blank page.
 equal(cleanUrl('https://user:pw@example.com/a?code=1#access_token=2'), 'https://example.com/a', 'persist: userinfo, query and fragment stripped')
 equal(cleanUrl('http://localhost:5173/a?b=1#c'), 'http://localhost:5173/a?b=1#c', 'persist: a localhost query and fragment are kept')

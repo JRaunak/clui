@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { isHtml } from '../../../shared/html-view'
-import { isSvg, type SurfaceKind, type SurfaceTab } from '../../../shared/surfaces'
+import { isSvg, isTranscriptKind, type PaneKind, type SurfaceTab } from '../../../shared/surfaces'
 import { isDelimited, isWorkbook } from '../../../shared/sheets'
 
 export type Presentation = 'source' | 'preview'
@@ -11,7 +11,7 @@ export const isMermaid = (p: string): boolean => /\.(mmd|mermaid)$/i.test(p)
 export const hasPreview = (p: string): boolean => isHtml(p) || isMarkdown(p) || isMermaid(p) || isSvg(p) || isDelimited(p)
 
 /** Tabs that show one file: its text, a Preview beside it for the kinds that have one, an image, a PDF or a sheet. */
-export const fileLike = (kind: SurfaceKind | null | undefined): kind is 'file' | 'artifact' | 'image' | 'doc' | 'sheet' =>
+export const fileLike = (kind: PaneKind | null | undefined): kind is 'file' | 'artifact' | 'image' | 'doc' | 'sheet' =>
   kind === 'file' || kind === 'artifact' || kind === 'image' || kind === 'doc' || kind === 'sheet'
 
 /** What a pane tab shows: an explicit choice wins, and `auto` previews unless this file's preview is unavailable.
@@ -53,9 +53,10 @@ export const noPreview = (handleId: string | null, path: string | null | undefin
 
 export const useNoPreview = (handleId: string | null, path: string | null | undefined): NoPreview | null => useSyncExternalStore(subscribe, () => noPreview(handleId, path))
 
-/** The tab takes Find: Source, a Markdown Preview, which is DOM text, a PDF or a sheet's grid. An HTML Preview is a native
- *  page and takes none, nor does an image or a sheet Clui can't show. */
+/** The tab takes Find: Source, a Markdown Preview, which is DOM text, a PDF, a sheet's grid or a transcript. An HTML
+ *  Preview is a native page and takes none, nor does an image or a sheet Clui can't show. */
 export const hasFind = (handleId: string | null, tab: Pick<SurfaceTab, 'kind' | 'key' | 'mode'> | undefined): boolean => {
+  if (isTranscriptKind(tab?.kind)) return true
   if (!tab || !fileLike(tab.kind)) return false
   if (tab.kind === 'doc') return true
   if (tab.kind === 'sheet') return isDelimited(tab.key) || isWorkbook(tab.key)
@@ -65,5 +66,5 @@ export const hasFind = (handleId: string | null, tab: Pick<SurfaceTab, 'kind' | 
 
 /** Open externally takes the file to its default app rather than the editor: from a Preview, a raster image, a PDF or a
  *  workbook. */
-export const opensDefault = (kind: SurfaceKind | null | undefined, shown: Presentation | null): boolean =>
+export const opensDefault = (kind: PaneKind | null | undefined, shown: Presentation | null): boolean =>
   shown === 'preview' || ((kind === 'image' || kind === 'doc' || kind === 'sheet') && shown === null)

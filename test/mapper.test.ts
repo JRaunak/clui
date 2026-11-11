@@ -346,6 +346,46 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(messages.length === 2 && messages[0].role === 'user' && messages[0].text === 'Tidy it' && messages[1].text === 'Done.', 'resume: a fork transcript shows its directive, not the inherited call', JSON.stringify(messages.map((m) => m.text)))
 }
 
+// Resume: an Agent call learns whether it ran in the background, when its notice came and how long it ran; the agent's
+// own read reports whether its file exists and what its sidecar says.
+{
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { readTranscriptAtPath, readAgentTranscriptByToolUseId } = await import('../src/main/sessions/transcript.ts')
+  const home = mkdtempSync(join(tmpdir(), 'clui-agents-'))
+  const dir = join(home, 'projects', 'p', 's', 'subagents')
+  mkdirSync(dir, { recursive: true })
+  const rec = (o: object): string => JSON.stringify({ sessionId: 's', ...o })
+  const call = (id: string, description: string): string => rec({ type: 'assistant', uuid: `a-${id}`, message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Agent', input: { description } }] } })
+  const result = (id: string, toolUseResult: object): string => rec({ type: 'user', uuid: `r-${id}`, toolUseResult, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } })
+  const main = join(home, 'projects', 'p', 's.jsonl')
+  writeFileSync(main, [
+    call('tu-bg', 'Background one'),
+    result('tu-bg', { isAsync: true, status: 'async_launched', agentId: 'abg' }),
+    call('tu-fg', 'Foreground one'),
+    result('tu-fg', { status: 'completed', totalDurationMs: 4200 }),
+    rec({ type: 'user', uuid: 'n1', message: { role: 'user', content: '<task-notification>\n<task-id>abg</task-id>\n<tool-use-id>tu-bg</tool-use-id>\n<status>completed</status>\n<usage><subagent_tokens>9</subagent_tokens><duration_ms>9100</duration_ms></usage>\n</task-notification>' } })
+  ].join('\n') + '\n')
+  const { messages } = await readTranscriptAtPath(main)
+  const tools = messages.flatMap((m) => m.tools)
+  const bg = tools.find((t) => t.id === 'tu-bg')
+  const fg = tools.find((t) => t.id === 'tu-fg')
+  ok(bg?.background === true && bg.notifiedAt === messages.length && bg.durationMs === 9100, 'resume: a bg Agent call gets background, its notice point and its duration', JSON.stringify(bg))
+  ok(!fg?.background && fg?.durationMs === 4200 && fg.notifiedAt === undefined, 'resume: a fg Agent call gets its total duration', JSON.stringify(fg))
+  ok(!messages.some((m) => m.text.includes('task-notification')), 'resume: the notice is still not a bubble')
+  writeFileSync(join(dir, 'agent-abg.meta.json'), JSON.stringify({ toolUseId: 'tu-bg', requestShape: 'background', finished: true }))
+  writeFileSync(join(dir, 'agent-abg.jsonl'), rec({ type: 'assistant', uuid: 'x', isSidechain: true, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } }) + '\n')
+  const prev = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = home
+  const hit = await readAgentTranscriptByToolUseId('tu-bg')
+  const miss = await readAgentTranscriptByToolUseId('tu-none')
+  if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR
+  else process.env.CLAUDE_CONFIG_DIR = prev
+  ok(hit.found && JSON.stringify(hit.agentMeta) === JSON.stringify({ shape: 'background', finished: true }), 'agent read: found, with the sidecar outcome', JSON.stringify(hit.agentMeta))
+  ok(!miss.found && miss.agentMeta === null, 'agent read: no file anywhere is not found')
+}
+
 // Plugin UI messages: sanitized in main, deduped by uuid, routed by subtype.
 {
   const m = new EventMapper()

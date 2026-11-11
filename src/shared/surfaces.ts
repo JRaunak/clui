@@ -3,6 +3,29 @@ import type { ChangeSide, LineRange, SourceVersion } from './context'
 import type { PagePlace } from './html-view'
 import type { WordPart } from './office'
 export type SurfaceKind = 'browser' | 'tree' | 'file' | 'diff' | 'image' | 'doc' | 'sheet' | 'artifact'
+export type PaneKind = SurfaceKind | 'agent' | 'workflow' | 'agents' | 'workflows' | 'side'
+
+/** Kinds Claude's surface tools never see, never open and never get reported. */
+export const VIEW_KINDS = ['agent', 'workflow', 'agents', 'workflows', 'side'] as const
+export const isViewKind = (k: PaneKind | null | undefined): k is (typeof VIEW_KINDS)[number] => VIEW_KINDS.includes(k as never)
+
+/** One tab per session, keyed ''. */
+export const SINGLETON_KINDS = ['tree', 'diff', 'agents', 'workflows', 'side'] as const
+
+/** Kinds `session-surfaces.json` never holds. The renderer drops them before a save; persist.ts rejects them. */
+export const UNSAVED_KINDS: readonly PaneKind[] = ['side', 'workflow']
+
+/** Tabs whose body is a transcript, searched by ⌘F when focus is in the pane. */
+export const TRANSCRIPT_KINDS = ['agent', 'workflow', 'side'] as const
+export const isTranscriptKind = (k: PaneKind | null | undefined): k is (typeof TRANSCRIPT_KINDS)[number] => TRANSCRIPT_KINDS.includes(k as never)
+
+/** An agent tab's key: the launching Agent tool's id, or a workflow agent's id (it has no tool call). */
+export type AgentRef = { by: 'tool'; id: string } | { by: 'agent'; id: string }
+export const agentKey = (r: AgentRef): string => `${r.by}:${r.id}`
+export function agentRefOf(key: string): AgentRef | null {
+  const m = /^(tool|agent):([A-Za-z0-9_-]{1,128})$/.exec(key)
+  return m ? { by: m[1] as AgentRef['by'], id: m[2] } : null
+}
 export type OpenedBy = 'user' | 'claude' | 'link' | 'change'
 export type ViewMode = 'auto' | 'preview' | 'source'
 export type Delimiter = ',' | ';' | '\t' | '|'
@@ -80,8 +103,8 @@ export type SurfaceViewState =
 export interface SurfaceTab {
   /** Resource identity; Source/Preview does not create another tab. */
   id: string
-  kind: Exclude<SurfaceKind, 'browser'>
-  /** Canonical authorized path; '' for tree and diff. */
+  kind: Exclude<PaneKind, 'browser'>
+  /** Canonical authorized path; '' for singletons; an agent key for agent tabs; a task id for workflow tabs. */
   key: string
   title: string
   openedBy: OpenedBy
@@ -102,6 +125,8 @@ export interface SurfaceTab {
   /** The places a Markdown Preview's anchor jumps or a PDF's link and Contents jumps left, newest last, in the
    *  revision they were made in. Never saved. */
   back?: { revision: string; places: BackPlace[]; pages?: undefined } | { revision: string; pages: DocPlace[]; places?: undefined }
+  /** Agent tabs: ancestor tab ids, root first, so a restored nested agent names its parents without a disk read. */
+  trail?: string[]
 }
 
 /** Where a PDF jump left the reader, as its view state keeps it. */
@@ -145,15 +170,15 @@ const DOC = /\.(pdf|docx|docm|doc|odt|rtf|pptx|pptm|ppt|odp)$/i
  *  `.key` stays a file: in a repository it's far more often a PEM key than a Keynote deck. */
 export const kindForPath = (p: string): 'file' | 'image' | 'doc' | 'sheet' => (IMAGE.test(p) ? 'image' : DOC.test(p) ? 'doc' : SHEET.test(p) ? 'sheet' : 'file')
 
-/** Tree and diff are session singletons; a path resource is one tab whatever its presentation. */
+/** Singletons are keyed by kind; a path resource is one tab whatever its presentation. */
 export const surfaceIdOf = (t: Pick<SurfaceTab, 'kind' | 'key' | 'provenance'>): string =>
-  t.kind === 'tree' || t.kind === 'diff' ? t.kind : `${t.kind}:${t.key}${t.provenance?.creatingEditId ? `#${t.provenance.creatingEditId}` : ''}`
+  (SINGLETON_KINDS as readonly string[]).includes(t.kind) ? t.kind : `${t.kind}:${t.key}${t.provenance?.creatingEditId ? `#${t.provenance.creatingEditId}` : ''}`
 
-/** Non-browser tabs a session keeps; opening another closes the one viewed least recently. */
+/** Tabs a session keeps; opening another closes the one viewed least recently. */
 export const SURFACE_TAB_CAP = 24
 
 /** A tab as `session-surfaces.json` keeps it: never a selection, a highlight or a pending destination. */
-export type SavedTab = Pick<SurfaceTab, 'id' | 'kind' | 'key' | 'title' | 'openedBy' | 'mode' | 'viewState' | 'sourceView' | 'openedAt' | 'lastViewedAt' | 'provenance'>
+export type SavedTab = Pick<SurfaceTab, 'id' | 'kind' | 'key' | 'title' | 'openedBy' | 'mode' | 'viewState' | 'sourceView' | 'openedAt' | 'lastViewedAt' | 'provenance' | 'trail'>
 export interface SavedSet {
   /** Browser placements included. */
   order: string[]

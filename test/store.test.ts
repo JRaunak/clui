@@ -1,7 +1,8 @@
-import { CHANGE_REFS, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
+import { CHANGE_REFS, surfacesSave, watchAgentTabs, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
 import { noticeLead } from '../src/renderer/src/lib/refCopy.ts'
+import { agentRunState } from '../src/renderer/src/lib/agents.ts'
 import { equal, ok } from './support/harness.mjs'
 
 // The store's IPC is stubbed: each call is recorded and resolves true unless `replies` overrides it.
@@ -34,6 +35,9 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   backgroundTasks: {},
   subagentMessages: {},
   subagentChildren: {},
+  nestedLaunches: {},
+  agentMetas: {},
+  workflows: {},
   checkingTools: {},
   pendingPermissions: [],
   rateLimit: null,
@@ -305,7 +309,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   })
   const fresh = (over?: Record<string, unknown>): void => {
     reset(pane(over))
-    useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [] })
+    useSession.setState({ stageWide: true })
   }
   const said = (h = 'h1'): boolean => st().sessions[h].statusAnnounce.startsWith('Claude opened the browser')
 
@@ -328,9 +332,6 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   st().setPane('collapsed')
   ok(!cur().paneAutoOpenSuppressed, 'browser auto-open: a programmatic collapse does not suppress')
 
-  fresh()
-  useSession.setState({ viewingSubagent: 't1', subagentTrail: ['t1'] })
-  ok(!st().autoOpenPane('h1', 'browser:1') && !cur().paneAutoOpen, 'browser auto-open: skipped, not deferred, over a subagent pane')
   fresh()
   useSession.setState({ stageWide: false })
   ok(!st().autoOpenPane('h1', 'browser:1') && !cur().paneAutoOpen, 'browser auto-open: skipped, not deferred, on a narrow Stage')
@@ -379,9 +380,9 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   ok(!st().sessions.h2.paneOpen, 'browser auto-open: closing a background session leaves the viewed one alone')
 
   fresh({ paneOpen: true, surfacePaneFull: false })
-  useSession.setState({ paneFull: false, sessions: { ...st().sessions, h2: slice({ handleId: 'h2', ...pane({ surfacePaneFull: false }) }) } })
+  useSession.setState({ sessions: { ...st().sessions, h2: slice({ handleId: 'h2', ...pane({ surfacePaneFull: false }) }) } })
   st().setPane('full')
-  ok(cur().surfacePaneFull && !st().sessions.h2.surfacePaneFull && !st().paneFull, 'pane size: kept per session, apart from the subagent pane')
+  ok(cur().surfacePaneFull && !st().sessions.h2.surfacePaneFull, 'pane size: kept per session')
   st().setPane('collapsed')
   ok(cur().surfacePaneFull, 'pane size: hiding keeps the choice for the next open')
 }
@@ -393,7 +394,7 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   const empty = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
   const fresh = (over: Record<string, unknown> = {}): void => {
     reset({ browser: null, surfaces: empty, paneOpen: false, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { at: null, note: null }, ...over })
-    useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [], paneOpenedQuietly: false, settingsSection: null })
+    useSession.setState({ stageWide: true, paneOpenedQuietly: false, settingsSection: null })
     notePaneInput(0)
   }
   const sur = (): any => cur().surfaces
@@ -405,9 +406,21 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   fresh()
   const id = st().openSurface('h1', FILE, 'focus', 'user', 'user')
   ok(id === 'file:/tmp/w/src/a.ts' && sur().active === id && cur().paneOpen && !st().paneOpenedQuietly, 'intent: a user focus activates, opens and takes focus')
-  useSession.setState({ viewingSubagent: 't1', subagentTrail: ['t1'] })
+
+  // Agent tabs open through the same intents: a closed pane opens at its size, a second open focuses the same tab.
+  fresh({ surfacePaneFull: true })
+  st().openAgentTab('h1', { by: 'tool', id: 't1' }, { title: 'Probe agent' })
+  ok(cur().paneOpen && cur().surfacePaneFull && sur().active === 'agent:tool:t1', 'agent tab: opens a closed pane at its size, active')
   st().openSurface('h1', DIFF, 'focus', 'user', 'user')
-  ok(sur().active === 'diff' && st().viewingSubagent === null, 'intent: an explicit user activation closes the subagent view')
+  st().openAgentTab('h1', { by: 'tool', id: 't1' })
+  ok(sur().active === 'agent:tool:t1' && sur().order.filter((x: string) => x === 'agent:tool:t1').length === 1 && sur().tabs['agent:tool:t1'].title === 'Probe agent', 'agent tab: a second open focuses it, no duplicate, title kept')
+  st().openAgentTab('h1', { by: 'tool', id: 't2' }, { trail: ['agent:tool:t1'] })
+  ok(sur().tabs['agent:tool:t2'].trail?.join() === 'agent:tool:t1', 'agent tab: a nested child stores its trail')
+  useSession.setState((s: any) => ({ sessions: { ...s.sessions, h1: { ...s.sessions.h1, subagentMessages: { t2: [{ kind: 'tool', tool: { id: 't3', name: 'Agent', input: { description: 'Grandchild' } } }] }, subagentChildren: { t1: [{ childToolUseId: 't2', name: 'Agent' }] } } } }))
+  st().openAgentTab('h1', { by: 'tool', id: 't3' })
+  ok(sur().tabs['agent:tool:t3'].trail?.join() === 'agent:tool:t1,agent:tool:t2' && sur().tabs['agent:tool:t3'].title === 'Grandchild', 'agent tab: with no trail given, the known ancestors are its trail')
+  st().togglePane()
+  ok(!cur().paneOpen, 'agent tab: the toggle hides the pane over an agent tab')
 
   // One resource, one tab: a file open of a page Claude made lands on its artifact tab.
   fresh()
@@ -433,10 +446,9 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
   ok(sur().active === 'diff', 'intent: Claude focus waits while a Gate is up')
   fresh({ paneOpen: true })
-  openDiff()
-  useSession.setState({ viewingSubagent: 't1', subagentTrail: ['t1'] })
+  st().openAgentTab('h1', { by: 'tool', id: 't1' }, { title: 'Probe agent' })
   st().openSurface('h1', FILE, 'focus', 'claude', 'claude')
-  ok(sur().active === 'diff' && st().viewingSubagent === 't1', 'intent: Claude focus preserves the subagent takeover')
+  ok(sur().active === 'agent:tool:t1' && sur().tabs[id].unseen === true, 'intent: Claude focus waits behind an agent tab, its tab unseen')
 
   // focus · Claude · closed → active; the pane opens only under the auto-open conditions.
   fresh()
@@ -602,10 +614,6 @@ const retry = (attempt: number, status: number | null = 403): any => ({ type: 'a
   calls.length = 0
   st().togglePane()
   ok(cur().paneOpen && sur().active === null && !calls.some((c) => c.name === 'browserNewTab'), 'picker: with a browser and no tab, the toggle shows the picker too')
-  fresh({ paneOpen: true })
-  useSession.setState({ viewingSubagent: 't1', subagentTrail: ['t1'] })
-  st().togglePane()
-  ok(cur().paneOpen && st().viewingSubagent === null, 'picker: over the subagent view the toggle shows the pane instead of hiding it')
 }
 
 const res = (over: Record<string, unknown> = {}): any => ({ type: 'result', sessionId: 's', isError: false, result: null, ...over })
@@ -857,7 +865,7 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   // The note goes with the first tab and doesn't come back.
   const empty = { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} }
   reset({ browser: null, surfaces: empty, restoreNote: 'corrupt', paneOpen: true, paneAutoOpen: false, paneAutoOpenSuppressed: false, surfacePaneFull: false, statusAnnounce: '', annotate: { at: null, note: null }, tabsEvicted: false })
-  useSession.setState({ stageWide: true, viewingSubagent: null, subagentTrail: [], settingsSection: null, evictedTabs: [] })
+  useSession.setState({ stageWide: true, settingsSection: null, evictedTabs: [] })
   st().openSurface('h1', { kind: 'diff', key: '', title: 'Claude changes' }, 'open', 'user', 'user')
   st().closeSurface('h1', 'diff')
   ok(cur().restoreNote === null, "restore: the picker's note is gone once a tab opens")
@@ -1109,7 +1117,7 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   const two = { order: ['file:/w/seq.mmd'], active: 'file:/w/seq.mmd', tabs: { 'file:/w/seq.mmd': tab('/w/seq.mmd') }, browserLastViewedAt: {}, browserUnseen: {} }
   notePaneInput(0)
   reset({ paneOpen: true, surfaces: two })
-  useSession.setState({ viewingSubagent: null, settingsSection: null, stageWide: true })
+  useSession.setState({ settingsSection: null, stageWide: true })
   let replied = false
   const r = open('p1').then((v) => ((replied = true), v))
   await new Promise((d) => setTimeout(d, 20))
@@ -1133,4 +1141,52 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
     'dirs: deduped by firmlink spelling, first one kept, chat dir dropped'
   )
   equal(projectDirs(['/a'], null).length, 1, 'dirs: no chat dir yet drops nothing')
+}
+
+// Agent tabs in the store: a bg stop reads stopped in either order, saves drop workflow tabs, eviction spares the list
+// singletons, an open tab keeps its record, and a finish while elsewhere lights the tab.
+{
+  const T1 = { by: 'tool' as const, id: 't1' }
+  const row = (status = 'running'): any => ({ taskId: 'x', description: 'Probe', taskType: 'local_agent', toolUseId: 't1', status, startMs: 1 })
+  const agent = (id: string, over: Record<string, unknown> = {}): any => ({ id: `agent:tool:${id}`, kind: 'agent', key: `tool:${id}`, title: id, openedBy: 'user', openedAt: 1, lastViewedAt: 1, ...over })
+  const set = (tabs: any[], active: string | null = null): any => ({ order: tabs.map((t) => t.id), active, tabs: Object.fromEntries(tabs.map((t) => [t.id, t])), browserLastViewedAt: {}, browserUnseen: {} })
+  for (const [a, b] of [[['bg-task-updated', 'killed'], ['bg-task-notification', 'stopped']], [['bg-task-notification', 'stopped'], ['bg-task-updated', 'killed']]]) {
+    reset({ backgroundTasks: { x: row() }, statusAnnounce: '' })
+    st().applyEvent('h1', { type: a[0], taskId: 'x', status: a[1] } as any)
+    st().applyEvent('h1', { type: b[0], taskId: 'x', status: b[1] } as any)
+    ok(cur().backgroundTasks.x.status === 'killed' && agentRunState(cur(), T1).state === 'stopped', `bg stop: ${a[1]} then ${b[1]} ends killed and reads stopped`)
+  }
+
+  const wf = { id: 'workflow:w1', kind: 'workflow', key: 'w1', title: 'wf', openedBy: 'user', openedAt: 1, lastViewedAt: 1 }
+  const saved = surfacesSave({ ...cur(), paneOpen: true, surfacePaneFull: false, surfaces: set([agent('t1', { trail: ['agent:tool:t0'] }), wf], 'workflow:w1') })
+  ok(saved.set.order.join() === 'agent:tool:t1' && !saved.set.tabs['workflow:w1'] && saved.set.active === null, 'save: a workflow tab and its order entry are dropped, and active with it')
+  ok(saved.set.tabs['agent:tool:t1'].trail?.[0] === 'agent:tool:t0', 'save: an agent tab keeps its trail')
+
+  const many = [...Array.from({ length: 22 }, (_, i) => agent(`a${i}`, { lastViewedAt: 10 + i })), { id: 'agents', kind: 'agents', key: '', title: 'Subagents', openedBy: 'user', openedAt: 1, lastViewedAt: 0 }, { id: 'workflows', kind: 'workflows', key: '', title: 'Workflows', openedBy: 'user', openedAt: 1, lastViewedAt: 0 }]
+  equal(evictionVictim(set(many, 'agent:tool:a5'), 'agent:tool:new'), 'agent:tool:a0', 'evict: the least recently viewed agent goes, never a list tab')
+
+  reset({ backgroundTasks: { x: row('completed'), y: { ...row('completed'), taskId: 'y', toolUseId: 't9' } }, surfaces: set([agent('t1')], 'agent:tool:t1') })
+  st().clearCompletedBgWork('subagent')
+  ok(!!cur().backgroundTasks.x && !cur().backgroundTasks.y, 'linger: a finished bg agent whose tab is open keeps its record')
+
+  reset({ paneOpen: false, surfacePaneFull: false, surfaces: set([wf], 'workflow:w1') })
+  st().openAgentTab('h1', { by: 'agent', id: 'a1' }, { title: 'Map reads', trail: ['workflow:w1'] })
+  const opened = cur().surfaces.tabs['agent:agent:a1']
+  ok(cur().surfaces.active === 'agent:agent:a1' && opened?.trail?.join() === 'workflow:w1' && cur().paneOpen, "workflow tab: an agent's open action creates its own tab inside the workflow, active")
+
+  const stop = watchAgentTabs()
+  const tick = (): Promise<void> => new Promise((d) => queueMicrotask(d))
+  reset({ paneOpen: true, backgroundTasks: { x: row() }, surfaces: set([agent('t1'), { id: 'diff', kind: 'diff', key: '', title: 'Claude changes', openedBy: 'user', openedAt: 1, lastViewedAt: 1 }], 'diff') })
+  st().applyEvent('h1', { type: 'bg-task-updated', taskId: 'x', status: 'completed' } as any)
+  await tick()
+  ok(cur().surfaces.tabs['agent:tool:t1'].unseen === true, 'unseen: a bg agent finishing behind another tab lights its tab')
+  reset({ paneOpen: true, backgroundTasks: { x: row() }, surfaces: set([agent('t1')], 'agent:tool:t1') })
+  st().applyEvent('h1', { type: 'bg-task-updated', taskId: 'x', status: 'completed' } as any)
+  await tick()
+  ok(!cur().surfaces.tabs['agent:tool:t1'].unseen, 'unseen: finishing while its tab is active lights nothing')
+  reset({ paneOpen: true, busy: false, surfaces: set([agent('t5'), { id: 'diff', kind: 'diff', key: '', title: 'Claude changes', openedBy: 'user', openedAt: 1, lastViewedAt: 1 }], 'diff') })
+  useSession.setState((s: any) => ({ sessions: { ...s.sessions, h1: { ...s.sessions.h1, agentMetas: { t5: { shape: 'background', finished: true } } } } }))
+  await tick()
+  ok(!cur().surfaces.tabs['agent:tool:t5'].unseen, 'unseen: a restored tab never lights on load')
+  stop()
 }

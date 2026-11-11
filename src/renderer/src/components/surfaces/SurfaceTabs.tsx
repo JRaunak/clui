@@ -1,15 +1,19 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { activeSlice, browserTabOf, restoredTab, surfaceLabel, useActive, useSession, EMPTY_STRINGS, EMPTY_SURFACES, EMPTY_TABS } from '../../store'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { activeSlice, browserTabOf, restoredTab, surfaceLabel, useActive, useSession, EMPTY_STRINGS, EMPTY_SURFACES, EMPTY_TABS, type PerSessionState } from '../../store'
 import { blockedOf, recheck, useBlockedVersion, type Blocked } from '../../lib/blockedFiles'
 import { siteKeyOf, type TabState } from '../../../../shared/browser'
-import type { SurfaceKind } from '../../../../shared/surfaces'
+import { agentRefOf, type PaneKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
 import { shownPath, suffixes } from '../../lib/tree'
 import { fileLike } from '../../lib/presentation'
+import { agentInfo, agentRunState, denseNext, faceOf, RUN_WORDS, workflowRunState, type RunStatusOf } from '../../lib/agents'
+import { formatElapsed } from '../../lib/turnEnd'
 import { FileIcon } from '../FileIcon'
 import { Menu } from '../Menu'
 import { usePaneEntries } from './PanePicker'
-import { IconAgentBrowser, IconClose, IconDiff, IconFolder, IconPlus } from '../Icon'
+import { AgentFace } from '../faces'
+import { RunMark } from '../RunMark'
+import { IconAgentBrowser, IconClose, IconDiff, IconFolder, IconPlus, IconSideChat, IconSubagents, IconWorkflow, IconWorkflows } from '../Icon'
 
 const NEAREST: ScrollIntoViewOptions = { block: 'nearest', inline: 'nearest' }
 const EMPTY_IDS: number[] = []
@@ -60,7 +64,7 @@ function stateOf(t: TabState): 'driving' | 'user' | 'suspended' | null {
 
 interface TabView {
   id: string
-  kind: SurfaceKind
+  kind: PaneKind
   label: string
   /** Distinguishes file tabs that share a basename. */
   suffix: string
@@ -73,12 +77,53 @@ interface TabView {
   state: 'driving' | 'user' | 'suspended' | null
   unseen: boolean
   fade: boolean
+  /** Agent and workflow tabs: identity and run state, both shown even icon-only. */
+  run?: { face: number | null; state: RunStatusOf['state'] }
 }
 
-const GLYPH: Partial<Record<SurfaceKind, (p: { className?: string }) => JSX.Element>> = {
+const GLYPH: Partial<Record<PaneKind, (p: { className?: string }) => JSX.Element>> = {
   browser: IconAgentBrowser,
   diff: IconDiff,
-  tree: IconFolder
+  tree: IconFolder,
+  workflow: IconWorkflow,
+  agents: IconSubagents,
+  workflows: IconWorkflows,
+  side: IconSideChat
+}
+
+/** What an agent or workflow tab's name and tooltip say, from the slice. */
+interface RunView {
+  status: RunStatusOf
+  face: number | null
+  type: string | null
+  parent: string | null
+}
+
+/** The agent and workflow tabs' run views as one string, so the strip re-renders when one changes and not on every
+ *  streamed token. */
+function runSig(s: PerSessionState): string {
+  const out: Record<string, RunView> = {}
+  for (const t of Object.values(s.surfaces.tabs)) {
+    if (t.kind === 'workflow') out[t.id] = { status: workflowRunState(s.workflows[t.key]), face: null, type: null, parent: null }
+    if (t.kind !== 'agent') continue
+    const ref = agentRefOf(t.key)
+    if (!ref) continue
+    const up = t.trail?.[t.trail.length - 1]
+    const upRef = up ? agentRefOf(up.replace(/^agent:/, '')) : null
+    const parent = up ? (s.surfaces.tabs[up]?.title ?? (upRef?.by === 'tool' ? agentInfo(s, upRef.id).label : up.startsWith('workflow:') ? (s.workflows[up.slice(9)]?.name ?? 'Workflow') : 'Agent')) : null
+    out[t.id] = { status: agentRunState(s, ref), face: faceOf(s, t), type: ref.by === 'tool' ? agentInfo(s, ref.id).subtype : null, parent }
+  }
+  return JSON.stringify(out)
+}
+
+const REASON_SPOKEN = { quit: 'Clui quit while it was running', 'no-result': 'it ended without a result' } as const
+const REASON_LINE = { quit: 'Clui quit while it was running', 'no-result': 'It ended without a result' } as const
+
+/** The tooltip's figure: a running clock, or how long it took. Unknown shows nothing. */
+function figureOf({ state, startMs, durationMs }: RunStatusOf): string {
+  if ((state === 'running' || state === 'background' || state === 'needs') && startMs !== undefined) return ` · ${formatElapsed(Date.now() - startMs)}`
+  if (durationMs === undefined) return ''
+  return state === 'done' ? ` · in ${formatElapsed(durationMs)}` : state === 'failed' || state === 'stopped' ? ` · after ${formatElapsed(durationMs)}` : ''
 }
 
 const dirOf = (p: string): string => p.slice(0, Math.max(0, p.lastIndexOf('/')))
@@ -104,6 +149,10 @@ export function SurfaceTabs(): JSX.Element {
   const activate = useSession((s) => s.activateSurface)
   const entries = usePaneEntries()
   const listRef = useRef<HTMLDivElement>(null)
+  const rowRef = useRef<HTMLDivElement>(null)
+  const sig = useActive((s) => (s ? runSig(s) : '{}'))
+  const runs = useMemo(() => JSON.parse(sig) as Record<string, RunView>, [sig])
+  const [dense, setDense] = useState(false)
   // Tabs already here when the strip mounted don't fade, so reopening the pane stays still.
   const [initial] = useState(() => new Set(order))
 
@@ -141,6 +190,19 @@ export function SurfaceTabs(): JSX.Element {
     const common = { id, kind: t.kind, label, suffix: '', mark: false, more: '', tip: label, closeName: `Close ${label}`, state: null, unseen: !!t.unseen, fade: (t.openedBy === 'claude' || t.openedBy === 'change') && !initial.has(id) }
     if (t.kind === 'diff') return [{ ...common, tip: 'What Claude changed in this session' }]
     if (t.kind === 'tree') return [{ ...common, more: ', file tree', tip: cwd ? shownPath(cwd, window.clui.homeDir) : label }]
+    const run = runs[id]
+    if (run && t.kind === 'workflow') {
+      const w = RUN_WORDS[run.status.state]
+      return [{ ...common, run: { face: null, state: run.status.state }, more: `, workflow, ${w.spoken}`, tip: `${label}\nWorkflow · ${w.word}` }]
+    }
+    if (run) {
+      const { status, type, parent } = run
+      const w = RUN_WORDS[status.state]
+      const reason = status.state === 'interrupted' ? status.reason : undefined
+      const more = `, ${type ? `${type} agent` : 'agent'}, ${w.spoken}${reason ? `, ${REASON_SPOKEN[reason]}` : ''}${parent ? `, inside ${parent}` : ''}`
+      const tip = [label, `${type ? `${type} agent` : 'Agent'} · ${w.word}${figureOf(status)}`, parent ? `Inside ${parent}` : '', reason ? REASON_LINE[reason] : '']
+      return [{ ...common, run: { face: run.face, state: status.state }, more, tip: tip.filter(Boolean).join('\n') }]
+    }
     if (!fileLike(t.kind)) return [common]
     const suffix = dup.get(t.key) ?? ''
     const named = suffix ? `${label} ${suffix}` : label
@@ -159,11 +221,14 @@ export function SurfaceTabs(): JSX.Element {
   const count = views.length
   useEffect(() => {
     const el = listRef.current
-    if (!el) return
+    const row = rowRef.current
+    if (!el || !row) return
     const clip = (): void => {
       el.toggleAttribute('data-clip-start', el.scrollLeft > 0.5)
       el.toggleAttribute('data-clip-end', el.scrollLeft < el.scrollWidth - el.clientWidth - 0.5)
     }
+    // The row holds the tablist and the 30px "+".
+    const fit = (): void => setDense((was) => denseNext(count, row.clientWidth - 30, was))
     const onWheel = (e: WheelEvent): void => {
       if (e.deltaX !== 0 || e.deltaY === 0) return
       const before = el.scrollLeft
@@ -171,14 +236,18 @@ export function SurfaceTabs(): JSX.Element {
       if (el.scrollLeft !== before) e.preventDefault()
     }
     clip()
+    fit()
     el.addEventListener('scroll', clip, { passive: true })
     el.addEventListener('wheel', onWheel, { passive: false })
     const ro = new ResizeObserver(clip)
     ro.observe(el)
+    const rowRo = new ResizeObserver(fit)
+    rowRo.observe(row)
     return () => {
       el.removeEventListener('scroll', clip)
       el.removeEventListener('wheel', onWheel)
       ro.disconnect()
+      rowRo.disconnect()
     }
   }, [count])
 
@@ -221,7 +290,7 @@ export function SurfaceTabs(): JSX.Element {
   const any = views.length > 0
 
   return (
-    <div className="flex min-w-0 items-center">
+    <div ref={rowRef} className="flex min-w-0 flex-1 items-center">
       {any && (
         <div
           ref={listRef}
@@ -229,6 +298,7 @@ export function SurfaceTabs(): JSX.Element {
           aria-label="Pane tabs"
           aria-orientation="horizontal"
           data-ui="surface-tabs"
+          data-dense={dense || undefined}
           onBlur={(e) => {
             if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) focused.current = null
           }}
@@ -239,12 +309,16 @@ export function SurfaceTabs(): JSX.Element {
             // Activation clears unseen, and a driving tab's dot already says something is happening there.
             const unseenShown = v.unseen && !on && v.state !== 'driving'
             const Glyph = GLYPH[v.kind]
+            // Dense: every inactive tab keeps only its icon (and run mark); a hover × would cover the face.
+            const icon = dense && !on
+            const size = icon ? 'w-auto min-w-0 shrink-0' : dense ? 'w-[160px] shrink-0' : `w-[200px] min-w-[120px] ${on ? 'shrink-0' : 'shrink'}`
             return (
               <div
                 key={v.id}
                 data-kind={v.kind}
                 data-enter={v.fade || undefined}
-                className={`group/tab @container relative flex h-7 w-[200px] min-w-[120px] ${on ? 'shrink-0' : 'shrink'} items-center rounded-md ${
+                // An inline-size container has no intrinsic width, so an auto-width icon tab would measure 0px.
+                className={`group/tab ${icon ? '' : '@container'} relative flex h-7 ${size} items-center rounded-md ${
                   v.fade ? 'transition-opacity duration-fast ease-out starting:opacity-0 motion-reduce:transition-none' : ''
                 }`}
               >
@@ -272,56 +346,77 @@ export function SurfaceTabs(): JSX.Element {
                   onAuxClick={(e) => {
                     if (e.button === 1) closeTab(v.id, inList())
                   }}
-                  className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border pl-2.5 text-label focus-visible:-outline-offset-2 active:bg-border-strong ${
+                  className={`flex h-7 min-w-0 flex-1 items-center rounded-md border text-label focus-visible:-outline-offset-2 active:bg-border-strong ${icon ? 'gap-[3px] px-2' : 'gap-1.5 pl-2.5'} ${
                     on
                       ? 'border-control-edge bg-control pr-7 font-medium text-content'
                       : `border-transparent pointer-fine:group-hover/tab:bg-[var(--glass-row-hover)] pointer-fine:group-hover/tab:text-content ${
-                          unseenShown ? 'pr-7 text-content' : 'pr-2.5 text-dim'
+                          icon ? (unseenShown ? 'text-content' : 'text-dim') : unseenShown ? 'pr-7 text-content' : 'pr-2.5 text-dim'
                         }`
                   }`}
                 >
-                  {/* Live state outranks the kind, so it takes the glyph's place rather than adding to the row. */}
-                  <span aria-hidden="true" className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                    {v.state === 'driving' ? (
-                      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                    ) : v.state === 'user' ? (
-                      <span className="flex gap-0.5">
-                        <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
-                        <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
-                      </span>
-                    ) : fileLike(v.kind) ? (
-                      <FileIcon name={v.label} kind="file" className="h-3.5 w-3.5" />
-                    ) : (
-                      Glyph && <Glyph className="h-3.5 w-3.5" />
-                    )}
-                  </span>
-                  <span className="min-w-0 truncate">{v.label}</span>
-                  {v.suffix && <span className="ml-1 min-w-0 shrink-[2] truncate text-meta text-faint">{v.suffix}</span>}
-                  {/* Dropped rather than cut to "b…" in a narrow tab; the name and tooltip still carry it. */}
-                  {v.mark && <span className="ml-1 shrink-0 text-meta text-faint @max-[140px]:hidden">{v.suffix ? '· by Claude' : 'by Claude'}</span>}
+                  {/* An agent's face and its state are both needed exactly when several run, so neither replaces the other. */}
+                  {v.run ? (
+                    <span aria-hidden="true" className={`flex shrink-0 items-center ${icon ? 'gap-[3px]' : 'gap-1'}`}>
+                      {v.kind === 'agent' ? (
+                        <AgentFace face={v.run.face} className="h-4 w-4" />
+                      ) : (
+                        <span className="flex h-3.5 w-3.5 items-center justify-center">{Glyph && <Glyph className="h-3.5 w-3.5" />}</span>
+                      )}
+                      <RunMark state={v.run.state} />
+                    </span>
+                  ) : (
+                    // Live state outranks the kind, so it takes the glyph's place rather than adding to the row.
+                    <span aria-hidden="true" className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                      {v.state === 'driving' ? (
+                        <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                      ) : v.state === 'user' ? (
+                        <span className="flex gap-0.5">
+                          <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
+                          <span className="h-1.5 w-0.5 rounded-[1px] bg-dim" />
+                        </span>
+                      ) : fileLike(v.kind) ? (
+                        <FileIcon name={v.label} kind="file" className="h-3.5 w-3.5" />
+                      ) : (
+                        Glyph && <Glyph className="h-3.5 w-3.5" />
+                      )}
+                    </span>
+                  )}
+                  {!icon && (
+                    <>
+                      <span className="min-w-0 truncate">{v.label}</span>
+                      {v.suffix && <span className="ml-1 min-w-0 shrink-[2] truncate text-meta text-faint">{v.suffix}</span>}
+                      {/* Dropped rather than cut to "b…" in a narrow tab; the name and tooltip still carry it. */}
+                      {v.mark && <span className="ml-1 shrink-0 text-meta text-faint @max-[140px]:hidden">{v.suffix ? '· by Claude' : 'by Claude'}</span>}
+                    </>
+                  )}
                 </button>
-                {unseenShown && (
-                  <span aria-hidden="true" data-ui="surface-tab-unseen" className="pointer-events-none absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center">
-                    <span className="h-1.5 w-1.5 rounded-full bg-content" />
-                  </span>
-                )}
+                {unseenShown &&
+                  (icon ? (
+                    <span aria-hidden="true" data-ui="surface-tab-unseen" className="pointer-events-none absolute right-[3px] top-[3px] h-1.5 w-1.5 rounded-full bg-content" />
+                  ) : (
+                    <span aria-hidden="true" data-ui="surface-tab-unseen" className="pointer-events-none absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center">
+                      <span className="h-1.5 w-1.5 rounded-full bg-content" />
+                    </span>
+                  ))}
                 {/* The keyboard closes with Delete on the tab, so the button stays out of the Tab order. */}
-                <button
-                  type="button"
-                  data-ui="surface-tab-close"
-                  aria-label={v.closeName}
-                  title="Close tab"
-                  tabIndex={-1}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => closeTab(v.id, inList())}
-                  className={`absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-sm text-dim pointer-fine:hover:text-content ${
-                    on
-                      ? 'bg-control pointer-fine:hover:bg-[linear-gradient(var(--glass-row-hover),var(--glass-row-hover))]'
-                      : 'pointer-events-none bg-bg bg-[linear-gradient(var(--glass-row-hover),var(--glass-row-hover))] opacity-0 pointer-fine:group-hover/tab:pointer-events-auto pointer-fine:group-hover/tab:opacity-100 group-active/tab:bg-border-strong group-active/tab:bg-none'
-                  }`}
-                >
-                  <IconClose className="h-3.5 w-3.5" />
-                </button>
+                {!icon && (
+                  <button
+                    type="button"
+                    data-ui="surface-tab-close"
+                    aria-label={v.closeName}
+                    title="Close tab"
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => closeTab(v.id, inList())}
+                    className={`absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-sm text-dim pointer-fine:hover:text-content ${
+                      on
+                        ? 'bg-control pointer-fine:hover:bg-[linear-gradient(var(--glass-row-hover),var(--glass-row-hover))]'
+                        : 'pointer-events-none bg-bg bg-[linear-gradient(var(--glass-row-hover),var(--glass-row-hover))] opacity-0 pointer-fine:group-hover/tab:pointer-events-auto pointer-fine:group-hover/tab:opacity-100 group-active/tab:bg-border-strong group-active/tab:bg-none'
+                    }`}
+                  >
+                    <IconClose className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             )
           })}

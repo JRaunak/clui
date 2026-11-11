@@ -284,6 +284,19 @@
   --glass-row-hover: rgb(255 255 255 / 0.06);
   /* Fill opacity under the stroke for a closed folder's body and an open folder's front face. */
   --ft-folder-fill: 0.18;
+  /* Agent face head fills, in FACES order; adjacent faces sit at least 116° apart in OKLCH hue. */
+  --face-bear: #403817;
+  --face-cat: #123f47;
+  --face-antenna: #472e44;
+  --face-sprocket: #1b4032;
+  --face-bolt: #353451;
+  --face-hat: #353c1d;
+  --face-stadium: #1c3c4f;
+  --face-loaf: #4c2d39;
+  --face-hex: #11403d;
+  --face-cone: #3f314c;
+  --face-kite: #283f26;
+  --face-bunny: #293852;
   --window-material: solid;
   /* Solved against the measured dark material; the worst case is a white window behind (12-sidebar-glass.md §13.8). */
   --sidebar-glass-a: 85%;
@@ -399,11 +412,30 @@
   --lumen-scale-min: 0.9;
   --glass-row-hover: rgb(0 0 0 / 0.05);
   --ft-folder-fill: 0.14;
+  --face-bear: #ede5c7;
+  --face-cat: #c7ecf5;
+  --face-antenna: #f5dbf1;
+  --face-sprocket: #cdeede;
+  --face-bolt: #e1e2ff;
+  --face-hat: #e1e9cb;
+  --face-stadium: #cde9fc;
+  --face-loaf: #fcdae6;
+  --face-hex: #c7eeea;
+  --face-cone: #ecdefa;
+  --face-kite: #d6ecd3;
+  --face-bunny: #d6e6ff;
   /* The lowest tint that keeps every sidebar foreground at AA over a black window, the hover visible and warm
      show-through under the chroma cap, solved from the native material. The row lift is solved for visibility only:
      every row foreground passes on both the sidebar and the opaque lift, so it passes on any mix of them. */
   --sidebar-glass-a: 70%;
   --row-selected-a: 60%;
+}
+
+/* The head fill is an inline style, so only !important outranks it. */
+@media (forced-colors: active) {
+  .face-head {
+    fill: none !important;
+  }
 }
 
 /* In dark, hover and selection both lift, so the sidebar's hover takes a smaller step than the global one and selection
@@ -977,6 +1009,18 @@ body {
   }
 }
 
+/* A running agent's arc. Every mark sets a negative delay from the wall clock, so all of them turn in phase. */
+.run-spin {
+  transform-origin: 6px 6px;
+  transform-box: view-box;
+  animation: mark-spin var(--loop-period) linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .run-spin {
+    animation: none;
+  }
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
    Transcript spine. Each transcript item draws its own slice of the line so nothing is
    measured: a slice reaches 8px up to bridge the flex gap above it. The head slice starts at the
@@ -1213,9 +1257,6 @@ body {
 @keyframes vt-recede {
   to { opacity: 0; transform: scale(0.96); }
 }
-@keyframes vt-return {
-  from { opacity: 0; transform: scale(0.96); }
-}
 @keyframes vt-switch-out {
   to { opacity: 0; transform: scale(0.985); }
 }
@@ -1239,17 +1280,11 @@ body {
 }
 
 /* Subagent dive: the Agent row morphs into the pane. */
-[data-ui='stage'][data-vt^='dive']::view-transition-group(dive),
-[data-ui='stage'][data-vt^='undive']::view-transition-group(dive) {
+[data-ui='stage'][data-vt^='dive']::view-transition-group(dive) {
   overflow: clip;
   border-radius: var(--radius-md);
   animation-timing-function: var(--ease-snap);
-}
-[data-ui='stage'][data-vt^='dive']::view-transition-group(dive) {
   animation-duration: var(--dur-stage);
-}
-[data-ui='stage'][data-vt^='undive']::view-transition-group(dive) {
-  animation-duration: var(--dur-slow);
 }
 /* A 32px row and a full-height pane have different aspect ratios. Both snapshots stay at natural size,
    cropped from the top-left by the group's clip: any fit that scales would change its scale factor
@@ -1267,28 +1302,18 @@ body {
 [data-ui='stage'][data-vt^='dive']::view-transition-new(dive) {
   animation: vt-fade-in var(--dur-fast) var(--ease-out) both;
 }
-/* The pane is gone before the transcript comes back: two full-bleed text layers crossing read as noise. */
-[data-ui='stage'][data-vt^='undive']::view-transition-old(dive) {
-  animation: vt-fade-out var(--dur-instant) var(--ease-in) both;
-}
 /* The growing pane is transparent, so fill it or the transcript beneath shows through its edge. */
 [data-ui='stage'][data-vt='dive-split']::view-transition-group(dive) {
   background-color: var(--color-bg);
-}
-[data-ui='stage'][data-vt^='undive']::view-transition-new(dive) {
-  animation: vt-fade-in var(--dur-instant) var(--ease-out) both;
 }
 /* The transcript scrolls under the glass band, but its snapshot paints above the band's, so without
    this the rows under the band show sharp through it for the length of the transition. */
 [data-ui='stage']::view-transition-image-pair(stage-content) {
   clip-path: inset(var(--top-h, 0px) 0 0 0);
 }
-/* Dive to full: the transcript recedes behind the arriving pane and comes forward on the way out. */
+/* Dive to full: the transcript recedes behind the arriving pane. */
 [data-ui='stage'][data-vt='dive']::view-transition-old(stage-content) {
   animation: vt-recede var(--dur-base) var(--ease-out) both;
-}
-[data-ui='stage'][data-vt='undive']::view-transition-new(stage-content) {
-  animation: vt-return var(--dur-base) var(--ease-out) var(--dur-instant) both;
 }
 /* Half (split): the transcript's group morphs to the new width while both snapshots stay at
    natural size, cropped from the top-left, so text never stretches. */

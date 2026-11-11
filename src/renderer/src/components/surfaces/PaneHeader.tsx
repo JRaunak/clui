@@ -1,8 +1,8 @@
 import { useRef, type ReactNode } from 'react'
 import { useSession } from '../../store'
 import { usePane } from '../Stage'
-import { IconClose, IconExternal, IconMaximize, IconRestore, IconShield } from '../Icon'
-import { diveOut, resizePane } from '../../lib/dive'
+import { IconExternal, IconMaximize, IconRestore, IconShield } from '../Icon'
+import { resizePane } from '../../lib/dive'
 import { viaOf } from '../../lib/motion'
 
 export const PANE_BTN =
@@ -20,21 +20,15 @@ export interface PaneExternal {
 }
 
 /**
- * The right sidebar's 36px header under the top band, glass only while content is under it. The view
- * inside supplies the title (the element carrying data-ui="pane-title", or the pane's tabs) and its
- * status; the header supplies the pane actions. Only the subagent pane closes from here. Surfaces
- * hide through the toggle or ⇧⌘B so their pages stay live, and each tab has its own close.
+ * The right sidebar's 36px header under the top band, glass only while content is under it. The pane's
+ * tabs are its title; the header supplies the pane actions. The pane hides through the toggle or ⇧⌘B
+ * so its pages stay live, and each tab has its own close.
  */
 export function PaneHeader({
-  kind,
-  status,
   external,
   actions,
   children
 }: {
-  /** Without a kind the row starts at 8px, so the first tab lines up with the toolbar's Back button. */
-  kind?: string
-  status?: ReactNode
   external?: PaneExternal
   actions?: ReactNode
   children: ReactNode
@@ -57,7 +51,7 @@ export function PaneHeader({
     <div
       data-ui="pane-header"
       data-scrolled={scrolled || undefined}
-      className={`group/pane absolute inset-x-0 top-11 z-30 flex h-9 items-center gap-2 pr-2 text-label ${kind ? 'pl-4' : 'pl-2'}`}
+      className="group/pane absolute inset-x-0 top-11 z-30 flex h-9 items-center gap-2 pl-2 pr-2 text-label"
     >
       <div
         aria-hidden="true"
@@ -66,13 +60,6 @@ export function PaneHeader({
       />
       <div data-ui="pane-head-title" className="flex min-w-0 flex-1 items-center gap-2">
         {children}
-        {kind && <span className="shrink-0 text-meta text-dim">{kind}</span>}
-        {status && (
-          <>
-            <span aria-hidden="true" className="shrink-0 text-meta text-dim">·</span>
-            {status}
-          </>
-        )}
       </div>
       {pane.needsYou && (
         <button
@@ -111,18 +98,6 @@ export function PaneHeader({
             className={PANE_BTN}
           >
             {full ? <IconRestore className="h-4 w-4" /> : <IconMaximize className="h-4 w-4" />}
-          </button>
-        )}
-        {pane.kind === 'subagent' && (
-          <button
-            type="button"
-            data-ui="pane-close"
-            onClick={(e) => diveOut(viaOf(e))}
-            aria-label="Close pane"
-            title="Close (Esc)"
-            className={PANE_BTN}
-          >
-            <IconClose className="h-4 w-4" />
           </button>
         )}
       </div>

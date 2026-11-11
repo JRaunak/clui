@@ -17,7 +17,8 @@
  */
 import { create } from 'zustand'
 import { isListPriced, type DomainEvent, type ElicitationResponse, type PermissionDenial, type PermissionSuggestion, type RateLimit, type SessionTask, type SlashCommandInfo, type TurnEnd, type TurnUsage } from '../../shared/events'
-import type { BlockedPrompt, CompactionMarker, ProjectGroup } from '../../shared/sessions'
+import type { AgentMeta, BlockedPrompt, CompactionMarker, HistoryMessage, ProjectGroup } from '../../shared/sessions'
+import { agentInfo, agentRunState, findAgentTool, isAgentTool, isLive, trailOf, type RunStatusOf } from './lib/agents'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
@@ -50,7 +51,7 @@ import {
 import { removalSpoken, pausedText, resourceLabel, shortLabel } from './lib/refCopy'
 import type { Via } from './lib/motion'
 import { CHANGE_BYTES_MAX, CHANGE_TEXT_BUDGET, type ChangeGitStatus, type FileChangeSummary, type GitPathStatus } from '../../shared/changes'
-import { isSvg, kindForPath, restoreKinds, SURFACE_TAB_CAP, surfaceIdOf, type OpenIntent, type OpenedBy, type SavedTab, type SurfaceKind, type SurfaceSelection, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
+import { agentKey, agentRefOf, isViewKind, isSvg, kindForPath, restoreKinds, SINGLETON_KINDS, SURFACE_TAB_CAP, surfaceIdOf, UNSAVED_KINDS, type AgentRef, type OpenIntent, type PaneKind, type OpenedBy, type SavedTab, type SurfaceSelection, type SurfaceSet, type SurfaceTab, type SurfacesRestore, type SurfacesSave } from '../../shared/surfaces'
 import { clean, type Lines, type SurfaceCommand, type SurfaceReply, type SurfaceTarget, type TabFact } from '../../shared/surface-tools'
 import { laysOut } from '../../shared/office'
 import { awaitFound } from './lib/pointedText'
@@ -93,7 +94,7 @@ export interface BackgroundTask {
   taskType?: string
   /** The launching Agent tool_use id, present for backgrounded SUBAGENTS
    *  (taskType 'local_agent'). It equals the parent_tool_use_id the forwarded-transcript
-   *  (`subagentMessages`) is keyed by, so a subagent row can open its SubagentView.
+   *  (`subagentMessages`) is keyed by, so a subagent row can open its agent tab.
    *  Absent for bg bash shells (taskType 'local_bash'), which have no transcript. */
   toolUseId?: string
   /** 'running' until a terminal notification/update flips it. */
@@ -102,6 +103,8 @@ export interface BackgroundTask {
   startMs: number
   /** True while a user-requested stop is in flight over the control protocol. */
   stopping?: boolean
+  /** Wall-clock ms of its first terminal event. */
+  endMs?: number
 }
 
 /**
@@ -318,6 +321,13 @@ export interface ToolCall {
   notRun?: boolean
   /** A Stop or Send now ended the call while it ran. */
   stopped?: boolean
+  /** Live: when its result arrived. */
+  endMs?: number
+  /** Agent/Task calls: launched in the background; the message count when its completion notice came; how long it
+   *  ran (rebuilt calls only). */
+  background?: true
+  notifiedAt?: number
+  durationMs?: number
 }
 
 /** All state for a single live session, keyed by its `handleId` in the store. */
@@ -408,9 +418,14 @@ export interface PerSessionState {
    */
   subagentMessages: Record<string, SubagentMessage[]>
   /** Nesting: child subagents spawned BY a subagent, keyed by the PARENT
-   *  subagent's tool_use id. Drives the nested "Agent →" cards inside SubagentView.
+   *  subagent's tool_use id. Drives the nested agent cards inside an agent tab.
    *  A child's own transcript lives in `subagentMessages` under its childToolUseId. */
   subagentChildren: Record<string, NestedSubagent[]>
+  /** The Agent calls a restored parent's transcript holds, keyed by the parent's tool_use id: where a restored
+   *  nested tab finds its siblings' order (its face) and its own launch. Never saved. */
+  nestedLaunches: Record<string, ToolCall[]>
+  /** Agent sidecar outcomes by tool_use id, null when there's none. Read for agent tabs, never saved. */
+  agentMetas: Record<string, AgentMeta | null>
   /** Live dynamic workflows (ultracode), keyed by workflow task_id. Populated from
    *  workflow-started/progress/ended events; drives the tray chip + phase tree. */
   workflows: Record<string, WorkflowState>
@@ -620,25 +635,6 @@ interface SessionStore {
   /** Effort ceilings from ~/.claude/settings.json (read-only), so the picker/chip show
    *  the effort that will actually run under a `maxEffortLevel` cap. Read via `effortCap`. */
   effortCaps: EffortCaps
-  /**
-   * The `parent_tool_use_id` of the subagent/workflow whose transcript is being
-   * VIEWED in the maximized transcript view (null = normal chat). Scoped to the
-   * active session's Agent tool_use ids. Cleared on ← Chat / Esc / session switch.
-   * This is the LAST element of `subagentTrail` (the deepest open subagent), kept
-   * as a derived convenience so existing readers (App gate, findOpen guard) are untouched.
-   */
-  viewingSubagent: string | null
-  /**
-   * Nesting: the drill-down breadcrumb of subagent tool_use ids. Entering a
-   * transcript from an Agent card / bg tray RESETS it to `[id]`; drilling into a nested
-   * child PUSHES; the header "← back" POPS. Empty = normal chat. `viewingSubagent` mirrors
-   * its tail. (A workflow trail is always length 1: workflows don't nest this way.)
-   */
-  subagentTrail: string[]
-  /** The user's size choice for the subagent pane when the Stage can split: false = half, true = full.
-   *  Below SPLIT_MIN an open pane is full regardless, and that never counts as a choice. Persisted. */
-  paneFull: boolean
-  setPaneFull: (full: boolean) => void
   /** The Stage is at least SPLIT_MIN wide, the only width where a half pane renders as half. */
   stageWide: boolean
   setStageWide: (wide: boolean) => void
@@ -801,18 +797,10 @@ interface SessionStore {
   dismissApiRetry: () => void
   /** Hide the active session's usage-limit strip until the limit's status changes. */
   dismissRateLimit: () => void
-  /** Open the maximized transcript view for a subagent (by parent_tool_use_id). Resets
-   *  the nesting trail to just this id (fresh entry from an Agent card / bg tray). */
-  viewSubagent: (parentToolUseId: string) => void
-  /** Nesting: drill INTO a nested child subagent, pushing it onto the trail so
-   *  the header shows a breadcrumb + "← back" to the parent. */
-  pushSubagent: (childToolUseId: string) => void
-  /** Nesting: go back up one level (pop the trail); closes the view if at root. */
-  popSubagent: () => void
-  /** Nesting: jump to a specific breadcrumb depth (truncate the trail to it). */
-  gotoSubagentDepth: (depth: number) => void
-  /** Close the transcript view entirely, returning to the chat (clears the trail). */
-  closeSubagentView: () => void
+  /** Opens or focuses an agent's transcript tab. A nested agent's trail is its known ancestors unless `trail` says
+   *  otherwise; an existing tab keeps its own. */
+  openAgentTab: (handleId: string, ref: AgentRef, opts?: { title?: string; trail?: string[] }) => void
+  openWorkflowTab: (handleId: string, taskId: string, title: string) => void
   /** Route one browser event from main into its session's slice. */
   applyBrowserEvent: (handleId: string, e: BrowserEvent) => void
   applyAnnotateEvent: (handleId: string, e: AnnotateEvent) => void
@@ -876,7 +864,7 @@ interface SessionStore {
 }
 
 export type SurfaceSpec = Pick<SurfaceTab, 'kind' | 'key' | 'title'> &
-  Partial<Pick<SurfaceTab, 'mode' | 'location' | 'highlight' | 'provenance'>>
+  Partial<Pick<SurfaceTab, 'mode' | 'location' | 'highlight' | 'provenance' | 'trail'>>
 export type SurfaceViewPatch = Partial<Pick<SurfaceTab, 'mode' | 'location' | 'selection' | 'highlight' | 'viewState' | 'sourceView' | 'reveal' | 'back'>>
 
 /**
@@ -966,7 +954,7 @@ export function browserTabOf(id: string | null | undefined): number | null {
   return id?.startsWith('browser:') ? Number(id.slice(8)) : null
 }
 
-export function surfaceKindOf(set: SurfaceSet, id: string | null): SurfaceKind | null {
+export function surfaceKindOf(set: SurfaceSet, id: string | null): PaneKind | null {
   if (!id) return null
   return browserTabOf(id) !== null ? 'browser' : (set.tabs[id]?.kind ?? null)
 }
@@ -1065,6 +1053,12 @@ export function surfaceLabel(t: SurfaceTab): string {
     case 'sheet':
     case 'artifact':
       return basename(t.key)
+    case 'agent':
+    case 'workflow':
+    case 'agents':
+    case 'workflows':
+    case 'side':
+      return t.title
     default: {
       const none: never = t.kind
       return none
@@ -1076,29 +1070,37 @@ export function surfaceLabel(t: SurfaceTab): string {
 export const restoredTab = (slice: Pick<PerSessionState, 'createdMs'> | null, tab: Pick<SurfaceTab, 'openedAt'>): boolean =>
   !!slice && tab.openedAt < slice.createdMs
 
-/** The tab the cap closes to make room for `keep`: the inactive one viewed least recently. Tree and
- *  Claude changes are never closed. */
+/** The tab the cap closes to make room for `keep`: the inactive one viewed least recently. Singletons are never
+ *  closed, and closing a running agent's tab never stops the agent. */
 export function evictionVictim(set: SurfaceSet, keep: string): string | null {
   const tabs = Object.values(set.tabs)
   if (tabs.length < SURFACE_TAB_CAP) return null
   let pick: SurfaceTab | null = null
   for (const t of tabs) {
-    if (t.kind === 'tree' || t.kind === 'diff' || t.id === set.active || t.id === keep) continue
+    if ((SINGLETON_KINDS as readonly string[]).includes(t.kind) || t.id === set.active || t.id === keep) continue
     if (!pick || t.lastViewedAt < pick.lastViewedAt) pick = t
   }
   return pick?.id ?? null
 }
 
 function savedTab(t: SurfaceTab): SavedTab {
-  const { id, kind, key, title, openedBy, mode, viewState, sourceView, openedAt, lastViewedAt, provenance } = t
-  return { id, kind, key, title, openedBy, mode, viewState, sourceView, openedAt, lastViewedAt, provenance }
+  const { id, kind, key, title, openedBy, mode, viewState, sourceView, openedAt, lastViewedAt, provenance, trail } = t
+  return { id, kind, key, title, openedBy, mode, viewState, sourceView, openedAt, lastViewedAt, provenance, trail }
 }
 
-const surfacesSave = (s: PerSessionState): SurfacesSave => ({
-  set: { order: s.surfaces.order, active: s.surfaces.active, tabs: Object.fromEntries(Object.entries(s.surfaces.tabs).map(([id, t]) => [id, savedTab(t)])) },
-  open: s.paneOpen,
-  full: s.surfacePaneFull
-})
+export const surfacesSave = (s: PerSessionState): SurfacesSave => {
+  const { order, active, tabs } = s.surfaces
+  const kept = (id: string): boolean => !tabs[id] || !UNSAVED_KINDS.includes(tabs[id].kind)
+  return {
+    set: {
+      order: order.filter(kept),
+      active: active && kept(active) ? active : null,
+      tabs: Object.fromEntries(Object.entries(tabs).filter(([id]) => kept(id)).map(([id, t]) => [id, savedTab(t)]))
+    },
+    open: s.paneOpen,
+    full: s.surfacePaneFull
+  }
+}
 
 /**
  * A new or resumed slice's pane, from what the sidecar kept. Main has already restored the browser tabs
@@ -1342,6 +1344,74 @@ function watchSurfaces(): void {
   })
 }
 
+/** An agent tab whose agent stops running while the user is elsewhere gets the unseen dot. A tab's first derived
+ *  state is its baseline, so a restored tab never lights on load. */
+export function watchAgentTabs(): () => void {
+  const last = new Map<string, RunStatusOf['state']>()
+  return useSession.subscribe((s, prev) => {
+    if (s.sessions === prev.sessions) return
+    const lit: [string, string][] = []
+    for (const [handleId, slice] of Object.entries(s.sessions)) {
+      for (const t of Object.values(slice.surfaces.tabs)) {
+        const ref = t.kind === 'agent' ? agentRefOf(t.key) : null
+        if (!ref) continue
+        const k = `${handleId}\n${t.id}`
+        const was = last.get(k)
+        const now = agentRunState(slice, ref).state
+        last.set(k, now)
+        const seen = handleId === s.activeHandleId && slice.paneOpen && slice.surfaces.active === t.id
+        if (was && isLive(was) && !isLive(now) && !seen && !t.unseen) lit.push([handleId, t.id])
+      }
+    }
+    if (!lit.length) return
+    queueMicrotask(() =>
+      useSession.setState((st) => {
+        let sessions = st.sessions
+        for (const [h, id] of lit) {
+          const cur = sessions[h]
+          const tab = cur?.surfaces.tabs[id]
+          if (tab) sessions = { ...sessions, [h]: { ...cur, surfaces: { ...cur.surfaces, tabs: { ...cur.surfaces.tabs, [id]: { ...tab, unseen: true } } } } }
+        }
+        return { sessions }
+      })
+    )
+  })
+}
+
+/** Keeps what an agent's transcript read says about its outcome and the agents it launched, so every surface that
+ *  shows it or its children agrees. A read that changed neither leaves the slice alone. */
+export function noteAgentRead(handleId: string, id: string, r: { messages: HistoryMessage[]; agentMeta: AgentMeta | null }): void {
+  const launches: ToolCall[] = r.messages.flatMap((m) => m.tools.filter((t) => isAgentTool(t.name)))
+  const sig = (l: readonly ToolCall[] | undefined): string => JSON.stringify(l?.map((t) => [t.id, t.result === undefined, t.isError]))
+  useSession.setState((s) => {
+    const cur = s.sessions[handleId]
+    if (!cur || (JSON.stringify(cur.agentMetas[id]) === JSON.stringify(r.agentMeta) && sig(cur.nestedLaunches[id]) === sig(launches))) return {}
+    return patchSlice(s, handleId, { agentMetas: { ...cur.agentMetas, [id]: r.agentMeta }, nestedLaunches: { ...cur.nestedLaunches, [id]: launches } })
+  })
+}
+
+const agentReads = new Set<string>()
+/** Reads what an agent tab's status and face need that no live stream gave: its parent's launches, for a nested
+ *  tab, and its own sidecar when main holds no foreground launch for it. Once per agent per session. */
+export function ensureAgentData(handleId: string, tab: Pick<SurfaceTab, 'key' | 'trail'>): void {
+  const ref = agentRefOf(tab.key)
+  const slice = useSession.getState().sessions[handleId]
+  if (ref?.by !== 'tool' || !slice) return
+  const read = (id: string): void => {
+    const k = `${handleId}\n${id}`
+    if (agentReads.has(k)) return
+    agentReads.add(k)
+    window.clui.readAgentTranscriptByToolUseId(id).then(
+      (r) => noteAgentRead(handleId, id, r),
+      () => agentReads.delete(k)
+    )
+  }
+  const parent = tab.trail?.length ? agentRefOf(tab.trail[tab.trail.length - 1].replace(/^agent:/, '')) : null
+  if (parent?.by === 'tool' && !slice.subagentChildren[parent.id]?.length && !slice.nestedLaunches[parent.id]) read(parent.id)
+  const main = findAgentTool(slice.messages, ref.id)
+  if ((!main || main.background) && !(ref.id in slice.agentMetas)) read(ref.id)
+}
+
 /** A session that can't read changes drops the change refs it holds, however `changeRead` got there. */
 function watchChangeRead(): void {
   useSession.subscribe((s, prev) => {
@@ -1360,6 +1430,9 @@ export function denyChangeRead(handleId: string): void {
 
 const hidden = (): boolean => typeof document !== 'undefined' && document.hidden
 
+/** The pane shows a tab Claude can't see: an agent, workflow, list or side chat. */
+const viewShown = (slice: PerSessionState): boolean => slice.paneOpen && isViewKind(surfaceKindOf(slice.surfaces, slice.surfaces.active))
+
 /** What the pane shows a session, as surface_state reports it. Lines and labels only, never selected text. */
 export function paneFacts(handleId: string): SurfaceReply {
   const st = useSession.getState()
@@ -1375,7 +1448,7 @@ export function paneFacts(handleId: string): SurfaceReply {
     const tab = browserTabOf(id)
     if (tab !== null) return slice.browser ? { kind: 'browser', tab, claude: false, unseen: !!set0.browserUnseen[id] } : null
     const t = set0.tabs[id]
-    if (!t) return null
+    if (!t || isViewKind(t.kind)) return null
     const at = t.location
     const pend = t.pendingShow?.location
     if (t.kind === 'doc' && laysOut(t.key)) {
@@ -1440,7 +1513,7 @@ export function paneFacts(handleId: string): SurfaceReply {
     .sort((a, b) => seen(b) - seen(a))
     .flatMap((id) => fact(id) ?? [])
   const session =
-    handleId !== st.activeHandleId ? 'background' : hidden() ? 'minimized' : st.viewingSubagent || st.settingsSection !== null || slice.pendingPermissions.length ? 'covered' : 'shown'
+    handleId !== st.activeHandleId ? 'background' : hidden() ? 'minimized' : viewShown(slice) || st.settingsSection !== null || slice.pendingPermissions.length ? 'covered' : 'shown'
   return {
     pane: slice.paneOpen ? 'open' : 'closed',
     ...(slice.paneOpen ? { width: slice.surfacePaneFull || !st.stageWide ? 'wide' : 'half' } : {}),
@@ -1491,7 +1564,7 @@ export function openForClaude(handleId: string, a: SurfaceTarget & { focus: bool
   if (!after.paneOpen && after.paneAutoOpenSuppressed && after.surfaces.active === id) return { outcome: 'pane-closed' }
   const visible = handleId === now.activeHandleId && !hidden()
   const tab = after.surfaces.tabs[id]
-  const shown = visible && after.paneOpen && !now.viewingSubagent && now.settingsSection === null && after.surfaces.active === id && !tab?.pendingShow
+  const shown = visible && after.paneOpen && now.settingsSection === null && after.surfaces.active === id && !tab?.pendingShow
   const preview = !!lines && !parts && !!tab && (isHtml(tab.key) || isSvg(tab.key) || isDelimited(tab.key)) && presentationOf(tab, !!noPreview(handleId, tab.key)) === 'preview'
   const source = !!parts && tab?.mode === 'source'
   return { outcome: shown ? 'shown' : a.focus && !visible ? 'deferred' : 'prepared', ...(preview ? { preview } : {}), ...(source ? { source } : {}) }
@@ -1526,6 +1599,7 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
   subscribed = true
   watchSurfaces()
   watchChangeRead()
+  watchAgentTabs()
   window.clui.onSurfaceCommand(answerSurface)
   window.clui.onSessionEvent(({ handleId, event }) => {
     applyEvent(handleId, event)
@@ -1567,9 +1641,7 @@ function prepareChanges(handleId: string, prev: PerSessionState, next: FileChang
   if (!fresh || !set0 || set0.active === 'diff' || set0.tabs.diff?.unseen) return
   st.openSurface(handleId, { kind: 'diff', key: '', title: 'Claude changes', location: { file: fresh.path } }, 'prepare', 'claude', 'change')
   // With no tab to show, a hidden pane's toggle targets the new tab; it stays unseen until the pane is shown on it.
-  const cur = useSession.getState().sessions[handleId]
-  const shown = cur.paneOpen && !(handleId === st.activeHandleId && st.viewingSubagent)
-  if (set0.active === null && !shown) useSession.setState((s) => patchSlice(s, handleId, { surfaces: { ...s.sessions[handleId].surfaces, active: 'diff' } }))
+  if (set0.active === null && !useSession.getState().sessions[handleId].paneOpen) useSession.setState((s) => patchSlice(s, handleId, { surfaces: { ...s.sessions[handleId].surfaces, active: 'diff' } }))
 }
 
 /** Insert a freshly-created slice and flush any events that raced ahead of it. */
@@ -1584,11 +1656,7 @@ function insertSlice(
       sessions,
       // A pane restored open mounts without taking focus.
       ...arriveWithPane(sessions, slice.handleId, s.stageWide, surfacePaneShown(s)),
-      activeHandleId: slice.handleId,
-      // A new/resumed session becomes active, so any open detail view (scoped to the
-      // previously-active session's tool ids) must close.
-      viewingSubagent: null,
-      subagentTrail: []
+      activeHandleId: slice.handleId
     }
   })
   const buffered = earlyBuffer.get(slice.handleId)
@@ -1772,6 +1840,8 @@ async function beginSession(
     modStatus: EMPTY_MOD_STATUS,
     subagentMessages: {},
     subagentChildren: {},
+    nestedLaunches: {},
+    agentMetas: {},
     workflows: {},
     monitors: EMPTY_MONITORS,
     slashCommands: EMPTY_SLASH_COMMANDS,
@@ -1802,6 +1872,7 @@ async function beginSession(
     referenceEditTarget: null,
     refAnnounce: ''
   })
+  for (const t of Object.values(get().sessions[handleId]?.surfaces.tabs ?? {})) if (t.kind === 'agent') ensureAgentData(handleId, t)
   // Main rebuilds a resume's changes from its transcripts. A push that lands before the slice
   // exists is dropped, so pull once the slice is in.
   if (opts.resumeSessionId) void get().refreshChanges(handleId)
@@ -1917,7 +1988,7 @@ function evictFor(
   }
   const at = Date.now()
   const card: EvictedTab = { id: `evicted-${++evictSeq}`, handleId, tab, index: set0.order.indexOf(victim), at }
-  const text = toggled(`Closed ${label}. Clui keeps up to ${SURFACE_TAB_CAP} tabs per session and closed the one you viewed least recently.`)
+  const text = toggled(`Closed ${label}. Clui keeps up to ${SURFACE_TAB_CAP} tabs per session and closed the one you viewed least recently.${tab.kind === 'agent' ? ' Reopen it from its card in the chat.' : ''}`)
   set((s) => ({ ...patchSlice(s, handleId, { surfaces, tabsEvicted: true }), evictedTabs: [card, ...s.evictedTabs], evictedAnnounce: { text, at } }))
 }
 
@@ -1955,7 +2026,7 @@ function shownCopy(s: PerSessionState, id: string | null, opened: boolean): stri
 const said = (text: string): { statusAnnounce?: string } => (typeof document !== 'undefined' && document.hidden ? {} : { statusAnnounce: toggled(text) })
 
 /** The Stage already shows a Surfaces pane, so the next session's pane reuses it without remounting. */
-const surfacePaneShown = (s: SessionStore): boolean => !s.viewingSubagent && !!(s.activeHandleId && s.sessions[s.activeHandleId]?.paneOpen)
+const surfacePaneShown = (s: SessionStore): boolean => !!(s.activeHandleId && s.sessions[s.activeHandleId]?.paneOpen)
 
 /** The payload for a session becoming active. Arriving isn't a request to work in its browser pane,
  *  so a pane that mounts on arrival leaves focus where it was. A deferred open comes up here at half
@@ -2270,11 +2341,10 @@ function placeNote(messages: ChatMessage[], note: HookNote, standalone: boolean)
 const MOD_TOAST_CAP = 3
 let modToastSeq = 0
 
-/** Narrow a loose CLI task status to the tray's union: only 'killed'/'failed' are kept
- *  distinct; every other terminal string collapses to 'completed' (the tray only cares
- *  running-vs-not). One place so the bg-task-updated and -notification arms can't diverge. */
-function narrowTaskStatus(status: string | undefined): Exclude<BackgroundTask['status'], 'running'> {
-  return status === 'killed' || status === 'failed' ? status : 'completed'
+/** Narrow a loose CLI task status to the tray's union. A stop reports `killed` in its update and `stopped` in its
+ *  notification, so both read as killed. One place so the bg-task-updated and -notification arms can't diverge. */
+export function narrowTaskStatus(status: string | undefined): Exclude<BackgroundTask['status'], 'running'> {
+  return status === 'killed' || status === 'stopped' ? 'killed' : status === 'failed' ? 'failed' : 'completed'
 }
 
 /** The subagent (by its parent tool_use id) that started this bg task, or null when the
@@ -2351,9 +2421,6 @@ export const useSession = create<SessionStore>((set, get) => ({
   evictedTabs: [],
   evictedAnnounce: { text: '', at: 0 },
   effortCaps: {},
-  viewingSubagent: null,
-  subagentTrail: [],
-  paneFull: false,
   stageWide: false,
   setStageWide: (wide) => set({ stageWide: wide }),
   paneOpenedQuietly: false,
@@ -2493,10 +2560,6 @@ export const useSession = create<SessionStore>((set, get) => ({
         sessions,
         ...arriveWithPane(sessions, handleId, s.stageWide, surfacePaneShown(s)),
         activeHandleId: handleId,
-        // Switching sessions closes any open transcript view (its ids are scoped to
-        // the previously-active session's Agent tool_use ids).
-        viewingSubagent: null,
-        subagentTrail: [],
         currentTurn: null
       }
     })
@@ -2542,9 +2605,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       return {
         sessions: next,
         activeHandleId: active,
-        // If the active session changed, its detail view (scoped to the closed session's
-        // tool ids) must reset.
-        ...(active !== s.activeHandleId ? { viewingSubagent: null, subagentTrail: [], ...arriveWithPane(next, active, s.stageWide, surfacePaneShown(s)) } : {})
+        ...(active !== s.activeHandleId ? { ...arriveWithPane(next, active, s.stageWide, surfacePaneShown(s)) } : {})
       }
     })
   },
@@ -2911,26 +2972,21 @@ export const useSession = create<SessionStore>((set, get) => ({
     set((s) => {
       const active = activeSlice(s)
       if (!active) return {}
-      // NEVER dispose the record a detail view is currently showing, or the open view falls
-      // back to an empty generic pane. A subagent is viewed by its toolUseId (the
-      // PTU), a workflow by its taskId, so both are matched against `viewingSubagent`.
-      const viewing = s.viewingSubagent
+      // An open tab's record stays, or the tab loses its status and its workflow tree.
+      const open = new Set(Object.keys(active.surfaces.tabs))
       const patch: Partial<PerSessionState> = {}
-      // Drop lingering terminal SUBAGENTS (keep running ones, any bash, and the viewed one).
       if (kind !== 'workflow') {
         const nextTasks: Record<string, BackgroundTask> = {}
         for (const [id, t] of Object.entries(active.backgroundTasks)) {
-          const lingeringSubagent =
-            t.taskType === 'local_agent' && t.status !== 'running' && t.toolUseId !== viewing
+          const lingeringSubagent = t.taskType === 'local_agent' && t.status !== 'running' && !open.has(`agent:tool:${t.toolUseId}`)
           if (!lingeringSubagent) nextTasks[id] = t
         }
         patch.backgroundTasks = nextTasks
       }
-      // Drop ENDED workflows (keep running ones, endedStatus === null, and the viewed one).
       if (kind !== 'subagent') {
         const nextWf: Record<string, WorkflowState> = {}
         for (const [id, w] of Object.entries(active.workflows)) {
-          if (w.endedStatus === null || id === viewing) nextWf[id] = w
+          if (w.endedStatus === null || open.has(`workflow:${id}`)) nextWf[id] = w
         }
         patch.workflows = nextWf
       }
@@ -3214,6 +3270,7 @@ export const useSession = create<SessionStore>((set, get) => ({
             if (t) {
               t.result = e.content
               t.isError = e.isError
+              t.endMs = Date.now()
               if (e.notRun) t.notRun = true
               if (e.stopped) t.stopped = true
               break
@@ -3314,7 +3371,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           break
         case 'subagent-message': {
           // Accumulate a running subagent's forwarded text under its parent Agent
-          // tool_use id. Rendered by SubagentView (opened from the Agent card / bg tray).
+          // tool_use id. Rendered by its agent tab (opened from the Agent card / bg tray).
           const prev = slice.subagentMessages[e.parentToolUseId] ?? EMPTY_SUBAGENT_MSGS
           patch.subagentMessages = {
             ...slice.subagentMessages,
@@ -3360,7 +3417,7 @@ export const useSession = create<SessionStore>((set, get) => ({
         }
         case 'subagent-nested': {
           // Nesting: a subagent spawned a child. Record it under the PARENT's
-          // tool_use id so SubagentView shows a nested "Agent →" card; de-dupe by
+          // tool_use id so its agent tab shows a nested agent card; de-dupe by
           // childToolUseId (a forwarded snapshot can repeat the same tool_use block).
           const prev = slice.subagentChildren[e.parentToolUseId] ?? EMPTY_NESTED_SUBAGENTS
           if (prev.some((c) => c.childToolUseId === e.childToolUseId)) break
@@ -3433,7 +3490,7 @@ export const useSession = create<SessionStore>((set, get) => ({
               description: e.description,
               taskType: e.taskType,
               // Carried for backgrounded subagents so the tray row can open the
-              // forwarded-transcript SubagentView (keyed by this = the PTU).
+              // forwarded-transcript agent tab (keyed by this = the PTU).
               toolUseId: e.toolUseId,
               status: 'running',
               startMs: Date.now()
@@ -3469,7 +3526,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (prev && e.status && e.status !== 'running') {
             patch.backgroundTasks = {
               ...slice.backgroundTasks,
-              [e.taskId]: { ...prev, status: narrowTaskStatus(e.status) }
+              [e.taskId]: { ...prev, status: narrowTaskStatus(e.status), endMs: prev.endMs ?? Date.now() }
             }
           }
           const mon = monitorOfTask(slice.monitors, e.taskId)
@@ -3491,11 +3548,18 @@ export const useSession = create<SessionStore>((set, get) => ({
             const status = narrowTaskStatus(e.status)
             // LINGER (subagents): a backgrounded SUBAGENT has a reopenable transcript, so
             // instead of deleting the row we KEEP it in a terminal "done" state (still
-            // clickable into SubagentView) until it's opened / displaced / times out. A bg
+            // clickable into its agent tab) until it's opened / displaced / times out. A bg
             // BASH shell has no transcript to reopen → delete it as before (its toast is
             // its only trace). Both still toast.
             if (prev.taskType === 'local_agent') {
-              patch.backgroundTasks = { ...slice.backgroundTasks, [e.taskId]: { ...prev, status } }
+              patch.backgroundTasks = { ...slice.backgroundTasks, [e.taskId]: { ...prev, status, endMs: prev.endMs ?? Date.now() } }
+              // Where the agent let go of its face for the agents launched after it.
+              const at = prev.toolUseId ? messages.findIndex((m) => m.tools.some((t) => t.id === prev.toolUseId)) : -1
+              if (at >= 0) {
+                const next = messages.slice()
+                next[at] = { ...messages[at], tools: messages[at].tools.map((t) => (t.id === prev.toolUseId ? { ...t, notifiedAt: messages.length } : t)) }
+                patch.messages = next
+              }
             } else {
               const next = { ...slice.backgroundTasks }
               delete next[e.taskId]
@@ -3758,7 +3822,7 @@ export const useSession = create<SessionStore>((set, get) => ({
         return {
           sessions: next,
           activeHandleId: active,
-          ...(active !== state.activeHandleId ? { viewingSubagent: null, subagentTrail: [], ...arriveWithPane(next, active, state.stageWide, surfacePaneShown(state)) } : {})
+          ...(active !== state.activeHandleId ? { ...arriveWithPane(next, active, state.stageWide, surfacePaneShown(state)) } : {})
         }
       }
 
@@ -3830,34 +3894,16 @@ export const useSession = create<SessionStore>((set, get) => ({
           : 0
       return patchSlice(s, active.handleId, { compactDismissedAtRunway: runway })
     }),
-  // Fresh entry from an Agent card / bg tray / workflow chip → the trail is just [id].
-  viewSubagent: (parentToolUseId) =>
-    set(() => ({ viewingSubagent: parentToolUseId, subagentTrail: [parentToolUseId] })),
-  // Nesting: drill into a child by pushing it; `viewingSubagent` mirrors the tail.
-  // Guard against pushing a dupe (e.g. double-click) so "back" always makes progress.
-  pushSubagent: (childToolUseId) =>
-    set((s) =>
-      s.subagentTrail[s.subagentTrail.length - 1] === childToolUseId
-        ? {}
-        : { viewingSubagent: childToolUseId, subagentTrail: [...s.subagentTrail, childToolUseId] }
-    ),
-  // Pop one level; at the root this closes the view (empty trail → back to chat).
-  popSubagent: () =>
-    set((s) => {
-      const trail = s.subagentTrail.slice(0, -1)
-      return { subagentTrail: trail, viewingSubagent: trail[trail.length - 1] ?? null }
-    }),
-  // Truncate the trail to `depth+1` entries (breadcrumb click); clamps defensively.
-  gotoSubagentDepth: (depth) =>
-    set((s) => {
-      const trail = s.subagentTrail.slice(0, Math.max(1, depth + 1))
-      return { subagentTrail: trail, viewingSubagent: trail[trail.length - 1] ?? null }
-    }),
-  closeSubagentView: () => set(() => ({ viewingSubagent: null, subagentTrail: [], currentTurn: null })),
-  setPaneFull: (full) => {
-    if (get().paneFull === full) return
-    set({ paneFull: full })
-    void window.clui.updateSettings({ subagentPaneFull: full })
+  openAgentTab: (handleId, ref, opts) => {
+    const slice = get().sessions[handleId]
+    if (!slice) return
+    const key = agentKey(ref)
+    const title = opts?.title || slice.surfaces.tabs[`agent:${key}`]?.title || (ref.by === 'tool' ? agentInfo(slice, ref.id).label : 'Agent')
+    const trail = (opts?.trail ?? (ref.by === 'tool' ? trailOf(slice, ref.id) : [])).slice(-8)
+    get().openSurface(handleId, { kind: 'agent', key, title, ...(trail.length ? { trail } : {}) }, 'focus', 'user', 'user')
+  },
+  openWorkflowTab: (handleId, taskId, title) => {
+    get().openSurface(handleId, { kind: 'workflow', key: taskId, title }, 'focus', 'user', 'user')
   },
   setPrimaryScrolled: (scrolled) =>
     set((s) =>
@@ -3868,10 +3914,7 @@ export const useSession = create<SessionStore>((set, get) => ({
   setSecondaryScrolled: (scrolled) =>
     set((s) => (s.secondaryScrolled === scrolled ? s : { secondaryScrolled: scrolled })),
 
-  // Search UI. Find-in-conversation only makes sense over the live Virtuoso
-  // transcript, so opening it is a no-op while viewing a subagent transcript.
-  setFindOpen: (open) =>
-    set((s) => (open && s.viewingSubagent ? {} : open ? { findOpen: true } : { findOpen: false, findActiveId: null })),
+  setFindOpen: (open) => set(() => (open ? { findOpen: true } : { findOpen: false, findActiveId: null })),
   setFindActiveId: (id) => set(() => ({ findActiveId: id })),
   setGlobalSearchOpen: (open) => set(() => ({ globalSearchOpen: open })),
   openSettings: (section = 'general', anchor) => set(() => ({ settingsSection: section, settingsAnchor: anchor ?? null })),
@@ -4045,12 +4088,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     const active = activeSlice(s)
     if (!active || (next !== 'collapsed' && !active.cwd)) return
     const open = next !== 'collapsed'
-    // The subagent pane outranks the Surfaces pane in the Stage, so opening it closes the subagent view.
-    const closeSubagent = open && !!s.viewingSubagent
-    set({
-      ...patchSlice(s, active.handleId, { paneOpen: open, ...(open ? { surfacePaneFull: next === 'full' } : {}) }),
-      ...(closeSubagent ? { viewingSubagent: null, subagentTrail: [], currentTurn: null } : {})
-    })
+    set(patchSlice(s, active.handleId, { paneOpen: open, ...(open ? { surfacePaneFull: next === 'full' } : {}) }))
   },
 
   togglePane: (apply) => {
@@ -4058,7 +4096,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     const active = activeSlice(st)
     if (!active) return
     const show = apply ?? st.setPane
-    if (!st.viewingSubagent && active.paneOpen) {
+    if (active.paneOpen) {
       set((s) => patchSlice(s, active.handleId, { paneAutoOpenSuppressed: true, paneAutoOpen: false }))
       return show('collapsed')
     }
@@ -4072,7 +4110,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     const st = get()
     const active = activeSlice(st)
     if (!active?.browser) return
-    const onBrowser = !st.viewingSubagent && active.paneOpen && browserTabOf(active.surfaces.active) !== null
+    const onBrowser = active.paneOpen && browserTabOf(active.surfaces.active) !== null
     if (!onBrowser) return void st.revealBrowser(null, apply)
     set((s) => patchSlice(s, active.handleId, { paneAutoOpenSuppressed: true, paneAutoOpen: false }))
     ;(apply ?? st.setPane)('collapsed')
@@ -4089,7 +4127,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     else await window.clui.browserNewTab(handleId)
     const st = get()
     const now = st.sessions[handleId]
-    if (!now || handleId !== st.activeHandleId || (now.paneOpen && !st.viewingSubagent)) return
+    if (!now || handleId !== st.activeHandleId || now.paneOpen) return
     ;(apply ?? st.setPane)(now.surfacePaneFull ? 'full' : 'half')
   },
 
@@ -4107,7 +4145,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       view()
       return false
     }
-    if (s.viewingSubagent || !s.stageWide) return false
+    if (!s.stageWide) return false
     const shown = activation(slice, id, Date.now())
     set({ ...patchSlice(s, handleId, { ...shown, paneAutoOpen: false, ...said(shownCopy({ ...slice, ...shown }, id, true)) }), paneOpenedQuietly: true })
     view()
@@ -4130,12 +4168,13 @@ export const useSession = create<SessionStore>((set, get) => ({
     const now = Date.now()
     const set0 = cur.surfaces
     const viewed = handleId === s.activeHandleId
-    const showing = viewed && cur.paneOpen && !s.viewingSubagent
+    const showing = viewed && cur.paneOpen
     let eff = intent
     if (actor === 'claude' && intent === 'focus') {
       const onBrowser = browserTabOf(set0.active) !== null
+      // The user is reading a tab Claude can't see, so Claude's tab waits behind it.
       const held =
-        (viewed && (!!s.viewingSubagent || s.settingsSection !== null)) ||
+        (viewed && (viewShown(cur) || s.settingsSection !== null)) ||
         cur.pendingPermissions.length > 0 ||
         cur.annotate.at !== null ||
         (showing && focusInPane(onBrowser))
@@ -4154,7 +4193,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       const existing = set0.tabs[id]
       const base: SurfaceTab = existing
         ? { ...existing, title: spec.title }
-        : { id, kind: spec.kind, key: spec.key, title: spec.title, openedBy, openedAt: now, lastViewedAt: now, ...(spec.mode ? { mode: spec.mode } : {}), ...(spec.provenance ? { provenance: spec.provenance } : {}) }
+        : { id, kind: spec.kind, key: spec.key, title: spec.title, openedBy, openedAt: now, lastViewedAt: now, ...(spec.mode ? { mode: spec.mode } : {}), ...(spec.provenance ? { provenance: spec.provenance } : {}), ...(spec.trail ? { trail: spec.trail } : {}) }
       const dest = { ...(spec.location ? { location: spec.location } : {}), ...(spec.highlight ? { highlight: spec.highlight } : {}) }
       const order = existing ? set0.order : [...set0.order, id]
       if (eff === 'prepare') {
@@ -4176,9 +4215,8 @@ export const useSession = create<SessionStore>((set, get) => ({
       const moved = showing && actor === 'claude' && (set0.active !== id || located)
       set(patchSlice(s, handleId, { ...activeNow, ...(moved ? said(shownCopy({ ...placed, ...activeNow }, id, fresh)) : {}) }))
     } else if (actor === 'user') {
-      // An explicit user open outranks the subagent takeover.
-      set({ ...patchSlice(s, handleId, { ...activeNow, paneOpen: true }), ...(viewed ? { viewingSubagent: null, subagentTrail: [], currentTurn: null } : {}) })
-    } else if (cur.paneAutoOpenSuppressed || (viewed && (!!s.viewingSubagent || !s.stageWide))) {
+      set(patchSlice(s, handleId, { ...activeNow, paneOpen: true }))
+    } else if (cur.paneAutoOpenSuppressed || (viewed && !s.stageWide)) {
       set(patchSlice(s, handleId, activeNow))
     } else if (!viewed) {
       set(patchSlice(s, handleId, { ...activeNow, paneAutoOpen: true }))

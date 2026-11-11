@@ -36,7 +36,7 @@ export function TopBand({
   const showToggle = useActive((s) => !!s?.cwd)
   // An open find bar's dim text sits on the band, and a compositor-scrolled first frame can reach
   // it before any script runs, so the band stays tinted for as long as find is open.
-  const findOpen = useSession((s) => s.findOpen && !s.viewingSubagent)
+  const findOpen = useSession((s) => s.findOpen)
   const scrolled = scrolledUnder || findOpen
   const [painted, setPainted] = useState(false)
   // The fade arms a frame after the open session's first report, so a session that opens at the top
@@ -135,7 +135,7 @@ export function TopSlot({
   split: boolean
 }): JSX.Element {
   const currentTurn = useSession((s) => s.currentTurn)
-  const findOpen = useSession((s) => s.findOpen && !s.viewingSubagent)
+  const findOpen = useSession((s) => s.findOpen)
   return (
     <div data-ui="top-slot" className="flex h-full min-w-0 flex-1 items-center">
       <div data-ui="top-band-drag" aria-hidden="true" className="h-full flex-1 [-webkit-app-region:drag]" />
@@ -164,7 +164,7 @@ export function TopSlot({
  *  so the button keeps one shape; its name and title add the tab it would show or is showing. While
  *  Claude drives a hidden browser, a static dot marks it, since the light itself stays in the transcript. */
 function PaneToggle(): JSX.Element {
-  const open = useSession((s) => !s.viewingSubagent && selectPaneOpen(activeSlice(s)))
+  const open = useSession((s) => selectPaneOpen(activeSlice(s)))
   const driving = useActive((s) => anyTabIn(s?.browser, 'driving'))
   const kind = useActive((s) => (s ? surfaceKindOf(s.surfaces, paneTarget(s)) : null))
   const title = useActive((s) => {

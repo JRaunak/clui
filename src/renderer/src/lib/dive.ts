@@ -9,11 +9,6 @@ function openButtonFor(toolId: string): HTMLElement | null {
   )
 }
 
-function inView(el: HTMLElement): boolean {
-  const r = el.getBoundingClientRect()
-  return r.bottom > 0 && r.top < window.innerHeight
-}
-
 const pane = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-ui="pane-secondary"]')
 // In full the primary pane is unmounted, so its presence is the half/full test.
 const primaryShown = (): boolean => !!document.querySelector('[data-ui="pane-primary"]')
@@ -25,34 +20,24 @@ export function focusPaneTitle(): void {
     ?.focus({ preventScroll: true })
 }
 
-/** Back on the transcript, return focus to a waiting Gate, else the row that opened the pane. If the
- *  row isn't rendered, bring its message to the top of the viewport and retry once, then fall back
- *  to the composer. */
-function focusOpener(toolId: string): void {
-  // A Gate waiting in the dock outranks the row: the user went to the transcript to answer it.
-  const gate = document.querySelector<HTMLElement>('[data-ui="gate-title"]')
-  if (gate) return gate.focus({ preventScroll: true })
-  const btn = openButtonFor(toolId)
-  if (btn) return btn.focus({ preventScroll: true })
-  const st = useSession.getState()
-  const slice = st.activeHandleId ? st.sessions[st.activeHandleId] : null
-  const msg = slice?.messages.find((m) => m.tools.some((t) => t.id === toolId))
-  if (!msg) return void document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
-  st.requestScrollTo(msg.id, { align: 'start' })
-  setTimeout(() => {
-    ;(openButtonFor(toolId) ?? document.querySelector<HTMLElement>('[data-composer-input]'))?.focus()
-  }, 300)
-}
-
-/** Open a subagent's transcript from its Agent row: the row becomes the pane. */
+/** Open a subagent's transcript tab from its Agent row. Into a closed pane by pointer, the row morphs into the pane;
+ *  otherwise the tab opens as any tab does. Focus lands on the tab. */
 export function diveInto(toolId: string, via: Via): void {
+  const st = useSession.getState()
+  const handleId = st.activeHandleId
+  if (!handleId) return
+  const open = (): void => useSession.getState().openAgentTab(handleId, { by: 'tool', id: toolId })
+  if (activeSlice(st)?.paneOpen || via !== 'pointer') {
+    open()
+    return void requestAnimationFrame(focusPaneTitle)
+  }
   const stage = getStage()
   const row = openButtonFor(toolId)?.closest<HTMLElement>('[data-ui="instrument-row"]') ?? null
   row?.style.setProperty('view-transition-name', 'dive')
   const t = runTagged('dive', {
     via,
     scope: stage,
-    update: () => useSession.getState().viewSubagent(toolId),
+    update: open,
     after: () => {
       // Whether the pane opened half or full is only known once the Stage has laid it out. The
       // pseudo tree is built after this callback, so retagging here still picks the right CSS.
@@ -67,36 +52,6 @@ export function diveInto(toolId: string, via: Via): void {
   const clear = (): void => {
     row?.style.removeProperty('view-transition-name')
     pane()?.style.removeProperty('view-transition-name')
-  }
-  if (t) t.finished.finally(clear)
-  else clear()
-}
-
-/** Close the subagent pane, the pane morphing back into its row. */
-export function diveOut(via: Via): void {
-  const st = useSession.getState()
-  const toolId = st.subagentTrail[0] ?? st.viewingSubagent
-  const stage = getStage()
-  const p = pane()
-  p?.style.setProperty('view-transition-name', 'dive')
-  let row: HTMLElement | null = null
-  const t = runTagged(primaryShown() ? 'undive-split' : 'undive', {
-    via,
-    scope: stage,
-    update: () => useSession.getState().closeSubagentView(),
-    after: () => {
-      p?.style.removeProperty('view-transition-name')
-      const btn = toolId ? openButtonFor(toolId) : null
-      row = btn?.closest<HTMLElement>('[data-ui="instrument-row"]') ?? null
-      // A row that isn't on screen has nothing to morph into; the pane just fades.
-      if (row && inView(row)) row.style.setProperty('view-transition-name', 'dive')
-      else row = null
-      if (toolId) focusOpener(toolId)
-    }
-  })
-  const clear = (): void => {
-    p?.style.removeProperty('view-transition-name')
-    row?.style.removeProperty('view-transition-name')
   }
   if (t) t.finished.finally(clear)
   else clear()
@@ -117,12 +72,7 @@ export function resizePane(full: boolean, via: Via): void {
   const t = runTagged(full ? 'pane-full' : 'pane-half', {
     via,
     scope: getStage(),
-    update: () => {
-      // The subagent pane outranks the Surfaces pane in the Stage, so whichever is showing is resized.
-      const st = useSession.getState()
-      if (st.viewingSubagent) st.setPaneFull(full)
-      else st.setPane(full ? 'full' : 'half')
-    },
+    update: () => useSession.getState().setPane(full ? 'full' : 'half'),
     after: () => {
       if (full && fromTranscript) focusPaneTitle()
     }
@@ -143,7 +93,7 @@ export function setPaneVia(next: BrowserPaneState, via: Via): void {
   const st = useSession.getState()
   const cur = activeSlice(st)
   if (!cur) return
-  const from: BrowserPaneState = st.viewingSubagent || !cur.paneOpen ? 'collapsed' : cur.surfacePaneFull ? 'full' : 'half'
+  const from: BrowserPaneState = !cur.paneOpen ? 'collapsed' : cur.surfacePaneFull ? 'full' : 'half'
   if (from === next) return
   if (from !== 'collapsed' && next !== 'collapsed') return resizePane(next === 'full', via)
   const stage = getStage()

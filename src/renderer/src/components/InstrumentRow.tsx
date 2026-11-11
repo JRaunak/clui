@@ -29,6 +29,7 @@ import {
   type RowState
 } from '../lib/instrument'
 import { effortLabel } from '../../../shared/settings'
+import { subagentType } from '../lib/agents'
 import { IconAgentBrowser, IconCheck, IconChevron, IconCircle, IconCopy, IconFile, IconOpenPane, IconSendToTray, IconShield, IconStop, IconWarn } from './Icon'
 
 type Placement = 'spine' | 'inline'
@@ -415,6 +416,7 @@ export function InstrumentRow({
             )}
             <button
               type="button"
+              data-find-skip=""
               onClick={() => setInputOpen((o) => !o)}
               aria-expanded={inputOpen}
               className="mt-2.5 flex min-h-6 items-center gap-1.5 text-caps uppercase text-faint transition-colors hover:text-dim"
@@ -671,14 +673,6 @@ function firstLine(s: string): string {
     if (t) return t
   }
   return ''
-}
-
-export function subagentType(input: unknown): string | null {
-  if (input && typeof input === 'object') {
-    const t = (input as Record<string, unknown>).subagent_type
-    if (typeof t === 'string' && t) return t
-  }
-  return null
 }
 
 /** The CLI ignores `effort` on a fork, so showing it there would lie. */

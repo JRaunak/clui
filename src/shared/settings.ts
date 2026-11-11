@@ -55,9 +55,6 @@ export interface CluiSettings {
   /** Expanded sidebar width in px. Applied clamped to the live window, so a width saved on a wide
    *  monitor still fits a laptop. Persisted like `sidebarCollapsed`. */
   sidebarWidth: number
-  /** The subagent pane's size when the Stage can split, false = half, app-wide. Persisted like
-   *  `sidebarCollapsed`. */
-  subagentPaneFull: boolean
   /** Where a link Clui renders opens: a new tab in the session's own browser, or the default browser.
    *  'clui' takes effect only in a session with the browser tools; elsewhere links go to the default browser. */
   linkTarget: LinkTarget
@@ -245,10 +242,10 @@ export const FALLBACK_MODEL_IDS: string[] = [
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
-  'claude-fable-5-2',
   'claude-sonnet-5-5',
   'claude-sonnet-5',
   'claude-sonnet-4-6',
+  'claude-fable-5-2',
   'claude-fable-5-1',
   'claude-fable-5',
   'claude-haiku-5-5'
@@ -632,7 +629,6 @@ export const DEFAULT_SETTINGS: CluiSettings = {
   onboarded: false,
   sidebarCollapsed: false,
   sidebarWidth: 288,
-  subagentPaneFull: false,
   linkTarget: 'clui',
   fileLinkTarget: 'clui',
   annotateScreenshots: true,

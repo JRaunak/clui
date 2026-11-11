@@ -771,7 +771,7 @@ function SpineItems({ entries }: { entries: SpineEntry[] }): JSX.Element {
 
 /**
  * A run of consecutive tool calls. On the spine, each row's bead sits on the line; 'end' marks the
- * run that carries the transcript item's last bead. SubagentView keeps the default 'off', which
+ * run that carries the transcript item's last bead. AgentTab keeps the default 'off', which
  * puts beads inline because its column has no spine gutter.
  */
 export function ToolGroup({

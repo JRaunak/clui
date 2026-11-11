@@ -2,7 +2,7 @@ import { useId, useMemo, useState, type ReactNode } from 'react'
 import { useActive, useSession, type PendingPermission } from '../../store'
 import { Button } from '../Button'
 import { IconCheck, IconOpenPane, IconShield } from '../Icon'
-import { subagentType } from '../InstrumentRow'
+import { subagentType } from '../../lib/agents'
 import { diveInto } from '../../lib/dive'
 import { viaOf } from '../../lib/motion'
 import { getStage, SPLIT_MIN } from '../../lib/stage'
@@ -124,7 +124,7 @@ export function PermissionGate({
 function SubagentSource({ id, request }: { id: string; request: PendingPermission }): JSX.Element {
   const toolId = request.agentToolUseId
   const desc = request.agentDescription
-  const viewing = useSession((s) => !!toolId && s.viewingSubagent === toolId)
+  const viewing = useActive((s) => !!toolId && !!s?.paneOpen && s.surfaces.active === `agent:tool:${toolId}`)
   // The Agent call's own card carries the type; a nested subagent's card isn't in the main transcript.
   const subType = useActive((s) => {
     if (!toolId || !s) return null
@@ -137,7 +137,7 @@ function SubagentSource({ id, request }: { id: string; request: PendingPermissio
   const open = (e: { detail: number }): void => {
     if (!toolId) return
     // A full pane would cover this card; beside it, the user can answer while reading.
-    if ((getStage()?.clientWidth ?? 0) >= SPLIT_MIN) useSession.getState().setPaneFull(false)
+    if ((getStage()?.clientWidth ?? 0) >= SPLIT_MIN) useSession.getState().setPane('half')
     diveInto(toolId, viaOf(e))
   }
   return (

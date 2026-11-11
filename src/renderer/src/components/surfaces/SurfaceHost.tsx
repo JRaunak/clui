@@ -19,6 +19,7 @@ import { SheetSurface } from './SheetSurface'
 import { PresentationButton } from './PresentationButton'
 import { fileLike, isMarkdown, isMermaid, opensDefault, presentationOf, useNoPreview } from '../../lib/presentation'
 import { isHtml } from '../../../../shared/html-view'
+import { AgentTab, WorkflowTab } from '../AgentTab'
 
 /** The Surfaces pane: one header whose tab strip outlives a switch between kinds, over the active
  *  surface's body, or the picker when there are no tabs. Only the active surface is mounted, so the
@@ -42,6 +43,7 @@ export function SurfaceHost(): JSX.Element | null {
   const shown = presentationOf(fileTab && filePath !== null ? { kind, key: filePath, mode } : undefined, !!noPreview)
   const fileExternal = useFileExternal(handleId, filePath, opensDefault(kind, shown))
   const cwd = useActive((s) => s?.cwd ?? null)
+  const viewTab = useActive((s) => (activeId && (kind === 'agent' || kind === 'workflow') ? (s?.surfaces.tabs[activeId] ?? null) : null))
   if (!handleId) return null
   const browser = kind === 'browser'
   const external =
@@ -100,6 +102,8 @@ export function SurfaceHost(): JSX.Element | null {
         ) : (
           <FileSurface key={`${handleId}\0${activeId}`} handleId={handleId} tabId={activeId} />
         ))}
+      {viewTab?.kind === 'agent' && <AgentTab key={`${handleId}\0${viewTab.id}`} handleId={handleId} tab={viewTab} />}
+      {viewTab?.kind === 'workflow' && <WorkflowTab key={`${handleId}\0${viewTab.id}`} handleId={handleId} tab={viewTab} />}
       {!kind && <PanePicker key={handleId} />}
     </div>
   )

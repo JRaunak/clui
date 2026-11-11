@@ -14,6 +14,7 @@ import { ANNOUNCE_MS } from './SelectionBar'
 import { addFromSurface } from '../ContextChips'
 import { useSay } from '../../lib/useSay'
 import { sayInHeader } from './PresentationButton'
+import { findRe } from '../../lib/find'
 
 // What the File tab's two presentations share: the read and re-read of one file, its line selection, and the
 // states shown when there's no text to show.
@@ -26,6 +27,53 @@ const MISSING_POLL_MS = 2000
 const REMAP_MS = 50
 export const FLASH_MS = 720
 export const FIND_MAX = 10_000
+
+const DOC_SKIP = '[data-num], .sr-only, button, [data-find-skip], [data-pointed]'
+
+/** Every rendered text node's matches of `q`, case-insensitively, as ranges, outside whatever `skip` matches. Gutter
+ *  numbers and labels aren't text the reader reads, and no match runs from one block into the next. */
+export function findRanges(col: HTMLElement, q: string, skip = DOC_SKIP): { ranges: Range[]; more: boolean } {
+  const walker = document.createTreeWalker(col, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest(skip) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT)
+  })
+  const nodes: Text[] = []
+  const starts: number[] = []
+  let all = ''
+  let block: Element | null = null
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const b = n.parentElement?.closest('[data-src]') ?? null
+    if (b !== block) {
+      all += '\n'
+      block = b
+    }
+    starts.push(all.length)
+    nodes.push(n as Text)
+    all += (n as Text).data
+  }
+  const at = (off: number): number => {
+    let lo = 0
+    let hi = starts.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (starts[mid] <= off) lo = mid
+      else hi = mid - 1
+    }
+    return lo
+  }
+  const ranges: Range[] = []
+  for (const m of all.matchAll(findRe(q))) {
+    if (ranges.length === FIND_MAX) return { ranges, more: true }
+    const i = m.index
+    const e = i + m[0].length
+    const a = at(i)
+    const z = at(e - 1)
+    const r = document.createRange()
+    r.setStart(nodes[a], i - starts[a])
+    r.setEnd(nodes[z], e - starts[z])
+    ranges.push(r)
+  }
+  return { ranges, more: false }
+}
 /** The window's unload never unmounts the open file, so its top line saves once a scroll settles. */
 export const VIEW_SETTLE_MS = 250
 /** ⌘F, ⌘G and ⇧⌘G routed to the File surface; detail is 'open' | 'next' | 'prev'. */

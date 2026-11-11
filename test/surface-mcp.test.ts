@@ -612,7 +612,7 @@ equal((await call({ path: path(b1.url), token: b1.token, body: list })).status, 
     surfaces: { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} },
     ...over
   })
-  useSession.setState({ sessions: { r1: slice('r1'), r2: slice('r2') }, activeHandleId: 'r1', viewingSubagent: null, settingsSection: null, stageWide: true })
+  useSession.setState({ sessions: { r1: slice('r1'), r2: slice('r2') }, activeHandleId: 'r1', settingsSection: null, stageWide: true })
   const cmd = { reqId: 'a'.repeat(32), handleId: 'r1', generation: 0, expiresAt: Date.now() + 3000, op: 'open' as const, args: { kind: 'file' as const, path: '/w/a.ts', line: 3, focus: false } }
   answerSurface(cmd)
   answerSurface(cmd)
@@ -627,14 +627,20 @@ equal((await call({ path: path(b1.url), token: b1.token, body: list })).status, 
   equal(JSON.stringify(openForClaude('r1', { kind: 'file', path: '/w/a.ts', focus: true })), JSON.stringify({ outcome: 'shown' }), 'renderer: focus on the viewed session shows')
   equal(JSON.stringify(openForClaude('r2', { kind: 'diff', focus: true })), JSON.stringify({ outcome: 'deferred' }), 'renderer: focus on a background session defers')
   equal(useSession.getState().activeHandleId, 'r1', 'renderer: and never activates it')
-  useSession.setState({ viewingSubagent: 't1' })
-  equal(JSON.stringify(openForClaude('r1', { kind: 'tree', path: '/w/src', focus: true })), JSON.stringify({ outcome: 'prepared' }), 'renderer: a subagent view turns focus into prepare')
+  const before = useSession.getState().sessions.r1.surfaces
+  const agent = { id: 'agent:tool:t1', kind: 'agent', key: 'tool:t1', title: 'Probe agent', openedBy: 'user', openedAt: 1, lastViewedAt: Date.now() }
+  const withAgent = (surfaces: any): void => useSession.setState((s: any) => ({ sessions: { ...s.sessions, r1: { ...s.sessions.r1, surfaces } } }))
+  withAgent({ ...before, order: [...before.order, agent.id], active: agent.id, tabs: { ...before.tabs, [agent.id]: agent } })
+  equal(JSON.stringify(openForClaude('r1', { kind: 'tree', path: '/w/src', focus: true })), JSON.stringify({ outcome: 'prepared' }), 'renderer: an agent tab turns focus into prepare')
   const facts = paneFacts('r1') as any
-  equal(facts.session, 'covered', 'renderer: the subagent view covers the session')
-  equal(facts.active?.path, '/w/a.ts', 'renderer: the active tab is still the file')
+  equal(facts.session, 'covered', 'renderer: an agent tab covers the session')
+  ok(!('active' in facts), 'renderer: an active agent tab is no fact')
+  ok(facts.tabs.some((f: any) => f.path === '/w/a.ts') && !facts.tabs.some((f: any) => f.kind === 'agent'), 'renderer: the file tab is listed, the agent tab never')
   ok(facts.tabs.some((f: any) => f.kind === 'tree' && f.path === '/w/src' && f.unseen), 'renderer: the prepared tree is listed, unseen, at its folder')
   equal(JSON.stringify(openForClaude('none', { kind: 'diff', focus: false })), JSON.stringify({ outcome: 'unavailable' }), 'renderer: a handle it lacks is unavailable')
-  useSession.setState({ viewingSubagent: null })
+  const now = useSession.getState().sessions.r1.surfaces
+  const { [agent.id]: _gone, ...rest } = now.tabs
+  withAgent({ ...now, order: now.order.filter((id: string) => id !== agent.id), active: before.active, tabs: rest })
 
   // Lines on an HTML or SVG tab that shows its Preview are flagged; Source and Markdown draw them.
   const at = (path: string, line?: number) => JSON.stringify(openForClaude('r1', { kind: 'file', path, ...(line ? { line } : {}), focus: false }))

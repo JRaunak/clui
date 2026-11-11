@@ -113,7 +113,6 @@ export function App(): JSX.Element {
       setOnboarded(values.onboarded)
       setSidebarCollapsed(values.sidebarCollapsed)
       setSidebarWidth(values.sidebarWidth)
-      useSession.setState({ paneFull: values.subagentPaneFull })
     })
   }, [])
 

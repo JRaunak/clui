@@ -215,7 +215,7 @@ const point: RefInput = { ...base, pageSize: { w: 612, h: 792 }, point: { x: 0.4
   const prev = w.window
   w.window = { clui: new Proxy({}, { get: () => async () => true }) }
   const slice = { handleId: 'd1', cwd: '/w', browser: null, paneOpen: true, surfacePaneFull: false, paneAutoOpen: false, paneAutoOpenSuppressed: false, pendingPermissions: [], annotate: { at: null, note: null }, changes: [], restoreNote: null, surfaces: { order: [], active: null, tabs: {}, browserLastViewedAt: {}, browserUnseen: {} } }
-  useSession.setState({ sessions: { d1: slice } as never, activeHandleId: 'd1', viewingSubagent: null, settingsSection: null, stageWide: true })
+  useSession.setState({ sessions: { d1: slice } as never, activeHandleId: 'd1', settingsSection: null, stageWide: true })
   openForClaude('d1', { kind: 'file', path: '/w/paper.pdf', page: 400, focus: true })
   const t = useSession.getState().sessions.d1.surfaces.tabs['doc:/w/paper.pdf']
   ok(t?.kind === 'doc' && t.location?.page === 400 && t.highlight?.page === 400 && !t.selection, "claude: a page opens the doc tab there, as Claude's highlight")

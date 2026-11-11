@@ -65,6 +65,18 @@ export interface HistoryToolCall {
   input: unknown
   result?: string
   isError?: boolean
+  /** Agent/Task calls only: launched in the background, the history message count when its completion notice
+   *  arrived, and how long it ran. */
+  background?: true
+  notifiedAt?: number
+  durationMs?: number
+}
+
+/** The outcome fields of an agent's `.meta.json` sidecar. `shape` is the CLI's `requestShape`, absent in older ones. */
+export interface AgentMeta {
+  shape?: 'background' | 'foreground'
+  finished?: true
+  stoppedByUser?: true
 }
 
 /** An attachment recovered from a resumed USER turn (drop-file). Images

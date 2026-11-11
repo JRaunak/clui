@@ -20,6 +20,7 @@ import {
 import { usePopover } from './Popover'
 import { useStopFocus } from '../lib/useStopFocus'
 import { IconCheck, IconStop, IconWarn, IconNoEntry } from './Icon'
+import { focusPaneTitle } from '../lib/dive'
 
 const EMPTY: Record<string, BackgroundTask> = {}
 const EMPTY_SUB_MSGS: Record<string, SubagentMessage[]> = {}
@@ -35,7 +36,7 @@ export function BackgroundTasks(): JSX.Element | null {
   const monitors = useActive((s) => s?.monitors ?? EMPTY_MONITORS)
   const handleId = useActive((s) => s?.handleId ?? null)
   const stopTask = useSession((s) => s.stopBackgroundTask)
-  const viewSubagent = useSession((s) => s.viewSubagent)
+  const openAgentTab = useSession((s) => s.openAgentTab)
   const clearCompleted = useSession((s) => s.clearCompletedBgWork)
   // Upward from the status bar, clear of the dock; with the pane full there's no dock, so it
   // opens above its own pill instead.
@@ -89,7 +90,8 @@ export function BackgroundTasks(): JSX.Element | null {
     t.taskType === 'local_agent' && t.toolUseId
       ? () => {
           p.close({ returnFocus: false })
-          viewSubagent(t.toolUseId as string)
+          if (handleId) openAgentTab(handleId, { by: 'tool', id: t.toolUseId as string })
+          requestAnimationFrame(focusPaneTitle)
           // Opening a completed subagent = "seen", so stop lingering it.
           if (t.status !== 'running') clearCompleted('subagent')
         }

@@ -225,7 +225,7 @@ export function CommandPalette({
     const slice = activeSlice(store)
     const paneCommands = (cwd: string): PaletteItem[] => {
       const n = slice?.changes.length ?? 0
-      const shown = !store.viewingSubagent && selectPaneOpen(slice)
+      const shown = selectPaneOpen(slice)
       const item = (key: string, label: string, hint: string, icon: PaletteItem['icon'], run: () => void): PaletteItem => ({ key: `cmd:${key}`, kind: 'command', label, hint, icon, recency: 0, run })
       return [
         {

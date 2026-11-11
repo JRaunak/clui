@@ -13,7 +13,7 @@ import { readdir, stat, readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { dirname, join } from 'node:path'
 import { claudeHome } from '../lib/claude-home'
-import type { HistoryMessage, HistoryToolCall, TranscriptResult } from '../../shared/sessions'
+import type { AgentMeta, HistoryMessage, HistoryToolCall, TranscriptResult } from '../../shared/sessions'
 import { parseCliMessage, type TurnUsage } from '../../shared/events'
 import { readSessionUsage } from './usage'
 
@@ -54,6 +54,8 @@ interface RawEntry {
   preventContinuation?: boolean
   attachment?: { type?: string; commandMode?: string; prompt?: unknown }
   durationMs?: number
+  /** On a tool-result record; a string for some tools. */
+  toolUseResult?: unknown
 }
 
 /** Unwrap <local-command-stdout>…</local-command-stdout> to the inner text. */
@@ -346,13 +348,28 @@ export async function readTranscript(
 export async function readAgentTranscript(
   agentId: string,
   cap = SAFETY_CAP
-): Promise<TranscriptResult> {
+): Promise<TranscriptResult & { found: boolean }> {
   const file = await findAgentFile(agentId)
-  if (!file) return { messages: [], total: 0, capped: false, contextTokens: null }
+  if (!file) return { messages: [], total: 0, capped: false, contextTokens: null, found: false }
   // An agent transcript's OWN records are all `isSidechain:true` (they ARE the
   // sidechain), so we must NOT skip them here. In a main-session read, sidechain
   // records are a subagent's output to be excluded.
-  return parseTranscriptFile(file, cap, { includeSidechain: true })
+  return { ...(await parseTranscriptFile(file, cap, { includeSidechain: true })), found: true }
+}
+
+/** The outcome fields of an agent's `.meta.json` sidecar. The sidecar is re-read on each call: `finished` flips at
+ *  completion. */
+async function agentMetaOf(file: string): Promise<AgentMeta | null> {
+  try {
+    const m = JSON.parse(await readFile(file.replace(/\.jsonl$/, '.meta.json'), 'utf8')) as { requestShape?: unknown; finished?: unknown; stoppedByUser?: unknown }
+    return {
+      ...(m.requestShape === 'background' || m.requestShape === 'foreground' ? { shape: m.requestShape } : {}),
+      ...(m.finished === true ? { finished: true } : {}),
+      ...(m.stoppedByUser === true ? { stoppedByUser: true } : {})
+    }
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -363,10 +380,11 @@ export async function readAgentTranscript(
 export async function readAgentTranscriptByToolUseId(
   toolUseId: string,
   cap = SAFETY_CAP
-): Promise<TranscriptResult> {
+): Promise<TranscriptResult & { found: boolean; agentMeta: AgentMeta | null }> {
   const file = await findAgentFileByToolUseId(toolUseId)
-  if (!file) return { messages: [], total: 0, capped: false, contextTokens: null }
-  return parseTranscriptFile(file, cap, { includeSidechain: true })
+  if (!file) return { messages: [], total: 0, capped: false, contextTokens: null, found: false, agentMeta: null }
+  const [t, agentMeta] = await Promise.all([parseTranscriptFile(file, cap, { includeSidechain: true }), agentMetaOf(file)])
+  return { ...t, found: true, agentMeta }
 }
 
 /**
@@ -376,6 +394,16 @@ export async function readAgentTranscriptByToolUseId(
  */
 export async function readTranscriptAtPath(file: string): Promise<TranscriptResult> {
   return parseTranscriptFile(file, SAFETY_CAP)
+}
+
+const isAgentCall = (t: HistoryToolCall): boolean => t.name === 'Agent' || t.name === 'Task'
+
+/** A launched agent's `toolUseResult`: async for a background launch, a total duration for a foreground one. */
+function agentOutcome(call: HistoryToolCall, r: unknown): void {
+  if (!r || typeof r !== 'object') return
+  const { isAsync, totalDurationMs } = r as { isAsync?: unknown; totalDurationMs?: unknown }
+  if (isAsync === true) call.background = true
+  if (typeof totalDurationMs === 'number') call.durationMs = totalDurationMs
 }
 
 function forkDirective(blocks: ContentBlock[]): string | null {
@@ -536,6 +564,7 @@ async function parseTranscriptFile(
             if (call) {
               call.result = resultText(b.content)
               call.isError = Boolean(b.is_error)
+              if (isAgentCall(call)) agentOutcome(call, entry.toolUseResult)
             }
           }
         }
@@ -651,6 +680,13 @@ async function parseTranscriptFile(
       // Drop CLI slash-command plumbing user-bubbles (<command-name>/<caveat>):
       // noise the terminal never shows; the command's output is surfaced separately.
       if (role === 'user' && msg.tools.length === 0 && !msg.thinking && isCommandPlumbing(msg.text)) {
+        const note = /^\s*<task-notification>[\s\S]*?<tool-use-id>([^<]+)<\/tool-use-id>/.exec(msg.text)
+        const call = note && toolCallsById.get(note[1])
+        if (call && isAgentCall(call)) {
+          call.notifiedAt = messages.length
+          const ms = /<duration_ms>(\d+)<\/duration_ms>/.exec(msg.text)
+          if (ms) call.durationMs = Number(ms[1])
+        }
         continue
       }
       messages.push(msg)

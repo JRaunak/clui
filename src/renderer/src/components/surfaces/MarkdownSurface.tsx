@@ -5,11 +5,10 @@ import type { BackPlace, SurfaceLocation } from '../../../../shared/surfaces'
 import { CodeBlock, DocContext, docRow, FileLinkContext, GutterNum, PointedRow, type DocLinks } from '../Markdown'
 import { FindField } from '../FindField'
 import { SelectionBar } from './SelectionBar'
-import { BANNER, baseOf, DocState, FIND_MAX, FLASH_MS, rangeText, SelectionNotice, STATE_BODY, TEXT_BTN, useFileDoc, useFind, VIEW_SETTLE_MS, viewSourceAt } from './fileDoc'
+import { BANNER, baseOf, DocState, findRanges, FLASH_MS, rangeText, SelectionNotice, STATE_BODY, TEXT_BTN, useFileDoc, useFind, VIEW_SETTLE_MS, viewSourceAt } from './fileDoc'
 import { DiagramContext, useDiagramSelection, type DiagramHost } from '../Mermaid'
 import { reportFound } from '../../lib/pointedText'
 import { blockFor, docTree, frontMatter, joinSpans, meets, nextChunk, parseSpan, pointAt, previewEnd, rowOf, rowWithId, type DocTree, type Span } from '../../lib/markdownDoc'
-import { findRe } from '../../lib/find'
 import { latestParse } from '../../lib/markdownParse'
 import { markNoPreview } from '../../lib/presentation'
 import { useLinkRoot } from '../../lib/openLink'
@@ -22,7 +21,6 @@ const HOLD_MS = 2000
 const COLUMN =
   'relative isolate mx-auto w-full max-w-[calc(72ch+4.5rem)] py-6 pl-12 pr-6 text-base text-content [--gut:3rem] @max-[520px]/md:py-4 @max-[520px]/md:pl-10 @max-[520px]/md:pr-4 @max-[520px]/md:[--gut:2.5rem]'
 const WASH = 'bg-bg-raised animate-[turn-flash-out_var(--dur-slow)_var(--ease-in)_var(--dur-stage)_both]'
-const SKIP = '[data-num], .sr-only, button, [data-find-skip], [data-pointed]'
 // Over this a document parses in the worker; under it a parse costs less than the hop.
 const SYNC_MAX = 8 * 1024
 // Elements per render: a paragraph row measured ~26 µs to render, a linked list item more, so this keeps a commit
@@ -61,51 +59,6 @@ function bandsOf(kind: Band['kind'], b: Blocks, span: Span, top: number): Band[]
     joined = true
   }
   return out
-}
-
-/** Every rendered text node's matches of `q`, case-insensitively, as ranges. Gutter numbers and labels aren't text the
- *  reader reads, and no match runs from one block into the next. */
-function findRanges(col: HTMLElement, q: string): { ranges: Range[]; more: boolean } {
-  const walker = document.createTreeWalker(col, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (n.parentElement?.closest(SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT)
-  })
-  const nodes: Text[] = []
-  const starts: number[] = []
-  let all = ''
-  let block: Element | null = null
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const b = n.parentElement?.closest('[data-src]') ?? null
-    if (b !== block) {
-      all += '\n'
-      block = b
-    }
-    starts.push(all.length)
-    nodes.push(n as Text)
-    all += (n as Text).data
-  }
-  const at = (off: number): number => {
-    let lo = 0
-    let hi = starts.length - 1
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1
-      if (starts[mid] <= off) lo = mid
-      else hi = mid - 1
-    }
-    return lo
-  }
-  const ranges: Range[] = []
-  for (const m of all.matchAll(findRe(q))) {
-    if (ranges.length === FIND_MAX) return { ranges, more: true }
-    const i = m.index
-    const e = i + m[0].length
-    const a = at(i)
-    const z = at(e - 1)
-    const r = document.createRange()
-    r.setStart(nodes[a], i - starts[a])
-    r.setEnd(nodes[z], e - starts[z])
-    ranges.push(r)
-  }
-  return { ranges, more: false }
 }
 
 /**

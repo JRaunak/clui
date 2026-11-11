@@ -521,3 +521,44 @@ export function IconCode(p: IconProps): JSX.Element {
     </Svg>
   )
 }
+
+export function IconWorkflow(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <rect x="8.5" y="3" width="7" height="5" rx="1.5" />
+      <rect x="3" y="16" width="7" height="5" rx="1.5" />
+      <rect x="14" y="16" width="7" height="5" rx="1.5" />
+      <path d="M12 8v3.5M6.5 16v-2.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2V16" />
+    </Svg>
+  )
+}
+
+export function IconSubagents(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <circle cx="9.5" cy="14.5" r="6.5" />
+      <path d="M11.3 7.29A5 5 0 1 1 17.71 13.7" />
+      <circle cx="7.2" cy="15" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="11.8" cy="15" r="1.5" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}
+
+export function IconWorkflows(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <rect x="3.5" y="3.5" width="5" height="5" rx="1.2" />
+      <rect x="3.5" y="15.5" width="5" height="5" rx="1.2" />
+      <path d="M6 8.5v7M11.5 6h9M11.5 12h6M11.5 18h9" />
+    </Svg>
+  )
+}
+
+export function IconSideChat(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <path d="M9 5h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3l-3 3v-3H9a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
+      <path d="M3 8v8" />
+    </Svg>
+  )
+}

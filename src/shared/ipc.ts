@@ -10,6 +10,7 @@ import type { Converted, Glimpse, LoOutcome, LoState, OfficeOpen } from './offic
 import type {
   ProjectGroup,
   TranscriptResult,
+  AgentMeta,
   SearchResults,
   SearchOptions,
   WorkspaceOption
@@ -21,7 +22,7 @@ import type { ChangeSide, DraftReference, LineRange, RefInput, RefInvalid, Sourc
 import type { ChangeGitStatus, ChangeMarks, ChangesEvent, DiffRequest, FileChangeSummary, FileDiff, HunkRows } from './changes'
 import type { HtmlOpenResult, HtmlViewEvent, PagePlace, PageStart } from './html-view'
 import type { ContextMenuItem, DocHead, FileChangedEvent, FileStat, ImageCap, ImageOpen, Refusal, TextRead, TreeListing } from './files'
-import type { SurfaceKind, SurfacesRestore, SurfacesSave } from './surfaces'
+import type { PaneKind, SurfacesRestore, SurfacesSave } from './surfaces'
 import type { SurfaceCommand, SurfaceReply } from './surface-tools'
 import type {
   CluiSettings,
@@ -270,11 +271,12 @@ export interface CluiApi {
   warmSearchCache: () => Promise<void>
   /** Read a workflow/subagent agent transcript by agentId (from disk; the live
    *  stream doesn't carry it). Empty if not found (still streaming / layout drift). */
-  readAgentTranscript: (agentId: string) => Promise<TranscriptResult>
+  readAgentTranscript: (agentId: string) => Promise<TranscriptResult & { found: boolean }>
   /** Nesting: read a subagent transcript by its Agent tool_use_id (via the .meta.json
    *  sidecar), for NESTED children whose taskId the UI never learns. Used when no live
-   *  forwarded stream is left to replay, i.e. a resumed session's finished agents. */
-  readAgentTranscriptByToolUseId: (toolUseId: string) => Promise<TranscriptResult>
+   *  forwarded stream is left to replay, i.e. a resumed session's finished agents.
+   *  `found: false` = no file anywhere; a read error rejects. `agentMeta` is the sidecar's outcome. */
+  readAgentTranscriptByToolUseId: (toolUseId: string) => Promise<TranscriptResult & { found: boolean; agentMeta: AgentMeta | null }>
   /** Load the per-session model+effort map (sessionId → {model,effort}). Passed as
    *  --model/--effort on resume so a mid-session switch survives (the CLI otherwise
    *  reverts to the settings.json default on --resume). */
@@ -692,7 +694,7 @@ export interface MenuState {
   browser: 'none' | 'shown' | 'hidden'
   pane: 'none' | 'split' | 'full'
   /** The pane's active kind while it shows, 'picker' with no tab active. */
-  surface: SurfaceKind | 'picker' | 'none'
+  surface: PaneKind | 'picker' | 'none'
   /** The active session has a cwd, so it has files to open and a pane to show them in. */
   canPane: boolean
   /** What ⌘W closes, as far as the renderer's focus tells. Main overrides it while a native page has focus. */

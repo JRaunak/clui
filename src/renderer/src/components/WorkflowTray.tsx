@@ -7,13 +7,15 @@
  */
 import { useCallback, useEffect, useRef } from 'react'
 import { useActive, useSession, type WorkflowState } from '../store'
+import { focusPaneTitle } from '../lib/dive'
 
 const EMPTY: Record<string, WorkflowState> = {}
 const LINGER_MS = 15_000
 
 export function WorkflowTray(): JSX.Element | null {
   const workflows = useActive((s) => s?.workflows ?? EMPTY)
-  const viewWorkflow = useSession((s) => s.viewSubagent)
+  const openWorkflowTab = useSession((s) => s.openWorkflowTab)
+  const handleId = useActive((s) => s?.handleId ?? null)
   const clearCompleted = useSession((s) => s.clearCompletedBgWork)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -79,7 +81,8 @@ export function WorkflowTray(): JSX.Element | null {
         hasRunning ? 'text-info' : anyFailed ? 'text-content' : 'text-dim'
       }`}
       onClick={() => {
-        viewWorkflow(target.taskId)
+        if (handleId) openWorkflowTab(handleId, target.taskId, target.name)
+        requestAnimationFrame(focusPaneTitle)
         clearCompleted('workflow') // opening = "seen" → clear the lingering done state.
       }}
       title={full}
