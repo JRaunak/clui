@@ -446,6 +446,8 @@ export interface PerSessionState {
   runs: RunsState
   /** A running subagent's latest token count, by tool_use id. */
   agentUsage: Record<string, number>
+  /** A live subagent's current step in the CLI's words, by tool_use id. In memory only, gone when the agent ends. */
+  agentActivity: Record<string, string>
   /** Monitor tool calls by tool_use id. */
   monitors: Record<string, MonitorRecord>
   /** The CLI's live slash-command list (from the initialize response). The
@@ -1219,6 +1221,13 @@ function withoutKey<T>(rec: Record<string, T>, key: string): Record<string, T> {
   return rest
 }
 
+/** A shown activity line stays at least this long; steps that land inside it collapse to the newest. */
+const ACTIVITY_HOLD_MS = 1000
+/** By `${handleId}\0${toolUseId}`: when the agent's shown line may next change, and the newest text waiting for then. */
+const activityHolds = new Map<string, { until: number; next?: string; timer?: ReturnType<typeof setTimeout> }>()
+/** Events that can end an agent, after which its activity is dropped. */
+const ENDS_AGENTS = new Set<DomainEvent['type']>(['tool-result', 'subagent-tool-result', 'bg-task-updated', 'bg-task-notification', 'bg-tasks-changed', 'result', 'process-exit'])
+
 /** Each session's one pending timer for its usage limit's reset, replaced by every new limit event. */
 const rateLimitTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -1246,6 +1255,11 @@ const RETIRED_CAP = 1000
  *  so future late events are discarded. */
 function retireHandle(handleId: string): void {
   earlyBuffer.delete(handleId)
+  for (const [key, hold] of activityHolds) {
+    if (!key.startsWith(`${handleId}\0`)) continue
+    clearTimeout(hold.timer)
+    activityHolds.delete(key)
+  }
   retiredHandles.add(handleId)
   if (retiredHandles.size > RETIRED_CAP) {
     const oldest = retiredHandles.values().next().value
@@ -1912,6 +1926,7 @@ async function beginSession(
     workflowReads: {},
     runs: IDLE_RUNS,
     agentUsage: {},
+    agentActivity: {},
     monitors: EMPTY_MONITORS,
     slashCommands: EMPTY_SLASH_COMMANDS,
     tasks: EMPTY_TASKS,
@@ -3126,6 +3141,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     const rescanSessions = { needed: false }
     // A usage-limit event to (re)arm the reset timer for, after the commit. Holder like `release`.
     const rateLimitSchedule: { next: RateLimit | null } = { next: null }
+    // An agent whose held step needs a release timer, armed after the commit.
+    const activityWake: { id: string | null } = { id: null }
     set((state) => {
       const slice = state.sessions[handleId]
       // Slice not created yet: buffer until insertSlice flushes it (race guard). But a
@@ -3542,9 +3559,23 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.lastActivityMs = Date.now()
           break
         }
-        case 'agent-usage':
-          patch.agentUsage = { ...slice.agentUsage, [e.toolUseId]: e.tokens }
+        case 'agent-usage': {
+          if (e.tokens !== undefined) patch.agentUsage = { ...slice.agentUsage, [e.toolUseId]: e.tokens }
+          if (!e.activity) break
+          const key = `${handleId}\0${e.toolUseId}`
+          const hold = activityHolds.get(key)
+          const now = Date.now()
+          // While the agent waits on the user its line reads paused, so the newest step goes straight under it.
+          if (hold && now < hold.until && !slice.pendingPermissions.some((p) => p.agentToolUseId === e.toolUseId)) {
+            hold.next = e.activity
+            activityWake.id = e.toolUseId
+            break
+          }
+          clearTimeout(hold?.timer)
+          activityHolds.set(key, { until: now + ACTIVITY_HOLD_MS })
+          patch.agentActivity = { ...slice.agentActivity, [e.toolUseId]: e.activity }
           break
+        }
         case 'workflow-ended': {
           const wf = slice.workflows[e.taskId]
           if (!wf) break
@@ -3904,6 +3935,19 @@ export const useSession = create<SessionStore>((set, get) => ({
         }
       }
 
+      if (ENDS_AGENTS.has(e.type)) {
+        const next = { ...slice, ...patch, messages }
+        const ended = Object.keys(next.agentActivity).filter((id) => !isLive(agentRunState(next, { by: 'tool', id }).state))
+        if (ended.length) {
+          const left = { ...next.agentActivity }
+          for (const id of ended) {
+            delete left[id]
+            clearTimeout(activityHolds.get(`${handleId}\0${id}`)?.timer)
+            activityHolds.delete(`${handleId}\0${id}`)
+          }
+          patch.agentActivity = left
+        }
+      }
       if (touchesMessages(e.type)) patch.messages = messages
       return {
         ...top,
@@ -3920,6 +3964,19 @@ export const useSession = create<SessionStore>((set, get) => ({
       void dispatchTurn(set, h, msg.text, msg.attachments, msg.refs)
     }
     if (rescanSessions.needed) void get().refreshSessions(true)
+    const woke = activityWake.id
+    const hold = woke === null ? undefined : activityHolds.get(`${handleId}\0${woke}`)
+    if (woke !== null && hold && !hold.timer) {
+      hold.timer = setTimeout(() => {
+        const text = hold.next
+        hold.timer = hold.next = undefined
+        hold.until = Date.now() + ACTIVITY_HOLD_MS
+        set((s) => {
+          const sl = s.sessions[handleId]
+          return sl && text !== undefined && woke in sl.agentActivity ? patchSlice(s, handleId, { agentActivity: { ...sl.agentActivity, [woke]: text } }) : {}
+        })
+      }, hold.until - Date.now())
+    }
     const limit = rateLimitSchedule.next
     if (limit) {
       clearTimeout(rateLimitTimers.get(handleId))

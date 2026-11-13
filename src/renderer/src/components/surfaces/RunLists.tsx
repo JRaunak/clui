@@ -1,15 +1,15 @@
 /** The Subagents and Workflows list tabs: every run in the session, live ones at once and the rest read from disk. */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { activeSlice, EMPTY_PENDING, loadRuns, useActive, useSession, type ChatMessage, type ToolCall } from '../../store'
-import { agentRows, isAgentTool, isLive, runningAgents, REASON_COPY, RUN_WORDS, type AgentListRow } from '../../lib/agents'
+import { activityLine, agentRows, isAgentTool, isLive, runningAgents, REASON_COPY, RUN_WORDS, STARTING, type AgentListRow } from '../../lib/agents'
 import { workflowRows, workflowSummary } from '../../lib/workflow'
 import { fmtTokens } from '../../lib/formatTokens'
 import { formatElapsed } from '../../lib/turnEnd'
 import { focusPaneTitle } from '../../lib/dive'
 import { takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { useDelayedFlag } from '../../lib/useDelayedFlag'
-import { Dash, Figures, TIME, TOKENS } from '../WorkflowTab'
+import { Dash, Figures, FIGURES, TIME, TOKENS } from '../WorkflowTab'
 import { RunningTimer } from '../InstrumentRow'
 import { RunMark } from '../RunMark'
 import { AgentFace } from '../faces'
@@ -18,7 +18,9 @@ import { IconChevron, IconWorkflow } from '../Icon'
 import { knownRuns } from './PanePicker'
 
 const SKELETON = ['w-[64%]', 'w-[52%]', 'w-[58%]']
-const ROW = 'flex h-8 w-full items-center gap-2 rounded-md pr-4 text-left cursor-default focus-visible:-outline-offset-2 pointer-fine:hover:bg-[var(--glass-row-hover)]'
+const ROW_BOX = 'w-full rounded-md pr-4 text-left cursor-default focus-visible:-outline-offset-2 pointer-fine:hover:bg-[var(--glass-row-hover)]'
+const ROW = `flex h-8 items-center gap-2 ${ROW_BOX}`
+const NO_ACTIVITY: Record<string, string> = {}
 
 type Kind = 'agents' | 'workflows'
 const COPY: Record<Kind, { reading: string; failed: string; empty: string; how: string }> = {
@@ -154,6 +156,8 @@ export function AgentsList({ handleId }: { handleId: string }): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps)
   const running = useActive((s) => (s ? runningAgents(s, s.runs.data?.agents ?? null) : 0))
+  const activity = useActive((s) => s?.agentActivity ?? NO_ACTIVITY)
+  const lineIds = useId()
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
   const [focusId, setFocusId] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
@@ -242,6 +246,9 @@ export function AgentsList({ handleId }: { handleId: string }): JSX.Element {
             const n = r.children.length ? inside(r) : 0
             const on = expanded.has(r.id)
             const { state, startMs, durationMs, reason } = r.status
+            // Main's own launches hold the slot from launch; a nested one may never report a step, so it waits for one.
+            const line = activityLine(state, activity[r.id], level === 1)
+            const lineId = `${lineIds}${r.id}`
             return (
               <div
                 key={r.id}
@@ -252,45 +259,58 @@ export function AgentsList({ handleId }: { handleId: string }): JSX.Element {
                 aria-posinset={f.posinset}
                 aria-expanded={n ? on : undefined}
                 aria-label={agentName(r, n)}
-                title={reason ? REASON_COPY[reason] : undefined}
+                aria-describedby={line ? lineId : undefined}
+                title={reason ? REASON_COPY[reason] : line && line !== STARTING ? line : undefined}
                 tabIndex={stop === r.id ? 0 : -1}
                 {...(stop === r.id ? { 'data-pane-title': '' } : {})}
                 onFocus={() => setFocusId(r.id)}
                 onKeyDown={(e) => onKey(e, f, i)}
                 onClick={() => open(r)}
                 style={{ paddingLeft: 16 + 20 * (level - 1) }}
-                className={ROW}
+                className={`flex flex-col ${ROW_BOX}`}
               >
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center">
-                  {n > 0 && (
-                    <button
-                      type="button"
-                      data-ui="row-disclose"
-                      tabIndex={-1}
-                      aria-hidden="true"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setFocusId(r.id)
-                        setOpen([r.id], !on)
-                      }}
-                      className="flex h-6 w-6 items-center justify-center rounded text-faint pointer-fine:hover:text-content"
-                    >
-                      <IconChevron className={`h-4 w-4 transition-transform [transition-duration:var(--dur-fast)] [transition-timing-function:var(--ease-out)] motion-reduce:transition-none ${on ? 'rotate-90' : ''}`} />
-                    </button>
-                  )}
-                </span>
-                <span aria-hidden="true" className="flex shrink-0 items-center gap-1 text-content">
-                  <AgentFace face={r.face} className="h-4 w-4" />
-                  <RunMark state={state} />
-                </span>
-                <span className="min-w-0 flex-1 truncate text-label text-content">{r.label}</span>
-                {r.type && <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint @max-[520px]:hidden">{r.type}</span>}
-                <span className="w-[8ch] shrink-0 text-right text-meta text-faint">{n > 0 && !on ? `${n} inside` : ''}</span>
-                <Figures
-                  time={isLive(state) ? (startMs !== undefined ? <RunningTimer startMs={startMs} /> : <Dash />) : durationMs !== undefined ? formatElapsed(durationMs) : <Dash agent />}
-                  tokens={r.tokens !== undefined ? fmtTokens(r.tokens) : isLive(state) ? <Dash /> : <Dash agent />}
-                />
+                <div className="flex h-8 items-center gap-2">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+                    {n > 0 && (
+                      <button
+                        type="button"
+                        data-ui="row-disclose"
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setFocusId(r.id)
+                          setOpen([r.id], !on)
+                        }}
+                        className="flex h-6 w-6 items-center justify-center rounded text-faint pointer-fine:hover:text-content"
+                      >
+                        <IconChevron className={`h-4 w-4 transition-transform [transition-duration:var(--dur-fast)] [transition-timing-function:var(--ease-out)] motion-reduce:transition-none ${on ? 'rotate-90' : ''}`} />
+                      </button>
+                    )}
+                  </span>
+                  <span aria-hidden="true" className="flex shrink-0 items-center gap-1 text-content">
+                    <AgentFace face={r.face} className="h-4 w-4" />
+                    <RunMark state={state} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-label text-content">{r.label}</span>
+                  {r.type && <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint @max-[520px]:hidden">{r.type}</span>}
+                  <span className="w-[8ch] shrink-0 text-right text-meta text-faint">{n > 0 && !on ? `${n} inside` : ''}</span>
+                  <Figures
+                    time={isLive(state) ? (startMs !== undefined ? <RunningTimer startMs={startMs} /> : <Dash />) : durationMs !== undefined ? formatElapsed(durationMs) : <Dash agent />}
+                    tokens={r.tokens !== undefined ? fmtTokens(r.tokens) : isLive(state) ? <Dash /> : <Dash agent />}
+                  />
+                </div>
+                {line && (
+                  <div id={lineId} aria-hidden="true" data-ui="agent-activity" className="-mt-1 mb-1 flex h-4 items-center text-meta text-dim">
+                    <span className="w-[72px] shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">{line}</span>
+                    <span className={`ml-2 ${FIGURES}`}>
+                      <span className={TIME} />
+                      <span className={TOKENS} />
+                    </span>
+                  </div>
+                )}
               </div>
             )
           })}

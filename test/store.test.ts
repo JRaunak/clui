@@ -2,7 +2,8 @@ import { CHANGE_REFS, loadWorkflowRun, surfacesSave, watchAgentTabs, useSession,
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
 import { noticeLead } from '../src/renderer/src/lib/refCopy.ts'
-import { agentRows, agentRunState, hasAgents, runningAgents } from '../src/renderer/src/lib/agents.ts'
+import { activityLine, agentRows, agentRunState, hasAgents, runningAgents } from '../src/renderer/src/lib/agents.ts'
+import { mock } from 'node:test'
 import { hasWorkflows, workflowRows } from '../src/renderer/src/lib/workflow.ts'
 import { equal, ok } from './support/harness.mjs'
 
@@ -42,6 +43,7 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   workflowReads: {},
   runs: { status: 'idle', data: null },
   agentUsage: {},
+  agentActivity: {},
   checkingTools: {},
   pendingPermissions: [],
   rateLimit: null,
@@ -1305,4 +1307,52 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
     { taskId: 'w2', runId: 'wf_2', name: 'disk copy', status: 'completed', startTime: 30, phases: [], agents: [] }
   ])
   ok(wfs.map((w) => `${w.taskId}:${w.name}:${w.endedStatus}`).join() === 'w2:live:null,w1:old:interrupted', 'list: workflows newest first, a live one over its record, a record left running interrupted', JSON.stringify(wfs))
+}
+
+// The activity line: the first step shows at once, steps inside the 1s hold collapse to the newest, a pending gate
+// lets a step straight through, and the agent's end drops its line and any held step.
+{
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10_000 })
+  const msgs = (tool: object): any[] => [{ id: 'm1', role: 'assistant', text: '', thinking: '', tools: [{ id: 't1', name: 'Agent', input: { description: 'probe' }, startMs: 1, ...tool }], blocks: [] }]
+  reset({ messages: msgs({}) })
+  const step = (activity: string): void => st().applyEvent('h1', { type: 'agent-usage', toolUseId: 't1', tokens: 1, activity })
+  const shown = (): string | undefined => cur().agentActivity.t1
+  step('A')
+  equal(shown(), 'A', 'activity: the first step replaces Starting at once')
+  mock.timers.tick(100)
+  step('B')
+  mock.timers.tick(100)
+  step('C')
+  st().applyEvent('h1', { type: 'agent-usage', toolUseId: 't1', tokens: 2 })
+  equal(shown(), 'A', 'activity: steps inside the hold wait, and a tokens-only event changes nothing')
+  mock.timers.tick(799)
+  equal(shown(), 'A', 'activity: the hold lasts the full second')
+  mock.timers.tick(1)
+  equal(shown(), 'C', 'activity: the hold ends on the newest step, the ones between dropped')
+  mock.timers.tick(500)
+  step('D')
+  mock.timers.tick(499)
+  equal(shown(), 'C', 'activity: the released step is held a second in turn')
+  mock.timers.tick(1)
+  equal(shown(), 'D', 'activity: then the next one shows')
+  mock.timers.tick(1500)
+  step('E')
+  equal(shown(), 'E', 'activity: a step after a quiet second shows at once')
+  useSession.setState((s) => ({ sessions: { h1: { ...s.sessions.h1, pendingPermissions: [{ requestId: 'r', toolName: 'Bash', agentToolUseId: 't1' } as any] } } }))
+  step('F')
+  equal(shown(), 'F', 'activity: while the agent waits on the user a step goes straight in')
+  useSession.setState((s) => ({ sessions: { h1: { ...s.sessions.h1, pendingPermissions: [] } } }))
+  step('G')
+  equal(shown(), 'F', 'activity: and the hold resumes after')
+  st().applyEvent('h1', { type: 'tool-result', toolUseId: 't1', content: 'done', isError: false } as any)
+  ok(!('t1' in cur().agentActivity), 'activity: the end drops the line')
+  mock.timers.tick(2000)
+  ok(!('t1' in cur().agentActivity), 'activity: a step held at the end never comes back')
+
+  equal(activityLine('running', undefined, true), 'Starting…', 'line: a top-level live agent holds the slot from launch')
+  equal(activityLine('running', undefined, false), '', 'line: a nested one waits for its first step')
+  equal(activityLine('background', 'Reading', false), 'Reading', 'line: a step shows on a background agent')
+  equal(activityLine('needs', 'Reading', true), 'Paused until you answer', 'line: a pending gate overrides the step')
+  equal(activityLine('done', 'Reading', true), '', 'line: an ended agent shows none')
+  mock.timers.reset()
 }

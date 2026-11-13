@@ -98,6 +98,15 @@ export const REASON_COPY: Record<InterruptReason, string> = {
 
 export const isLive = (s: RunState): boolean => s === 'running' || s === 'background' || s === 'needs' || s === 'stopping'
 
+export const STARTING = 'Starting…'
+
+/** The line under a live agent: '' once it ends, a pause while it waits on the user, else the CLI's latest step.
+ *  `holds` keeps the slot from launch with "Starting…"; without it the line waits for a first step. */
+export function activityLine(state: RunState, activity: string | undefined, holds: boolean): string {
+  if (!isLive(state) || (activity === undefined && !holds)) return ''
+  return state === 'needs' ? 'Paused until you answer' : (activity ?? STARTING)
+}
+
 /** A workflow agent's state word as a run state. A workflow stop cuts its running agents off as `error`, and the user
  *  asked for that stop, so it and every agent it never reached read stopped. A run Clui quit during leaves its unfinished agents interrupted. */
 export function runStateOf(state: string, workflowEnded: string | null): 'queued' | 'running' | 'done' | 'failed' | 'stopped' | 'interrupted' {

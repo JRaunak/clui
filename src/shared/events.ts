@@ -274,8 +274,9 @@ export type DomainEvent =
     }
   /** A workflow reached a terminal state (from its task_notification). */
   | { type: 'workflow-ended'; taskId: string; status?: string; summary?: string }
-  /** A running Agent-tool subagent's token count so far, from its `task_progress`. A stop's notification carries none. */
-  | { type: 'agent-usage'; toolUseId: string; tokens: number }
+  /** A running Agent-tool subagent's token count so far and the CLI's line for its current step, from its `task_progress`.
+   *  A stop's notification carries none. */
+  | { type: 'agent-usage'; toolUseId: string; tokens?: number; activity?: string }
   /**
    * Forwarded internal output of a RUNNING subagent, unlocked by
    * `initialize {forwardSubagentText:true}`. The CLI streams the subagent's own

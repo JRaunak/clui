@@ -29,7 +29,7 @@ import {
   type RowState
 } from '../lib/instrument'
 import { effortLabel } from '../../../shared/settings'
-import { subagentType } from '../lib/agents'
+import { activityLine, agentRunState, findAgentTool, STARTING, subagentType } from '../lib/agents'
 import { workflowTaskOf } from '../lib/workflow'
 import { IconAgentBrowser, IconCheck, IconChevron, IconCircle, IconCopy, IconFile, IconOpenPane, IconSendToTray, IconShield, IconStop, IconWarn } from './Icon'
 
@@ -188,7 +188,10 @@ export function InstrumentRow({
   }, [open, animateBody])
   const sendToBackground = useSession((s) => s.backgroundTask)
   // Boolean selectors: a streaming token re-runs them but only re-renders the row whose answer flips.
-  const needsYou = useActive((s) => needsYouToolIdOf(s) === tool.id)
+  // A subagent's own gate names its tool (Bash, Edit), never the Agent call, so the card asks the agent's run state.
+  const needsYou = useActive(
+    (s) => needsYouToolIdOf(s) === tool.id || (!!s && (tool.name === 'Task' || tool.name === 'Agent') && tool.result === undefined && agentRunState(s, { by: 'tool', id: tool.id }).state === 'needs')
+  )
   const checking = useDelayedFlag(useActive((s) => !!s?.checkingTools[tool.id]))
   const lit = useActive((s) => {
     if (!lumen || !s) return false
@@ -207,6 +210,13 @@ export function InstrumentRow({
   const stopRef = useStopFocus<HTMLButtonElement>(stopping)
   // Task was renamed Agent in CLI 2.1.63; both mean a subagent.
   const isSubagent = tool.name === 'Task' || tool.name === 'Agent'
+  const line = useActive((s) => {
+    // A finished foreground call is never live; a backgrounded one keeps running past its result. A nested agent's
+    // card sits in its parent's tab, whose transcript already shows each step.
+    if (!isSubagent || !s || (tool.result !== undefined && !isBackgroundedTool(tool)) || !findAgentTool(s.messages, tool.id)) return ''
+    return activityLine(needsYou ? 'needs' : agentRunState(s, { by: 'tool', id: tool.id }).state, s.agentActivity[tool.id], true)
+  })
+  const lineId = useId()
   const wfTask = useActive((s) => (tool.name === 'Workflow' && s ? workflowTaskOf(s, tool) : null))
   const wfName = useActive((s) => (wfTask ? (s?.workflows[wfTask]?.name ?? null) : null)) ?? summary
   // Agent and openable Workflow rows open a tab; every other row discloses in place.
@@ -264,7 +274,8 @@ export function InstrumentRow({
               data-tool-id={tool.id}
               className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
               aria-label={`${name}${summary ? ` ${summary}` : ''}, ${STATE_TEXT[state]}, open transcript`}
-              title={summary ? `${summary}\nOpen transcript` : 'Open transcript'}
+              aria-describedby={line ? lineId : undefined}
+              title={[summary, line !== STARTING && line, 'Open transcript'].filter(Boolean).join('\n')}
               onClick={(e) => diveInto(tool.id, viaOf(e))}
             />
           ) : wfTask ? (
@@ -396,6 +407,16 @@ export function InstrumentRow({
               </span>
             )}
           </div>
+          {line && (
+            <div
+              id={lineId}
+              aria-hidden="true"
+              data-ui="agent-activity"
+              className={`pointer-events-none relative -mt-1 truncate pb-1.5 pr-[34px] text-meta text-dim ${placement === 'inline' ? 'pl-[26px]' : 'pl-2.5'}`}
+            >
+              {line}
+            </div>
+          )}
         </div>
         {/* A collapsed failure keeps its reason visible. err text on the tool fill has the least
             contrast headroom, so the reason itself stays dim. */}

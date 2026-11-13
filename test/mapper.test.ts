@@ -645,4 +645,12 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1' }]).length === 0, 'mapper: a subagent task_progress with no usage emits nothing')
   const wf = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'w1', usage: { total_tokens: 9 }, workflow_progress: [{ type: 'workflow_phase', index: 1, title: 'Map' }] }])
   ok(wf.length === 1 && wf[0].type === 'workflow-progress', 'mapper: a workflow task_progress still emits only workflow-progress', JSON.stringify(wf))
+  const step = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', tool_use_id: 'tu-sub', description: '  Running   Run first\n command \u2014 then \u2013 more ', subagent_type: 'general-purpose', usage: { total_tokens: 12707, tool_uses: 1, duration_ms: 1573 }, last_tool_name: 'Bash' }])
+  ok(step.length === 1 && step[0].type === 'agent-usage' && step[0].tokens === 12707 && step[0].activity === 'Running Run first command - then - more', 'mapper: a step carries its description, whitespace collapsed and dashes plain', JSON.stringify(step))
+  const bare = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', description: 'Reading files' }])
+  ok(bare.length === 1 && bare[0].type === 'agent-usage' && bare[0].tokens === undefined && bare[0].activity === 'Reading files', 'mapper: a step with no usage still carries its description', JSON.stringify(bare))
+  const blank = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', description: ' \n ', usage: { total_tokens: 5 } }])
+  ok(blank.length === 1 && blank[0].type === 'agent-usage' && blank[0].activity === undefined, 'mapper: a blank description carries no activity', JSON.stringify(blank))
+  const long = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', description: 'x'.repeat(400) }])
+  ok(long[0]?.type === 'agent-usage' && long[0].activity?.length === 300, 'mapper: an activity is capped at 300 chars')
 }

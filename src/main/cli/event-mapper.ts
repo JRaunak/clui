@@ -659,7 +659,10 @@ export class EventMapper {
         const agent = env.task_id ? this.taskMeta.get(env.task_id) : undefined
         if (agent?.taskType === 'local_agent') {
           const tokens = env.usage?.total_tokens
-          return agent.toolUseId && typeof tokens === 'number' ? [{ type: 'agent-usage', toolUseId: agent.toolUseId, tokens }] : []
+          const activity = env.description?.replace(/[\u2013\u2014]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 300)
+          return agent.toolUseId && (typeof tokens === 'number' || activity)
+            ? [{ type: 'agent-usage', toolUseId: agent.toolUseId, tokens, activity: activity || undefined }]
+            : []
         }
         // Live workflow phase/agent tree. workflow_progress[] mixes workflow_phase +
         // workflow_agent items; split them (agents group under phases by phaseIndex).
