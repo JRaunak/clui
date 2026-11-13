@@ -11,7 +11,6 @@ export interface WorkflowSummary {
   failed: number
   stopped: number
   total: number
-  tokens?: number
 }
 
 export function workflowSummary(w: WorkflowState, pending: readonly PendingPermission[]): WorkflowSummary {
@@ -24,9 +23,7 @@ export function workflowSummary(w: WorkflowState, pending: readonly PendingPermi
       : e === 'interrupted'
         ? { state: 'interrupted', reason: 'quit' }
         : { state: e === 'completed' ? 'done' : e === 'killed' || e === 'stopped' ? 'stopped' : 'failed', durationMs: w.durationMs }
-  // Agents report tokens only once done; the sum must match the Tokens column, so the run's own total never stands in.
-  const sum = w.agents.reduce((n, a, i) => (states[i] === 'done' && a.tokens !== undefined ? n + a.tokens : n), 0)
-  return { state, states, done: count('done'), failed: count('failed'), stopped: count('stopped'), total: w.agents.length, tokens: sum || undefined }
+  return { state, states, done: count('done'), failed: count('failed'), stopped: count('stopped'), total: w.agents.length }
 }
 
 /** A phase's state from its agents'. A run that's over never reads running, and one Clui quit during
@@ -61,7 +58,6 @@ export const recordOf = (run: WorkflowRun): WorkflowState => ({
   description: run.summary ?? '',
   phases: run.phases,
   agents: run.agents,
-  totalTokens: run.totalTokens,
   startMs: run.startTime,
   // The run's process died with the app that launched it.
   endedStatus: run.status === 'running' ? 'interrupted' : run.status,

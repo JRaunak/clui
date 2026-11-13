@@ -5,7 +5,7 @@ import { ensureAgentData, noteAgentRead, useActive, useSession, EMPTY_NESTED_SUB
 import { agentKey, agentRefOf, type AgentRef, type SurfaceTab } from '../../../shared/surfaces'
 import { deriveModelInfo, effortLabel } from '../../../shared/settings'
 import type { AgentMeta, TranscriptResult } from '../../../shared/sessions'
-import { agentDescription, agentInfo, agentRunState, entriesOf, faceOf, isAgentTool, isLive, RUN_WORDS, subagentType, type RunState, type RunStatusOf } from '../lib/agents'
+import { agentDescription, agentInfo, agentRunState, entriesOf, faceOf, isAgentTool, isLive, launcherOf, RUN_WORDS, subagentType, toolUsesOf, type RunState, type RunStatusOf } from '../lib/agents'
 import { useDelayedFlag } from '../lib/useDelayedFlag'
 import { useTranscriptFind } from '../lib/useTranscriptFind'
 import { Markdown } from './Markdown'
@@ -354,6 +354,8 @@ export function AgentTab({ handleId, tab }: { handleId: string; tab: SurfaceTab 
   const face = useActive((s) => (s ? faceOf(s, tab) : null))
   const type = useActive((s) => (s && ref?.by === 'tool' ? agentInfo(s, ref.id).subtype : null))
   const input = useActive((s) => (s && ref?.by === 'tool' ? agentInfo(s, ref.id).input : null))
+  const toolUses = useActive((s) => (s && ref ? toolUsesOf(s, ref) : undefined))
+  const resolvedModel = useActive((s) => (s && ref?.by === 'tool' ? launcherOf(s, ref.id)?.resolvedModel : undefined))
   const live = isLive(status.state)
   useEffect(() => ensureAgentData(handleId, tab), [handleId, tab])
   const { entries, phase, model, retry } = useAgentEntries(handleId, ref ?? { by: 'tool', id: '' }, live)
@@ -362,7 +364,7 @@ export function AgentTab({ handleId, tab }: { handleId: string; tab: SurfaceTab 
   const bodyRef = useRef<HTMLDivElement>(null)
   const [scrolled, setScrolled] = useState(false)
   const find = useTranscriptFind(bodyRef, [entries], () => entries.length > 0)
-  const ran = modelText(model, subagentEffort(input))
+  const ran = modelText(model.model ? model : { ...model, model: resolvedModel }, subagentEffort(input))
   const openChild = (c: NestedSubagent): void => {
     useSession.getState().openAgentTab(handleId, { by: 'tool', id: c.childToolUseId }, { title: c.description?.trim() || c.subagentType || 'Agent', trail: [...(tab.trail ?? []), tab.id] })
     requestAnimationFrame(focusPaneTitle)
@@ -395,7 +397,15 @@ export function AgentTab({ handleId, tab }: { handleId: string; tab: SurfaceTab 
             {ran && (
               <>
                 <Sep />
-                <span>{ran}</span>
+                <span className="min-w-0 truncate">{ran}</span>
+              </>
+            )}
+            {toolUses !== undefined && (
+              <>
+                <Sep />
+                <span className="shrink-0">
+                  {toolUses} {toolUses === 1 ? 'tool call' : 'tool calls'}
+                </span>
               </>
             )}
           </>

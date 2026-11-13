@@ -730,7 +730,6 @@ export interface WorkflowRun {
   status: string
   startTime?: number
   durationMs?: number
-  totalTokens?: number
   summary?: string
   result?: string
   phases: { index: number; title: string }[]
@@ -750,7 +749,6 @@ export interface AgentRun {
   outcome: 'done' | 'failed' | 'stopped' | 'open'
   startedAt?: number
   durationMs?: number
-  tokens?: number
 }
 
 /** Launch order, oldest first. Workflow records carry no result. */

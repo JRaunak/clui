@@ -66,10 +66,12 @@ export interface HistoryToolCall {
   result?: string
   isError?: boolean
   /** Agent/Task calls only: launched in the background, the history message count when its completion notice
-   *  arrived, and how long it ran. */
+   *  arrived, how long it ran, how many tool calls it made and the model the CLI ran it on. */
   background?: true
   notifiedAt?: number
   durationMs?: number
+  toolUses?: number
+  resolvedModel?: string
 }
 
 /** The outcome fields of an agent's `.meta.json` sidecar. `shape` is the CLI's `requestShape`, absent in older ones. */

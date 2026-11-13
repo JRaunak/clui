@@ -364,15 +364,15 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
     call('tu-bg', 'Background one'),
     result('tu-bg', { isAsync: true, status: 'async_launched', agentId: 'abg' }),
     call('tu-fg', 'Foreground one'),
-    result('tu-fg', { status: 'completed', totalDurationMs: 4200 }),
-    rec({ type: 'user', uuid: 'n1', message: { role: 'user', content: '<task-notification>\n<task-id>abg</task-id>\n<tool-use-id>tu-bg</tool-use-id>\n<status>completed</status>\n<usage><subagent_tokens>9</subagent_tokens><duration_ms>9100</duration_ms></usage>\n</task-notification>' } })
+    result('tu-fg', { status: 'completed', totalDurationMs: 4200, totalToolUseCount: 14, resolvedModel: 'claude-haiku-4-5-20251001' }),
+    rec({ type: 'user', uuid: 'n1', message: { role: 'user', content: '<task-notification>\n<task-id>abg</task-id>\n<tool-use-id>tu-bg</tool-use-id>\n<status>completed</status>\n<usage><subagent_tokens>9</subagent_tokens><tool_uses>20</tool_uses><duration_ms>9100</duration_ms></usage>\n</task-notification>' } })
   ].join('\n') + '\n')
   const { messages } = await readTranscriptAtPath(main)
   const tools = messages.flatMap((m) => m.tools)
   const bg = tools.find((t) => t.id === 'tu-bg')
   const fg = tools.find((t) => t.id === 'tu-fg')
-  ok(bg?.background === true && bg.notifiedAt === messages.length && bg.durationMs === 9100, 'resume: a bg Agent call gets background, its notice point and its duration', JSON.stringify(bg))
-  ok(!fg?.background && fg?.durationMs === 4200 && fg.notifiedAt === undefined, 'resume: a fg Agent call gets its total duration', JSON.stringify(fg))
+  ok(bg?.background === true && bg.notifiedAt === messages.length && bg.durationMs === 9100 && bg.toolUses === 20, 'resume: a bg Agent call gets background, its notice point, its duration and its tool calls', JSON.stringify(bg))
+  ok(!fg?.background && fg?.durationMs === 4200 && fg.toolUses === 14 && fg.resolvedModel === 'claude-haiku-4-5-20251001' && fg.notifiedAt === undefined, 'resume: a fg Agent call gets its total duration, tool calls and model', JSON.stringify(fg))
   ok(!messages.some((m) => m.text.includes('task-notification')), 'resume: the notice is still not a bubble')
   writeFileSync(join(dir, 'agent-abg.meta.json'), JSON.stringify({ toolUseId: 'tu-bg', requestShape: 'background', finished: true }))
   writeFileSync(join(dir, 'agent-abg.jsonl'), rec({ type: 'assistant', uuid: 'x', isSidechain: true, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } }) + '\n')
@@ -619,9 +619,9 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
     feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'w1', workflow_progress: [{ type: 'workflow_phase', index: 1, title: 'Map' }, { type: 'workflow_agent', index: 1, phaseIndex: 1, label: 'Map reads', agentId: 'a1', ...it }] }])[0]
   const done = progress({ state: 'done', tokens: 41000, durationMs: 70000, startedAt: 5, toolCalls: 3, model: 'm', agentType: 'Explore' })
   const a = done?.agents[0]
-  ok(done?.phases[0]?.title === 'Map' && a?.tokens === 41000 && a.durationMs === 70000 && a.startedAt === 5 && a.toolCalls === 3 && a.model === 'm' && a.agentType === 'Explore', 'mapper: a done workflow agent carries its figures', JSON.stringify(a))
+  ok(done?.phases[0]?.title === 'Map' && !('tokens' in a) && a.durationMs === 70000 && a.startedAt === 5 && a.toolCalls === 3 && a.model === 'm' && a.agentType === 'Explore', 'mapper: a done workflow agent carries its figures, never its tokens', JSON.stringify(a))
   const run = progress({ state: 'start', startedAt: 9, model: 'm' })?.agents[0]
-  ok(run?.startedAt === 9 && run.model === 'm' && run.tokens === undefined && run.durationMs === undefined, 'mapper: a running workflow agent has no tokens or duration yet', JSON.stringify(run))
+  ok(run?.startedAt === 9 && run.model === 'm' && run.toolCalls === undefined && run.durationMs === undefined, 'mapper: a running workflow agent has no tool calls or duration yet', JSON.stringify(run))
   const ended = feed(m, [{ type: 'system', subtype: 'task_notification', task_id: 'w1', status: 'completed', summary: 'Dynamic workflow "review" completed' }])[0]
   ok(ended?.type === 'workflow-ended' && ended.summary === 'Dynamic workflow "review" completed', 'mapper: a workflow end carries its summary')
 
@@ -633,7 +633,8 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(subAsk?.agentToolUseId === 'tu-sub' && subAsk.agentId === undefined, 'mapper: a subagent gate keeps its Agent tool call')
 }
 
-// A subagent's task_progress carries its running token count under its launching call; a workflow's still maps to its tree.
+// A subagent's task_progress carries its tool calls so far under its launching call, never its tokens; a workflow's
+// still maps to its tree.
 {
   const m = new EventMapper()
   feed(m, [
@@ -641,16 +642,22 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
     { type: 'system', subtype: 'task_started', task_id: 'w1', tool_use_id: 'tu-w', task_type: 'local_workflow', workflow_name: 'review' }
   ])
   const usage = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', usage: { total_tokens: 12346, tool_uses: 2, duration_ms: 3710 } }])
-  ok(usage.length === 1 && usage[0].type === 'agent-usage' && usage[0].toolUseId === 'tu-sub' && usage[0].tokens === 12346, 'mapper: a subagent task_progress emits agent-usage for its launching call', JSON.stringify(usage))
+  ok(usage.length === 1 && usage[0].type === 'agent-usage' && usage[0].toolUseId === 'tu-sub' && usage[0].toolUses === 2 && !('tokens' in usage[0]), 'mapper: a subagent task_progress emits agent-usage for its launching call', JSON.stringify(usage))
   ok(feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1' }]).length === 0, 'mapper: a subagent task_progress with no usage emits nothing')
+  ok(feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', usage: { total_tokens: 7 } }]).length === 0, 'mapper: a subagent task_progress with only tokens emits nothing')
+  const result = (tool_use_result: unknown): any =>
+    feed(m, [{ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu-sub', content: 'done' }] }, tool_use_result }])[0]
+  ok(result({ status: 'completed', totalTokens: 13584, totalToolUseCount: 14 })?.toolUses === 14, "mapper: an Agent call's result carries its tool calls")
+  ok(!('toolUses' in result('plain text')) && !('toolUses' in result(null)), 'mapper: a result without a count carries none')
+  ok(result({ status: 'completed', resolvedModel: 'claude-haiku-4-5-20251001' })?.resolvedModel === 'claude-haiku-4-5-20251001' && !('resolvedModel' in result({ resolvedModel: '' })), "mapper: an Agent call's result names the model it ran on")
   const wf = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'w1', usage: { total_tokens: 9 }, workflow_progress: [{ type: 'workflow_phase', index: 1, title: 'Map' }] }])
-  ok(wf.length === 1 && wf[0].type === 'workflow-progress', 'mapper: a workflow task_progress still emits only workflow-progress', JSON.stringify(wf))
+  ok(wf.length === 1 && wf[0].type === 'workflow-progress' && !('totalTokens' in wf[0]), 'mapper: a workflow task_progress still emits only workflow-progress, without tokens', JSON.stringify(wf))
   const step = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', tool_use_id: 'tu-sub', description: '  Running   Run first\n command \u2014 then \u2013 more ', subagent_type: 'general-purpose', usage: { total_tokens: 12707, tool_uses: 1, duration_ms: 1573 }, last_tool_name: 'Bash' }])
-  ok(step.length === 1 && step[0].type === 'agent-usage' && step[0].tokens === 12707 && step[0].activity === 'Running Run first command - then - more', 'mapper: a step carries its description, whitespace collapsed and dashes plain', JSON.stringify(step))
+  ok(step.length === 1 && step[0].type === 'agent-usage' && step[0].toolUses === 1 && step[0].activity === 'Running Run first command - then - more', 'mapper: a step carries its description, whitespace collapsed and dashes plain', JSON.stringify(step))
   const bare = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', description: 'Reading files' }])
-  ok(bare.length === 1 && bare[0].type === 'agent-usage' && bare[0].tokens === undefined && bare[0].activity === 'Reading files', 'mapper: a step with no usage still carries its description', JSON.stringify(bare))
-  const blank = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', description: ' \n ', usage: { total_tokens: 5 } }])
-  ok(blank.length === 1 && blank[0].type === 'agent-usage' && blank[0].activity === undefined, 'mapper: a blank description carries no activity', JSON.stringify(blank))
+  ok(bare.length === 1 && bare[0].type === 'agent-usage' && bare[0].toolUses === undefined && bare[0].activity === 'Reading files', 'mapper: a step with no usage still carries its description', JSON.stringify(bare))
+  const blank = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', description: ' \n ', usage: { total_tokens: 5, tool_uses: 0 } }])
+  ok(blank.length === 1 && blank[0].type === 'agent-usage' && blank[0].activity === undefined && blank[0].toolUses === 0, 'mapper: a blank description carries no activity, and a recorded 0 still counts', JSON.stringify(blank))
   const long = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', description: 'x'.repeat(400) }])
   ok(long[0]?.type === 'agent-usage' && long[0].activity?.length === 300, 'mapper: an activity is capped at 300 chars')
 }

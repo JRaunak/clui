@@ -31,7 +31,7 @@ import { openFileAt, useLinkRoot } from '../lib/openLink'
 import { formatCost } from '../lib/formatCost'
 import { turnEndLine, wokenLine } from '../lib/turnEnd'
 import { isListPriced, type DenialSource, type PermissionDenial, type TurnUsage } from '../../../shared/events'
-import { PERMISSION_MODE_LABELS } from '../../../shared/settings'
+import { deriveModelInfo, PERMISSION_MODE_LABELS } from '../../../shared/settings'
 
 export { summarizeInput } from '../lib/instrument'
 
@@ -536,12 +536,14 @@ function TurnFooter({ message }: { message: ChatMessage }): JSX.Element | null {
 }
 
 function fmtCost(n: number | undefined): string {
-  return typeof n === 'number' ? formatCost(n) : '—'
+  return typeof n === 'number' ? formatCost(n) : '-'
 }
 
-function UsageRow({ label, value, strong }: { label: string; value: string; strong?: boolean }): JSX.Element {
+const UNRECORDED = 'Not recorded for this turn'
+
+function UsageRow({ label, value, strong, title }: { label: string; value: string; strong?: boolean; title?: string }): JSX.Element {
   return (
-    <div className="flex items-baseline justify-between gap-6">
+    <div className="flex items-baseline justify-between gap-6" title={title}>
       <dt className="text-faint">{label}</dt>
       <dd className={`font-mono tabular-nums ${strong ? 'text-content' : 'text-dim'}`}>{value}</dd>
     </div>
@@ -559,6 +561,7 @@ function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.
   const n = (v: number): string => v.toLocaleString('en-US')
   const panelId = `turn-usage-${id}`
   const estimate = isListPriced(usage)
+  const byCost = usage.models.length > 1 ? [...usage.models].sort((a, b) => (b.costUSD ?? -1) - (a.costUSD ?? -1)) : []
   return (
     <div className="flex shrink-0 flex-col items-end">
       <button
@@ -566,7 +569,7 @@ function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.
         className="flex min-h-[24px] items-center gap-1 rounded px-1.5 font-mono text-meta tabular-nums text-faint transition-colors hover:text-content"
         aria-expanded={open}
         aria-controls={panelId}
-        aria-label={`${estimate ? 'Estimated turn cost' : 'Turn cost'} ${fmtCost(usage.costUSD)}, show breakdown`}
+        aria-label={`${usage.costUSD === undefined ? 'Turn cost not recorded' : `${estimate ? 'Estimated turn cost' : 'Turn cost'} ${fmtCost(usage.costUSD)}`}, show breakdown`}
         title={estimate ? 'Estimated at list prices' : undefined}
         onClick={() => setOpen((o) => !o)}
       >
@@ -576,7 +579,7 @@ function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.
       {open && (
         <div id={panelId} className="mt-1 w-80 max-w-full rounded-md border border-border bg-bg-elev px-3 py-2 text-meta">
           <dl className="flex flex-col gap-1">
-            <UsageRow label="Turn cost" value={fmtCost(usage.costUSD)} strong />
+            <UsageRow label="Turn cost" value={fmtCost(usage.costUSD)} strong title={usage.costUSD === undefined ? UNRECORDED : undefined} />
             <UsageRow label="Tokens" value={`${n(usage.inputTokens)} in · ${n(usage.outputTokens)} out`} />
             <UsageRow
               label="Cache read"
@@ -586,16 +589,22 @@ function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.
               <UsageRow label="Cache creation" value={n(usage.cacheCreationInputTokens)} />
             )}
             {usage.thinkingTokens > 0 && <UsageRow label="Thinking" value={n(usage.thinkingTokens)} />}
-            {usage.models.length > 1 &&
-              usage.models.map((m, i) => (
-                <div key={i} className="flex items-baseline justify-between gap-6">
-                  <dt className="min-w-0 truncate font-mono text-faint" title={m.model}>
-                    {m.model}
-                  </dt>
-                  <dd className="shrink-0 font-mono tabular-nums text-dim">{fmtCost(m.costUSD)}</dd>
-                </div>
-              ))}
           </dl>
+          {!!byCost.length && (
+            <>
+              <p className="mt-2 text-faint">By model</p>
+              <dl className="mt-1 flex flex-col gap-1">
+                {byCost.map((m) => (
+                  <div key={m.id ?? m.model} className="flex items-baseline justify-between gap-6" title={m.costUSD === undefined ? UNRECORDED : undefined}>
+                    <dt className="min-w-0 truncate text-faint" title={m.id ?? m.model}>
+                      {deriveModelInfo(m.model).label}
+                    </dt>
+                    <dd className="shrink-0 font-mono tabular-nums text-dim">{fmtCost(m.costUSD)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </>
+          )}
           {estimate && <p className="mt-1 border-t border-border pt-1 text-meta text-faint">Estimated at list prices. Your bill may differ.</p>}
         </div>
       )}

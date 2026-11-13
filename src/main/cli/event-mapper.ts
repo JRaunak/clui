@@ -116,6 +116,8 @@ interface RawEnvelope {
   local_command?: string
   /** On a user/tool_result envelope: why a call didn't run, keyed by tool_use_id. */
   tool_result_meta?: Array<{ id?: string; non_execution_kind?: string }>
+  /** On a user/tool_result envelope: the tool's structured result, a string for some tools. */
+  tool_use_result?: { totalToolUseCount?: unknown; resolvedModel?: unknown } | string | null
   rate_limit_info?: {
     status?: string
     resetsAt?: number
@@ -169,7 +171,7 @@ interface RawEnvelope {
   tasks?: Array<{ task_id?: string; task_type?: string; description?: string }>
   // Dynamic-workflow fields (task_type 'local_workflow' + system/task_progress).
   workflow_name?: string
-  usage?: RawUsage & { total_tokens?: number }
+  usage?: { tool_uses?: number }
   workflow_progress?: unknown[]
 }
 
@@ -658,10 +660,10 @@ export class EventMapper {
       case 'task_progress': {
         const agent = env.task_id ? this.taskMeta.get(env.task_id) : undefined
         if (agent?.taskType === 'local_agent') {
-          const tokens = env.usage?.total_tokens
+          const toolUses = env.usage?.tool_uses
           const activity = env.description?.replace(/[\u2013\u2014]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 300)
-          return agent.toolUseId && (typeof tokens === 'number' || activity)
-            ? [{ type: 'agent-usage', toolUseId: agent.toolUseId, tokens, activity: activity || undefined }]
+          return agent.toolUseId && (typeof toolUses === 'number' || activity)
+            ? [{ type: 'agent-usage', toolUseId: agent.toolUseId, toolUses, activity: activity || undefined }]
             : []
         }
         // Live workflow phase/agent tree. workflow_progress[] mixes workflow_phase +
@@ -675,8 +677,7 @@ export class EventMapper {
             type: 'workflow-progress',
             taskId: env.task_id,
             phases,
-            agents,
-            totalTokens: env.usage?.total_tokens
+            agents
           }
         ]
       }
@@ -1001,6 +1002,8 @@ export class EventMapper {
     const content = env.message?.content
     if (!Array.isArray(content)) return []
     const out: DomainEvent[] = []
+    const toolUses = typeof env.tool_use_result === 'object' ? env.tool_use_result?.totalToolUseCount : undefined
+    const resolvedModel = typeof env.tool_use_result === 'object' ? env.tool_use_result?.resolvedModel : undefined
     for (const block of content) {
       if (!block || typeof block !== 'object') continue
       if (block.type === 'tool_result' && block.tool_use_id) {
@@ -1015,7 +1018,9 @@ export class EventMapper {
             ? { notRun: true }
             : kind && STOP_KINDS.has(kind) && (this.interrupted || this.sentNow.size > 0)
               ? { stopped: true }
-              : {})
+              : {}),
+          ...(typeof toolUses === 'number' ? { toolUses } : {}),
+          ...(typeof resolvedModel === 'string' && resolvedModel ? { resolvedModel } : {})
         })
       }
     }

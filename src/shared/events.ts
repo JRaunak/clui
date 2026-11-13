@@ -158,9 +158,8 @@ export interface WorkflowAgent {
   promptPreview?: string
   agentId?: string
   agentType?: string
-  /** Set once the agent starts; tokens, tool calls and duration only once it's done. */
+  /** Set once the agent starts; tool calls and duration only once it's done. */
   startedAt?: number
-  tokens?: number
   toolCalls?: number
   durationMs?: number
   model?: string
@@ -189,7 +188,6 @@ export function workflowProgressOf(items: readonly unknown[]): { phases: { index
         agentId: text(it.agentId),
         agentType: text(it.agentType),
         startedAt: num(it.startedAt),
-        tokens: num(it.tokens),
         toolCalls: num(it.toolCalls),
         durationMs: num(it.durationMs),
         model: text(it.model)
@@ -240,6 +238,9 @@ export type DomainEvent =
       notRun?: boolean
       /** A Stop or Send now ended the call while it ran. */
       stopped?: boolean
+      /** An Agent call's tool calls and the model it ran on, from its result. */
+      toolUses?: number
+      resolvedModel?: string
     }
   /** Auto mode's classifier has been deciding on this call for a few seconds (`checking`), or stopped. */
   | { type: 'permission-check'; toolUseId: string; checking: boolean }
@@ -270,13 +271,12 @@ export type DomainEvent =
       taskId: string
       phases: { index: number; title: string }[]
       agents: WorkflowAgent[]
-      totalTokens?: number
     }
   /** A workflow reached a terminal state (from its task_notification). */
   | { type: 'workflow-ended'; taskId: string; status?: string; summary?: string }
-  /** A running Agent-tool subagent's token count so far and the CLI's line for its current step, from its `task_progress`.
+  /** A running Agent-tool subagent's tool calls so far and the CLI's line for its current step, from its `task_progress`.
    *  A stop's notification carries none. */
-  | { type: 'agent-usage'; toolUseId: string; tokens?: number; activity?: string }
+  | { type: 'agent-usage'; toolUseId: string; toolUses?: number; activity?: string }
   /**
    * Forwarded internal output of a RUNNING subagent, unlocked by
    * `initialize {forwardSubagentText:true}`. The CLI streams the subagent's own

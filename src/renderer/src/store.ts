@@ -142,7 +142,6 @@ export interface WorkflowState {
   description: string
   phases: { index: number; title: string }[]
   agents: WorkflowAgent[]
-  totalTokens?: number
   startMs?: number
   /** null while running; set to the terminal status when it ends, `interrupted` for a record left running. */
   endedStatus: string | null
@@ -337,10 +336,13 @@ export interface ToolCall {
   /** Live: when its result arrived. */
   endMs?: number
   /** Agent/Task calls: launched in the background; the message count when its completion notice came; how long it
-   *  ran (rebuilt calls only). */
+   *  ran (rebuilt calls only); its tool calls, from its result or a rebuilt call's completion notice; the model its
+   *  result names, for when its own transcript is gone. */
   background?: true
   notifiedAt?: number
   durationMs?: number
+  toolUses?: number
+  resolvedModel?: string
 }
 
 /** All state for a single live session, keyed by its `handleId` in the store. */
@@ -444,8 +446,8 @@ export interface PerSessionState {
   workflows: Record<string, WorkflowState>
   workflowReads: Record<string, WorkflowRead>
   runs: RunsState
-  /** A running subagent's latest token count, by tool_use id. */
-  agentUsage: Record<string, number>
+  /** A subagent's tool calls at its latest `task_progress`, by tool_use id. */
+  agentToolUses: Record<string, number>
   /** A live subagent's current step in the CLI's words, by tool_use id. In memory only, gone when the agent ends. */
   agentActivity: Record<string, string>
   /** Monitor tool calls by tool_use id. */
@@ -1925,7 +1927,7 @@ async function beginSession(
     workflows: {},
     workflowReads: {},
     runs: IDLE_RUNS,
-    agentUsage: {},
+    agentToolUses: {},
     agentActivity: {},
     monitors: EMPTY_MONITORS,
     slashCommands: EMPTY_SLASH_COMMANDS,
@@ -3362,6 +3364,8 @@ export const useSession = create<SessionStore>((set, get) => ({
               t.endMs = Date.now()
               if (e.notRun) t.notRun = true
               if (e.stopped) t.stopped = true
+              if (e.toolUses !== undefined) t.toolUses = e.toolUses
+              if (e.resolvedModel) t.resolvedModel = e.resolvedModel
               break
             }
           }
@@ -3552,15 +3556,14 @@ export const useSession = create<SessionStore>((set, get) => ({
             [e.taskId]: {
               ...wf,
               phases: e.phases.length ? e.phases : wf.phases,
-              agents: e.agents.length ? e.agents : wf.agents,
-              totalTokens: e.totalTokens ?? wf.totalTokens
+              agents: e.agents.length ? e.agents : wf.agents
             }
           }
           patch.lastActivityMs = Date.now()
           break
         }
         case 'agent-usage': {
-          if (e.tokens !== undefined) patch.agentUsage = { ...slice.agentUsage, [e.toolUseId]: e.tokens }
+          if (e.toolUses !== undefined) patch.agentToolUses = { ...slice.agentToolUses, [e.toolUseId]: e.toolUses }
           if (!e.activity) break
           const key = `${handleId}\0${e.toolUseId}`
           const hold = activityHolds.get(key)

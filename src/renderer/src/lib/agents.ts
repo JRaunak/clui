@@ -176,6 +176,12 @@ export function agentRunState(slice: PerSessionState, ref: AgentRef, meta?: Agen
   return asks ? { ...s, state: 'needs' } : s
 }
 
+/** An agent's tool calls: its result's total once there is one, else the count at its latest progress report. */
+export function toolUsesOf(slice: PerSessionState, ref: AgentRef): number | undefined {
+  if (ref.by === 'agent') return workflowOfAgent(slice.workflows, ref.id)?.agent.toolCalls
+  return launcherOf(slice, ref.id)?.toolUses ?? slice.agentToolUses[ref.id]
+}
+
 export const hasAgents = (s: Pick<PerSessionState, 'messages'>): boolean => s.messages.some((m) => m.tools.some((t) => isAgentTool(t.name)))
 
 /** An agent's status in the Subagents list. One this process watched start is read live. Otherwise its files say how
@@ -195,7 +201,6 @@ export interface AgentListRow {
   label: string
   type: string | null
   status: RunStatusOf
-  tokens?: number
   face: number | null
   /** Its ancestors' tab ids, root first. */
   trail: string[]
@@ -230,14 +235,12 @@ export function agentRows(slice: PerSessionState, disk: readonly AgentRun[] | nu
     const run = runs.get(id)
     const info = agentInfo(slice, id)
     const status = listStatus(slice, id, run)
-    const usage = slice.agentUsage[id]
     const inner = [...trail, `agent:tool:${id}`]
     return {
       id,
       label: info.label === 'Agent' && run ? run.description.trim() || run.subagentType || 'Agent' : info.label,
       type: info.subtype ?? run?.subagentType ?? null,
       status,
-      tokens: isLive(status.state) ? usage : (run?.tokens ?? usage),
       face: faceOf(slice, { key: `tool:${id}`, trail }),
       trail,
       children: inner.length > 8 ? [] : (kids.get(id) ?? []).map((c) => build(c, inner))

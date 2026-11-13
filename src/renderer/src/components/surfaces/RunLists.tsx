@@ -4,12 +4,11 @@ import { useShallow } from 'zustand/react/shallow'
 import { activeSlice, EMPTY_PENDING, loadRuns, useActive, useSession, type ChatMessage, type ToolCall } from '../../store'
 import { activityLine, agentRows, isAgentTool, isLive, runningAgents, REASON_COPY, RUN_WORDS, STARTING, type AgentListRow } from '../../lib/agents'
 import { workflowRows, workflowSummary } from '../../lib/workflow'
-import { fmtTokens } from '../../lib/formatTokens'
 import { formatElapsed } from '../../lib/turnEnd'
 import { focusPaneTitle } from '../../lib/dive'
 import { takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { useDelayedFlag } from '../../lib/useDelayedFlag'
-import { Dash, Figures, FIGURES, TIME, TOKENS } from '../WorkflowTab'
+import { Dash, Figures, FIGURES, TIME } from '../WorkflowTab'
 import { RunningTimer } from '../InstrumentRow'
 import { RunMark } from '../RunMark'
 import { AgentFace } from '../faces'
@@ -44,7 +43,7 @@ function useRuns(handleId: string): { complete: boolean; failed: boolean; readin
   return { complete, failed: status === 'error', reading: status === 'loading' && !hasData }
 }
 
-/** The line over a list, the column head, and what shows around the rows while history loads or fails. */
+/** The line over a list, its column head when it has one, and what shows around the rows while history loads or fails. */
 function ListFrame({ kind, handleId, rows, total, running, cols, children }: { kind: Kind; handleId: string; rows: number; total: number; running: number; cols: ReactNode; children: ReactNode }): JSX.Element {
   const { complete, failed, reading } = useRuns(handleId)
   const skeleton = useDelayedFlag(reading)
@@ -66,11 +65,10 @@ function ListFrame({ kind, handleId, rows, total, running, cols, children }: { k
           </div>
         ) : (
           <>
-            {(rows > 0 || skeleton) && (
+            {!!cols && (rows > 0 || skeleton) && (
               <div aria-hidden="true" className="sticky top-0 z-10 flex h-6 items-center justify-end gap-3 bg-bg pr-4 text-caps uppercase text-faint">
                 {cols}
                 <span className={TIME}>Time</span>
-                <span className={TOKENS}>Tokens</span>
               </div>
             )}
             {children}
@@ -132,8 +130,7 @@ function agentToolsOf(messages: readonly ChatMessage[]): ToolCall[] {
 function agentName(r: AgentListRow, n: number): string {
   const { state, durationMs } = r.status
   const time = !isLive(state) && durationMs !== undefined ? `, ${formatElapsed(durationMs)}` : ''
-  const tokens = r.tokens !== undefined ? `, ${fmtTokens(r.tokens)} tokens` : ''
-  return `${r.label}, ${r.type ? `${r.type} agent` : 'agent'}, ${RUN_WORDS[state].spoken}${time}${tokens}${n ? `, ${n} ${n === 1 ? 'subagent' : 'subagents'} inside` : ''}`
+  return `${r.label}, ${r.type ? `${r.type} agent` : 'agent'}, ${RUN_WORDS[state].spoken}${time}${n ? `, ${n} ${n === 1 ? 'subagent' : 'subagents'} inside` : ''}`
 }
 
 /** Moves focus to the row a list keeps as its one tab stop, and returns whether there was one. */
@@ -147,7 +144,7 @@ export function AgentsList({ handleId }: { handleId: string }): JSX.Element {
   // What the rows read, minus streamed text: a subagent's own tool calls aren't Agent launches.
   const deps = useActive(
     useShallow((s) =>
-      s ? [agentToolsOf(s.messages), s.backgroundTasks, s.subagentChildren, s.nestedLaunches, s.agentMetas, s.agentUsage, s.runs.data, s.pendingPermissions, s.workflows, s.busy, s.interrupting] : []
+      s ? [agentToolsOf(s.messages), s.backgroundTasks, s.subagentChildren, s.nestedLaunches, s.agentMetas, s.runs.data, s.pendingPermissions, s.workflows, s.busy, s.interrupting] : []
     )
   )
   const tree = useMemo(() => {
@@ -298,7 +295,6 @@ export function AgentsList({ handleId }: { handleId: string }): JSX.Element {
                   <span className="w-[8ch] shrink-0 text-right text-meta text-faint">{n > 0 && !on ? `${n} inside` : ''}</span>
                   <Figures
                     time={isLive(state) ? (startMs !== undefined ? <RunningTimer startMs={startMs} /> : <Dash />) : durationMs !== undefined ? formatElapsed(durationMs) : <Dash agent />}
-                    tokens={r.tokens !== undefined ? fmtTokens(r.tokens) : isLive(state) ? <Dash /> : <Dash agent />}
                   />
                 </div>
                 {line && (
@@ -307,7 +303,6 @@ export function AgentsList({ handleId }: { handleId: string }): JSX.Element {
                     <span className="min-w-0 flex-1 truncate">{line}</span>
                     <span className={`ml-2 ${FIGURES}`}>
                       <span className={TIME} />
-                      <span className={TOKENS} />
                     </span>
                   </div>
                 )}
@@ -360,13 +355,12 @@ export function WorkflowsList({ handleId }: { handleId: string }): JSX.Element {
             const { state, startMs, durationMs, reason } = sum.state
             const live = isLive(state)
             const time = !live && durationMs !== undefined ? `, ${formatElapsed(durationMs)}` : ''
-            const tokens = sum.tokens !== undefined ? `, ${fmtTokens(sum.tokens)} tokens` : ''
             return (
               <li key={w.taskId}>
                 <button
                   type="button"
                   data-row={w.taskId}
-                  aria-label={`${w.name}, workflow, ${RUN_WORDS[state].spoken}, ${sum.done} of ${sum.total} agents done${time}${tokens}`}
+                  aria-label={`${w.name}, workflow, ${RUN_WORDS[state].spoken}, ${sum.done} of ${sum.total} agents done${time}`}
                   title={reason ? REASON_COPY[reason] : undefined}
                   tabIndex={stop === w.taskId ? 0 : -1}
                   {...(stop === w.taskId ? { 'data-pane-title': '' } : {})}
@@ -383,13 +377,12 @@ export function WorkflowsList({ handleId }: { handleId: string }): JSX.Element {
                     <RunMark state={state} />
                   </span>
                   <span className="min-w-0 flex-1 truncate text-label text-content">{w.name}</span>
-                  <span className="w-[7ch] shrink-0 text-right font-mono text-meta tabular-nums text-dim">
-                    {sum.done} of {sum.total}
+                  <span className={FIGURES}>
+                    <span className="w-[7ch] text-right">
+                      {sum.done} of {sum.total}
+                    </span>
+                    <Figures time={live && startMs !== undefined ? <RunningTimer startMs={startMs} /> : durationMs !== undefined ? formatElapsed(durationMs) : <Dash />} />
                   </span>
-                  <Figures
-                    time={live && startMs !== undefined ? <RunningTimer startMs={startMs} /> : durationMs !== undefined ? formatElapsed(durationMs) : <Dash />}
-                    tokens={sum.tokens !== undefined ? fmtTokens(sum.tokens) : <Dash />}
-                  />
                 </button>
               </li>
             )

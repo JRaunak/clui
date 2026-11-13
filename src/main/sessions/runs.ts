@@ -97,7 +97,6 @@ function runOf(taskId: string, rec: Rec, withResult: boolean): WorkflowRun {
     status: str(rec.status) ?? 'completed',
     startTime: num(rec.startTime),
     durationMs: num(rec.durationMs),
-    totalTokens: num(rec.totalTokens),
     summary: str(rec.summary),
     result: withResult ? resultOf(rec.result) : undefined,
     phases,
@@ -129,7 +128,7 @@ interface Scan {
   /** Agent tool results, by tool_use id. */
   results: Map<string, { isError: boolean; rejected: boolean; r: Rec | null }>
   /** The last completion notice per tool_use id: a resumed background agent can notify more than once. */
-  notes: Map<string, { status: string; tokens?: number; durationMs?: number }>
+  notes: Map<string, { status: string; durationMs?: number }>
   workflows: { taskId: string; file: string }[]
 }
 
@@ -163,7 +162,7 @@ function scanRecord(scan: Scan, rec: Rec, main: boolean): void {
     for (const n of content.split('<task-notification>').slice(1)) {
       const id = tag(n, 'tool-use-id')
       const status = tag(n, 'status')
-      if (id && status) scan.notes.set(id, { status, tokens: numTag(n, 'subagent_tokens'), durationMs: numTag(n, 'duration_ms') })
+      if (id && status) scan.notes.set(id, { status, durationMs: numTag(n, 'duration_ms') })
     }
     return
   }
@@ -249,8 +248,8 @@ function runOfLaunch(l: Launch, scan: Scan, meta: Meta | undefined, parent: stri
   const note = scan.notes.get(l.id)
   const background = l.background || r?.isAsync === true || !!meta?.background
   const base = { toolUseId: l.id, agentId: str(r?.agentId) ?? meta?.agentId, ...(parent ? { parent } : {}), description: l.description || meta?.description || '', subagentType: l.subagentType ?? meta?.agentType, background, startedAt: l.startedAt }
-  if (note) return { ...base, outcome: NOTED[note.status] ?? 'done', durationMs: note.durationMs, tokens: note.tokens }
-  if (res && r?.isAsync !== true) return { ...base, outcome: res.rejected ? 'stopped' : res.isError ? 'failed' : 'done', durationMs: num(r?.totalDurationMs), tokens: num(r?.totalTokens) }
+  if (note) return { ...base, outcome: NOTED[note.status] ?? 'done', durationMs: note.durationMs }
+  if (res && r?.isAsync !== true) return { ...base, outcome: res.rejected ? 'stopped' : res.isError ? 'failed' : 'done', durationMs: num(r?.totalDurationMs) }
   return { ...base, outcome: meta?.finished ? (meta.stoppedByUser ? 'stopped' : 'done') : 'open' }
 }
 

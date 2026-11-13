@@ -4,7 +4,6 @@ import { EMPTY_PENDING, loadWorkflowRun, useActive, useSession, type PendingPerm
 import type { SurfaceTab } from '../../../shared/surfaces'
 import { isLive, RUN_WORDS, workflowAgentStatus, workflowFaces, type RunState, type RunStatusOf } from '../lib/agents'
 import { phaseState, workflowSummary } from '../lib/workflow'
-import { fmtTokens } from '../lib/formatTokens'
 import { formatElapsed } from '../lib/turnEnd'
 import { focusPaneTitle } from '../lib/dive'
 import { useDelayedFlag } from '../lib/useDelayedFlag'
@@ -23,7 +22,6 @@ import { IconChevron, IconWorkflow } from './Icon'
 const SPOKEN: Partial<Record<RunState, string>> = { done: 'Workflow finished', failed: 'Workflow failed', stopped: 'Workflow stopped' }
 export const FIGURES = 'flex shrink-0 gap-3 font-mono text-meta tabular-nums text-dim'
 export const TIME = 'w-[7ch] text-right'
-export const TOKENS = 'w-[6ch] text-right'
 const SKELETON = ['w-[60%]', 'w-[48%]', 'w-[52%]', 'w-[40%]']
 const FIND_SKIP = '.sr-only, [data-find-skip]'
 
@@ -55,8 +53,8 @@ function phasesOf(w: WorkflowState, pending: readonly PendingPermission[], workf
     })
 }
 
-const sumOf = (rows: AgentRow[], k: 'durationMs' | 'tokens'): number | undefined =>
-  rows.reduce<number | undefined>((n, r) => (r.agent[k] === undefined ? n : (n ?? 0) + r.agent[k]), undefined)
+const durationOf = (rows: AgentRow[]): number | undefined =>
+  rows.reduce<number | undefined>((n, r) => (r.agent.durationMs === undefined ? n : (n ?? 0) + r.agent.durationMs), undefined)
 
 export function Dash({ agent }: { agent?: boolean }): JSX.Element {
   return (
@@ -66,11 +64,10 @@ export function Dash({ agent }: { agent?: boolean }): JSX.Element {
   )
 }
 
-export function Figures({ time, tokens }: { time: ReactNode; tokens: ReactNode }): JSX.Element {
+export function Figures({ time }: { time: ReactNode }): JSX.Element {
   return (
     <span className={FIGURES}>
       <span className={TIME}>{time}</span>
-      <span className={TOKENS}>{tokens}</span>
     </span>
   )
 }
@@ -78,9 +75,8 @@ export function Figures({ time, tokens }: { time: ReactNode; tokens: ReactNode }
 function agentName({ agent, status }: AgentRow): string {
   const done = status.state === 'done'
   const time = done && agent.durationMs !== undefined ? `, ${formatElapsed(agent.durationMs)}` : ''
-  const tokens = done && agent.tokens !== undefined ? `, ${fmtTokens(agent.tokens)} tokens` : ''
   const unstarted = !agent.agentId ? ', not started' : ''
-  return `${agent.label}, ${agent.agentType ? `${agent.agentType} agent` : 'agent'}, ${RUN_WORDS[status.state].spoken}${time}${tokens}${unstarted}`
+  return `${agent.label}, ${agent.agentType ? `${agent.agentType} agent` : 'agent'}, ${RUN_WORDS[status.state].spoken}${time}${unstarted}`
 }
 
 /** The run's result, six lines until asked for the rest. */
@@ -293,12 +289,6 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
                   <span>{sum.stopped} stopped</span>
                 </>
               )}
-              {sum.tokens !== undefined && (
-                <>
-                  <Sep />
-                  <span>{fmtTokens(sum.tokens)} tokens</span>
-                </>
-              )}
             </>
           )
         }
@@ -322,7 +312,7 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
           />
         </div>
       )}
-      <div data-beside-header="" ref={bodyRef} onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)} className="@container min-h-0 flex-1 scroll-pt-6 overflow-y-auto pb-6">
+      <div data-beside-header="" ref={bodyRef} onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)} className="@container min-h-0 flex-1 overflow-y-auto pb-6">
         {view === 'error' ? (
           <div role="alert" className="flex flex-col items-start gap-1 px-4 pt-2">
             <p className="text-ui text-content">Couldn&apos;t read this workflow&apos;s record.</p>
@@ -335,10 +325,6 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
           <p className="px-4 pt-2 text-ui text-dim">This workflow&apos;s record isn&apos;t on disk anymore.</p>
         ) : (
           <>
-            <div aria-hidden="true" className="sticky top-0 z-10 flex h-6 items-center justify-end gap-3 bg-bg pr-4 text-caps uppercase text-faint">
-              <span className={TIME}>Time</span>
-              <span className={TOKENS}>Tokens</span>
-            </div>
             {view === 'loading' ? (
               skeleton && (
                 <div aria-hidden="true">
@@ -357,8 +343,7 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
                     const expanded = !collapsed.has(p.index)
                     const running = p.agents.some((a) => isLive(a.status.state))
                     const empty = ended ? 'No agents ran in this phase' : 'No agents yet'
-                    const time = sumOf(p.done, 'durationMs')
-                    const tokens = sumOf(p.done, 'tokens')
+                    const time = durationOf(p.done)
                     return (
                       <Fragment key={r.id}>
                         <div
@@ -392,9 +377,9 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
                             {p.title}
                           </span>
                           {running ? (
-                            <Figures time={<span className="text-faint">…</span>} tokens={<span className="text-faint">…</span>} />
+                            <Figures time={<span className="text-faint">…</span>} />
                           ) : (
-                            <Figures time={time !== undefined ? formatElapsed(time) : <Dash />} tokens={tokens !== undefined ? fmtTokens(tokens) : <Dash />} />
+                            <Figures time={time !== undefined ? formatElapsed(time) : <Dash />} />
                           )}
                         </div>
                         {expanded && !p.agents.length && (
@@ -432,7 +417,6 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
                       {a.agentType && <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint @max-[420px]:hidden">{a.agentType}</span>}
                       <Figures
                         time={done && a.durationMs !== undefined ? formatElapsed(a.durationMs) : isLive(status.state) && status.startMs !== undefined ? <RunningTimer startMs={status.startMs} /> : <Dash agent />}
-                        tokens={done && a.tokens !== undefined ? fmtTokens(a.tokens) : <Dash agent />}
                       />
                     </div>
                   )

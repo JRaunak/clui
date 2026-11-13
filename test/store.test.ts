@@ -2,7 +2,7 @@ import { CHANGE_REFS, loadWorkflowRun, surfacesSave, watchAgentTabs, useSession,
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
 import { noticeLead } from '../src/renderer/src/lib/refCopy.ts'
-import { activityLine, agentRows, agentRunState, hasAgents, runningAgents } from '../src/renderer/src/lib/agents.ts'
+import { activityLine, agentRows, agentRunState, hasAgents, runningAgents, toolUsesOf } from '../src/renderer/src/lib/agents.ts'
 import { mock } from 'node:test'
 import { hasWorkflows, workflowRows } from '../src/renderer/src/lib/workflow.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -42,7 +42,7 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   workflows: {},
   workflowReads: {},
   runs: { status: 'idle', data: null },
-  agentUsage: {},
+  agentToolUses: {},
   agentActivity: {},
   checkingTools: {},
   pendingPermissions: [],
@@ -1260,17 +1260,17 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   stop()
 }
 
-// The Subagents list: live rows before any disk read, disk outcomes for what this process never watched, live tokens
-// from task_progress, and nesting from the disk's parent links.
+// The Subagents list: live rows before any disk read, disk outcomes for what this process never watched, no tokens,
+// and nesting from the disk's parent links.
 {
   const call = (id: string, over: object = {}): any => ({ id, name: 'Agent', input: { description: `do ${id}`, subagent_type: 'Explore' }, ...over })
   const msgs = (...tools: any[]): any[] => [{ id: 'm1', role: 'assistant', text: '', thinking: '', tools, blocks: [] }]
   ok(!hasAgents(slice()) && hasAgents(slice({ messages: msgs(call('t1')) })), 'list: hasAgents is false on a fresh slice and true after one Agent call')
   ok(!hasWorkflows(slice()) && hasWorkflows(slice({ messages: [{ id: 'm', role: 'assistant', text: '', thinking: '', tools: [{ id: 'w', name: 'Workflow', input: {} }], blocks: [] }] })), 'list: hasWorkflows follows a Workflow call')
 
-  const live = slice({ busy: true, messages: msgs(call('t1', { startMs: 1000 })), agentUsage: { t1: 4200 } })
+  const live = slice({ busy: true, messages: msgs(call('t1', { startMs: 1000 })) })
   const [row] = agentRows(live, null)
-  ok(row?.id === 't1' && row.status.state === 'running' && row.tokens === 4200 && row.label === 'do t1' && row.type === 'Explore', 'list: a live-only row shows before any disk read, with its live tokens', JSON.stringify(row))
+  ok(row?.id === 't1' && row.status.state === 'running' && !('tokens' in row) && row.label === 'do t1' && row.type === 'Explore', 'list: a live-only row shows before any disk read, without tokens', JSON.stringify(row))
   ok(runningAgents(live, null) === 1, 'list: a call still out counts as running')
 
   const disk = (id: string, over: object = {}): any => ({ toolUseId: id, description: `disk ${id}`, background: true, outcome: 'open', ...over })
@@ -1278,10 +1278,7 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   const resumed = slice({ busy: false, messages: msgs(call('t2', { background: true, result: 'Async agent launched' })) })
   ok(agentRows(resumed, [disk('t2')])[0]?.status.state === 'interrupted', 'list: an open disk row with no live fact reads interrupted')
   ok(agentRows({ ...resumed, backgroundTasks: bgTask('running') }, [disk('t2')])[0]?.status.state === 'background', 'list: an open disk row reads running while its background task runs')
-  ok(agentRows(resumed, [disk('t2', { outcome: 'failed', durationMs: 900, tokens: 61000 })])[0]?.status.state === 'failed', 'list: a disk outcome stands for an agent this process never watched')
-  const stopped = { ...resumed, backgroundTasks: bgTask('killed'), agentUsage: { t2: 3100 } }
-  ok(agentRows(stopped, [disk('t2')])[0]?.tokens === 3100, 'list: a stop with no usage on its notice keeps the last live tokens')
-  ok(agentRows(stopped, [disk('t2', { outcome: 'stopped', tokens: 3300 })])[0]?.tokens === 3300, "list: once ended, the disk's totals win")
+  ok(agentRows(resumed, [disk('t2', { outcome: 'failed', durationMs: 900 })])[0]?.status.state === 'failed', 'list: a disk outcome stands for an agent this process never watched')
 
   const tree = agentRows(slice({ busy: false, messages: msgs(call('a'), call('b')) }), [disk('a', { outcome: 'done' }), disk('b', { outcome: 'done' }), disk('k1', { parent: 'a', outcome: 'done' }), disk('k2', { parent: 'a', outcome: 'done' }), disk('g', { parent: 'k1', outcome: 'done' })])
   ok(tree.map((r) => r.id).join() === 'b,a', 'list: top level newest first', tree.map((r) => r.id).join())
@@ -1309,13 +1306,34 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   ok(wfs.map((w) => `${w.taskId}:${w.name}:${w.endedStatus}`).join() === 'w2:live:null,w1:old:interrupted', 'list: workflows newest first, a live one over its record, a record left running interrupted', JSON.stringify(wfs))
 }
 
+// An agent's tool calls: the count at its latest progress while it runs, its result's total once it has one, the
+// last progress seen for one whose end carries none, and a workflow agent's own figure.
+{
+  const msgs = (tool: object): any[] => [{ id: 'm1', role: 'assistant', text: '', thinking: '', tools: [{ id: 't1', name: 'Agent', input: { description: 'probe' }, startMs: 1, ...tool }], blocks: [] }]
+  reset({ messages: msgs({}) })
+  equal(toolUsesOf(cur(), { by: 'tool', id: 't1' }), undefined, 'tool calls: none before any progress')
+  st().applyEvent('h1', { type: 'agent-usage', toolUseId: 't1', toolUses: 3 })
+  st().applyEvent('h1', { type: 'agent-usage', toolUseId: 't1', activity: 'Reading files' })
+  equal(toolUsesOf(cur(), { by: 'tool', id: 't1' }), 3, 'tool calls: live, the latest progress count, kept by a step with none')
+  st().applyEvent('h1', { type: 'tool-result', toolUseId: 't1', content: 'done', isError: false, toolUses: 14 })
+  equal(toolUsesOf(cur(), { by: 'tool', id: 't1' }), 14, "tool calls: done, the result's total wins")
+  st().applyEvent('h1', { type: 'tool-result', toolUseId: 't1', content: 'done', isError: false })
+  equal(toolUsesOf(cur(), { by: 'tool', id: 't1' }), 14, 'tool calls: a later result with no count keeps the total')
+  reset({ messages: msgs({ background: true, result: 'Async agent launched' }) })
+  st().applyEvent('h1', { type: 'agent-usage', toolUseId: 't1', toolUses: 6 })
+  equal(toolUsesOf(cur(), { by: 'tool', id: 't1' }), 6, 'tool calls: a background launch keeps its last progress count')
+  equal(toolUsesOf(slice({ messages: msgs({ result: 'done', toolUses: 0 }) }), { by: 'tool', id: 't1' }), 0, 'tool calls: a recorded 0 counts')
+  const wf = { w1: { taskId: 'w1', name: 'review', description: '', phases: [], agents: [{ index: 1, label: 'a', phaseIndex: 1, state: 'done', agentId: 'a1', toolCalls: 5 }], endedStatus: 'completed' } }
+  equal(toolUsesOf(slice({ workflows: wf }), { by: 'agent', id: 'a1' }), 5, "tool calls: a workflow agent reads its record's figure")
+}
+
 // The activity line: the first step shows at once, steps inside the 1s hold collapse to the newest, a pending gate
 // lets a step straight through, and the agent's end drops its line and any held step.
 {
   mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10_000 })
   const msgs = (tool: object): any[] => [{ id: 'm1', role: 'assistant', text: '', thinking: '', tools: [{ id: 't1', name: 'Agent', input: { description: 'probe' }, startMs: 1, ...tool }], blocks: [] }]
   reset({ messages: msgs({}) })
-  const step = (activity: string): void => st().applyEvent('h1', { type: 'agent-usage', toolUseId: 't1', tokens: 1, activity })
+  const step = (activity: string): void => st().applyEvent('h1', { type: 'agent-usage', toolUseId: 't1', toolUses: 1, activity })
   const shown = (): string | undefined => cur().agentActivity.t1
   step('A')
   equal(shown(), 'A', 'activity: the first step replaces Starting at once')
@@ -1323,8 +1341,8 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   step('B')
   mock.timers.tick(100)
   step('C')
-  st().applyEvent('h1', { type: 'agent-usage', toolUseId: 't1', tokens: 2 })
-  equal(shown(), 'A', 'activity: steps inside the hold wait, and a tokens-only event changes nothing')
+  st().applyEvent('h1', { type: 'agent-usage', toolUseId: 't1', toolUses: 2 })
+  equal(shown(), 'A', 'activity: steps inside the hold wait, and a count-only event changes nothing')
   mock.timers.tick(799)
   equal(shown(), 'A', 'activity: the hold lasts the full second')
   mock.timers.tick(1)

@@ -398,12 +398,14 @@ export async function readTranscriptAtPath(file: string): Promise<TranscriptResu
 
 const isAgentCall = (t: HistoryToolCall): boolean => t.name === 'Agent' || t.name === 'Task'
 
-/** A launched agent's `toolUseResult`: async for a background launch, a total duration for a foreground one. */
+/** A launched agent's `toolUseResult`: async for a background launch, totals for a foreground one. */
 function agentOutcome(call: HistoryToolCall, r: unknown): void {
   if (!r || typeof r !== 'object') return
-  const { isAsync, totalDurationMs } = r as { isAsync?: unknown; totalDurationMs?: unknown }
+  const { isAsync, totalDurationMs, totalToolUseCount, resolvedModel } = r as { isAsync?: unknown; totalDurationMs?: unknown; totalToolUseCount?: unknown; resolvedModel?: unknown }
   if (isAsync === true) call.background = true
   if (typeof totalDurationMs === 'number') call.durationMs = totalDurationMs
+  if (typeof totalToolUseCount === 'number') call.toolUses = totalToolUseCount
+  if (typeof resolvedModel === 'string' && resolvedModel) call.resolvedModel = resolvedModel
 }
 
 function forkDirective(blocks: ContentBlock[]): string | null {
@@ -686,6 +688,8 @@ async function parseTranscriptFile(
           call.notifiedAt = messages.length
           const ms = /<duration_ms>(\d+)<\/duration_ms>/.exec(msg.text)
           if (ms) call.durationMs = Number(ms[1])
+          const uses = /<tool_uses>(\d+)<\/tool_uses>/.exec(msg.text)
+          if (uses) call.toolUses = Number(uses[1])
         }
         continue
       }

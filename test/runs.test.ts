@@ -41,7 +41,7 @@ import { ok } from './support/harness.mjs'
   process.env.CLAUDE_CONFIG_DIR = home
   try {
     const run = await readWorkflowRun('s1', 'w1')
-    ok(run?.status === 'running' && run.name === 'review' && run.phases[0]?.title === 'Map' && run.agents[0]?.tokens === 9 && run.agents[0].durationMs === 800, 'runs: a forked launch reads its record under the source session', JSON.stringify(run))
+    ok(run?.status === 'running' && run.name === 'review' && run.phases[0]?.title === 'Map' && !('tokens' in run.agents[0]) && !('totalTokens' in run) && run.agents[0].durationMs === 800, 'runs: a forked launch reads its record under the source session', JSON.stringify(run))
     ok(!!run?.result?.startsWith('```json') && run.result.includes('"verdict": "ship"'), 'runs: a structured result reads as a JSON block')
     const own = await readWorkflowRun('s1', 'w2')
     ok(own?.status === 'killed' && own.result === 'Stopped early.', "runs: with no launch result, the session's own records are matched by task id")
@@ -108,18 +108,18 @@ import { ok } from './support/harness.mjs'
     const { agents, workflows } = await listRuns('s3')
     const by = new Map(agents.map((a) => [a.toolUseId, a]))
     const fg = by.get('tu_fg')
-    ok(fg?.outcome === 'done' && fg.tokens === 12000 && fg.durationMs === 4100 && fg.subagentType === 'Explore' && fg.agentId === 'afg' && fg.startedAt === Date.parse('2026-11-13T10:00:00.000Z') && !fg.background, 'runs list: a foreground launch carries its result totals', JSON.stringify(fg))
+    ok(fg?.outcome === 'done' && !('tokens' in fg) && fg.durationMs === 4100 && fg.subagentType === 'Explore' && fg.agentId === 'afg' && fg.startedAt === Date.parse('2026-11-13T10:00:00.000Z') && !fg.background, 'runs list: a foreground launch carries its result totals', JSON.stringify(fg))
     const bg = by.get('tu_bg')
-    ok(bg?.outcome === 'failed' && bg.background && bg.tokens === 61000 && bg.durationMs === 160000, "runs list: a background launch ends with its notice's status and usage", JSON.stringify(bg))
+    ok(bg?.outcome === 'failed' && bg.background && !('tokens' in bg) && bg.durationMs === 160000, "runs list: a background launch ends with its notice's status and duration", JSON.stringify(bg))
     ok(by.get('tu_open')?.outcome === 'open', 'runs list: a background launch with no notice and an unfinished sidecar is open, and a quoted notice is not one')
     ok(by.get('tu_rej')?.outcome === 'stopped', 'runs list: a rejected launch reads stopped')
     const kid = by.get('tu_kid')
-    ok(kid?.parent === 'tu_fg' && kid.outcome === 'done' && kid.tokens === 12000, "runs list: a nested launch comes from its parent's transcript", JSON.stringify(kid))
+    ok(kid?.parent === 'tu_fg' && kid.outcome === 'done' && kid.durationMs === 41000, "runs list: a nested launch comes from its parent's transcript", JSON.stringify(kid))
     const alone = by.get('tu_alone')
     ok(alone?.parent === undefined && alone.outcome === 'open' && alone.description === 'Parent gone' && agents[0] === alone, 'runs list: a sidecar no transcript launched lists first, at the top level')
     ok(!by.has('tu_cut') && !by.has('tu_wfagent') && !by.has('../x'), 'runs list: a cut-off record, a workflow agent and a bad sidecar are skipped')
     ok(agents.map((a) => a.toolUseId).join() === 'tu_alone,tu_fg,tu_bg,tu_open,tu_rej,tu_kid', 'runs list: launch order', agents.map((a) => a.toolUseId).join())
-    ok(workflows.map((w) => w.taskId).join() === 'w6,w7' && workflows[1].agents[0]?.tokens === 5 && workflows.every((w) => w.result === undefined), 'runs list: workflow records oldest first, read without their results', JSON.stringify(workflows))
+    ok(workflows.map((w) => w.taskId).join() === 'w6,w7' && workflows[1].agents[0]?.agentId === 'awf' && !('tokens' in workflows[1].agents[0]) && workflows.every((w) => w.result === undefined), 'runs list: workflow records oldest first, read without their results', JSON.stringify(workflows))
     ok(JSON.stringify(await listRuns('../s3')) === '{"agents":[],"workflows":[]}' && JSON.stringify(await listRuns('nope')) === '{"agents":[],"workflows":[]}', 'runs list: a bad or unknown session lists nothing')
   } finally {
     if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR

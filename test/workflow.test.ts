@@ -21,13 +21,12 @@ equal(phaseState(['done'], 'interrupted'), 'done', 'phase: an interrupted run ke
 equal(phaseState([], 'stopped'), 'stopped', 'phase: an empty phase in a stopped run is stopped')
 equal(phaseState(['queued', 'queued'], 'stopped'), 'stopped', 'phase: a stopped run never leaves a phase queued')
 
-// The summary: counts, tokens from done agents, and the run's own state.
+// The summary: counts and the run's own state, never tokens.
 {
   const live = workflowSummary(wf([agent(1, 'done', { tokens: 1000 }), agent(2, 'done', { tokens: 500 }), agent(3, 'done'), agent(4, 'start'), agent(5, 'error'), agent(6, 'queued'), agent(7, 'queued')], null, { startMs: 3, totalTokens: 99 }), [])
   ok(live.done === 3 && live.total === 7 && live.failed === 1 && live.stopped === 0, 'summary: 3 of 7 done, 1 failed', JSON.stringify(live))
-  equal(live.tokens, 1500, 'summary: tokens sum the done agents')
+  ok(!('tokens' in live), 'summary: no tokens, whatever the agents carry')
   ok(live.state.state === 'running' && live.state.startMs === 3, 'summary: a live run is running from its start')
-  equal(workflowSummary(wf([agent(1, 'start')], null, { totalTokens: 42 }), []).tokens, undefined, "summary: with no agent done there are no tokens, never the run's own total")
 
   for (const e of ['stopped', 'killed']) {
     const s = workflowSummary(wf([agent(1, 'error'), agent(2, 'done'), agent(3, 'start'), agent(4, 'queued', { agentId: undefined })], e, { durationMs: 900 }), [])
