@@ -116,10 +116,14 @@ const inside = (r: AgentListRow): number => r.children.reduce((n, c) => n + 1 + 
 const countAll = (rows: readonly AgentListRow[]): number => rows.reduce((n, r) => n + 1 + inside(r), 0)
 
 let agentTools: ToolCall[] = []
-/** Main's Agent calls, the same array while none changed, so streamed text doesn't rebuild the tree. */
+let agentToolsSig = ''
+/** Main's Agent calls, the same array while none changed, so streamed text doesn't rebuild the tree. The store ends a
+ *  call by writing its result onto the same object, so a call's outcome is part of the comparison, not just its identity. */
 function agentToolsOf(messages: readonly ChatMessage[]): ToolCall[] {
   const next = messages.flatMap((m) => m.tools.filter((t) => isAgentTool(t.name)))
-  if (next.length === agentTools.length && next.every((t, i) => t === agentTools[i])) return agentTools
+  const sig = next.map((t) => `${t.id}:${t.result !== undefined}:${!!t.isError}:${!!t.stopped}:${!!t.sentToBackground}`).join(' ')
+  if (sig === agentToolsSig) return agentTools
+  agentToolsSig = sig
   return (agentTools = next)
 }
 
@@ -281,7 +285,7 @@ export function AgentsList({ handleId }: { handleId: string }): JSX.Element {
                   <RunMark state={state} />
                 </span>
                 <span className="min-w-0 flex-1 truncate text-label text-content">{r.label}</span>
-                {r.type && <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint @max-[400px]:hidden">{r.type}</span>}
+                {r.type && <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint @max-[520px]:hidden">{r.type}</span>}
                 <span className="w-[8ch] shrink-0 text-right text-meta text-faint">{n > 0 && !on ? `${n} inside` : ''}</span>
                 <Figures
                   time={isLive(state) ? (startMs !== undefined ? <RunningTimer startMs={startMs} /> : <Dash />) : durationMs !== undefined ? formatElapsed(durationMs) : <Dash agent />}
