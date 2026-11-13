@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useId, useMemo, useRef, type KeyboardEvent } from 'react'
-import { activeSlice, useActive, useSession, type SurfaceSpec } from '../../store'
+import { activeSlice, useActive, useSession, type PerSessionState, type SurfaceSpec } from '../../store'
 import { paneItems, type PaneItem, type PaneItemKey } from '../../lib/paneItems'
+import { agentCount, hasAgents, runningAgents } from '../../lib/agents'
+import { hasWorkflows, runningWorkflows, workflowRows } from '../../lib/workflow'
 import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
 import { useEscape } from '../../lib/useEscape'
 import { usePane } from '../Stage'
 import { openFilePalette } from '../CommandPalette'
-import { IconAgentBrowser, IconDiff, IconFolder, IconSearch } from '../Icon'
+import { IconAgentBrowser, IconDiff, IconFolder, IconSearch, IconSubagents, IconWorkflows } from '../Icon'
 
 const GLYPH: Record<PaneItemKey, (p: { className?: string }) => JSX.Element> = {
   'open-file': IconSearch,
   tree: IconFolder,
   changes: IconDiff,
-  browser: IconAgentBrowser
+  browser: IconAgentBrowser,
+  agents: IconSubagents,
+  workflows: IconWorkflows
 }
 
 export interface PaneEntry extends PaneItem {
@@ -44,7 +48,7 @@ async function openBrowserTab(): Promise<void> {
 
 /** Creates or activates a singleton and puts focus in it. One already on screen mounts nothing that would take
  *  the focus, so it's given here. */
-function openSingleton(spec: SurfaceSpec & { kind: 'tree' | 'diff' }): void {
+function openSingleton(spec: SurfaceSpec & { kind: 'tree' | 'diff' | 'agents' | 'workflows' }): void {
   const st = useSession.getState()
   const slice = activeSlice(st)
   if (!slice) return
@@ -64,8 +68,15 @@ export function runPaneItem(key: PaneItemKey, cwd: string): void {
       return openSingleton({ kind: 'diff', key: '', title: 'Claude changes' })
     case 'browser':
       return void openBrowserTab()
+    case 'agents':
+      return openSingleton({ kind: 'agents', key: '', title: 'Subagents' })
+    case 'workflows':
+      return openSingleton({ kind: 'workflows', key: '', title: 'Workflows' })
   }
 }
+
+/** The session's whole run count is known: its files were read, or it never had any. */
+export const knownRuns = (s: PerSessionState): boolean => s.ephemeral || (!!s.runs.data && s.runs.status !== 'error')
 
 /** The one list the empty pane and the "+" menu both show. */
 export function usePaneEntries(): PaneEntry[] {
@@ -74,13 +85,18 @@ export function usePaneEntries(): PaneEntry[] {
   const browser = useActive((s) => !!s?.browser)
   const treeOpen = useActive((s) => !!s?.surfaces.tabs.tree)
   const changesOpen = useActive((s) => !!s?.surfaces.tabs.diff)
-  return useMemo(
-    () =>
-      cwd
-        ? paneItems({ cwd, home: window.clui.homeDir, changes, browser, treeOpen, changesOpen }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) }))
-        : [],
-    [cwd, changes, browser, treeOpen, changesOpen]
-  )
+  const agentsOffered = useActive((s) => !!s && !s.surfaces.tabs.agents && hasAgents(s))
+  const agentsRunning = useActive((s) => (s ? runningAgents(s, s.runs.data?.agents ?? null) : 0))
+  const agentsTotal = useActive((s) => (s && knownRuns(s) ? agentCount(s, s.runs.data?.agents ?? null) : null))
+  const workflowsOffered = useActive((s) => !!s && !s.surfaces.tabs.workflows && hasWorkflows(s))
+  const workflowsRunning = useActive((s) => (s ? runningWorkflows(s) : 0))
+  const workflowsTotal = useActive((s) => (s && knownRuns(s) ? workflowRows(s, s.runs.data?.workflows ?? null).length : null))
+  return useMemo(() => {
+    if (!cwd) return []
+    const agents = agentsOffered ? { running: agentsRunning, total: agentsTotal } : undefined
+    const workflows = workflowsOffered ? { running: workflowsRunning, total: workflowsTotal } : undefined
+    return paneItems({ cwd, home: window.clui.homeDir, changes, browser, treeOpen, changesOpen, agents, workflows }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) }))
+  }, [cwd, changes, browser, treeOpen, changesOpen, agentsOffered, agentsRunning, agentsTotal, workflowsOffered, workflowsRunning, workflowsTotal])
 }
 
 /** The pane with no tabs: what it can open, as a flat list. */

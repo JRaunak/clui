@@ -18,13 +18,15 @@ import { applyTheme } from '../lib/theme'
 import { fuzzyMatch, highlightRuns, rankPaths, splitLine } from '../lib/fuzzy'
 import { requestSurfaceFocus } from '../lib/surfaceFocus'
 import { viaOf, type Via } from '../lib/motion'
-import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage, IconFolder, IconDiff, IconAgentBrowser, IconPaneRight, IconHalfRing, IconSidebar, IconDownload, IconGitFork } from './Icon'
+import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage, IconFolder, IconDiff, IconAgentBrowser, IconPaneRight, IconHalfRing, IconSidebar, IconDownload, IconGitFork, IconSubagents, IconWorkflows } from './Icon'
 import { FileIcon } from './FileIcon'
 import { cleanError, openEditor } from './surfaces/fileDoc'
 import { tilde } from '../lib/tree'
-import { fileCount } from '../lib/paneItems'
+import { fileCount, runCountMeta } from '../lib/paneItems'
+import { agentCount, hasAgents, runningAgents } from '../lib/agents'
+import { hasWorkflows, runningWorkflows, workflowRows } from '../lib/workflow'
 import { fileLike } from '../lib/presentation'
-import { runPaneItem } from './surfaces/PanePicker'
+import { knownRuns, runPaneItem } from './surfaces/PanePicker'
 import { WORKSPACE_FILE_CAP } from '../../../shared/files'
 import type { ProjectGroup } from '../../../shared/sessions'
 
@@ -239,6 +241,12 @@ export function CommandPalette({
         item('tree', 'Show file tree', cwd.slice(cwd.lastIndexOf('/') + 1) || cwd, IconFolder, () => runPaneItem('tree', cwd)),
         ...(n > 0 ? [item('changes', 'Show Claude changes', fileCount(n), IconDiff, () => runPaneItem('changes', cwd))] : []),
         ...(slice?.browser ? [item('browser', 'Show browser', '⇧⌘B', IconAgentBrowser, () => void store.revealBrowser(null))] : []),
+        ...(slice && hasAgents(slice)
+          ? [item('agents', 'Show subagents', runCountMeta({ running: runningAgents(slice, slice.runs.data?.agents ?? null), total: knownRuns(slice) ? agentCount(slice, slice.runs.data?.agents ?? null) : null }), IconSubagents, () => runPaneItem('agents', cwd))]
+          : []),
+        ...(slice && hasWorkflows(slice)
+          ? [item('workflows', 'Show workflows', runCountMeta({ running: runningWorkflows(slice), total: knownRuns(slice) ? workflowRows(slice, slice.runs.data?.workflows ?? null).length : null }), IconWorkflows, () => runPaneItem('workflows', cwd))]
+          : []),
         item('pane', shown ? 'Hide pane' : 'Show pane', '⌥⌘0', IconPaneRight, () => store.togglePane())
       ]
     }

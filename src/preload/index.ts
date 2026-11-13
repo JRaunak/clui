@@ -80,6 +80,7 @@ const api: CluiApi = {
   readAgentTranscriptByToolUseId: (toolUseId: string) =>
     ipcRenderer.invoke(IpcChannels.readAgentTranscriptByToolUseId, toolUseId),
   readWorkflowRun: (sessionId: string, taskId: string) => ipcRenderer.invoke(IpcChannels.readWorkflowRun, sessionId, taskId),
+  listRuns: (sessionId: string) => ipcRenderer.invoke(IpcChannels.listRuns, sessionId),
   searchSessions: (query: string, queryId: number, opts?: { scopeSlug?: string; userOnly?: boolean }) =>
     ipcRenderer.invoke(IpcChannels.searchSessions, query, queryId, opts),
   warmSearchCache: () => ipcRenderer.invoke(IpcChannels.warmSearchCache),

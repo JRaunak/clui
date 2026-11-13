@@ -632,3 +632,17 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   const subAsk = gate('sub1')
   ok(subAsk?.agentToolUseId === 'tu-sub' && subAsk.agentId === undefined, 'mapper: a subagent gate keeps its Agent tool call')
 }
+
+// A subagent's task_progress carries its running token count under its launching call; a workflow's still maps to its tree.
+{
+  const m = new EventMapper()
+  feed(m, [
+    { type: 'system', subtype: 'task_started', task_id: 'sub1', tool_use_id: 'tu-sub', task_type: 'local_agent', description: 'Probe' },
+    { type: 'system', subtype: 'task_started', task_id: 'w1', tool_use_id: 'tu-w', task_type: 'local_workflow', workflow_name: 'review' }
+  ])
+  const usage = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1', usage: { total_tokens: 12346, tool_uses: 2, duration_ms: 3710 } }])
+  ok(usage.length === 1 && usage[0].type === 'agent-usage' && usage[0].toolUseId === 'tu-sub' && usage[0].tokens === 12346, 'mapper: a subagent task_progress emits agent-usage for its launching call', JSON.stringify(usage))
+  ok(feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'sub1' }]).length === 0, 'mapper: a subagent task_progress with no usage emits nothing')
+  const wf = feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'w1', usage: { total_tokens: 9 }, workflow_progress: [{ type: 'workflow_phase', index: 1, title: 'Map' }] }])
+  ok(wf.length === 1 && wf[0].type === 'workflow-progress', 'mapper: a workflow task_progress still emits only workflow-progress', JSON.stringify(wf))
+}

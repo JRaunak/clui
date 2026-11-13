@@ -2,7 +2,8 @@ import { CHANGE_REFS, loadWorkflowRun, surfacesSave, watchAgentTabs, useSession,
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
 import { noticeLead } from '../src/renderer/src/lib/refCopy.ts'
-import { agentRunState } from '../src/renderer/src/lib/agents.ts'
+import { agentRows, agentRunState, hasAgents, runningAgents } from '../src/renderer/src/lib/agents.ts'
+import { hasWorkflows, workflowRows } from '../src/renderer/src/lib/workflow.ts'
 import { equal, ok } from './support/harness.mjs'
 
 // The store's IPC is stubbed: each call is recorded and resolves true unless `replies` overrides it.
@@ -39,6 +40,8 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   agentMetas: {},
   workflows: {},
   workflowReads: {},
+  runs: { status: 'idle', data: null },
+  agentUsage: {},
   checkingTools: {},
   pendingPermissions: [],
   rateLimit: null,
@@ -1253,4 +1256,53 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   await tick()
   ok(cur().surfaces.tabs['workflow:w1'].unseen === true, 'unseen: a workflow finishing behind another tab lights its tab')
   stop()
+}
+
+// The Subagents list: live rows before any disk read, disk outcomes for what this process never watched, live tokens
+// from task_progress, and nesting from the disk's parent links.
+{
+  const call = (id: string, over: object = {}): any => ({ id, name: 'Agent', input: { description: `do ${id}`, subagent_type: 'Explore' }, ...over })
+  const msgs = (...tools: any[]): any[] => [{ id: 'm1', role: 'assistant', text: '', thinking: '', tools, blocks: [] }]
+  ok(!hasAgents(slice()) && hasAgents(slice({ messages: msgs(call('t1')) })), 'list: hasAgents is false on a fresh slice and true after one Agent call')
+  ok(!hasWorkflows(slice()) && hasWorkflows(slice({ messages: [{ id: 'm', role: 'assistant', text: '', thinking: '', tools: [{ id: 'w', name: 'Workflow', input: {} }], blocks: [] }] })), 'list: hasWorkflows follows a Workflow call')
+
+  const live = slice({ busy: true, messages: msgs(call('t1', { startMs: 1000 })), agentUsage: { t1: 4200 } })
+  const [row] = agentRows(live, null)
+  ok(row?.id === 't1' && row.status.state === 'running' && row.tokens === 4200 && row.label === 'do t1' && row.type === 'Explore', 'list: a live-only row shows before any disk read, with its live tokens', JSON.stringify(row))
+  ok(runningAgents(live, null) === 1, 'list: a call still out counts as running')
+
+  const disk = (id: string, over: object = {}): any => ({ toolUseId: id, description: `disk ${id}`, background: true, outcome: 'open', ...over })
+  const bgTask = (status: string): any => ({ x: { taskId: 'x', description: 'd', taskType: 'local_agent', toolUseId: 't2', status, startMs: 5 } })
+  const resumed = slice({ busy: false, messages: msgs(call('t2', { background: true, result: 'Async agent launched' })) })
+  ok(agentRows(resumed, [disk('t2')])[0]?.status.state === 'interrupted', 'list: an open disk row with no live fact reads interrupted')
+  ok(agentRows({ ...resumed, backgroundTasks: bgTask('running') }, [disk('t2')])[0]?.status.state === 'background', 'list: an open disk row reads running while its background task runs')
+  ok(agentRows(resumed, [disk('t2', { outcome: 'failed', durationMs: 900, tokens: 61000 })])[0]?.status.state === 'failed', 'list: a disk outcome stands for an agent this process never watched')
+  const stopped = { ...resumed, backgroundTasks: bgTask('killed'), agentUsage: { t2: 3100 } }
+  ok(agentRows(stopped, [disk('t2')])[0]?.tokens === 3100, 'list: a stop with no usage on its notice keeps the last live tokens')
+  ok(agentRows(stopped, [disk('t2', { outcome: 'stopped', tokens: 3300 })])[0]?.tokens === 3300, "list: once ended, the disk's totals win")
+
+  const tree = agentRows(slice({ busy: false, messages: msgs(call('a'), call('b')) }), [disk('a', { outcome: 'done' }), disk('b', { outcome: 'done' }), disk('k1', { parent: 'a', outcome: 'done' }), disk('k2', { parent: 'a', outcome: 'done' }), disk('g', { parent: 'k1', outcome: 'done' })])
+  ok(tree.map((r) => r.id).join() === 'b,a', 'list: top level newest first', tree.map((r) => r.id).join())
+  const a = tree[1]
+  ok(a.children.map((r) => r.id).join() === 'k1,k2' && a.children[0].children[0]?.id === 'g', 'list: children nest under their parent in launch order')
+  ok(a.children[0].trail.join() === 'agent:tool:a' && a.children[0].children[0].trail.join() === 'agent:tool:a,agent:tool:k1', "list: a child's trail is its ancestors' tab ids, root first")
+  ok(a.children[1].label === 'disk k2', 'list: a row with no launch in the slice takes its description from disk')
+
+  // A busy main with a nested history child only its parent's transcript holds: nothing live places it, so it isn't
+  // running, and the strip, picker and summary count (runningAgents) agrees with the tree.
+  const busy = slice({ busy: true, messages: msgs(call('p', { startMs: 1 }), call('q', { result: 'done' })), subagentChildren: { p: [{ childToolUseId: 'c1', name: 'Agent', description: 'live child' }] } })
+  const hist = [disk('q', { outcome: 'done', background: false }), disk('ghost', { parent: 'q' }), disk('c1', { parent: 'p' }), disk('orphan')]
+  const t = agentRows(busy, hist)
+  const flat = (rows: any[]): any[] => rows.flatMap((r) => [r, ...flat(r.children)])
+  const byId = new Map(flat(t).map((r) => [r.id, r]))
+  ok(byId.get('ghost')?.status.state === 'interrupted' && byId.get('orphan')?.status.state === 'interrupted', 'list: an open history agent the busy slice cannot place reads interrupted', JSON.stringify(t))
+  ok(byId.get('c1')?.status.state === 'running' && byId.get('p')?.status.state === 'running', 'list: a placed nested child and a call still out read running')
+  const shown = flat(t).filter((r) => ['running', 'background', 'needs', 'stopping'].includes(r.status.state)).length
+  ok(shown === 2 && runningAgents(busy, hist) === 2, 'list: the running count matches the tree', `${shown} vs ${runningAgents(busy, hist)}`)
+
+  const wfs = workflowRows({ workflows: { w2: { taskId: 'w2', name: 'live', description: '', phases: [], agents: [], startMs: 30, endedStatus: null } as any } }, [
+    { taskId: 'w1', runId: 'wf_1', name: 'old', status: 'running', startTime: 10, phases: [], agents: [] },
+    { taskId: 'w2', runId: 'wf_2', name: 'disk copy', status: 'completed', startTime: 30, phases: [], agents: [] }
+  ])
+  ok(wfs.map((w) => `${w.taskId}:${w.name}:${w.endedStatus}`).join() === 'w2:live:null,w1:old:interrupted', 'list: workflows newest first, a live one over its record, a record left running interrupted', JSON.stringify(wfs))
 }

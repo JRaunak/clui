@@ -19,10 +19,10 @@ import { create } from 'zustand'
 import { isListPriced, type DomainEvent, type ElicitationResponse, type PermissionDenial, type PermissionSuggestion, type RateLimit, type SessionTask, type SlashCommandInfo, type TurnEnd, type TurnUsage, type WorkflowAgent } from '../../shared/events'
 import type { AgentMeta, BlockedPrompt, CompactionMarker, HistoryMessage, ProjectGroup } from '../../shared/sessions'
 import { agentInfo, agentRunState, findAgentTool, isAgentTool, isLive, trailOf, type RunStatusOf } from './lib/agents'
-import { workflowSummary } from './lib/workflow'
+import { recordOf, workflowSummary } from './lib/workflow'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
-import type { CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment, WorkflowRun } from '../../shared/ipc'
+import type { CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, SessionRuns, WireAttachment } from '../../shared/ipc'
 import { loadFailureOf, siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
 import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, setLiveEfforts, supportsUltracodeToggle, contextWindowForModel, contextSizeLabel, latestModelInFamily, deriveModelInfo, modelCheckReason, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
@@ -155,6 +155,13 @@ export interface WorkflowState {
 
 /** A workflow record read for a tab that has none live. Absent once it's in `workflows`. */
 export type WorkflowRead = 'loading' | 'gone' | 'error'
+
+/** The session's runs as its files record them, read when a list tab opens. `data` outlives a refresh or its error. */
+export interface RunsState {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  data: SessionRuns | null
+}
+const IDLE_RUNS: RunsState = { status: 'idle', data: null }
 
 /** An ordered piece of an assistant message (a text run or a tool call ref), so the
  *  transcript renders text and tools in true stream order rather than lumping all
@@ -436,6 +443,9 @@ export interface PerSessionState {
    *  records read back from disk for a tab. Drives the tray chip and the workflow tab. */
   workflows: Record<string, WorkflowState>
   workflowReads: Record<string, WorkflowRead>
+  runs: RunsState
+  /** A running subagent's latest token count, by tool_use id. */
+  agentUsage: Record<string, number>
   /** Monitor tool calls by tool_use id. */
   monitors: Record<string, MonitorRecord>
   /** The CLI's live slash-command list (from the initialize response). The
@@ -1422,21 +1432,6 @@ export function ensureAgentData(handleId: string, tab: Pick<SurfaceTab, 'key' | 
   if ((!main || main.background) && !(ref.id in slice.agentMetas)) read(ref.id)
 }
 
-const recordOf = (run: WorkflowRun): WorkflowState => ({
-  taskId: run.taskId,
-  name: run.name,
-  description: run.summary ?? '',
-  phases: run.phases,
-  agents: run.agents,
-  totalTokens: run.totalTokens,
-  startMs: run.startTime,
-  // The run's process died with the app that launched it.
-  endedStatus: run.status === 'running' ? 'interrupted' : run.status,
-  durationMs: run.durationMs,
-  result: run.result,
-  restored: true
-})
-
 const resultReads = new Set<string>()
 /**
  * Reads a workflow's record from disk: for a tab with no live record, which it then seeds, or once for a live run
@@ -1466,6 +1461,20 @@ export function loadWorkflowRun(handleId: string, taskId: string): void {
         return run ? { workflows: { ...cur.workflows, [taskId]: recordOf(run) } } : { workflowReads: { ...cur.workflowReads, [taskId]: 'gone' } }
       }),
     () => settle((cur) => (cur.workflows[taskId] ? {} : { workflowReads: { ...cur.workflowReads, [taskId]: 'error' } }))
+  )
+}
+
+/** Reads the session's runs for a list tab. A session with no transcript yet, or none ever, has only live ones. */
+export function loadRuns(handleId: string): void {
+  const slice = useSession.getState().sessions[handleId]
+  const sessionId = slice?.sessionId
+  if (!slice || !sessionId || slice.ephemeral || slice.runs.status === 'loading') return
+  const put = (status: RunsState['status'], data: SessionRuns | null): void =>
+    useSession.setState((s) => (s.sessions[handleId]?.sessionId === sessionId ? patchSlice(s, handleId, { runs: { status, data } }) : {}))
+  put('loading', slice.runs.data)
+  window.clui.listRuns(sessionId).then(
+    (data) => put('ready', data),
+    () => put('error', useSession.getState().sessions[handleId]?.runs.data ?? null)
   )
 }
 
@@ -1901,6 +1910,8 @@ async function beginSession(
     agentMetas: {},
     workflows: {},
     workflowReads: {},
+    runs: IDLE_RUNS,
+    agentUsage: {},
     monitors: EMPTY_MONITORS,
     slashCommands: EMPTY_SLASH_COMMANDS,
     tasks: EMPTY_TASKS,
@@ -2049,7 +2060,7 @@ function evictFor(
   }
   const at = Date.now()
   const card: EvictedTab = { id: `evicted-${++evictSeq}`, handleId, tab, index: set0.order.indexOf(victim), at }
-  const text = toggled(`Closed ${label}. Clui keeps up to ${SURFACE_TAB_CAP} tabs per session and closed the one you viewed least recently.${tab.kind === 'agent' ? ' Reopen it from its card in the chat.' : ''}`)
+  const text = toggled(`Closed ${label}. Clui keeps up to ${SURFACE_TAB_CAP} tabs per session and closed the one you viewed least recently.${tab.kind === 'agent' && tab.key.startsWith('tool:') ? ' Reopen it from Subagents.' : tab.kind === 'agent' || tab.kind === 'workflow' ? ' Reopen it from Workflows.' : ''}`)
   set((s) => ({ ...patchSlice(s, handleId, { surfaces, tabsEvicted: true }), evictedTabs: [card, ...s.evictedTabs], evictedAnnounce: { text, at } }))
 }
 
@@ -3531,6 +3542,9 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.lastActivityMs = Date.now()
           break
         }
+        case 'agent-usage':
+          patch.agentUsage = { ...slice.agentUsage, [e.toolUseId]: e.tokens }
+          break
         case 'workflow-ended': {
           const wf = slice.workflows[e.taskId]
           if (!wf) break

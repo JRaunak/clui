@@ -21,9 +21,9 @@ import { AgentFace } from './faces'
 import { IconChevron, IconWorkflow } from './Icon'
 
 const SPOKEN: Partial<Record<RunState, string>> = { done: 'Workflow finished', failed: 'Workflow failed', stopped: 'Workflow stopped' }
-const FIGURES = 'flex shrink-0 gap-3 font-mono text-meta tabular-nums text-dim'
-const TIME = 'w-[7ch] text-right'
-const TOKENS = 'w-[6ch] text-right'
+export const FIGURES = 'flex shrink-0 gap-3 font-mono text-meta tabular-nums text-dim'
+export const TIME = 'w-[7ch] text-right'
+export const TOKENS = 'w-[6ch] text-right'
 const SKELETON = ['w-[60%]', 'w-[48%]', 'w-[52%]', 'w-[40%]']
 const FIND_SKIP = '.sr-only, [data-find-skip]'
 
@@ -58,7 +58,7 @@ function phasesOf(w: WorkflowState, pending: readonly PendingPermission[], workf
 const sumOf = (rows: AgentRow[], k: 'durationMs' | 'tokens'): number | undefined =>
   rows.reduce<number | undefined>((n, r) => (r.agent[k] === undefined ? n : (n ?? 0) + r.agent[k]), undefined)
 
-function Dash({ agent }: { agent?: boolean }): JSX.Element {
+export function Dash({ agent }: { agent?: boolean }): JSX.Element {
   return (
     <span className="text-faint" title={agent ? 'Not recorded for this agent' : undefined}>
       -
@@ -66,7 +66,7 @@ function Dash({ agent }: { agent?: boolean }): JSX.Element {
   )
 }
 
-function Figures({ time, tokens }: { time: ReactNode; tokens: ReactNode }): JSX.Element {
+export function Figures({ time, tokens }: { time: ReactNode; tokens: ReactNode }): JSX.Element {
   return (
     <span className={FIGURES}>
       <span className={TIME}>{time}</span>
@@ -377,6 +377,7 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
                             data-ui="row-disclose"
                             tabIndex={-1}
                             aria-hidden="true"
+                            onMouseDown={(e) => e.preventDefault()}
                             onClick={() => {
                               if (expanded) setFocusId(r.id)
                               toggle(p.index)

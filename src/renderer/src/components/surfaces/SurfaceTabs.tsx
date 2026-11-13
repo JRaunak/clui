@@ -6,8 +6,8 @@ import { agentRefOf, type PaneKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
 import { shownPath, suffixes } from '../../lib/tree'
 import { fileLike } from '../../lib/presentation'
-import { agentInfo, agentRunState, denseNext, faceOf, RUN_WORDS, type RunStatusOf } from '../../lib/agents'
-import { workflowSummary } from '../../lib/workflow'
+import { agentInfo, agentRunState, denseNext, faceOf, runningAgents, RUN_WORDS, type RunStatusOf } from '../../lib/agents'
+import { runningWorkflows, workflowSummary } from '../../lib/workflow'
 import { formatElapsed } from '../../lib/turnEnd'
 import { FileIcon } from '../FileIcon'
 import { Menu } from '../Menu'
@@ -101,6 +101,8 @@ interface RunView {
   /** A workflow's agents: done of total. */
   done?: number
   total?: number
+  /** A list tab's rows that run now. */
+  running?: number
 }
 
 /** The agent and workflow tabs' run views as one string, so the strip re-renders when one changes and not on every
@@ -108,6 +110,11 @@ interface RunView {
 function runSig(s: PerSessionState): string {
   const out: Record<string, RunView> = {}
   for (const t of Object.values(s.surfaces.tabs)) {
+    if (t.kind === 'agents' || t.kind === 'workflows') {
+      const running = t.kind === 'agents' ? runningAgents(s, s.runs.data?.agents ?? null) : runningWorkflows(s)
+      out[t.id] = { status: { state: running ? 'running' : 'done' }, face: null, type: null, parent: null, running }
+      continue
+    }
     const w = t.kind === 'workflow' ? s.workflows[t.key] : undefined
     if (w) {
       const sum = workflowSummary(w, s.pendingPermissions)
@@ -199,6 +206,10 @@ export function SurfaceTabs(): JSX.Element {
     if (t.kind === 'diff') return [{ ...common, tip: 'What Claude changed in this session' }]
     if (t.kind === 'tree') return [{ ...common, more: ', file tree', tip: cwd ? shownPath(cwd, window.clui.homeDir) : label }]
     const run = runs[id]
+    if (t.kind === 'agents' || t.kind === 'workflows') {
+      const r = run?.running ?? 0
+      return [{ ...common, ...(r ? { run: { face: null, state: 'running' as const } } : {}), more: r ? `, ${r} running` : '', tip: `${label} in this session${r ? `\n${r} running` : ''}` }]
+    }
     if (run && t.kind === 'workflow') {
       const w = RUN_WORDS[run.status.state]
       const of = `${run.done} of ${run.total} agents done`

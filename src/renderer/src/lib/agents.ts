@@ -1,3 +1,4 @@
+import type { AgentRun } from '../../../shared/ipc'
 import type { AgentMeta, HistoryMessage } from '../../../shared/sessions'
 import { agentRefOf, type AgentRef, type SurfaceTab } from '../../../shared/surfaces'
 import type { PendingPermission, PerSessionState, SubagentMessage, ToolCall, WorkflowAgent, WorkflowState } from '../store'
@@ -164,6 +165,89 @@ export function agentRunState(slice: PerSessionState, ref: AgentRef, meta?: Agen
   const s = toolRunState(slice, ref.id, meta === undefined ? slice.agentMetas[ref.id] : meta)
   const asks = (s.state === 'running' || s.state === 'background') && slice.pendingPermissions.some((p) => p.agentToolUseId === ref.id)
   return asks ? { ...s, state: 'needs' } : s
+}
+
+export const hasAgents = (s: Pick<PerSessionState, 'messages'>): boolean => s.messages.some((m) => m.tools.some((t) => isAgentTool(t.name)))
+
+/** An agent's status in the Subagents list. One this process watched start is read live. Otherwise its files say how
+ *  it ended, and only an agent the live state places (a nested child streaming now) may read running: anything else
+ *  they leave open was interrupted. */
+function listStatus(slice: PerSessionState, id: string, run: AgentRun | undefined): RunStatusOf {
+  const live = agentRunState(slice, { by: 'tool', id })
+  const watched = Object.values(slice.backgroundTasks).some((t) => t.toolUseId === id) || launcherOf(slice, id)?.startMs !== undefined
+  if (watched) return live
+  if (run && run.outcome !== 'open') return { state: run.outcome, durationMs: run.durationMs }
+  const placed = Object.values(slice.subagentChildren).some((kids) => kids.some((c) => c.childToolUseId === id))
+  return (isLive(live.state) ? placed : !run) ? live : { state: 'interrupted', reason: 'quit' }
+}
+
+export interface AgentListRow {
+  id: string
+  label: string
+  type: string | null
+  status: RunStatusOf
+  tokens?: number
+  face: number | null
+  /** Its ancestors' tab ids, root first. */
+  trail: string[]
+  children: AgentListRow[]
+}
+
+/** Every Agent-tool subagent the session knows, by tool_use id, to its parent's (null for main's own), in launch
+ *  order: the disk's, then what the slice holds that the disk didn't have yet. */
+function agentParents(slice: PerSessionState, disk: readonly AgentRun[] | null): Map<string, string | null> {
+  const up = new Map<string, string | null>()
+  for (const r of disk ?? []) up.set(r.toolUseId, r.parent ?? null)
+  for (const m of slice.messages) for (const t of m.tools) if (isAgentTool(t.name) && !up.has(t.id)) up.set(t.id, null)
+  for (const [p, kids] of Object.entries(slice.subagentChildren)) for (const c of kids) if (!up.has(c.childToolUseId)) up.set(c.childToolUseId, p)
+  for (const [p, tools] of Object.entries(slice.nestedLaunches)) for (const t of tools) if (!up.has(t.id)) up.set(t.id, p)
+  return up
+}
+
+export const agentCount = (slice: PerSessionState, disk: readonly AgentRun[] | null): number => agentParents(slice, disk).size
+
+/** The Subagents tree: main's launches newest first, each agent's children in launch order under it. */
+export function agentRows(slice: PerSessionState, disk: readonly AgentRun[] | null): AgentListRow[] {
+  const runs = new Map(disk?.map((r) => [r.toolUseId, r]))
+  const up = agentParents(slice, disk)
+  const kids = new Map<string | null, string[]>()
+  for (const [id, p] of up) {
+    const parent = p !== null && up.has(p) ? p : null
+    const list = kids.get(parent)
+    if (list) list.push(id)
+    else kids.set(parent, [id])
+  }
+  const build = (id: string, trail: string[]): AgentListRow => {
+    const run = runs.get(id)
+    const info = agentInfo(slice, id)
+    const status = listStatus(slice, id, run)
+    const usage = slice.agentUsage[id]
+    const inner = [...trail, `agent:tool:${id}`]
+    return {
+      id,
+      label: info.label === 'Agent' && run ? run.description.trim() || run.subagentType || 'Agent' : info.label,
+      type: info.subtype ?? run?.subagentType ?? null,
+      status,
+      tokens: isLive(status.state) ? usage : (run?.tokens ?? usage),
+      face: faceOf(slice, { key: `tool:${id}`, trail }),
+      trail,
+      children: inner.length > 8 ? [] : (kids.get(id) ?? []).map((c) => build(c, inner))
+    }
+  }
+  return (kids.get(null) ?? []).map((id) => build(id, [])).reverse()
+}
+
+/** How many of the session's subagents run now, nested ones included, without building the tree. The strip, the
+ *  picker and the list's summary all count through this. Only an id the live state places can be running. */
+export function runningAgents(slice: PerSessionState, disk: readonly AgentRun[] | null): number {
+  const ids = new Set<string>()
+  for (const t of Object.values(slice.backgroundTasks)) if (t.taskType === 'local_agent' && t.toolUseId && t.status === 'running') ids.add(t.toolUseId)
+  for (const m of slice.messages) for (const t of m.tools) if (isAgentTool(t.name) && t.startMs !== undefined && t.result === undefined) ids.add(t.id)
+  for (const entries of Object.values(slice.subagentMessages)) for (const e of entries) if (e.kind === 'tool' && isAgentTool(e.tool.name) && e.tool.startMs !== undefined && e.tool.result === undefined) ids.add(e.tool.id)
+  for (const kids of Object.values(slice.subagentChildren)) for (const c of kids) ids.add(c.childToolUseId)
+  if (!ids.size) return 0
+  const runs = disk ? new Map(disk.map((r) => [r.toolUseId, r])) : null
+  return [...ids].filter((id) => isLive(listStatus(slice, id, runs?.get(id)).state)).length
 }
 
 /** A disk transcript as the live stream shape. Disk keeps no block order inside a message, so thinking, then text,

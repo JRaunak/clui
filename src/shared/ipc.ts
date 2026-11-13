@@ -279,6 +279,8 @@ export interface CluiApi {
   readAgentTranscriptByToolUseId: (toolUseId: string) => Promise<TranscriptResult & { found: boolean; agentMeta: AgentMeta | null }>
   /** A workflow run's record from `<session>/workflows/`. Null when no record is on disk; a read error rejects. */
   readWorkflowRun: (sessionId: string, taskId: string) => Promise<WorkflowRun | null>
+  /** Every Agent-tool subagent and workflow this session's files record. A read error rejects. */
+  listRuns: (sessionId: string) => Promise<SessionRuns>
   /** Load the per-session model+effort map (sessionId → {model,effort}). Passed as
    *  --model/--effort on resume so a mid-session switch survives (the CLI otherwise
    *  reverts to the settings.json default on --resume). */
@@ -580,6 +582,7 @@ export const IpcChannels = {
   readAgentTranscript: 'clui:readAgentTranscript',
   readAgentTranscriptByToolUseId: 'clui:readAgentTranscriptByToolUseId',
   readWorkflowRun: 'clui:readWorkflowRun',
+  listRuns: 'clui:listRuns',
   getSessionModels: 'clui:getSessionModels',
   setSessionModel: 'clui:setSessionModel',
   deleteSessionModel: 'clui:deleteSessionModel',
@@ -732,4 +735,26 @@ export interface WorkflowRun {
   result?: string
   phases: { index: number; title: string }[]
   agents: WorkflowAgent[]
+}
+
+/** An Agent-tool subagent as its session's files record it. Workflow agents live in their workflow's record. */
+export interface AgentRun {
+  toolUseId: string
+  agentId?: string
+  /** The launching agent's tool_use id; absent for main's own launches. */
+  parent?: string
+  description: string
+  subagentType?: string
+  background: boolean
+  /** `open`: nothing on disk says it ended. */
+  outcome: 'done' | 'failed' | 'stopped' | 'open'
+  startedAt?: number
+  durationMs?: number
+  tokens?: number
+}
+
+/** Launch order, oldest first. Workflow records carry no result. */
+export interface SessionRuns {
+  agents: AgentRun[]
+  workflows: WorkflowRun[]
 }

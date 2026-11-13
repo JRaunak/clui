@@ -1,3 +1,4 @@
+import type { WorkflowRun } from '../../../shared/ipc'
 import type { PendingPermission, PerSessionState, ToolCall, WorkflowState } from '../store'
 import { workflowAgentState, type RunState, type RunStatusOf } from './agents'
 
@@ -51,4 +52,31 @@ export function workflowTaskOf(slice: Pick<PerSessionState, 'workflows'>, tool: 
   const live = Object.values(slice.workflows).find((w) => w.toolUseId === tool.id)
   if (live) return live.taskId
   return /Task ID: ([A-Za-z0-9_-]{1,64})/.exec(tool.result ?? '')?.[1] ?? null
+}
+
+/** A workflow as its record on disk tells it. */
+export const recordOf = (run: WorkflowRun): WorkflowState => ({
+  taskId: run.taskId,
+  name: run.name,
+  description: run.summary ?? '',
+  phases: run.phases,
+  agents: run.agents,
+  totalTokens: run.totalTokens,
+  startMs: run.startTime,
+  // The run's process died with the app that launched it.
+  endedStatus: run.status === 'running' ? 'interrupted' : run.status,
+  durationMs: run.durationMs,
+  result: run.result,
+  restored: true
+})
+
+export const hasWorkflows = (s: Pick<PerSessionState, 'workflows' | 'messages'>): boolean =>
+  Object.keys(s.workflows).length > 0 || s.messages.some((m) => m.tools.some((t) => t.name === 'Workflow'))
+
+export const runningWorkflows = (s: Pick<PerSessionState, 'workflows'>): number => Object.values(s.workflows).filter((w) => w.endedStatus === null).length
+
+/** The session's workflows, newest first: the slice's own, then the records on disk it doesn't hold. */
+export function workflowRows(slice: Pick<PerSessionState, 'workflows'>, disk: readonly WorkflowRun[] | null): WorkflowState[] {
+  const rows = [...Object.values(slice.workflows), ...(disk ?? []).filter((r) => !slice.workflows[r.taskId]).map(recordOf)]
+  return rows.sort((a, b) => (b.startMs ?? 0) - (a.startMs ?? 0))
 }
