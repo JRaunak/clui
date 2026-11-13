@@ -1,6 +1,6 @@
 import type { AgentMeta, HistoryMessage } from '../../../shared/sessions'
 import { agentRefOf, type AgentRef, type SurfaceTab } from '../../../shared/surfaces'
-import type { PerSessionState, SubagentMessage, ToolCall, WorkflowAgent, WorkflowState } from '../store'
+import type { PendingPermission, PerSessionState, SubagentMessage, ToolCall, WorkflowAgent, WorkflowState } from '../store'
 import { assignFaces, type Launch } from './faces'
 
 export const isAgentTool = (name: string): boolean => name === 'Task' || name === 'Agent'
@@ -98,20 +98,27 @@ export const REASON_COPY: Record<InterruptReason, string> = {
 export const isLive = (s: RunState): boolean => s === 'running' || s === 'background' || s === 'needs' || s === 'stopping'
 
 /** A workflow agent's state word as a run state. A workflow stop cuts its running agents off as `error`, and the user
- *  asked for that stop, so it reads stopped. */
-export function runStateOf(state: string, workflowEnded: string | null): 'queued' | 'running' | 'done' | 'failed' | 'stopped' {
+ *  asked for that stop, so it and every agent it never reached read stopped. A run Clui quit during leaves its unfinished agents interrupted. */
+export function runStateOf(state: string, workflowEnded: string | null): 'queued' | 'running' | 'done' | 'failed' | 'stopped' | 'interrupted' {
   const cut = workflowEnded === 'killed' || workflowEnded === 'stopped'
   if (state === 'done') return 'done'
   if (state === 'error') return cut ? 'stopped' : 'failed'
+  if (cut) return 'stopped'
+  if (workflowEnded === 'interrupted') return 'interrupted'
   if (state === 'start' || state === 'running') return workflowEnded === null ? 'running' : 'stopped'
   return 'queued'
 }
 
-/** A workflow's own status. A record gone from the session reads as ended without a result. */
-export function workflowRunState(w: WorkflowState | undefined): RunStatusOf {
-  if (!w) return { state: 'interrupted', reason: 'no-result' }
-  const e = w.endedStatus
-  return { state: e === null ? 'running' : e === 'completed' ? 'done' : e === 'killed' || e === 'stopped' ? 'stopped' : 'failed' }
+/** A workflow agent's state, needs while a gate it raised is up. Its gate carries only its agent id. */
+export function workflowAgentState(a: WorkflowAgent, workflowEnded: string | null, pending: readonly PendingPermission[]): RunState {
+  const s = runStateOf(a.state, workflowEnded)
+  return s === 'running' && !!a.agentId && pending.some((p) => p.agentId === a.agentId) ? 'needs' : s
+}
+
+/** A workflow agent's status with its figures: elapsed from its start while it runs, its duration once done. */
+export function workflowAgentStatus(a: WorkflowAgent, workflowEnded: string | null, pending: readonly PendingPermission[]): RunStatusOf {
+  const state = workflowAgentState(a, workflowEnded, pending)
+  return { state, ...(state === 'interrupted' ? { reason: 'quit' as const } : {}), startMs: a.startedAt, durationMs: state === 'done' ? a.durationMs : undefined }
 }
 
 export function workflowOfAgent(workflows: Record<string, WorkflowState>, agentId: string): { workflow: WorkflowState; agent: WorkflowAgent } | null {
@@ -152,7 +159,7 @@ function toolRunState(slice: PerSessionState, id: string, meta: AgentMeta | null
 export function agentRunState(slice: PerSessionState, ref: AgentRef, meta?: AgentMeta | null): RunStatusOf {
   if (ref.by === 'agent') {
     const hit = workflowOfAgent(slice.workflows, ref.id)
-    return hit ? { state: runStateOf(hit.agent.state, hit.workflow.endedStatus) } : { state: 'interrupted', reason: 'quit' }
+    return hit ? workflowAgentStatus(hit.agent, hit.workflow.endedStatus, slice.pendingPermissions) : { state: 'interrupted', reason: 'quit' }
   }
   const s = toolRunState(slice, ref.id, meta === undefined ? slice.agentMetas[ref.id] : meta)
   const asks = (s.state === 'running' || s.state === 'background') && slice.pendingPermissions.some((p) => p.agentToolUseId === ref.id)
@@ -214,9 +221,19 @@ export function faceOf(slice: PerSessionState, tab: Pick<SurfaceTab, 'key' | 'tr
   if (!ref) return null
   if (ref.by === 'tool') return toolFace(slice, ref.id, tab.trail ?? [])
   const hit = workflowOfAgent(slice.workflows, ref.id)
-  if (!hit) return null
-  const agents = hit.workflow.agents.filter((a) => a.agentId).sort((a, b) => a.index - b.index)
-  return assignFaces(agents.map((a) => ({ key: a.agentId!, at: a.index, end: null }))).get(ref.id) ?? null
+  return hit ? (workflowFaces(hit.workflow).get(ref.id) ?? null) : null
+}
+
+const wfFaces = new WeakMap<WorkflowAgent[], Map<string, number>>()
+
+/** A workflow's agents' faces by agent id, in launch (index) order. */
+export function workflowFaces(w: WorkflowState): Map<string, number> {
+  const hit = wfFaces.get(w.agents)
+  if (hit) return hit
+  const agents = w.agents.filter((a) => a.agentId).sort((a, b) => a.index - b.index)
+  const faces = assignFaces(agents.map((a) => ({ key: a.agentId!, at: a.index, end: null })))
+  wfFaces.set(w.agents, faces)
+  return faces
 }
 
 /** Labeled tabs need 120px each and 4px between. Dense mode leaves only once they fit with 24px to spare, so a

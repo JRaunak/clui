@@ -19,7 +19,8 @@ import { SheetSurface } from './SheetSurface'
 import { PresentationButton } from './PresentationButton'
 import { fileLike, isMarkdown, isMermaid, opensDefault, presentationOf, useNoPreview } from '../../lib/presentation'
 import { isHtml } from '../../../../shared/html-view'
-import { AgentTab, WorkflowTab } from '../AgentTab'
+import { AgentTab } from '../AgentTab'
+import { WorkflowTab } from '../WorkflowTab'
 
 /** The Surfaces pane: one header whose tab strip outlives a switch between kinds, over the active
  *  surface's body, or the picker when there are no tabs. Only the active surface is mounted, so the

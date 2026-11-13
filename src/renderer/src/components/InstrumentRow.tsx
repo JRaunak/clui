@@ -30,6 +30,7 @@ import {
 } from '../lib/instrument'
 import { effortLabel } from '../../../shared/settings'
 import { subagentType } from '../lib/agents'
+import { workflowTaskOf } from '../lib/workflow'
 import { IconAgentBrowser, IconCheck, IconChevron, IconCircle, IconCopy, IconFile, IconOpenPane, IconSendToTray, IconShield, IconStop, IconWarn } from './Icon'
 
 type Placement = 'spine' | 'inline'
@@ -206,6 +207,10 @@ export function InstrumentRow({
   const stopRef = useStopFocus<HTMLButtonElement>(stopping)
   // Task was renamed Agent in CLI 2.1.63; both mean a subagent.
   const isSubagent = tool.name === 'Task' || tool.name === 'Agent'
+  const wfTask = useActive((s) => (tool.name === 'Workflow' && s ? workflowTaskOf(s, tool) : null))
+  const wfName = useActive((s) => (wfTask ? (s?.workflows[wfTask]?.name ?? null) : null)) ?? summary
+  // Agent and openable Workflow rows open a tab; every other row discloses in place.
+  const opens = isSubagent || !!wfTask
   const subType = subagentType(tool.input)
   const effort = subagentEffort(tool.input)
   const name = toolLabel(tool.name)
@@ -216,7 +221,7 @@ export function InstrumentRow({
   // A failed call's file may not exist, and a Quick session has no folder to open it in.
   const cwd = useActive((s) => (FILE_TOOLS.has(tool.name) && s && !s.ephemeral ? s.cwd : null))
   const filePath = state === 'done' ? toolPathIn(tool.input, cwd) : null
-  const actions = isSubagent || canSendToBackground || canStopMonitor || (browser && hasBrowser) || !!filePath
+  const actions = opens || canSendToBackground || canStopMonitor || (browser && hasBrowser) || !!filePath
   const errLine = tool.isError ? firstLine(tool.result ?? '') : ''
   const failed = state === 'failed'
   const toggleBody = (e: MouseEvent): void => {
@@ -245,13 +250,13 @@ export function InstrumentRow({
       data-seg={placement === 'spine' ? seg : undefined}
     >
       {placement === 'spine' && <Bead state={state} lit={lit} placement="spine" />}
-      {/* On an Agent row the fill means "opens the transcript", so it stays off while the pointer is on the
+      {/* On a row that opens a tab the fill means "opens it", so it stays off while the pointer is on the
           chevron, which only discloses the result. */}
-      <div className={isSubagent ? `${CARD} group/row pointer-fine:has-[[data-ui=row-disclose]:hover]:bg-tool` : CARD}>
+      <div className={opens ? `${CARD} group/row pointer-fine:has-[[data-ui=row-disclose]:hover]:bg-tool` : CARD}>
         <div className="relative">
           {/* The whole header is one button laid under the visible grid, so the action buttons can sit
-              inside the row without nesting a button in a button. An Agent row's opens its transcript;
-              every other row's is the disclosure. */}
+              inside the row without nesting a button in a button. An Agent row's opens its transcript, a
+              Workflow row's its workflow; every other row's is the disclosure. */}
           {isSubagent ? (
             <button
               type="button"
@@ -261,6 +266,16 @@ export function InstrumentRow({
               aria-label={`${name}${summary ? ` ${summary}` : ''}, ${STATE_TEXT[state]}, open transcript`}
               title={summary ? `${summary}\nOpen transcript` : 'Open transcript'}
               onClick={(e) => diveInto(tool.id, viaOf(e))}
+            />
+          ) : wfTask ? (
+            <button
+              type="button"
+              data-ui="row-open-workflow"
+              data-tool-id={tool.id}
+              className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
+              aria-label={`Workflow${wfName ? ` ${wfName}` : ''}, ${STATE_TEXT[state]}, open workflow`}
+              title={wfName ? `${wfName}\nOpen workflow` : 'Open workflow'}
+              onClick={(e) => diveInto(tool.id, viaOf(e), { taskId: wfTask, title: wfName || 'Workflow' })}
             />
           ) : (
             <button
@@ -310,7 +325,7 @@ export function InstrumentRow({
                 <StatusText state={state} startMs={watching ? rec?.startMs : tool.startMs} reason={errLine} />
               )}
             </span>
-            {isSubagent ? (
+            {opens ? (
               // Not a button: a click here falls through to the row. It's the one sign that this row
               // opens a pane where every other row expands in place.
               <span className="flex h-7 w-7 items-center justify-center">
@@ -362,13 +377,13 @@ export function InstrumentRow({
                 {filePath && cwd && <OpenFileButton tool={tool} path={filePath} cwd={cwd} />}
               </span>
             )}
-            {isSubagent ? (
+            {opens ? (
               <button
                 type="button"
                 data-ui="row-disclose"
                 aria-expanded={open}
                 aria-controls={bodyId}
-                aria-label="Agent result"
+                aria-label={isSubagent ? 'Agent result' : 'Workflow result'}
                 title={open ? 'Hide result' : 'Show result'}
                 onClick={toggleBody}
                 className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded text-faint transition-colors pointer-fine:hover:text-content focus-visible:text-content focus-visible:outline-offset-[-2px]"

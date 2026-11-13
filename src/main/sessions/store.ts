@@ -26,7 +26,7 @@ const projectsRoot = (): string => join(claudeHome(), 'projects')
  * separators, a NUL) is rejected, so a crafted or malformed `.jsonl` filename (e.g.
  * `...jsonl` → id `..`) can neither be listed as a session nor delete outside its dir.
  */
-function isSafeComponent(s: string): boolean {
+export function isSafeComponent(s: string): boolean {
   return !!s && s !== '.' && s !== '..' && !s.includes('/') && !s.includes('\\') && !s.includes('\0')
 }
 

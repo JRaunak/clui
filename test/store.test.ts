@@ -1,4 +1,4 @@
-import { CHANGE_REFS, surfacesSave, watchAgentTabs, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
+import { CHANGE_REFS, loadWorkflowRun, surfacesSave, watchAgentTabs, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
 import { noticeLead } from '../src/renderer/src/lib/refCopy.ts'
@@ -38,6 +38,7 @@ const slice = (over: Record<string, unknown> = {}): any => ({
   nestedLaunches: {},
   agentMetas: {},
   workflows: {},
+  workflowReads: {},
   checkingTools: {},
   pendingPermissions: [],
   rateLimit: null,
@@ -1158,8 +1159,9 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   }
 
   const wf = { id: 'workflow:w1', kind: 'workflow', key: 'w1', title: 'wf', openedBy: 'user', openedAt: 1, lastViewedAt: 1 }
-  const saved = surfacesSave({ ...cur(), paneOpen: true, surfacePaneFull: false, surfaces: set([agent('t1', { trail: ['agent:tool:t0'] }), wf], 'workflow:w1') })
-  ok(saved.set.order.join() === 'agent:tool:t1' && !saved.set.tabs['workflow:w1'] && saved.set.active === null, 'save: a workflow tab and its order entry are dropped, and active with it')
+  const side = { id: 'side', kind: 'side', key: '', title: 'Side chat', openedBy: 'user', openedAt: 1, lastViewedAt: 1 }
+  const saved = surfacesSave({ ...cur(), paneOpen: true, surfacePaneFull: false, surfaces: set([agent('t1', { trail: ['agent:tool:t0'] }), wf, side], 'side') })
+  ok(saved.set.order.join() === 'agent:tool:t1,workflow:w1' && !!saved.set.tabs['workflow:w1'] && !saved.set.tabs.side && saved.set.active === null, 'save: a workflow tab is kept, a side tab and its active are dropped')
   ok(saved.set.tabs['agent:tool:t1'].trail?.[0] === 'agent:tool:t0', 'save: an agent tab keeps its trail')
 
   const many = [...Array.from({ length: 22 }, (_, i) => agent(`a${i}`, { lastViewedAt: 10 + i })), { id: 'agents', kind: 'agents', key: '', title: 'Subagents', openedBy: 'user', openedAt: 1, lastViewedAt: 0 }, { id: 'workflows', kind: 'workflows', key: '', title: 'Workflows', openedBy: 'user', openedAt: 1, lastViewedAt: 0 }]
@@ -1188,5 +1190,67 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   useSession.setState((s: any) => ({ sessions: { ...s.sessions, h1: { ...s.sessions.h1, agentMetas: { t5: { shape: 'background', finished: true } } } } }))
   await tick()
   ok(!cur().surfaces.tabs['agent:tool:t5'].unseen, 'unseen: a restored tab never lights on load')
+  stop()
+}
+
+// Workflow records: a restored tab seeds its run from disk, a run left running reads interrupted, a live record always
+// wins, and a read that fails or finds nothing says so. A live run that ends reads its result once.
+{
+  const tick = (): Promise<void> => new Promise((d) => setTimeout(d, 0))
+  const run = (over: Record<string, unknown> = {}): any => ({ taskId: 'w1', runId: 'wf_1', name: 'review', status: 'running', summary: 'Review it', result: 'All good.', durationMs: 900, phases: [{ index: 1, title: 'Map' }], agents: [{ index: 1, label: 'Map reads', phaseIndex: 1, state: 'start', agentId: 'a1' }], ...over })
+  const live = { taskId: 'w1', toolUseId: 'tu-w', name: 'live', description: '', phases: [], agents: [], endedStatus: null }
+  const load = async (reply: () => unknown, over: Record<string, unknown> = {}): Promise<void> => {
+    reset({ sessionId: 's1', workflows: {}, workflowReads: {}, ...over })
+    replies.readWorkflowRun = reply
+    loadWorkflowRun('h1', 'w1')
+    await tick()
+  }
+
+  await load(() => run())
+  const seeded = cur().workflows.w1
+  ok(seeded?.endedStatus === 'interrupted' && seeded.restored && seeded.result === 'All good.' && seeded.description === 'Review it' && !cur().workflowReads.w1, 'load: a record left running seeds an interrupted, restored run', JSON.stringify(seeded))
+
+  reset({ sessionId: 's1', workflows: {}, workflowReads: {} })
+  replies.readWorkflowRun = async () => (await tick(), run())
+  loadWorkflowRun('h1', 'w1')
+  equal(cur().workflowReads.w1, 'loading', 'load: the read is loading until it lands')
+  st().applyEvent('h1', { type: 'workflow-started', taskId: 'w1', toolUseId: 'tu-w', name: 'live', description: '' } as any)
+  await tick()
+  await tick()
+  ok(cur().workflows.w1.name === 'live' && cur().workflows.w1.endedStatus === null && !cur().workflows.w1.restored, 'load: a live record that arrived meanwhile is never overwritten')
+
+  await load(() => null)
+  ok(cur().workflowReads.w1 === 'gone' && !cur().workflows.w1, 'load: no record on disk is gone')
+  await load(() => Promise.reject(new Error('EACCES')))
+  equal(cur().workflowReads.w1, 'error', 'load: a failed read is an error')
+  replies.readWorkflowRun = () => run({ status: 'completed' })
+  loadWorkflowRun('h1', 'w1')
+  await tick()
+  ok(cur().workflows.w1?.endedStatus === 'completed' && !cur().workflowReads.w1, 'load: Try again reads it afresh')
+
+  await load(() => run(), { workflows: { w1: live } })
+  ok(calls.every((c) => c.name !== 'readWorkflowRun'), 'load: a running live record reads nothing')
+  await load(() => run({ status: 'completed' }), { workflows: { w1: { ...live, endedStatus: 'completed', summary: 'Dynamic workflow "review" completed' } } })
+  ok(cur().workflows.w1.result === 'All good.' && cur().workflows.w1.durationMs === 900 && cur().workflows.w1.name === 'live', 'load: an ended live run takes its result and duration from the record')
+
+  reset({ workflows: { w1: { ...live, startMs: Date.now() - 5000 } } })
+  st().applyEvent('h1', { type: 'workflow-ended', taskId: 'w1', status: 'completed', summary: 'done' } as any)
+  ok(cur().workflows.w1.summary === 'done' && cur().workflows.w1.durationMs >= 5000, 'ended: a live run keeps its summary and how long it ran')
+  st().applyEvent('h1', { type: 'permission-request', requestId: 'r1', toolName: 'Bash', input: {}, agentId: 'a1' } as any)
+  equal(cur().pendingPermissions[0].agentId, 'a1', "gate: a workflow agent's request keeps its agent id")
+
+  const wfTab = { id: 'workflow:w1', kind: 'workflow', key: 'w1', title: 'wf', openedBy: 'user', openedAt: 1, lastViewedAt: 1 }
+  const agentTab = { id: 'agent:agent:a1', kind: 'agent', key: 'agent:a1', title: 'Map reads', openedBy: 'user', openedAt: 1, lastViewedAt: 1, trail: ['workflow:w1'] }
+  const ended = (taskId: string, agentId: string): any => ({ ...live, taskId, endedStatus: 'completed', agents: [{ index: 1, label: 'x', phaseIndex: 1, state: 'done', agentId }] })
+  reset({ workflows: { w1: ended('w1', 'a1'), w2: ended('w2', 'a2') }, surfaces: { order: [agentTab.id], active: agentTab.id, tabs: { [agentTab.id]: agentTab }, browserLastViewedAt: {}, browserUnseen: {} } })
+  st().clearCompletedBgWork('workflow')
+  ok(!!cur().workflows.w1 && !cur().workflows.w2, "linger: an ended workflow stays while one of its agents' tabs is open")
+
+  const stop = watchAgentTabs()
+  const diff = { id: 'diff', kind: 'diff', key: '', title: 'Claude changes', openedBy: 'user', openedAt: 1, lastViewedAt: 1 }
+  reset({ paneOpen: true, workflows: { w1: live }, surfaces: { order: [wfTab.id, 'diff'], active: 'diff', tabs: { [wfTab.id]: wfTab, diff }, browserLastViewedAt: {}, browserUnseen: {} } })
+  st().applyEvent('h1', { type: 'workflow-ended', taskId: 'w1', status: 'completed' } as any)
+  await tick()
+  ok(cur().surfaces.tabs['workflow:w1'].unseen === true, 'unseen: a workflow finishing behind another tab lights its tab')
   stop()
 }

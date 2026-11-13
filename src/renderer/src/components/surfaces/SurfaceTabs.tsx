@@ -6,7 +6,8 @@ import { agentRefOf, type PaneKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
 import { shownPath, suffixes } from '../../lib/tree'
 import { fileLike } from '../../lib/presentation'
-import { agentInfo, agentRunState, denseNext, faceOf, RUN_WORDS, workflowRunState, type RunStatusOf } from '../../lib/agents'
+import { agentInfo, agentRunState, denseNext, faceOf, RUN_WORDS, type RunStatusOf } from '../../lib/agents'
+import { workflowSummary } from '../../lib/workflow'
 import { formatElapsed } from '../../lib/turnEnd'
 import { FileIcon } from '../FileIcon'
 import { Menu } from '../Menu'
@@ -97,6 +98,9 @@ interface RunView {
   face: number | null
   type: string | null
   parent: string | null
+  /** A workflow's agents: done of total. */
+  done?: number
+  total?: number
 }
 
 /** The agent and workflow tabs' run views as one string, so the strip re-renders when one changes and not on every
@@ -104,7 +108,11 @@ interface RunView {
 function runSig(s: PerSessionState): string {
   const out: Record<string, RunView> = {}
   for (const t of Object.values(s.surfaces.tabs)) {
-    if (t.kind === 'workflow') out[t.id] = { status: workflowRunState(s.workflows[t.key]), face: null, type: null, parent: null }
+    const w = t.kind === 'workflow' ? s.workflows[t.key] : undefined
+    if (w) {
+      const sum = workflowSummary(w, s.pendingPermissions)
+      out[t.id] = { status: sum.state, face: null, type: null, parent: null, done: sum.done, total: sum.total }
+    }
     if (t.kind !== 'agent') continue
     const ref = agentRefOf(t.key)
     if (!ref) continue
@@ -193,7 +201,8 @@ export function SurfaceTabs(): JSX.Element {
     const run = runs[id]
     if (run && t.kind === 'workflow') {
       const w = RUN_WORDS[run.status.state]
-      return [{ ...common, run: { face: null, state: run.status.state }, more: `, workflow, ${w.spoken}`, tip: `${label}\nWorkflow · ${w.word}` }]
+      const of = `${run.done} of ${run.total} agents done`
+      return [{ ...common, run: { face: null, state: run.status.state }, more: `, workflow, ${w.spoken}, ${of}`, tip: `${label}\nWorkflow · ${w.word}${figureOf(run.status)}\n${of}` }]
     }
     if (run) {
       const { status, type, parent } = run

@@ -101,6 +101,9 @@ const withSet = (patch: Record<string, unknown>): any => {
     ['an agent view state', withTab(agent('tool:t', { viewState: { kind: 'agent' } }))]
   ]
   for (const [why, v] of bad) ok(parseEntry(v) === null, `persist: refuses ${why}`)
+  const wf = (key: string): any => withTab({ id: `workflow:${key}`, kind: 'workflow', key, title: 'review', openedBy: 'user', openedAt: 1, lastViewedAt: 2 })
+  equal(parseEntry(wf('wwcff6p0q'))?.set.tabs['workflow:wwcff6p0q']?.key, 'wwcff6p0q', 'persist: a workflow tab round-trips by its task id')
+  ok(parseEntry(wf('../x')) === null && parseEntry(wf('')) === null, 'persist: refuses a workflow key that is not a task id')
 }
 
 // URLs: no userinfo, no off-machine query or fragment, and nothing but http(s) or a blank page.

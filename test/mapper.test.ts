@@ -609,3 +609,26 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   equal(JSON.stringify(evs[0].commands), JSON.stringify(cmds), 'mapper: commands_changed uses the shared normalizer')
   equal((m.map({ type: 'system', subtype: 'commands_changed', commands: [] }) as any[]).length, 0, 'mapper: an empty commands_changed is dropped')
 }
+
+// Workflows: an agent's figures pass through once it's done, a running one has only its start and model; a gate from
+// a workflow agent names it by agent id, one from a known subagent keeps its tool call.
+{
+  const m = new EventMapper()
+  feed(m, [{ type: 'system', subtype: 'task_started', task_id: 'w1', tool_use_id: 'tu-w', task_type: 'local_workflow', workflow_name: 'review' }])
+  const progress = (it: object): any =>
+    feed(m, [{ type: 'system', subtype: 'task_progress', task_id: 'w1', workflow_progress: [{ type: 'workflow_phase', index: 1, title: 'Map' }, { type: 'workflow_agent', index: 1, phaseIndex: 1, label: 'Map reads', agentId: 'a1', ...it }] }])[0]
+  const done = progress({ state: 'done', tokens: 41000, durationMs: 70000, startedAt: 5, toolCalls: 3, model: 'm', agentType: 'Explore' })
+  const a = done?.agents[0]
+  ok(done?.phases[0]?.title === 'Map' && a?.tokens === 41000 && a.durationMs === 70000 && a.startedAt === 5 && a.toolCalls === 3 && a.model === 'm' && a.agentType === 'Explore', 'mapper: a done workflow agent carries its figures', JSON.stringify(a))
+  const run = progress({ state: 'start', startedAt: 9, model: 'm' })?.agents[0]
+  ok(run?.startedAt === 9 && run.model === 'm' && run.tokens === undefined && run.durationMs === undefined, 'mapper: a running workflow agent has no tokens or duration yet', JSON.stringify(run))
+  const ended = feed(m, [{ type: 'system', subtype: 'task_notification', task_id: 'w1', status: 'completed', summary: 'Dynamic workflow "review" completed' }])[0]
+  ok(ended?.type === 'workflow-ended' && ended.summary === 'Dynamic workflow "review" completed', 'mapper: a workflow end carries its summary')
+
+  const gate = (agent_id: string): any => m.map({ type: 'control_request', request_id: `r-${agent_id}`, request: { subtype: 'can_use_tool', tool_name: 'Bash', tool_use_id: 'tu-b', agent_id, input: {} } })[0]
+  const wfAsk = gate('a1')
+  ok(wfAsk?.agentId === 'a1' && wfAsk.agentToolUseId === undefined, 'mapper: a workflow agent gate names its agent id')
+  feed(m, [{ type: 'system', subtype: 'task_started', task_id: 'sub1', tool_use_id: 'tu-sub', task_type: 'local_agent', description: 'Probe' }])
+  const subAsk = gate('sub1')
+  ok(subAsk?.agentToolUseId === 'tu-sub' && subAsk.agentId === undefined, 'mapper: a subagent gate keeps its Agent tool call')
+}

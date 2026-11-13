@@ -17,7 +17,7 @@ import type { AgentMeta, HistoryMessage, HistoryToolCall, TranscriptResult } fro
 import { parseCliMessage, type TurnUsage } from '../../shared/events'
 import { readSessionUsage } from './usage'
 
-const projectsRoot = (): string => join(claudeHome(), 'projects')
+export const projectsRoot = (): string => join(claudeHome(), 'projects')
 
 /**
  * OOM safety ceiling, NOT a render cap. The transcript is VIRTUALIZED
@@ -153,7 +153,7 @@ const MAX_RECOVERED_IMAGES = 30
 const MAX_RECOVERED_IMAGE_BYTES = 25 * 1024 * 1024
 
 /** Locate a session's jsonl across project dirs (optionally scoped to a cwd slug). */
-async function findTranscriptFile(sessionId: string): Promise<string | null> {
+export async function findTranscriptFile(sessionId: string): Promise<string | null> {
   const root = projectsRoot()
   let slugs: string[]
   try {
@@ -301,7 +301,7 @@ function findAgentFileByToolUseId(toolUseId: string): Promise<string | null> {
  *  blow up peak memory when the whole transcript is parsed. */
 const MAX_RESULT_CHARS = 100_000
 
-function truncateResult(s: string): string {
+export function truncateResult(s: string): string {
   return s.length > MAX_RESULT_CHARS ? s.slice(0, MAX_RESULT_CHARS) + '\n…[truncated]' : s
 }
 

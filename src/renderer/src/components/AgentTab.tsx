@@ -1,11 +1,11 @@
-/** Agent and workflow tabs. An agent's transcript renders through one path whether it streams live or comes back from
+/** Agent tabs. An agent's transcript renders through one path whether it streams live or comes back from
  *  disk, under a pinned info row that names it, its ancestors and its state. */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
-import { ensureAgentData, noteAgentRead, useActive, useSession, EMPTY_NESTED_SUBAGENTS, EMPTY_SUBAGENT_MSGS, type NestedSubagent, type SubagentMessage, type ToolCall, type WorkflowAgent } from '../store'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { ensureAgentData, noteAgentRead, useActive, useSession, EMPTY_NESTED_SUBAGENTS, EMPTY_SUBAGENT_MSGS, type NestedSubagent, type SubagentMessage, type ToolCall } from '../store'
 import { agentKey, agentRefOf, type AgentRef, type SurfaceTab } from '../../../shared/surfaces'
 import { deriveModelInfo, effortLabel } from '../../../shared/settings'
 import type { AgentMeta, TranscriptResult } from '../../../shared/sessions'
-import { agentDescription, agentInfo, agentRunState, entriesOf, faceOf, isAgentTool, isLive, RUN_WORDS, runStateOf, subagentType, workflowRunState, type RunState, type RunStatusOf } from '../lib/agents'
+import { agentDescription, agentInfo, agentRunState, entriesOf, faceOf, isAgentTool, isLive, RUN_WORDS, subagentType, type RunState, type RunStatusOf } from '../lib/agents'
 import { useDelayedFlag } from '../lib/useDelayedFlag'
 import { useTranscriptFind } from '../lib/useTranscriptFind'
 import { Markdown } from './Markdown'
@@ -17,10 +17,10 @@ import { FindField } from './FindField'
 import { InfoRow } from './InfoRow'
 import { RunMark, RunStatus } from './RunMark'
 import { AgentFace } from './faces'
-import { IconChevron, IconOpenPane, IconWorkflow } from './Icon'
+import { IconChevron, IconWorkflow } from './Icon'
 import { focusPaneTitle } from '../lib/dive'
 
-const Sep = (): JSX.Element => (
+export const Sep = (): JSX.Element => (
   <span aria-hidden="true" className="text-faint">
     ·
   </span>
@@ -92,14 +92,14 @@ function WorkingTail({ bg, starting }: { bg: boolean; starting: boolean }): JSX.
 
 const SPOKEN: Partial<Record<RunState, string>> = { done: 'Subagent finished', failed: 'Subagent failed', stopped: 'Subagent stopped', needs: 'Subagent needs you' }
 
-/** Speaks when the viewed agent stops running or starts waiting on the user, never on mount. */
-function RunAnnounce({ state }: { state: RunState }): JSX.Element {
+/** Speaks when the viewed run stops running or starts waiting on the user, never on mount. */
+export function RunAnnounce({ state, spoken = SPOKEN }: { state: RunState; spoken?: Partial<Record<RunState, string>> }): JSX.Element {
   const [text, setText] = useState('')
   const prev = useRef(state)
   useEffect(() => {
     const was = prev.current
     prev.current = state
-    const say = SPOKEN[state]
+    const say = spoken[state]
     if (say && was !== state && (state === 'needs' || (isLive(was) && !isLive(state)))) setText(say)
   }, [state])
   return (
@@ -410,178 +410,6 @@ export function AgentTab({ handleId, tab }: { handleId: string; tab: SurfaceTab 
         <TranscriptBody bodyRef={bodyRef} onScrolled={setScrolled} entries={entries} phase={phase} status={status} children={children} onRetry={retry} onOpenChild={openChild} />
       ) : (
         <p className="px-8 pt-2 text-ui text-dim">This agent&apos;s transcript isn&apos;t on disk anymore.</p>
-      )}
-    </div>
-  )
-}
-
-/** A workflow agent's transcript under the workflow tab's list. Keyed by the agent, so a new selection reads afresh. */
-function WorkflowAgentTranscript({ handleId, tabId, agent, bodyRef, onScrolled, onFind }: { handleId: string; tabId: string; agent: WorkflowAgent & { agentId: string }; bodyRef: RefObject<HTMLDivElement>; onScrolled: (on: boolean) => void; onFind: (entries: SubagentMessage[]) => void }): JSX.Element {
-  const ref: AgentRef = { by: 'agent', id: agent.agentId }
-  const status = useRunStatus(ref)
-  const face = useActive((s) => (s ? faceOf(s, { key: agentKey(ref) }) : null))
-  const { entries, phase, retry } = useAgentEntries(handleId, ref, isLive(status.state))
-  useEffect(() => onFind(entries), [entries, onFind])
-  const open = (): void => {
-    useSession.getState().openAgentTab(handleId, ref, { title: agent.label, trail: [tabId] })
-    requestAnimationFrame(focusPaneTitle)
-  }
-  return (
-    <>
-      <div className="flex h-8 shrink-0 items-center gap-2 border-t border-border px-4">
-        <span aria-hidden="true" className="flex shrink-0 text-content">
-          <AgentFace face={face} className="h-4 w-4" />
-        </span>
-        <span className="min-w-0 flex-1 truncate text-label font-medium text-content">{agent.label}</span>
-        <Button variant="ghost" size="sm" onClick={open}>
-          Open in tab
-        </Button>
-      </div>
-      <TranscriptBody bodyRef={bodyRef} onScrolled={onScrolled} entries={entries} phase={phase} status={status} children={EMPTY_NESTED_SUBAGENTS} onRetry={retry} onOpenChild={() => {}} />
-    </>
-  )
-}
-
-const COUNT_ORDER = ['done', 'running', 'stopped', 'failed', 'queued'] as const
-
-/** A workflow's phases stacked over the selected agent's transcript. */
-export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceTab }): JSX.Element {
-  const workflow = useActive((s) => s?.workflows[tab.key] ?? null)
-  const status = workflowRunState(workflow ?? undefined)
-  const agents = workflow?.agents ?? []
-  const states = agents.map((a) => runStateOf(a.state, workflow?.endedStatus ?? null))
-  const selectable = agents.filter((a): a is WorkflowAgent & { agentId: string } => !!a.agentId)
-  const [picked, setPicked] = useState<string | null>(null)
-  const selected = selectable.find((a) => a.agentId === picked) ?? selectable.find((a) => states[agents.indexOf(a)] === 'running') ?? selectable[0] ?? null
-  const faces = useActive((s) => (s ? JSON.stringify(selectable.map((a) => faceOf(s, { key: `agent:${a.agentId}` }))) : '[]'))
-  const faceList = useMemo(() => JSON.parse(faces) as (number | null)[], [faces])
-  const bodyRef = useRef<HTMLDivElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
-  const [scrolled, setScrolled] = useState(false)
-  const [shownEntries, setShownEntries] = useState<SubagentMessage[]>(EMPTY_SUBAGENT_MSGS)
-  const find = useTranscriptFind(bodyRef, [shownEntries, selected?.agentId], () => !!selected && shownEntries.length > 0)
-  const openAgent = (a: WorkflowAgent & { agentId: string }): void => {
-    useSession.getState().openAgentTab(handleId, { by: 'agent', id: a.agentId }, { title: a.label, trail: [tab.id] })
-    requestAnimationFrame(focusPaneTitle)
-  }
-  const option = (id: string): HTMLElement | null => listRef.current?.querySelector<HTMLElement>(`[data-agent="${CSS.escape(id)}"]`) ?? null
-  const onKey = (e: KeyboardEvent, a: WorkflowAgent & { agentId: string }): void => {
-    if (e.key === 'Enter' && e.metaKey) {
-      e.preventDefault()
-      return openAgent(a)
-    }
-    const i = selectable.indexOf(a)
-    const to = e.key === 'ArrowDown' ? selectable[i + 1] : e.key === 'ArrowUp' ? selectable[i - 1] : e.key === 'Home' ? selectable[0] : e.key === 'End' ? selectable.at(-1) : undefined
-    if (!to) return
-    e.preventDefault()
-    setPicked(to.agentId)
-    option(to.agentId)?.focus()
-  }
-  const counts = COUNT_ORDER.flatMap((k) => {
-    const n = states.filter((s) => s === k).length
-    return n ? [`${n} ${k}`] : []
-  })
-  return (
-    <div data-ui="workflow-tab" className="flex min-h-0 flex-1 flex-col bg-bg">
-      <InfoRow
-        ui="workflow-info"
-        scrolled={scrolled}
-        lead={<IconWorkflow className="h-3.5 w-3.5" />}
-        line1={
-          <span className="min-w-0 flex-1 truncate text-ui font-semibold text-content" title={tab.title}>
-            {tab.title}
-          </span>
-        }
-        line2={
-          workflow && (
-            <>
-              <RunStatus {...status} />
-              {counts.map((c) => (
-                <span key={c} className="contents">
-                  <Sep />
-                  <span>{c}</span>
-                </span>
-              ))}
-            </>
-          )
-        }
-      />
-      {!workflow ? (
-        <p className="px-8 pt-2 text-ui text-dim">This workflow&apos;s details aren&apos;t available in this session.</p>
-      ) : (
-        <>
-          {find.open && selected && (
-            <div className="shrink-0 px-4 pb-2">
-              <FindField ui="agent-find" {...find.field} placeholder={`Find in ${selected.label}`} label={`Find in ${selected.label}`} />
-            </div>
-          )}
-          <div ref={listRef} role="listbox" aria-label="Workflow agents" className="max-h-[40%] shrink-0 overflow-y-auto pb-2">
-            {workflow.phases.map((ph) => {
-              const inPhase = agents.filter((a) => a.phaseIndex === ph.index)
-              const labelId = `wf-${tab.key}-phase-${ph.index}`
-              return (
-                <div key={ph.index} role="group" aria-labelledby={labelId}>
-                  <div id={labelId} className="flex h-8 items-center gap-2 px-4">
-                    <span className="font-mono text-meta tabular-nums text-faint">{ph.index + 1}</span>
-                    <span className="text-label font-medium text-content">{ph.title}</span>
-                  </div>
-                  {inPhase.map((a) => {
-                    const state = states[agents.indexOf(a)]
-                    if (!a.agentId)
-                      return (
-                        <div key={a.index} role="option" aria-selected={false} aria-disabled="true" aria-label={`${a.label}, ${RUN_WORDS[state].spoken}`} className="flex h-8 items-center gap-2 px-4 text-label text-dim">
-                          <AgentFace face={null} className="h-4 w-4" />
-                          <RunMark state={state} />
-                          <span className="min-w-0 flex-1 truncate">{a.label}</span>
-                        </div>
-                      )
-                    const ok = a as WorkflowAgent & { agentId: string }
-                    const on = selected?.agentId === a.agentId
-                    return (
-                      <div
-                        key={a.index}
-                        data-agent={a.agentId}
-                        role="option"
-                        aria-selected={on}
-                        aria-label={`${a.label}, ${RUN_WORDS[state].spoken}`}
-                        aria-keyshortcuts="Meta+Enter"
-                        tabIndex={on ? 0 : -1}
-                        onClick={() => setPicked(ok.agentId)}
-                        onKeyDown={(e) => onKey(e, ok)}
-                        className={`group/row relative flex h-8 cursor-default items-center gap-2 px-4 text-label focus-visible:-outline-offset-2 ${on ? 'bg-row-selected font-medium text-content' : 'text-dim pointer-fine:hover:bg-[var(--glass-row-hover)] pointer-fine:hover:text-content'}`}
-                      >
-                        {on && <span aria-hidden="true" className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-content" />}
-                        <span aria-hidden="true" className="flex shrink-0">
-                          <AgentFace face={faceList[selectable.indexOf(ok)] ?? null} className="h-4 w-4" />
-                        </span>
-                        <RunMark state={state} />
-                        <span className="min-w-0 flex-1 truncate">{a.label}</span>
-                        <button
-                          type="button"
-                          tabIndex={-1}
-                          aria-hidden="true"
-                          title="Open in its own tab"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            openAgent(ok)
-                          }}
-                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-dim opacity-0 pointer-fine:group-hover/row:opacity-100 pointer-fine:hover:text-content"
-                        >
-                          <IconOpenPane className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            })}
-          </div>
-          {selected ? (
-            <WorkflowAgentTranscript key={selected.agentId} handleId={handleId} tabId={tab.id} agent={selected} bodyRef={bodyRef} onScrolled={setScrolled} onFind={setShownEntries} />
-          ) : (
-            <p className="border-t border-border px-8 pt-2 text-ui text-dim">Select an agent to read its transcript.</p>
-          )}
-        </>
       )}
     </div>
   )

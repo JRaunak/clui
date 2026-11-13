@@ -33,6 +33,7 @@ import {
   readAgentTranscript,
   readAgentTranscriptByToolUseId
 } from './sessions/transcript'
+import { readWorkflowRun } from './sessions/runs'
 import { searchSessions, warmSearchCache } from './sessions/search'
 import { exportSessionMarkdown, exportFilename } from './sessions/export'
 import { readSessionModels, setSessionModel, deleteSessionModel } from './sessions/models'
@@ -993,6 +994,10 @@ function registerIpc(): void {
   handle(IpcChannels.readAgentTranscriptByToolUseId, async (_e, toolUseId: unknown) => {
     if (!agentIdOk(toolUseId)) throw new Error('bad tool use id')
     return readAgentTranscriptByToolUseId(toolUseId)
+  })
+  handle(IpcChannels.readWorkflowRun, async (_e, sessionId: unknown, taskId: unknown) => {
+    if (typeof sessionId !== 'string' || typeof taskId !== 'string') throw new Error('bad workflow run')
+    return readWorkflowRun(sessionId, taskId)
   })
 
   // Title/cwd lookup for search results, from the same source the sidebar uses. Cached

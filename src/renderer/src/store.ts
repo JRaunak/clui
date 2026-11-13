@@ -16,12 +16,13 @@
  * each event into `sessions[handleId]`.
  */
 import { create } from 'zustand'
-import { isListPriced, type DomainEvent, type ElicitationResponse, type PermissionDenial, type PermissionSuggestion, type RateLimit, type SessionTask, type SlashCommandInfo, type TurnEnd, type TurnUsage } from '../../shared/events'
+import { isListPriced, type DomainEvent, type ElicitationResponse, type PermissionDenial, type PermissionSuggestion, type RateLimit, type SessionTask, type SlashCommandInfo, type TurnEnd, type TurnUsage, type WorkflowAgent } from '../../shared/events'
 import type { AgentMeta, BlockedPrompt, CompactionMarker, HistoryMessage, ProjectGroup } from '../../shared/sessions'
 import { agentInfo, agentRunState, findAgentTool, isAgentTool, isLive, trailOf, type RunStatusOf } from './lib/agents'
+import { workflowSummary } from './lib/workflow'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
-import type { CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment } from '../../shared/ipc'
+import type { CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, WireAttachment, WorkflowRun } from '../../shared/ipc'
 import { loadFailureOf, siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
 import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, setLiveEfforts, supportsUltracodeToggle, contextWindowForModel, contextSizeLabel, latestModelInFamily, deriveModelInfo, modelCheckReason, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
@@ -81,6 +82,8 @@ export interface PendingPermission {
   /** Set when a subagent asks: its Agent tool_use id and task description. */
   agentToolUseId?: string
   agentDescription?: string
+  /** The asking workflow agent; it has no Agent tool call to name. */
+  agentId?: string
 }
 
 /**
@@ -128,27 +131,30 @@ export interface NestedSubagent {
   subagentType?: string
 }
 
-/** A dynamic-workflow agent within a phase (from `workflow_progress`). */
-export interface WorkflowAgent {
-  index: number
-  label: string
-  phaseIndex: number
-  state: string
-  promptPreview?: string
-  agentId?: string
-}
+export type { WorkflowAgent }
 
-/** A live dynamic workflow (ultracode): its phase→agent tree + status. */
+/** A dynamic workflow (ultracode): its phase→agent tree + status, live or read back from its record. */
 export interface WorkflowState {
   taskId: string
+  /** The Workflow tool call that launched it, so its inline card opens this tab. */
+  toolUseId?: string
   name: string
   description: string
   phases: { index: number; title: string }[]
   agents: WorkflowAgent[]
   totalTokens?: number
-  /** null while running; set to the terminal status when it ends. */
+  startMs?: number
+  /** null while running; set to the terminal status when it ends, `interrupted` for a record left running. */
   endedStatus: string | null
+  durationMs?: number
+  summary?: string
+  result?: string
+  /** Read from disk for a tab, never news: the tray chip leaves it out. */
+  restored?: true
 }
+
+/** A workflow record read for a tab that has none live. Absent once it's in `workflows`. */
+export type WorkflowRead = 'loading' | 'gone' | 'error'
 
 /** An ordered piece of an assistant message (a text run or a tool call ref), so the
  *  transcript renders text and tools in true stream order rather than lumping all
@@ -426,9 +432,10 @@ export interface PerSessionState {
   nestedLaunches: Record<string, ToolCall[]>
   /** Agent sidecar outcomes by tool_use id, null when there's none. Read for agent tabs, never saved. */
   agentMetas: Record<string, AgentMeta | null>
-  /** Live dynamic workflows (ultracode), keyed by workflow task_id. Populated from
-   *  workflow-started/progress/ended events; drives the tray chip + phase tree. */
+  /** Dynamic workflows (ultracode), keyed by workflow task_id: live ones from workflow-started/progress/ended, and
+   *  records read back from disk for a tab. Drives the tray chip and the workflow tab. */
   workflows: Record<string, WorkflowState>
+  workflowReads: Record<string, WorkflowRead>
   /** Monitor tool calls by tool_use id. */
   monitors: Record<string, MonitorRecord>
   /** The CLI's live slash-command list (from the initialize response). The
@@ -1344,7 +1351,7 @@ function watchSurfaces(): void {
   })
 }
 
-/** An agent tab whose agent stops running while the user is elsewhere gets the unseen dot. A tab's first derived
+/** An agent or workflow tab whose run stops while the user is elsewhere gets the unseen dot. A tab's first derived
  *  state is its baseline, so a restored tab never lights on load. */
 export function watchAgentTabs(): () => void {
   const last = new Map<string, RunStatusOf['state']>()
@@ -1354,10 +1361,11 @@ export function watchAgentTabs(): () => void {
     for (const [handleId, slice] of Object.entries(s.sessions)) {
       for (const t of Object.values(slice.surfaces.tabs)) {
         const ref = t.kind === 'agent' ? agentRefOf(t.key) : null
-        if (!ref) continue
+        const wf = t.kind === 'workflow' ? slice.workflows[t.key] : undefined
+        const now = ref ? agentRunState(slice, ref).state : wf ? workflowSummary(wf, slice.pendingPermissions).state.state : null
+        if (!now) continue
         const k = `${handleId}\n${t.id}`
         const was = last.get(k)
-        const now = agentRunState(slice, ref).state
         last.set(k, now)
         const seen = handleId === s.activeHandleId && slice.paneOpen && slice.surfaces.active === t.id
         if (was && isLive(was) && !isLive(now) && !seen && !t.unseen) lit.push([handleId, t.id])
@@ -1396,6 +1404,8 @@ const agentReads = new Set<string>()
 export function ensureAgentData(handleId: string, tab: Pick<SurfaceTab, 'key' | 'trail'>): void {
   const ref = agentRefOf(tab.key)
   const slice = useSession.getState().sessions[handleId]
+  const up = tab.trail?.[tab.trail.length - 1]
+  if (ref?.by === 'agent' && up?.startsWith('workflow:')) return loadWorkflowRun(handleId, up.slice(9))
   if (ref?.by !== 'tool' || !slice) return
   const read = (id: string): void => {
     const k = `${handleId}\n${id}`
@@ -1410,6 +1420,53 @@ export function ensureAgentData(handleId: string, tab: Pick<SurfaceTab, 'key' | 
   if (parent?.by === 'tool' && !slice.subagentChildren[parent.id]?.length && !slice.nestedLaunches[parent.id]) read(parent.id)
   const main = findAgentTool(slice.messages, ref.id)
   if ((!main || main.background) && !(ref.id in slice.agentMetas)) read(ref.id)
+}
+
+const recordOf = (run: WorkflowRun): WorkflowState => ({
+  taskId: run.taskId,
+  name: run.name,
+  description: run.summary ?? '',
+  phases: run.phases,
+  agents: run.agents,
+  totalTokens: run.totalTokens,
+  startMs: run.startTime,
+  // The run's process died with the app that launched it.
+  endedStatus: run.status === 'running' ? 'interrupted' : run.status,
+  durationMs: run.durationMs,
+  result: run.result,
+  restored: true
+})
+
+const resultReads = new Set<string>()
+/**
+ * Reads a workflow's record from disk: for a tab with no live record, which it then seeds, or once for a live run
+ * that ended, for the result and duration the stream doesn't carry. A live record always wins over a seed.
+ */
+export function loadWorkflowRun(handleId: string, taskId: string): void {
+  const slice = useSession.getState().sessions[handleId]
+  if (!slice?.sessionId) return
+  const live = slice.workflows[taskId]
+  const k = `${handleId}\n${taskId}`
+  if (live) {
+    // ponytail: one read at the end; re-read on a delay if the CLI is seen writing the record after its notification
+    if (live.restored || live.endedStatus === null || live.result !== undefined || resultReads.has(k)) return
+    resultReads.add(k)
+  } else if (slice.workflowReads[taskId] === 'loading') return
+  const settle = (fn: (cur: PerSessionState) => Partial<PerSessionState>): void =>
+    useSession.setState((s) => {
+      const cur = s.sessions[handleId]
+      return cur ? patchSlice(s, handleId, { workflowReads: withoutKey(cur.workflowReads, taskId), ...fn(cur) }) : {}
+    })
+  if (!live) useSession.setState((s) => patchSlice(s, handleId, { workflowReads: { ...s.sessions[handleId].workflowReads, [taskId]: 'loading' } }))
+  window.clui.readWorkflowRun(slice.sessionId, taskId).then(
+    (run) =>
+      settle((cur): Partial<PerSessionState> => {
+        const wf = cur.workflows[taskId]
+        if (wf) return run && !wf.restored && wf.endedStatus !== null ? { workflows: { ...cur.workflows, [taskId]: { ...wf, result: wf.result ?? run.result, durationMs: run.durationMs ?? wf.durationMs } } } : {}
+        return run ? { workflows: { ...cur.workflows, [taskId]: recordOf(run) } } : { workflowReads: { ...cur.workflowReads, [taskId]: 'gone' } }
+      }),
+    () => settle((cur) => (cur.workflows[taskId] ? {} : { workflowReads: { ...cur.workflowReads, [taskId]: 'error' } }))
+  )
 }
 
 /** A session that can't read changes drops the change refs it holds, however `changeRead` got there. */
@@ -1843,6 +1900,7 @@ async function beginSession(
     nestedLaunches: {},
     agentMetas: {},
     workflows: {},
+    workflowReads: {},
     monitors: EMPTY_MONITORS,
     slashCommands: EMPTY_SLASH_COMMANDS,
     tasks: EMPTY_TASKS,
@@ -1872,7 +1930,10 @@ async function beginSession(
     referenceEditTarget: null,
     refAnnounce: ''
   })
-  for (const t of Object.values(get().sessions[handleId]?.surfaces.tabs ?? {})) if (t.kind === 'agent') ensureAgentData(handleId, t)
+  for (const t of Object.values(get().sessions[handleId]?.surfaces.tabs ?? {})) {
+    if (t.kind === 'agent') ensureAgentData(handleId, t)
+    else if (t.kind === 'workflow') loadWorkflowRun(handleId, t.key)
+  }
   // Main rebuilds a resume's changes from its transcripts. A push that lands before the slice
   // exists is dropped, so pull once the slice is in.
   if (opts.resumeSessionId) void get().refreshChanges(handleId)
@@ -2986,7 +3047,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       if (kind !== 'subagent') {
         const nextWf: Record<string, WorkflowState> = {}
         for (const [id, w] of Object.entries(active.workflows)) {
-          if (w.endedStatus === null || open.has(`workflow:${id}`)) nextWf[id] = w
+          if (w.endedStatus === null || open.has(`workflow:${id}`) || w.agents.some((a) => open.has(`agent:agent:${a.agentId}`))) nextWf[id] = w
         }
         patch.workflows = nextWf
       }
@@ -3314,7 +3375,8 @@ export const useSession = create<SessionStore>((set, get) => ({
               blockedPath: e.blockedPath,
               suppressAlwaysAllow: e.suppressAlwaysAllow,
               agentToolUseId: e.agentToolUseId,
-              agentDescription: e.agentDescription
+              agentDescription: e.agentDescription,
+              agentId: e.agentId
             }
           ]
           patch.lastActivityMs = Date.now()
@@ -3441,10 +3503,12 @@ export const useSession = create<SessionStore>((set, get) => ({
             ...slice.workflows,
             [e.taskId]: {
               taskId: e.taskId,
+              toolUseId: e.toolUseId,
               name: e.name,
               description: e.description,
               phases: [],
               agents: [],
+              startMs: Date.now(),
               endedStatus: null
             }
           }
@@ -3472,7 +3536,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (!wf) break
           patch.workflows = {
             ...slice.workflows,
-            [e.taskId]: { ...wf, endedStatus: e.status ?? 'completed' }
+            [e.taskId]: { ...wf, endedStatus: e.status ?? 'completed', summary: e.summary ?? wf.summary, durationMs: wf.startMs === undefined ? wf.durationMs : Date.now() - wf.startMs }
           }
           break
         }

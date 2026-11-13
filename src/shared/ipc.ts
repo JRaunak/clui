@@ -5,7 +5,7 @@
  * happens via `onSessionEvent`, which delivers `DomainEvent`s tagged with the
  * session id they belong to.
  */
-import type { DomainEvent, ElicitationResponse } from './events'
+import type { DomainEvent, ElicitationResponse, WorkflowAgent } from './events'
 import type { Converted, Glimpse, LoOutcome, LoState, OfficeOpen } from './office'
 import type {
   ProjectGroup,
@@ -277,6 +277,8 @@ export interface CluiApi {
    *  forwarded stream is left to replay, i.e. a resumed session's finished agents.
    *  `found: false` = no file anywhere; a read error rejects. `agentMeta` is the sidecar's outcome. */
   readAgentTranscriptByToolUseId: (toolUseId: string) => Promise<TranscriptResult & { found: boolean; agentMeta: AgentMeta | null }>
+  /** A workflow run's record from `<session>/workflows/`. Null when no record is on disk; a read error rejects. */
+  readWorkflowRun: (sessionId: string, taskId: string) => Promise<WorkflowRun | null>
   /** Load the per-session model+effort map (sessionId → {model,effort}). Passed as
    *  --model/--effort on resume so a mid-session switch survives (the CLI otherwise
    *  reverts to the settings.json default on --resume). */
@@ -577,6 +579,7 @@ export const IpcChannels = {
   exportSession: 'clui:exportSession',
   readAgentTranscript: 'clui:readAgentTranscript',
   readAgentTranscriptByToolUseId: 'clui:readAgentTranscriptByToolUseId',
+  readWorkflowRun: 'clui:readWorkflowRun',
   getSessionModels: 'clui:getSessionModels',
   setSessionModel: 'clui:setSessionModel',
   deleteSessionModel: 'clui:deleteSessionModel',
@@ -714,4 +717,19 @@ export interface MenuState {
   zoom: 'none' | 'image' | 'doc' | 'text'
   /** A PDF is shown, so Go to Line goes to a page; `slide` for a converted presentation. */
   pages: boolean | 'slide'
+}
+
+/** A workflow run as its record on disk keeps it. `result` is Markdown: a structured result comes as a JSON block. */
+export interface WorkflowRun {
+  taskId: string
+  runId: string
+  name: string
+  status: string
+  startTime?: number
+  durationMs?: number
+  totalTokens?: number
+  summary?: string
+  result?: string
+  phases: { index: number; title: string }[]
+  agents: WorkflowAgent[]
 }

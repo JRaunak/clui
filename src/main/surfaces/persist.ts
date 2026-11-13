@@ -29,9 +29,10 @@ const TEXT_MAX = 1024
 const ID_MAX = 200
 const URL_MAX = 8192
 const EXPANDED_MAX = 200
-const KINDS = ['tree', 'file', 'diff', 'image', 'doc', 'sheet', 'artifact', 'agent', 'agents', 'workflows'] as const
+const KINDS = ['tree', 'file', 'diff', 'image', 'doc', 'sheet', 'artifact', 'agent', 'workflow', 'agents', 'workflows'] as const
 type Kind = (typeof KINDS)[number]
 const AGENT_KEY = /^(tool|agent):[A-Za-z0-9_-]{1,128}$/
+const TASK_KEY = /^[A-Za-z0-9_-]{1,64}$/
 /** Ancestors an agent tab's trail keeps; deeper agents keep their last 8. */
 const TRAIL_MAX = 8
 const DELIMITERS = [',', ';', '\t', '|'] as const
@@ -127,6 +128,7 @@ function viewOf(v: unknown, kind: Kind): SurfaceViewState {
       }
     case 'artifact':
     case 'agent':
+    case 'workflow':
     case 'agents':
     case 'workflows':
       return fail()
@@ -136,6 +138,7 @@ function viewOf(v: unknown, kind: Kind): SurfaceViewState {
 const keyOf = (kind: Kind, v: unknown): string =>
   kind === 'tree' || kind === 'diff' || kind === 'agents' || kind === 'workflows' ? (v === '' ? '' : fail())
   : kind === 'agent' ? (AGENT_KEY.test(str(v, ID_MAX)) ? (v as string) : fail())
+  : kind === 'workflow' ? (TASK_KEY.test(str(v, ID_MAX)) ? (v as string) : fail())
   : abs(v)
 
 function tabOf(v: unknown): SavedTab {

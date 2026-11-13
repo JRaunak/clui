@@ -30,6 +30,7 @@ const faces = (m: Map<string, number>, keys: string[]): number[] => keys.map((k)
   equal(runStateOf('error', 'killed'), 'stopped', 'runStateOf: error in a stopped workflow is stopped')
   equal(runStateOf('error', 'completed'), 'failed', 'runStateOf: error in a completed workflow is failed')
   equal(runStateOf('done', 'killed'), 'done', 'runStateOf: done stays done')
+  equal(runStateOf('queued', 'stopped'), 'stopped', 'runStateOf: a never-started agent in a stopped workflow is stopped')
   equal(runStateOf('weird', null), 'queued', 'runStateOf: an unknown word is queued')
 }
 
@@ -41,6 +42,7 @@ const sliceOf = (over: Record<string, unknown> = {}): any => ({
   agentMetas: {},
   backgroundTasks: {},
   workflows: {},
+  workflowReads: {},
   pendingPermissions: [],
   busy: false,
   interrupting: false,

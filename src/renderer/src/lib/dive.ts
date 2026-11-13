@@ -4,9 +4,8 @@ import { activeSlice, useSession } from '../store'
 import type { BrowserPaneState } from '../../../shared/browser'
 
 function openButtonFor(toolId: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(
-    `[data-ui="row-open-transcript"][data-tool-id="${CSS.escape(toolId)}"]`
-  )
+  const id = CSS.escape(toolId)
+  return document.querySelector<HTMLElement>(`[data-ui="row-open-transcript"][data-tool-id="${id}"], [data-ui="row-open-workflow"][data-tool-id="${id}"]`)
 }
 
 const pane = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-ui="pane-secondary"]')
@@ -20,13 +19,14 @@ export function focusPaneTitle(): void {
     ?.focus({ preventScroll: true })
 }
 
-/** Open a subagent's transcript tab from its Agent row. Into a closed pane by pointer, the row morphs into the pane;
- *  otherwise the tab opens as any tab does. Focus lands on the tab. */
-export function diveInto(toolId: string, via: Via): void {
+/** Open a subagent's transcript tab from its Agent row, or a workflow's tab from its Workflow row. Into a closed pane
+ *  by pointer, the row morphs into the pane; otherwise the tab opens as any tab does. Focus lands on the tab. */
+export function diveInto(toolId: string, via: Via, workflow?: { taskId: string; title: string }): void {
   const st = useSession.getState()
   const handleId = st.activeHandleId
   if (!handleId) return
-  const open = (): void => useSession.getState().openAgentTab(handleId, { by: 'tool', id: toolId })
+  const open = (): void =>
+    workflow ? useSession.getState().openWorkflowTab(handleId, workflow.taskId, workflow.title) : useSession.getState().openAgentTab(handleId, { by: 'tool', id: toolId })
   if (activeSlice(st)?.paneOpen || via !== 'pointer') {
     open()
     return void requestAnimationFrame(focusPaneTitle)

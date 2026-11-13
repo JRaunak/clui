@@ -13,7 +13,7 @@ export const isViewKind = (k: PaneKind | null | undefined): k is (typeof VIEW_KI
 export const SINGLETON_KINDS = ['tree', 'diff', 'agents', 'workflows', 'side'] as const
 
 /** Kinds `session-surfaces.json` never holds. The renderer drops them before a save; persist.ts rejects them. */
-export const UNSAVED_KINDS: readonly PaneKind[] = ['side', 'workflow']
+export const UNSAVED_KINDS: readonly PaneKind[] = ['side']
 
 /** Tabs whose body is a transcript, searched by ⌘F when focus is in the pane. */
 export const TRANSCRIPT_KINDS = ['agent', 'workflow', 'side'] as const

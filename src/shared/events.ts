@@ -148,6 +148,56 @@ export interface RateLimit {
   extraUsage: boolean
 }
 
+/** One agent of a dynamic workflow, as `workflow_progress` and the run's record on disk both carry it. */
+export interface WorkflowAgent {
+  index: number
+  label: string
+  phaseIndex: number
+  /** The CLI's word: start, done, error. */
+  state: string
+  promptPreview?: string
+  agentId?: string
+  agentType?: string
+  /** Set once the agent starts; tokens, tool calls and duration only once it's done. */
+  startedAt?: number
+  tokens?: number
+  toolCalls?: number
+  durationMs?: number
+  model?: string
+}
+
+const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+const text = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
+
+/** Splits a `workflow_progress` list, live or from a run's record, into its phases and agents. */
+export function workflowProgressOf(items: readonly unknown[]): { phases: { index: number; title: string }[]; agents: WorkflowAgent[] } {
+  const phases: { index: number; title: string }[] = []
+  const agents: WorkflowAgent[] = []
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object') continue
+    const it = raw as Record<string, unknown>
+    const index = num(it.index)
+    if (index === undefined) continue
+    if (it.type === 'workflow_phase') phases.push({ index, title: text(it.title) ?? `Phase ${index}` })
+    else if (it.type === 'workflow_agent')
+      agents.push({
+        index,
+        label: text(it.label) ?? `agent ${index}`,
+        phaseIndex: num(it.phaseIndex) ?? 0,
+        state: text(it.state) ?? 'running',
+        promptPreview: text(it.promptPreview),
+        agentId: text(it.agentId),
+        agentType: text(it.agentType),
+        startedAt: num(it.startedAt),
+        tokens: num(it.tokens),
+        toolCalls: num(it.toolCalls),
+        durationMs: num(it.durationMs),
+        model: text(it.model)
+      })
+  }
+  return { phases, agents }
+}
+
 export type DomainEvent =
   /** Session started; carries the CLI-assigned session id + metadata. */
   | {
@@ -219,18 +269,11 @@ export type DomainEvent =
       type: 'workflow-progress'
       taskId: string
       phases: { index: number; title: string }[]
-      agents: {
-        index: number
-        label: string
-        phaseIndex: number
-        state: string
-        promptPreview?: string
-        agentId?: string
-      }[]
+      agents: WorkflowAgent[]
       totalTokens?: number
     }
   /** A workflow reached a terminal state (from its task_notification). */
-  | { type: 'workflow-ended'; taskId: string; status?: string }
+  | { type: 'workflow-ended'; taskId: string; status?: string; summary?: string }
   /**
    * Forwarded internal output of a RUNNING subagent, unlocked by
    * `initialize {forwardSubagentText:true}`. The CLI streams the subagent's own
@@ -343,6 +386,8 @@ export type DomainEvent =
       /** Set when a subagent asks: its Agent tool_use id (opens its transcript) and task description. */
       agentToolUseId?: string
       agentDescription?: string
+      /** A workflow agent's id when it asks: it has no Agent tool call to name. */
+      agentId?: string
     }
   /** A notice the CLI shows the user (`system/informational`), in practice a hook's
    *  systemMessage. `blocked` means a UserPromptSubmit hook stopped the prompt, so the

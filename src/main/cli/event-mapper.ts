@@ -5,7 +5,7 @@
  * defensive: an unknown envelope maps to nothing rather than throwing, so CLI version
  * drift skips the envelope instead of crashing the app.
  */
-import { normalizeSlashCommands, parseCliMessage, type DenialSource, type DomainEvent, type PermissionDenial, type PermissionSuggestion, type RateLimit, type TurnEnd, type TurnUsage } from '../../shared/events'
+import { normalizeSlashCommands, parseCliMessage, type DenialSource, type DomainEvent, type PermissionDenial, type PermissionSuggestion, type RateLimit, type TurnEnd, type TurnUsage, workflowProgressOf } from '../../shared/events'
 import { contextWindowForModel, deriveModelInfo } from '../../shared/settings'
 
 type ModelUsage = Record<
@@ -170,16 +170,7 @@ interface RawEnvelope {
   // Dynamic-workflow fields (task_type 'local_workflow' + system/task_progress).
   workflow_name?: string
   usage?: RawUsage & { total_tokens?: number }
-  workflow_progress?: Array<{
-    type?: string
-    index?: number
-    title?: string
-    label?: string
-    phaseIndex?: number
-    state?: string
-    promptPreview?: string
-    agentId?: string
-  }>
+  workflow_progress?: unknown[]
 }
 
 /** Token usage fields we read to compute context-window utilization. */
@@ -670,30 +661,7 @@ export class EventMapper {
         if (!env.task_id || !this.workflowIds.has(env.task_id) || !Array.isArray(env.workflow_progress)) {
           return []
         }
-        const phases: { index: number; title: string }[] = []
-        const agents: {
-          index: number
-          label: string
-          phaseIndex: number
-          state: string
-          promptPreview?: string
-          agentId?: string
-        }[] = []
-        for (const it of env.workflow_progress) {
-          if (!it || typeof it !== 'object') continue
-          if (it.type === 'workflow_phase' && typeof it.index === 'number') {
-            phases.push({ index: it.index, title: it.title ?? `Phase ${it.index}` })
-          } else if (it.type === 'workflow_agent' && typeof it.index === 'number') {
-            agents.push({
-              index: it.index,
-              label: it.label ?? `agent ${it.index}`,
-              phaseIndex: typeof it.phaseIndex === 'number' ? it.phaseIndex : 0,
-              state: it.state ?? 'running',
-              promptPreview: it.promptPreview,
-              agentId: it.agentId
-            })
-          }
-        }
+        const { phases, agents } = workflowProgressOf(env.workflow_progress)
         return [
           {
             type: 'workflow-progress',
@@ -740,7 +708,7 @@ export class EventMapper {
           if (env.status === 'killed' || env.status === 'completed' || env.status === 'failed' || env.status === 'stopped') {
             this.workflowIds.delete(env.task_id)
           }
-          return [{ type: 'workflow-ended', taskId: env.task_id, status: env.status }]
+          return [{ type: 'workflow-ended', taskId: env.task_id, status: env.status, summary: env.summary }]
         }
         // Release the task's meta on a terminal status (trayed or not) so the map
         // doesn't retain an entry per foreground subagent or shell.
@@ -1077,7 +1045,8 @@ export class EventMapper {
           blockedPath: req.blocked_path,
           suppressAlwaysAllow: req.suppress_always_allow_rule,
           agentToolUseId: agent?.toolUseId,
-          agentDescription: agent?.description
+          agentDescription: agent?.description,
+          agentId: agent ? undefined : req.agent_id
         }
       ]
     }
