@@ -1,6 +1,6 @@
 import type { WorkflowRun } from '../../../shared/ipc'
 import type { PendingPermission, PerSessionState, ToolCall, WorkflowState } from '../store'
-import { workflowAgentState, type RunState, type RunStatusOf } from './agents'
+import { isLive, workflowAgentState, type RunState, type RunStatusOf } from './agents'
 
 /** One reading of a workflow for the strip, the tray chip, the info row and the tree, so they never disagree. */
 export interface WorkflowSummary {
@@ -19,7 +19,7 @@ export function workflowSummary(w: WorkflowState, pending: readonly PendingPermi
   const e = w.endedStatus
   const state: RunStatusOf =
     e === null
-      ? { state: states.includes('needs') ? 'needs' : 'running', startMs: w.startMs }
+      ? { state: w.stopping ? 'stopping' : states.includes('needs') ? 'needs' : 'running', startMs: w.startMs }
       : e === 'interrupted'
         ? { state: 'interrupted', reason: 'quit' }
         : { state: e === 'completed' ? 'done' : e === 'killed' || e === 'stopped' ? 'stopped' : 'failed', durationMs: w.durationMs }
@@ -39,7 +39,7 @@ export function phaseState(states: readonly RunState[], workflow: RunState): Run
   if (all) return 'done'
   // A stop ends every agent it reached, started or not, so a phase it cut off before anything ran reads stopped too.
   if (workflow === 'stopped') return 'stopped'
-  if (states.some((s) => s !== 'queued')) return workflow === 'running' || workflow === 'needs' ? 'running' : 'done'
+  if (states.some((s) => s !== 'queued')) return isLive(workflow) ? 'running' : 'done'
   return 'queued'
 }
 

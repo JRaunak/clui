@@ -1,6 +1,7 @@
 // Agent tabs' pure logic: face assignment, the one status function, the disk-to-stream shape and the dense strip.
 import { assignFaces, FACE_COUNT } from '../src/renderer/src/lib/faces.ts'
-import { agentRunState, denseNext, entriesOf, faceOf, runStateOf, trailOf } from '../src/renderer/src/lib/agents.ts'
+import { agentRunState, denseNext, entriesOf, faceOf, runStateOf, stopTargetOf, trailOf } from '../src/renderer/src/lib/agents.ts'
+import { phaseState, workflowSummary } from '../src/renderer/src/lib/workflow.ts'
 import { equal, ok } from './support/harness.mjs'
 
 const json = (v: unknown): string => JSON.stringify(v)
@@ -119,4 +120,41 @@ const run = (s: any, meta?: any): string => {
   const { hasFind } = await import('../src/renderer/src/lib/presentation.ts')
   ok(hasFind(null, { kind: 'agent', key: 'tool:x' }) && hasFind(null, { kind: 'workflow', key: 'w' }), 'find: agent and workflow tabs take Find')
   ok(!hasFind(null, { kind: 'agents', key: '' }) && !hasFind(null, { kind: 'workflows', key: '' }), 'find: list tabs never do')
+}
+
+// Which Stop a tab offers: a bg agent's task, main's turn for a foreground one, the whole workflow for a workflow
+// agent, and none for anything that isn't running.
+{
+  const target = (s: any, tab: any): string => json(stopTargetOf(s, tab))
+  const agentTab = (id: string, trail?: string[]): any => ({ kind: 'agent', key: `tool:${id}`, ...(trail ? { trail } : {}) })
+  const bgRow = (id: string, toolUseId: string, status = 'running', extra: Record<string, unknown> = {}): any => ({ [id]: { taskId: id, description: '', taskType: 'local_agent', toolUseId, status, startMs: 1, ...extra } })
+  const fg = msg([tool({ startMs: 1 })])
+  equal(target(sliceOf({ backgroundTasks: bgRow('b1', 't1') }), agentTab('t1')), json({ kind: 'task', taskId: 'b1', stopping: false }), 'stop: a bg agent stops its own task')
+  equal(target(sliceOf({ backgroundTasks: bgRow('b1', 't1', 'running', { stopping: true }) }), agentTab('t1')), json({ kind: 'task', taskId: 'b1', stopping: true }), 'stop: a bg stop in flight is stopping')
+  equal(target(sliceOf({ backgroundTasks: bgRow('b1', 't1', 'killed', { stopping: true }) }), agentTab('t1')), 'null', 'stop: a killed bg agent offers none')
+  equal(run(sliceOf({ backgroundTasks: bgRow('b1', 't1', 'killed', { stopping: true }) })), 'stopped', 'status: a killed bg agent whose stopping flag lingers reads stopped')
+  equal(target(sliceOf({ busy: true, messages: [fg] }), agentTab('t1')), json({ kind: 'turn', stopping: false }), 'stop: a foreground agent while main is busy interrupts the turn')
+  equal(target(sliceOf({ interrupting: true, messages: [fg] }), agentTab('t1')), json({ kind: 'turn', stopping: true }), 'stop: an interrupt in flight is stopping')
+  equal(target(sliceOf({ messages: [fg] }), agentTab('t1')), 'null', 'stop: a foreground agent while main is idle offers none')
+  equal(target(sliceOf({ busy: true, messages: [msg([tool({ startMs: 1, result: 'ok' })])] }), agentTab('t1')), 'null', 'stop: an ended agent offers none')
+  const nested = sliceOf({ busy: true, backgroundTasks: bgRow('b1', 'p'), subagentChildren: { p: [{ childToolUseId: 'c', name: 'Agent' }] } })
+  equal(target(nested, agentTab('c', ['agent:tool:p'])), json({ kind: 'task', taskId: 'b1', ancestor: 'agent:tool:p', stopping: false }), 'stop: a child under a bg parent stops the parent')
+  equal(target(nested, agentTab('c')), json({ kind: 'task', taskId: 'b1', ancestor: 'agent:tool:p', stopping: false }), 'stop: a tab without a trail finds the bg parent from the live state')
+  const twoDeep = sliceOf({ busy: true, backgroundTasks: bgRow('b1', 'p'), subagentChildren: { p: [{ childToolUseId: 'm', name: 'Agent' }], m: [{ childToolUseId: 'c', name: 'Agent' }] } })
+  equal(target(twoDeep, agentTab('c', ['agent:tool:p', 'agent:tool:m'])), json({ kind: 'task', taskId: 'b1', ancestor: 'agent:tool:p', stopping: false }), 'stop: a fg middle agent is skipped for the bg one above it')
+  equal(target(sliceOf({ busy: true, backgroundTasks: bgRow('b1', 'p', 'killed'), subagentChildren: { p: [{ childToolUseId: 'c', name: 'Agent' }] } }), agentTab('c', ['agent:tool:p'])), 'null', 'stop: a child of an ended bg agent offers none, never the turn')
+  equal(target(sliceOf({ busy: true, subagentChildren: { p: [{ childToolUseId: 'c', name: 'Agent' }] } }), agentTab('c', ['agent:tool:p'])), json({ kind: 'turn', stopping: false }), 'stop: a child under fg agents only interrupts the turn')
+  const wfOf = (endedStatus: string | null, state = 'start', extra: Record<string, unknown> = {}): any => ({ w: { taskId: 'w', name: 'wf', description: '', phases: [], agents: [{ index: 0, label: 'a', phaseIndex: 0, state, agentId: 'a1' }], endedStatus, ...extra } })
+  const A = { kind: 'agent', key: 'agent:a1', trail: ['workflow:w'] }
+  const W = { kind: 'workflow', key: 'w' }
+  equal(target(sliceOf({ workflows: wfOf(null) }), W), json({ kind: 'workflow', taskId: 'w', stopping: false }), 'stop: a running workflow stops itself')
+  equal(target(sliceOf({ workflows: wfOf(null) }), A), json({ kind: 'workflow', taskId: 'w', stopping: false }), "stop: a workflow agent stops its workflow, never its own agentId")
+  equal(target(sliceOf({ workflows: wfOf(null, 'done') }), A), json({ kind: 'workflow', taskId: 'w', stopping: false }), 'stop: a done agent in a running workflow can still stop the run')
+  equal(target(sliceOf({ workflows: wfOf('completed') }), A) + target(sliceOf({ workflows: wfOf('killed') }), W), 'nullnull', 'stop: an ended workflow offers none on either tab')
+  equal(target(sliceOf(), A), 'null', 'stop: a workflow agent with no live workflow offers none')
+  const stopping = wfOf(null, 'start', { stopping: true })
+  equal(target(sliceOf({ workflows: stopping }), W), json({ kind: 'workflow', taskId: 'w', stopping: true }), 'stop: a workflow stop in flight is stopping')
+  equal(workflowSummary(stopping.w, []).state.state, 'stopping', 'workflow: a stop in flight reads stopping')
+  equal(phaseState(['done', 'queued'], 'stopping'), 'running', 'workflow: a stopping run leaves an unfinished phase running')
+  equal(target(sliceOf({ busy: true }), { kind: 'agents', key: '' }), 'null', 'stop: a list tab offers none')
 }

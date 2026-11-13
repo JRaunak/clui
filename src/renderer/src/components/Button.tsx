@@ -4,7 +4,7 @@
  * missing focus rings. Variants follow the design-system spec: primary / secondary /
  * outline / ghost / destructive.
  */
-import type { ButtonHTMLAttributes } from 'react'
+import { forwardRef, type ButtonHTMLAttributes } from 'react'
 
 type Variant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'control'
 type Size = 'sm' | 'md' | 'lg' | 'icon'
@@ -26,23 +26,20 @@ const SIZES: Record<Size, string> = {
   icon: 'h-9 w-9 justify-center'
 }
 
-export function Button({
-  variant = 'secondary',
-  size = 'md',
-  busy = false,
-  className = '',
-  children,
-  ...rest
-}: {
-  variant?: Variant
-  size?: Size
-  /** In-flight, not unavailable: keep the variant's own fill and dim it (aria-busy), staying
-   *  focusable. Distinct from `disabled`, which is reserved for a genuinely dead control and
-   *  reads neutral-gray. Pointer-events off is a nicety; the async guard already no-ops re-entry. */
-  busy?: boolean
-} & ButtonHTMLAttributes<HTMLButtonElement>): JSX.Element {
+export const Button = forwardRef<
+  HTMLButtonElement,
+  {
+    variant?: Variant
+    size?: Size
+    /** In-flight, not unavailable: keep the variant's own fill and dim it (aria-busy), staying
+     *  focusable. Distinct from `disabled`, which is reserved for a genuinely dead control and
+     *  reads neutral-gray. Pointer-events off is a nicety; the async guard already no-ops re-entry. */
+    busy?: boolean
+  } & ButtonHTMLAttributes<HTMLButtonElement>
+>(function Button({ variant = 'secondary', size = 'md', busy = false, className = '', children, ...rest }, ref) {
   return (
     <button
+      ref={ref}
       aria-busy={busy || undefined}
       /* Disabled: don't just fade the fill. A faded terracotta primary still reads as a live
          button, and in dark it's near-indistinguishable from enabled. Override to a neutral
@@ -53,4 +50,4 @@ export function Button({
       {children}
     </button>
   )
-}
+})

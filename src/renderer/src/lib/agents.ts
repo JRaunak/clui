@@ -1,7 +1,7 @@
 import type { AgentRun } from '../../../shared/ipc'
 import type { AgentMeta, HistoryMessage } from '../../../shared/sessions'
 import { agentRefOf, type AgentRef, type SurfaceTab } from '../../../shared/surfaces'
-import type { PendingPermission, PerSessionState, SubagentMessage, ToolCall, WorkflowAgent, WorkflowState } from '../store'
+import type { BackgroundTask, PendingPermission, PerSessionState, SubagentMessage, ToolCall, WorkflowAgent, WorkflowState } from '../store'
 import { assignFaces, type Launch } from './faces'
 
 export const isAgentTool = (name: string): boolean => name === 'Task' || name === 'Agent'
@@ -144,7 +144,8 @@ const span = (start: number | undefined, end: number | undefined): number | unde
 function toolRunState(slice: PerSessionState, id: string, meta: AgentMeta | null | undefined): RunStatusOf {
   const bg = Object.values(slice.backgroundTasks).find((t) => t.taskType === 'local_agent' && t.toolUseId === id)
   if (bg) {
-    const state = bg.stopping ? 'stopping' : bg.status === 'running' ? 'background' : bg.status === 'killed' ? 'stopped' : bg.status === 'failed' ? 'failed' : 'done'
+    // A stopped agent's row lingers with its stopping flag still set, so only a running one reads stopping.
+    const state = bg.status === 'running' ? (bg.stopping ? 'stopping' : 'background') : bg.status === 'killed' ? 'stopped' : bg.status === 'failed' ? 'failed' : 'done'
     return { state, startMs: bg.startMs, durationMs: span(bg.startMs, bg.endMs) }
   }
   const tool = launcherOf(slice, id)
@@ -174,6 +175,32 @@ export function agentRunState(slice: PerSessionState, ref: AgentRef, meta?: Agen
   const s = toolRunState(slice, ref.id, meta === undefined ? slice.agentMetas[ref.id] : meta)
   const asks = (s.state === 'running' || s.state === 'background') && slice.pendingPermissions.some((p) => p.agentToolUseId === ref.id)
   return asks ? { ...s, state: 'needs' } : s
+}
+
+/** What a tab's Stop ends: a background agent's task, main's turn while it waits on a foreground agent, or a whole
+ *  workflow. Null when nothing it shows is running. `stopping` while that stop is in flight. */
+export type StopTarget = ({ kind: 'task'; taskId: string; ancestor?: string } | { kind: 'turn' } | { kind: 'workflow'; taskId: string }) & { stopping: boolean }
+
+export function stopTargetOf(slice: PerSessionState, tab: Pick<SurfaceTab, 'kind' | 'key' | 'trail'>): StopTarget | null {
+  const workflow = (w: WorkflowState | undefined): StopTarget | null => (w?.endedStatus === null ? { kind: 'workflow', taskId: w.taskId, stopping: !!w.stopping } : null)
+  if (tab.kind === 'workflow') return workflow(slice.workflows[tab.key])
+  const ref = tab.kind === 'agent' ? agentRefOf(tab.key) : null
+  if (!ref) return null
+  // The CLI acks a stop_task on one workflow agent and stops nothing, so its tab stops the run it belongs to.
+  if (ref.by === 'agent') return workflow(workflowOfAgent(slice.workflows, ref.id)?.workflow)
+  if (!isLive(agentRunState(slice, ref).state)) return null
+  const bgOf = (id: string): BackgroundTask | undefined => Object.values(slice.backgroundTasks).find((t) => t.taskType === 'local_agent' && t.toolUseId === id)
+  const task = (t: BackgroundTask, ancestor?: string): StopTarget => ({ kind: 'task', taskId: t.taskId, ...(ancestor ? { ancestor } : {}), stopping: !!t.stopping })
+  const own = bgOf(ref.id)
+  if (own?.status === 'running') return task(own)
+  // Interrupting main spares background agents, so a child of one stops only with it.
+  const trail = tab.trail ?? trailOf(slice, ref.id)
+  for (let i = trail.length - 1; i >= 0; i--) {
+    const up = agentRefOf(trail[i].replace(/^agent:/, ''))
+    const bg = up?.by === 'tool' ? bgOf(up.id) : undefined
+    if (bg) return bg.status === 'running' ? task(bg, trail[i]) : null
+  }
+  return slice.busy || slice.interrupting ? { kind: 'turn', stopping: slice.interrupting } : null
 }
 
 /** An agent's tool calls: its result's total once there is one, else the count at its latest progress report. */

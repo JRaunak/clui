@@ -5,8 +5,10 @@ import { ensureAgentData, noteAgentRead, useActive, useSession, EMPTY_NESTED_SUB
 import { agentKey, agentRefOf, type AgentRef, type SurfaceTab } from '../../../shared/surfaces'
 import { deriveModelInfo, effortLabel } from '../../../shared/settings'
 import type { AgentMeta, TranscriptResult } from '../../../shared/sessions'
-import { agentDescription, agentInfo, agentRunState, entriesOf, faceOf, isAgentTool, isLive, launcherOf, RUN_WORDS, subagentType, toolUsesOf, type RunState, type RunStatusOf } from '../lib/agents'
+import { agentDescription, agentInfo, agentRunState, entriesOf, faceOf, isAgentTool, isLive, launcherOf, RUN_WORDS, stopTargetOf, subagentType, toolUsesOf, type RunState, type RunStatusOf, type StopTarget } from '../lib/agents'
 import { useDelayedFlag } from '../lib/useDelayedFlag'
+import { useSay } from '../lib/useSay'
+import { useStopFocus } from '../lib/useStopFocus'
 import { useTranscriptFind } from '../lib/useTranscriptFind'
 import { Markdown } from './Markdown'
 import { ToolGroup } from './MessageView'
@@ -17,7 +19,7 @@ import { FindField } from './FindField'
 import { InfoRow } from './InfoRow'
 import { RunMark, RunStatus } from './RunMark'
 import { AgentFace } from './faces'
-import { IconChevron, IconWorkflow } from './Icon'
+import { IconChevron, IconStop, IconWorkflow } from './Icon'
 import { focusPaneTitle } from '../lib/dive'
 
 export const Sep = (): JSX.Element => (
@@ -91,6 +93,8 @@ function WorkingTail({ bg, starting }: { bg: boolean; starting: boolean }): JSX.
 }
 
 const SPOKEN: Partial<Record<RunState, string>> = { done: 'Subagent finished', failed: 'Subagent failed', stopped: 'Subagent stopped', needs: 'Subagent needs you' }
+// Only a workflow stop ends a workflow agent, and the tab's Stop control speaks for that.
+const WORKFLOW_AGENT_SPOKEN: Partial<Record<RunState, string>> = { ...SPOKEN, stopped: undefined }
 
 /** Speaks when the viewed run stops running or starts waiting on the user, never on mount. */
 export function RunAnnounce({ state, spoken = SPOKEN }: { state: RunState; spoken?: Partial<Record<RunState, string>> }): JSX.Element {
@@ -106,6 +110,70 @@ export function RunAnnounce({ state, spoken = SPOKEN }: { state: RunState; spoke
     <span className="sr-only" role="status" aria-live="polite">
       {text}
     </span>
+  )
+}
+
+function stopCopy(target: StopTarget, tab: SurfaceTab, ancestor: string): { label: string; description: string } {
+  if (target.kind === 'turn') return { label: 'Stop and interrupt Claude', description: "Claude is waiting on this agent, so stopping it ends Claude's current turn." }
+  if (target.kind === 'workflow')
+    return tab.kind === 'workflow'
+      ? { label: 'Stop workflow', description: 'Stops every agent in this workflow.' }
+      : { label: 'Stop workflow', description: "Stops the whole workflow, this agent and every other one in it. A single workflow agent can't be stopped on its own." }
+  if (target.ancestor) return { label: 'Stop parent agent', description: `This agent runs inside ${ancestor}. Stopping stops ${ancestor} and everything it started.` }
+  return { label: 'Stop', description: "Stops this background agent. Claude's turn keeps going." }
+}
+
+/** The info row's Stop. It names what it ends before the press, and once the run ends hands focus to the active tab
+ *  so it never falls to the body. Stays mounted so its announcements outlive the button. */
+export function StopControl({ handleId, tab }: { handleId: string; tab: SurfaceTab }): JSX.Element {
+  const sig = useActive((s) => JSON.stringify(s ? stopTargetOf(s, tab) : null))
+  const target = useMemo(() => JSON.parse(sig) as StopTarget | null, [sig])
+  const ancestorId = target?.kind === 'task' ? target.ancestor : undefined
+  const ancestor = useActive((s) => (s && ancestorId ? (s.surfaces.tabs[ancestorId]?.title ?? agentInfo(s, ancestorId.replace(/^agent:tool:/, '')).label) : ''))
+  const interrupting = useActive((s) => !!s?.interrupting)
+  const stopRef = useStopFocus<HTMLButtonElement>(!!target?.stopping)
+  const [said, say] = useSay()
+  const pressed = useRef<StopTarget['kind'] | null>(null)
+  useEffect(() => {
+    const kind = pressed.current
+    if (!kind) return
+    // Still there and no longer stopping: the stop failed and the button is back.
+    if (target) {
+      if (!target.stopping) pressed.current = null
+      return
+    }
+    if (kind === 'turn' && interrupting) return
+    pressed.current = null
+    if (document.activeElement === document.body) document.querySelector<HTMLElement>('[data-ui="surface-tabs"] [aria-selected="true"]')?.focus()
+    if (kind === 'turn') say("Claude's turn ended")
+    else if (kind === 'workflow' && tab.kind === 'agent') say('Workflow stopped')
+  }, [target, interrupting, tab.kind, say])
+  const copy = target && stopCopy(target, tab, ancestor)
+  // A stop aimed at this tab's own run already reads Stopping in the row; one that reaches past it says what's stopping.
+  const reach = target?.kind === 'task' && target.ancestor ? 'Stopping parent agent…' : target?.kind === 'workflow' && tab.kind === 'agent' ? 'Stopping workflow…' : null
+  const press = (t: StopTarget): void => {
+    pressed.current = t.kind
+    say(t.kind === 'workflow' ? 'Stopping workflow' : 'Stopping subagent')
+    void useSession.getState().stopRun(handleId, t)
+  }
+  return (
+    <>
+      <span className="sr-only" role="status" aria-live="polite">
+        {said}
+      </span>
+      {target?.stopping ? (
+        reach && (
+          <span data-ui="agent-stop" className="ml-auto text-meta text-dim">
+            {reach}
+          </span>
+        )
+      ) : target && copy ? (
+        <Button ref={stopRef} data-ui="agent-stop" variant="control" size="sm" className="-my-1.5 ml-auto" aria-label={copy.label} aria-description={copy.description} title={copy.description} onClick={() => press(target)}>
+          <IconStop className="h-3.5 w-3.5" />
+          {copy.label}
+        </Button>
+      ) : null}
+    </>
   )
 }
 
@@ -371,7 +439,7 @@ export function AgentTab({ handleId, tab }: { handleId: string; tab: SurfaceTab 
   }
   return (
     <div data-ui="agent-tab" className="flex min-h-0 flex-1 flex-col bg-bg">
-      <RunAnnounce state={status.state} />
+      <RunAnnounce state={status.state} spoken={ref?.by === 'agent' ? WORKFLOW_AGENT_SPOKEN : SPOKEN} />
       <InfoRow
         ui="agent-info"
         scrolled={scrolled}
@@ -408,6 +476,7 @@ export function AgentTab({ handleId, tab }: { handleId: string; tab: SurfaceTab 
                 </span>
               </>
             )}
+            <StopControl handleId={handleId} tab={tab} />
           </>
         }
       />

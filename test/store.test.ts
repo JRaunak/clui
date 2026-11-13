@@ -1374,3 +1374,43 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   equal(activityLine('done', 'Reading', true), '', 'line: an ended agent shows none')
   mock.timers.reset()
 }
+
+// A tab's Stop goes down the matching path and only that one: stop_task for a bg agent or a workflow's task id,
+// interrupt for main's turn. A foreground agent it ends reads stopped, and a workflow stop that fails says so.
+{
+  const fgTool = { id: 'tf', name: 'Agent', input: { description: 'Probe' }, startMs: 1 }
+  reset({ busy: true, messages: [{ id: 'a', role: 'assistant', text: '', thinking: '', tools: [fgTool], blocks: [] }] })
+  await st().stopRun('h1', { kind: 'turn', stopping: false })
+  ok(calls.map((c) => c.name).join() === 'interrupt' && cur().interrupting, 'stopRun: turn interrupts main and nothing else')
+  equal(agentRunState(cur(), { by: 'tool', id: 'tf' }).state, 'stopping', 'stopRun: the fg agent reads stopping while the interrupt is out')
+  st().applyEvent('h1', res({ isError: true, endReason: { kind: 'stopped' } }))
+  ok(cur().messages[0].tools[0].stopped && agentRunState(cur(), { by: 'tool', id: 'tf' }).state === 'stopped', 'stopRun: the interrupted turn leaves the fg agent stopped, never failed')
+
+  const bgTask = { taskId: 'b1', description: 'Probe', taskType: 'local_agent', toolUseId: 'tb', status: 'running', startMs: 1 }
+  reset({ busy: false, backgroundTasks: { b1: bgTask } })
+  await st().stopRun('h1', { kind: 'task', taskId: 'b1', stopping: false })
+  ok(calls.length === 1 && calls[0].name === 'stopTask' && calls[0].args.join() === 'h1,b1', 'stopRun: task calls stopTask with the bg task id')
+
+  const wf = { taskId: 'w1', name: 'review', description: '', phases: [], agents: [{ index: 0, label: 'a', phaseIndex: 0, state: 'start', agentId: 'a1' }], endedStatus: null }
+  for (const status of ['stopped', 'killed']) {
+    reset({ busy: false, workflows: { w1: wf } })
+    const out = st().stopRun('h1', { kind: 'workflow', taskId: 'w1', stopping: false })
+    ok(cur().workflows.w1.stopping, `stopRun: workflow marks it stopping (${status})`)
+    await out
+    ok(calls.length === 1 && calls[0].name === 'stopTask' && calls[0].args.join() === 'h1,w1', `stopRun: workflow calls stopTask with the workflow task id, never an agent id (${status})`)
+    st().applyEvent('h1', { type: 'workflow-ended', taskId: 'w1', status } as any)
+    ok(!cur().workflows.w1.stopping && agentRunState(cur(), { by: 'agent', id: 'a1' }).state === 'stopped', `stopRun: workflow-ended ${status} ends it with its agent stopped`)
+  }
+  replies.stopTask = () => false
+  reset({ busy: false, workflows: { w1: wf } })
+  await st().stopRun('h1', { kind: 'workflow', taskId: 'w1', stopping: false })
+  ok(!cur().workflows.w1.stopping && st().notice?.message === 'Couldn\'t stop "review". It\'s still running.', 'stopRun: a failed workflow stop clears stopping and says so')
+  replies.stopTask = () => (st().applyEvent('h1', { type: 'workflow-ended', taskId: 'w1', status: 'completed' } as any), false)
+  reset({ busy: false, workflows: { w1: wf } })
+  await st().stopRun('h1', { kind: 'workflow', taskId: 'w1', stopping: false })
+  ok(st().notice === null, 'stopRun: a workflow that ended meanwhile raises nothing')
+  reset({ busy: false, workflows: { w1: { ...wf, endedStatus: 'completed' } } })
+  await st().stopRun('h1', { kind: 'workflow', taskId: 'w1', stopping: false })
+  ok(!calls.length, 'stopRun: an ended workflow sends nothing')
+  delete replies.stopTask
+}

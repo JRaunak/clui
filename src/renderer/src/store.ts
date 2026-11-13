@@ -18,7 +18,7 @@
 import { create } from 'zustand'
 import { isListPriced, type DomainEvent, type ElicitationResponse, type PermissionDenial, type PermissionSuggestion, type RateLimit, type SessionTask, type SlashCommandInfo, type TurnEnd, type TurnUsage, type WorkflowAgent } from '../../shared/events'
 import type { AgentMeta, BlockedPrompt, CompactionMarker, HistoryMessage, ProjectGroup } from '../../shared/sessions'
-import { agentInfo, agentRunState, findAgentTool, isAgentTool, isLive, trailOf, type RunStatusOf } from './lib/agents'
+import { agentInfo, agentRunState, findAgentTool, isAgentTool, isLive, trailOf, type RunStatusOf, type StopTarget } from './lib/agents'
 import { recordOf, workflowSummary } from './lib/workflow'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
@@ -150,6 +150,8 @@ export interface WorkflowState {
   result?: string
   /** Read from disk for a tab, never news: the tray chip leaves it out. */
   restored?: true
+  /** A user's stop is in flight. */
+  stopping?: boolean
 }
 
 /** A workflow record read for a tab that has none live. Absent once it's in `workflows`. */
@@ -779,8 +781,9 @@ interface SessionStore {
   /** Clear a session's draft (text + attachments) once a successful send has consumed it. */
   clearDraft: (handleId: string) => void
   interrupt: () => Promise<void>
-  /** Stop a running background task (tool-mediated TaskStop; costs a turn). */
   stopBackgroundTask: (handleId: string, taskId: string) => Promise<void>
+  /** An agent or workflow tab's Stop. */
+  stopRun: (handleId: string, target: StopTarget) => Promise<void>
   /** Move a running foreground tool to the background (keeps running in the tray). */
   backgroundTask: (toolUseId: string) => Promise<boolean>
   /** Clear the LINGERING completed subagents + ended workflows from the active session's
@@ -2430,6 +2433,11 @@ function placeNote(messages: ChatMessage[], note: HookNote, standalone: boolean)
 const MOD_TOAST_CAP = 3
 let modToastSeq = 0
 
+const stillRunning = (desc: string): { message: string; tone: 'error' } => ({
+  message: `Couldn't stop "${desc.length > 60 ? `${desc.slice(0, 59)}…` : desc}". It's still running.`,
+  tone: 'error'
+})
+
 /** Narrow a loose CLI task status to the tray's union. A stop reports `killed` in its update and `stopped` in its
  *  notification, so both read as killed. One place so the bg-task-updated and -notification arms can't diverge. */
 export function narrowTaskStatus(status: string | undefined): Exclude<BackgroundTask['status'], 'running'> {
@@ -3026,13 +3034,31 @@ export const useSession = create<SessionStore>((set, get) => ({
     // The task may have ended on its own while the request was out; nothing failed then.
     const now = get().sessions[handleId]?.backgroundTasks[taskId]
     if (now?.status !== 'running') return
-    const desc = now.description.length > 60 ? `${now.description.slice(0, 59)}…` : now.description
     set((s) => ({
       ...patchSlice(s, handleId, {
         backgroundTasks: { ...(s.sessions[handleId]?.backgroundTasks ?? {}), [taskId]: { ...now, stopping: false } }
       }),
-      notice: { message: `Couldn't stop "${desc}". It's still running.`, tone: 'error' }
+      notice: stillRunning(now.description)
     }))
+  },
+
+  stopRun: async (handleId, target) => {
+    if (target.kind === 'task') return get().stopBackgroundTask(handleId, target.taskId)
+    if (target.kind === 'turn') return get().interrupt()
+    const { taskId } = target
+    const mark = (stopping: boolean): void =>
+      set((s) => {
+        const w = s.sessions[handleId]?.workflows[taskId]
+        return w ? patchSlice(s, handleId, { workflows: { ...s.sessions[handleId].workflows, [taskId]: { ...w, stopping } } }) : {}
+      })
+    if (get().sessions[handleId]?.workflows[taskId]?.endedStatus !== null) return
+    mark(true)
+    const ok = await window.clui.stopTask(handleId, taskId)
+    if (ok) return
+    const now = get().sessions[handleId]?.workflows[taskId]
+    if (now?.endedStatus !== null) return
+    mark(false)
+    set({ notice: stillRunning(now.name) })
   },
 
   backgroundTask: async (toolUseId) => {
@@ -3584,7 +3610,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (!wf) break
           patch.workflows = {
             ...slice.workflows,
-            [e.taskId]: { ...wf, endedStatus: e.status ?? 'completed', summary: e.summary ?? wf.summary, durationMs: wf.startMs === undefined ? wf.durationMs : Date.now() - wf.startMs }
+            [e.taskId]: { ...wf, endedStatus: e.status ?? 'completed', stopping: false, summary: e.summary ?? wf.summary, durationMs: wf.startMs === undefined ? wf.durationMs : Date.now() - wf.startMs }
           }
           break
         }

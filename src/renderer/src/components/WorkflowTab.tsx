@@ -8,7 +8,7 @@ import { formatElapsed } from '../lib/turnEnd'
 import { focusPaneTitle } from '../lib/dive'
 import { useDelayedFlag } from '../lib/useDelayedFlag'
 import { findRanges, useFind } from './surfaces/fileDoc'
-import { RunAnnounce, Sep } from './AgentTab'
+import { RunAnnounce, Sep, StopControl } from './AgentTab'
 import { usePane } from './Stage'
 import { Button } from './Button'
 import { FindField } from './FindField'
@@ -289,6 +289,7 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
                   <span>{sum.stopped} stopped</span>
                 </>
               )}
+              <StopControl handleId={handleId} tab={tab} />
             </>
           )
         }
