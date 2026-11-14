@@ -2,12 +2,13 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { EMPTY_PENDING, loadWorkflowRun, useActive, useSession, type PendingPermission, type WorkflowAgent, type WorkflowState } from '../store'
 import type { SurfaceTab } from '../../../shared/surfaces'
-import { isLive, RUN_WORDS, workflowAgentStatus, workflowFaces, type RunState, type RunStatusOf } from '../lib/agents'
+import { isLive, REASON_COPY, RUN_WORDS, workflowAgentStatus, workflowFaces, type RunState, type RunStatusOf } from '../lib/agents'
 import { phaseState, workflowSummary } from '../lib/workflow'
 import { formatElapsed } from '../lib/turnEnd'
 import { focusPaneTitle } from '../lib/dive'
 import { useDelayedFlag } from '../lib/useDelayedFlag'
 import { findRanges, useFind } from './surfaces/fileDoc'
+import { revealAcross } from '../lib/useTranscriptFind'
 import { RunAnnounce, Sep, StopControl } from './AgentTab'
 import { usePane } from './Stage'
 import { Button } from './Button'
@@ -75,7 +76,7 @@ export function Figures({ time }: { time: ReactNode }): JSX.Element {
 function agentName({ agent, status }: AgentRow): string {
   const done = status.state === 'done'
   const time = done && agent.durationMs !== undefined ? `, ${formatElapsed(agent.durationMs)}` : ''
-  const unstarted = !agent.agentId ? ', not started' : ''
+  const unstarted = !agent.agentId && status.state !== 'unrun' && status.state !== 'queued' ? ', not started' : ''
   return `${agent.label}, ${agent.agentType ? `${agent.agentType} agent` : 'agent'}, ${RUN_WORDS[status.state].spoken}${time}${unstarted}`
 }
 
@@ -211,11 +212,12 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
     else if (hitId?.startsWith('a')) setCollapsed((c) => (hitPhase !== undefined && c.has(hitPhase) ? new Set([...c].filter((x) => x !== hitPhase)) : c))
   }, [hitId, hitPhase])
   const searched = useRef('')
+  const shifted = useRef<HTMLElement | null>(null)
   useLayoutEffect(() => {
     const root = bodyRef.current
     if (searched.current !== q) reveal.current = true
     searched.current = q
-    if (!q || !root) return
+    if (!q || !root) return revealAcross(shifted, undefined, root)
     const ranges: Range[] = []
     let active: Range[] = []
     for (const m of matches) {
@@ -226,7 +228,10 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
       if (m === hit) {
         active = found
         // A hit in a collapsed phase or clamped result is revealed once its row is in the DOM.
-        if (reveal.current) el.scrollIntoView({ block: 'nearest' })
+        if (reveal.current) {
+          el.scrollIntoView({ block: 'nearest' })
+          revealAcross(shifted, found[0], root)
+        }
         reveal.current = false
       }
     }
@@ -402,6 +407,7 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
                       aria-level={2}
                       aria-disabled={a.agentId ? undefined : true}
                       aria-label={agentName(r)}
+                      title={status.state === 'unrun' ? 'Its workflow ended before this agent started' : status.reason ? REASON_COPY[status.reason] : undefined}
                       tabIndex={stop === r.id ? 0 : -1}
                       onFocus={() => setFocusId(r.id)}
                       onKeyDown={(e) => onKey(e, r, i)}
@@ -412,7 +418,7 @@ export function WorkflowTab({ handleId, tab }: { handleId: string; tab: SurfaceT
                         <AgentFace face={face} className="h-4 w-4" />
                         <RunMark state={status.state} />
                       </span>
-                      <span data-find={r.id} className={`min-w-0 flex-1 truncate text-label ${status.state === 'queued' ? 'text-dim' : 'text-content'}`}>
+                      <span data-find={r.id} className={`min-w-0 flex-1 truncate text-label ${status.state === 'queued' || status.state === 'unrun' ? 'text-dim' : 'text-content'}`}>
                         {a.label}
                       </span>
                       {a.agentType && <span className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint @max-[420px]:hidden">{a.agentType}</span>}

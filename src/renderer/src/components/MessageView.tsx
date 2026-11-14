@@ -535,10 +535,6 @@ function TurnFooter({ message }: { message: ChatMessage }): JSX.Element | null {
   )
 }
 
-function fmtCost(n: number | undefined): string {
-  return typeof n === 'number' ? formatCost(n) : '-'
-}
-
 const UNRECORDED = 'Not recorded for this turn'
 
 function UsageRow({ label, value, strong, title }: { label: string; value: string; strong?: boolean; title?: string }): JSX.Element {
@@ -562,6 +558,8 @@ function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.
   const panelId = `turn-usage-${id}`
   const estimate = isListPriced(usage)
   const byCost = usage.models.length > 1 ? [...usage.models].sort((a, b) => (b.costUSD ?? -1) - (a.costUSD ?? -1)) : []
+  const group = [usage.costUSD, ...usage.models.map((m) => m.costUSD)].filter((v): v is number => v !== undefined)
+  const fmtCost = (v: number | undefined): string => (v === undefined ? '-' : formatCost(v, group))
   return (
     <div className="flex shrink-0 flex-col items-end">
       <button

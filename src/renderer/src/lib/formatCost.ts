@@ -1,6 +1,5 @@
-/** Extra precision only below a cent, where 2dp would round a real charge to $0.00. Shared
- *  by the footer and per-turn trailer so they can't drift. */
-export function formatCost(usd: number): string {
-  if (usd > 0 && usd < 0.01) return `$${usd.toFixed(4)}`
-  return `$${usd.toFixed(2)}`
+/** Two decimals, or four when any nonzero figure shown with it is under a cent, where 2dp would round a real charge
+ *  to $0.00. `group` is every cost in one displayed column, so the column keeps one precision. */
+export function formatCost(usd: number, group: readonly number[] = [usd]): string {
+  return `$${usd.toFixed(group.some((v) => v > 0 && v < 0.01) ? 4 : 2)}`
 }

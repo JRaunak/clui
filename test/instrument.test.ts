@@ -1,6 +1,7 @@
 // Boundary: the row-state grammar, the aggregate's worst-state pick, "needs you" matching, and the
 // current-turn derivation that the top-band header renders.
 import { monitorRowState, rowState, worstState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel, summarizeInput } from '../src/renderer/src/lib/instrument.ts'
+import { formatCost } from '../src/renderer/src/lib/formatCost.ts'
 import { equal } from './support/harness.mjs'
 
 const tool = (o: Record<string, unknown>) => ({ id: 't', name: 'Bash', input: {}, ...o }) as never
@@ -11,6 +12,16 @@ equal(rowState(tool({}), false), 'running', 'row: unresolved foreground tool is 
 equal(rowState(tool({}), true), 'needs-you', 'row: a pending permission wins over running')
 equal(rowState(tool({ input: { run_in_background: true } }), false), 'launching', 'row: unresolved backgrounded tool is launching')
 equal(rowState(tool({ name: 'Workflow', result: 'ok' }), false), 'launched', 'row: a finished Workflow reads launched')
+equal(rowState(tool({ name: 'Agent', input: { run_in_background: true }, result: 'Launched' }), true), 'needs-you', 'row: a launched background agent at a gate needs you')
+equal(rowState(tool({ name: 'Agent', input: { run_in_background: true }, result: 'Launched' }), false), 'launched', 'row: a launched background agent with no gate reads launched')
+equal(rowState(tool({ name: 'Agent', result: 'ok' }), true), 'done', 'row: a finished foreground agent never reads needs you')
+
+// One precision per displayed column: four decimals for all of it once any nonzero figure in it is under a cent.
+equal(formatCost(0.0042), '$0.0042', 'cost: a lone sub-cent figure keeps four decimals')
+equal(formatCost(0), '$0.00', 'cost: zero is two decimals')
+equal(formatCost(0.05, [0.05, 0.0042]), '$0.0500', 'cost: a figure beside a sub-cent one takes four decimals')
+equal(formatCost(1.27, [1.27, 0.5]), '$1.27', 'cost: a column with nothing under a cent stays at two')
+equal(formatCost(1.27, [1.27, 0]), '$1.27', 'cost: a zero in the column is not under a cent')
 equal(rowState(tool({ sentToBackground: true, result: 'ok' }), false), 'launched', 'row: sent-to-background reads launched')
 equal(rowState(tool({ result: 'boom', isError: true }), false), 'failed', 'row: an error result is failed')
 equal(rowState(tool({ result: 'ok' }), false), 'done', 'row: a plain result is done')

@@ -11,7 +11,7 @@ export function InfoRow({ ui, lead, line1, line2, scrolled }: { ui: string; lead
         </span>
         <div className="flex min-w-0 flex-1 items-center gap-0.5">{line1}</div>
       </div>
-      <div className="flex min-h-5 flex-wrap items-center gap-x-1.5 gap-y-1 pl-6 text-meta text-dim">{line2}</div>
+      <div className="flex min-h-5 flex-wrap items-center gap-x-1.5 gap-y-1 pl-6 text-meta text-dim has-[button[data-ui=agent-stop]]:gap-y-2">{line2}</div>
     </div>
   )
 }

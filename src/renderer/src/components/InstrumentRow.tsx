@@ -190,7 +190,7 @@ export function InstrumentRow({
   // Boolean selectors: a streaming token re-runs them but only re-renders the row whose answer flips.
   // A subagent's own gate names its tool (Bash, Edit), never the Agent call, so the card asks the agent's run state.
   const needsYou = useActive(
-    (s) => needsYouToolIdOf(s) === tool.id || (!!s && (tool.name === 'Task' || tool.name === 'Agent') && tool.result === undefined && agentRunState(s, { by: 'tool', id: tool.id }).state === 'needs')
+    (s) => needsYouToolIdOf(s) === tool.id || (!!s && (tool.name === 'Task' || tool.name === 'Agent') && (tool.result === undefined || isBackgroundedTool(tool)) && agentRunState(s, { by: 'tool', id: tool.id }).state === 'needs')
   )
   const checking = useDelayedFlag(useActive((s) => !!s?.checkingTools[tool.id]))
   const lit = useActive((s) => {

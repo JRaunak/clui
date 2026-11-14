@@ -1,10 +1,28 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 import { FIND_MAX, findRanges, useFind } from '../components/surfaces/fileDoc'
 
 const NOT_FOUND: { ranges: Range[]; more: boolean } = { ranges: [], more: false }
 /** A transcript's buttons can carry its content, such as a spawned agent's card, so only chrome marked
  *  `data-find-skip` is passed over. */
 const SKIP = '[data-num], .sr-only, [data-find-skip], [data-pointed]'
+
+/** A match past a truncated row's ellipsis is lit off its clipped edge, so the box clipping it, the first ancestor
+ *  below `stop` that overflows sideways, scrolls to show it. `shifted` holds the box last scrolled; it goes back once the
+ *  match leaves it, or when `range` is undefined because find closed or nothing matched. */
+export function revealAcross(shifted: MutableRefObject<HTMLElement | null>, range: Range | undefined, stop: HTMLElement | null): void {
+  let box = range?.startContainer.parentElement ?? null
+  while (box && box !== stop && !(box.scrollWidth > box.clientWidth && getComputedStyle(box).overflowX !== 'visible')) box = box.parentElement
+  if (box === stop) box = null
+  const was = shifted.current
+  if (was && was !== box) {
+    was.scrollLeft = 0
+    delete was.dataset.findReveal
+  }
+  shifted.current = box
+  if (!box || !range) return
+  box.dataset.findReveal = ''
+  box.scrollLeft = Math.max(0, range.getBoundingClientRect().right + box.scrollLeft - (box.getBoundingClientRect().right - 16))
+}
 
 /**
  * ⌘F over a tab's rendered transcript: DOM ranges marked with the Custom Highlight API, so the DOM React owns is
@@ -47,13 +65,16 @@ export function useTranscriptFind(body: RefObject<HTMLElement>, deps: readonly u
       CSS.highlights.delete('transcript-find-active')
     }
   }, [found, activeRange])
+  const shifted = useRef<HTMLElement | null>(null)
   useLayoutEffect(() => {
     const el = body.current
+    if (!activeRange) revealAcross(shifted, undefined, el)
     if (!reveal.current || !activeRange?.startContainer.isConnected || !el) return
     reveal.current = false
     const b = el.getBoundingClientRect()
     const r = activeRange.getBoundingClientRect()
     if (r.top < b.top || r.bottom > b.bottom) el.scrollTop += r.top - (b.top + b.height / 2)
+    revealAcross(shifted, activeRange, el)
   }, [activeRange, body])
 
   const total = found.ranges.length

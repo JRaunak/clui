@@ -29,6 +29,8 @@ export const STATE_TEXT: Record<RowState, string> = {
 export function rowState(tool: ToolCall, needsYou: boolean, checking = false): RowState {
   const bg = isBackgroundedTool(tool)
   if (tool.result === undefined) return needsYou ? 'needs-you' : checking ? 'checking' : bg ? 'launching' : 'running'
+  // A background agent's launch result lands at once, while its own calls can still stop at a gate.
+  if (bg && needsYou) return 'needs-you'
   // Checked before isError: a call auto mode held back carries an error result but never ran.
   if (tool.notRun) return 'not-run'
   if (tool.stopped) return 'stopped'

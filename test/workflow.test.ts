@@ -35,6 +35,16 @@ equal(phaseState(['queued', 'queued'], 'stopped'), 'stopped', 'phase: a stopped 
   const quit = workflowSummary(wf([agent(1, 'done'), agent(2, 'start'), agent(3, 'queued')], 'interrupted'), [])
   ok(quit.state.state === 'interrupted' && quit.state.reason === 'quit' && quit.states.join() === 'done,interrupted,interrupted', 'summary: a run Clui quit during is interrupted, its unfinished agents too', JSON.stringify(quit))
   equal(workflowSummary(wf([agent(1, 'error')], 'failed'), []).state.state, 'failed', 'summary: a failed run is failed')
+  const failed = workflowSummary(wf([agent(1, 'done'), agent(2, 'start'), agent(3, 'queued', { agentId: undefined })], 'failed'), [])
+  ok(failed.states.join() === 'done,interrupted,unrun' && failed.done === 1 && failed.total === 3, 'summary: a failed run interrupts its running agent and never ran the rest', JSON.stringify(failed))
+  const cut = agentRunState({ workflows: { w1: wf([agent(2, 'start')], 'failed') }, pendingPermissions: [] } as any, { by: 'agent', id: 'a2' })
+  ok(cut.state === 'interrupted' && cut.reason === 'workflow-failed', "summary: its tab names the workflow's failure", JSON.stringify(cut))
+  equal(phaseState(['unrun', 'unrun'], 'failed'), 'unrun', 'phase: a phase a failed run never reached never ran')
+  equal(phaseState(['done', 'interrupted'], 'failed'), 'interrupted', 'phase: an interrupted agent beats done')
+  equal(phaseState(['done', 'unrun'], 'failed'), 'interrupted', 'phase: a failed run that reached part of a phase left it interrupted')
+  equal(phaseState(['done', 'unrun'], 'done'), 'done', 'phase: a completed run that skipped agents still finished the phase')
+  const late = agentRunState({ workflows: { w1: wf([agent(2, 'start')], 'completed') }, pendingPermissions: [] } as any, { by: 'agent', id: 'a2' })
+  ok(late.state === 'interrupted' && late.reason === 'no-result', 'summary: an agent still running when its run completed is interrupted without a result', JSON.stringify(late))
   equal(workflowSummary(wf([agent(1, 'done')], 'completed'), []).state.state, 'done', 'summary: a completed run is done')
 }
 

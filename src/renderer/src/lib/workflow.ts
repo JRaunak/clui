@@ -36,11 +36,14 @@ export function phaseState(states: readonly RunState[], workflow: RunState): Run
   if (has('running')) return 'running'
   if (has('failed')) return 'failed'
   if (has('stopped')) return 'stopped'
+  if (has('interrupted')) return 'interrupted'
   if (all) return 'done'
   // A stop ends every agent it reached, started or not, so a phase it cut off before anything ran reads stopped too.
   if (workflow === 'stopped') return 'stopped'
-  if (states.some((s) => s !== 'queued')) return isLive(workflow) ? 'running' : 'done'
-  return 'queued'
+  // A failed run left this phase part-done: the agents it never reached didn't run, so the phase didn't finish.
+  if (workflow === 'failed' && has('unrun')) return has('done') ? 'interrupted' : 'unrun'
+  if (states.some((s) => s !== 'queued' && s !== 'unrun')) return isLive(workflow) ? 'running' : 'done'
+  return states.includes('unrun') ? 'unrun' : 'queued'
 }
 
 /** The workflow a Workflow tool card launched: the live record that names the call, else the task id its result

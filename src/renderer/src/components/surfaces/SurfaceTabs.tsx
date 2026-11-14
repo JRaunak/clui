@@ -6,7 +6,7 @@ import { agentRefOf, type PaneKind } from '../../../../shared/surfaces'
 import { PANE_BTN } from './PaneHeader'
 import { shownPath, suffixes } from '../../lib/tree'
 import { fileLike } from '../../lib/presentation'
-import { agentInfo, agentRunState, denseNext, faceOf, runningAgents, RUN_WORDS, type RunStatusOf } from '../../lib/agents'
+import { agentInfo, agentRunState, denseNext, faceOf, REASON_COPY, runningAgents, RUN_WORDS, type InterruptReason, type RunStatusOf } from '../../lib/agents'
 import { runningWorkflows, workflowSummary } from '../../lib/workflow'
 import { formatElapsed } from '../../lib/turnEnd'
 import { FileIcon } from '../FileIcon'
@@ -131,8 +131,11 @@ function runSig(s: PerSessionState): string {
   return JSON.stringify(out)
 }
 
-const REASON_SPOKEN = { quit: 'Clui quit while it was running', 'no-result': 'it ended without a result' } as const
-const REASON_LINE = { quit: 'Clui quit while it was running', 'no-result': 'It ended without a result' } as const
+const REASON_SPOKEN: Record<InterruptReason, string> = {
+  quit: 'Clui quit while it was running',
+  'no-result': 'it ended without a result',
+  'workflow-failed': 'its workflow failed while it was running'
+}
 
 /** The tooltip's figure: a running clock, or how long it took. Unknown shows nothing. */
 function figureOf({ state, startMs, durationMs }: RunStatusOf): string {
@@ -220,7 +223,7 @@ export function SurfaceTabs(): JSX.Element {
       const w = RUN_WORDS[status.state]
       const reason = status.state === 'interrupted' ? status.reason : undefined
       const more = `, ${type ? `${type} agent` : 'agent'}, ${w.spoken}${reason ? `, ${REASON_SPOKEN[reason]}` : ''}${parent ? `, inside ${parent}` : ''}`
-      const tip = [label, `${type ? `${type} agent` : 'Agent'} · ${w.word}${figureOf(status)}`, parent ? `Inside ${parent}` : '', reason ? REASON_LINE[reason] : '']
+      const tip = [label, `${type ? `${type} agent` : 'Agent'} · ${w.word}${figureOf(status)}`, parent ? `Inside ${parent}` : '', reason ? REASON_COPY[reason] : '']
       return [{ ...common, run: { face: run.face, state: status.state }, more, tip: tip.filter(Boolean).join('\n') }]
     }
     if (!fileLike(t.kind)) return [common]

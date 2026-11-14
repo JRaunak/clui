@@ -7,6 +7,7 @@ import { RunningTimer } from './InstrumentRow'
 
 const INK: Record<RunState, string> = {
   queued: 'text-faint',
+  unrun: 'text-faint',
   running: 'text-dim',
   background: 'text-dim',
   done: 'text-dim',
@@ -32,6 +33,8 @@ function Shape({ state }: { state: RunState }): JSX.Element {
   switch (state) {
     case 'queued':
       return <circle cx="6" cy="6" r="4.25" strokeDasharray="2.2 2.25" />
+    case 'unrun':
+      return <path d="M3.5 6h5" />
     case 'running':
     case 'stopping':
       return <Spin />

@@ -10,3 +10,7 @@
   background-color: var(--color-content);
   color: var(--color-bg);
 }
+/* A truncated row scrolled sideways to a find match drops its ellipsis, so the match is never drawn under it. */
+[data-find-reveal] {
+  text-overflow: clip;
+}

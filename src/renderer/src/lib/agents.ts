@@ -70,8 +70,8 @@ export function agentInfo(slice: Pick<PerSessionState, 'messages' | 'subagentMes
   return { label: 'Agent', subtype: null, input: null }
 }
 
-export type RunState = 'queued' | 'running' | 'background' | 'done' | 'failed' | 'stopped' | 'interrupted' | 'needs' | 'stopping'
-export type InterruptReason = 'quit' | 'no-result'
+export type RunState = 'queued' | 'unrun' | 'running' | 'background' | 'done' | 'failed' | 'stopped' | 'interrupted' | 'needs' | 'stopping'
+export type InterruptReason = 'quit' | 'no-result' | 'workflow-failed'
 export interface RunStatusOf {
   state: RunState
   reason?: InterruptReason
@@ -81,6 +81,7 @@ export interface RunStatusOf {
 
 export const RUN_WORDS: Record<RunState, { word: string; spoken: string }> = {
   queued: { word: 'Queued', spoken: 'queued' },
+  unrun: { word: 'Not run', spoken: 'not run' },
   running: { word: 'Running', spoken: 'running' },
   background: { word: 'In background', spoken: 'running in background' },
   done: { word: 'Done', spoken: 'done' },
@@ -93,7 +94,8 @@ export const RUN_WORDS: Record<RunState, { word: string; spoken: string }> = {
 
 export const REASON_COPY: Record<InterruptReason, string> = {
   quit: 'Clui quit while it was running',
-  'no-result': 'It ended without a result'
+  'no-result': 'It ended without a result',
+  'workflow-failed': 'Its workflow failed while it was running'
 }
 
 export const isLive = (s: RunState): boolean => s === 'running' || s === 'background' || s === 'needs' || s === 'stopping'
@@ -108,15 +110,16 @@ export function activityLine(state: RunState, activity: string | undefined, hold
 }
 
 /** A workflow agent's state word as a run state. A workflow stop cuts its running agents off as `error`, and the user
- *  asked for that stop, so it and every agent it never reached read stopped. A run Clui quit during leaves its unfinished agents interrupted. */
-export function runStateOf(state: string, workflowEnded: string | null): 'queued' | 'running' | 'done' | 'failed' | 'stopped' | 'interrupted' {
+ *  asked for that stop, so it and every agent it never reached read stopped. Otherwise an agent still running when its
+ *  run ended is interrupted and one the run never reached didn't run, unless Clui quit during it, which interrupts both. */
+export function runStateOf(state: string, workflowEnded: string | null): 'queued' | 'unrun' | 'running' | 'done' | 'failed' | 'stopped' | 'interrupted' {
   const cut = workflowEnded === 'killed' || workflowEnded === 'stopped'
   if (state === 'done') return 'done'
   if (state === 'error') return cut ? 'stopped' : 'failed'
   if (cut) return 'stopped'
   if (workflowEnded === 'interrupted') return 'interrupted'
-  if (state === 'start' || state === 'running') return workflowEnded === null ? 'running' : 'stopped'
-  return 'queued'
+  if (state === 'start' || state === 'running') return workflowEnded === null ? 'running' : 'interrupted'
+  return workflowEnded === null ? 'queued' : 'unrun'
 }
 
 /** A workflow agent's state, needs while a gate it raised is up. Its gate carries only its agent id. */
@@ -128,7 +131,7 @@ export function workflowAgentState(a: WorkflowAgent, workflowEnded: string | nul
 /** A workflow agent's status with its figures: elapsed from its start while it runs, its duration once done. */
 export function workflowAgentStatus(a: WorkflowAgent, workflowEnded: string | null, pending: readonly PendingPermission[]): RunStatusOf {
   const state = workflowAgentState(a, workflowEnded, pending)
-  return { state, ...(state === 'interrupted' ? { reason: 'quit' as const } : {}), startMs: a.startedAt, durationMs: state === 'done' ? a.durationMs : undefined }
+  return { state, ...(state === 'interrupted' ? { reason: workflowEnded === 'interrupted' ? ('quit' as const) : workflowEnded === 'failed' ? ('workflow-failed' as const) : ('no-result' as const) } : {}), startMs: a.startedAt, durationMs: state === 'done' ? a.durationMs : undefined }
 }
 
 export function workflowOfAgent(workflows: Record<string, WorkflowState>, agentId: string): { workflow: WorkflowState; agent: WorkflowAgent } | null {
