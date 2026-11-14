@@ -21,9 +21,11 @@ export interface McpRoute {
   endpoint(handleId: string): Promise<{ url: string; token: string }>
   entry(handleId: string): Promise<{ type: 'http'; url: string; headers: { Authorization: string } }>
   revoke(handleId: string): void
+  /** `side` lists exactly `parent`'s tools and can call none of them. */
+  mirror(side: string, parent: string): void
 }
 
-interface Route { handler: McpHandler; tokens: Map<string, string> }
+interface Route { handler: McpHandler; tokens: Map<string, string>; mirrors: Map<string, string> }
 
 const MAX_BODY = 1 << 20
 
@@ -87,6 +89,7 @@ export function mcpListener(): { route(segment: 'mcp' | 'mcp-surface', handler: 
     if (msg.id === undefined) return void res.writeHead(202).end()
 
     const params = msg.params ?? {}
+    const as = route.mirrors.get(handleId)
     switch (msg.method) {
       case 'initialize':
         return reply(res, msg.id, {
@@ -97,9 +100,10 @@ export function mcpListener(): { route(segment: 'mcp' | 'mcp-surface', handler: 
       case 'ping':
         return reply(res, msg.id, {})
       case 'tools/list':
-        return reply(res, msg.id, { tools: route.handler.tools(handleId) })
+        return reply(res, msg.id, { tools: route.handler.tools(as ?? handleId) })
       case 'tools/call': {
         const name = typeof params.name === 'string' ? params.name : ''
+        if (as) return reply(res, msg.id, { content: [{ type: 'text', text: `Side chat is read-only: ${name} is not available here.` }], isError: true })
         const args = params.arguments && typeof params.arguments === 'object' ? (params.arguments as Record<string, unknown>) : {}
         const meta = params._meta && typeof params._meta === 'object' ? (params._meta as Record<string, unknown>)['claudecode/toolUseId'] : undefined
         return reply(res, msg.id, await route.handler.call(handleId, name, args, typeof meta === 'string' ? meta : undefined))
@@ -112,7 +116,8 @@ export function mcpListener(): { route(segment: 'mcp' | 'mcp-surface', handler: 
   return {
     route(segment, handler) {
       const tokens = new Map<string, string>()
-      routes.set(segment, { handler, tokens })
+      const mirrors = new Map<string, string>()
+      routes.set(segment, { handler, tokens, mirrors })
       const endpoint = async (handleId: string): Promise<{ url: string; token: string }> => {
         const p = await listen()
         let token = tokens.get(handleId)
@@ -128,7 +133,11 @@ export function mcpListener(): { route(segment: 'mcp' | 'mcp-surface', handler: 
           const { url, token } = await endpoint(handleId)
           return { type: 'http', url, headers: { Authorization: `Bearer ${token}` } }
         },
-        revoke: (handleId) => void tokens.delete(handleId)
+        revoke: (handleId) => {
+          tokens.delete(handleId)
+          mirrors.delete(handleId)
+        },
+        mirror: (side, parent) => void mirrors.set(side, parent)
       }
     }
   }

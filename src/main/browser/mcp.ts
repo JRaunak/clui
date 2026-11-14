@@ -357,6 +357,11 @@ export class BrowserMcpServer {
     return this.route.entry(handleId)
   }
 
+  /** A side chat's handle lists `parent`'s tools and calls none. */
+  mirror(side: string, parent: string): void {
+    this.route.mirror(side, parent)
+  }
+
   /** Which bundles this session's CLI sees and may call. Set before the CLI lists its tools, which it does once. */
   setBundles(handleId: string, b: Partial<Bundles>): void {
     this.bundles.set(handleId, { ...ALL_ON, ...b })

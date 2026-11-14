@@ -164,6 +164,18 @@ export type ApiProvider =
   | 'mantle'
   | 'gateway'
 
+export const API_PROVIDERS: readonly ApiProvider[] = ['firstParty', 'bedrock', 'vertex', 'foundry', 'anthropicAws', 'anthropicGoogleCloud', 'mantle', 'gateway']
+
+/** The tools a side chat's deny hook lets run. Order is the hand-back framing's order. */
+export const SIDE_HOOK_ALLOW = ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'ToolSearch'] as const
+
+export interface StartSideOptions {
+  parentHandleId: string
+  /** The parent's mode in effect, concrete. Only the renderer knows a model-entered plan mode. */
+  permissionMode: Exclude<PermissionModeChoice, 'inherit'>
+}
+export type StartSideResult = { ok: true; handleId: string } | { ok: false; reason: 'not-live' | 'quick' | 'hooks-off' | 'no-transcript' }
+
 /** Result of a model-list query: the ids plus where they came from. */
 export interface ModelListResult {
   ids: string[]
@@ -210,6 +222,8 @@ export interface CluiApi {
   isMac: boolean
   /** Start a session; returns a local handle. */
   startSession: (opts: StartSessionOptions) => Promise<StartSessionResult>
+  /** Fork a live session into a hidden read-only side chat that runs with the parent's own launch options. */
+  startSide: (opts: StartSideOptions) => Promise<StartSideResult>
   /** Validate, serialize and write one user message. Main re-checks every reference first; a stale one sends
    *  nothing. `now` sends into the running turn. */
   sendMessage: (handleId: string, packet: OutgoingPacket) => Promise<DispatchResult>
@@ -552,6 +566,7 @@ export const IpcChannels = {
   getCliInfo: 'clui:getCliInfo',
   getFullscreen: 'clui:getFullscreen',
   startSession: 'clui:startSession',
+  startSide: 'clui:startSide',
   sendMessage: 'clui:sendMessage',
   validateRefs: 'clui:validateRefs',
   syncAnnotationOrder: 'clui:syncAnnotationOrder',

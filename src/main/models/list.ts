@@ -12,7 +12,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { app } from 'electron'
-import type { ApiProvider, ModelListResult } from '../../shared/ipc'
+import { API_PROVIDERS, type ApiProvider, type ModelListResult } from '../../shared/ipc'
 import { FALLBACK_MODEL_IDS, catalogIds, deriveModelInfo, takes1mSuffix } from '../../shared/settings'
 import { detectCli } from '../cli/detect'
 import { NdjsonParser } from '../cli/ndjson'
@@ -89,22 +89,11 @@ function failureReason(e: unknown): NonNullable<ModelListResult['reason']> {
   return /expired|ExpiredToken|sso/i.test(text) ? 'expired-creds' : 'other'
 }
 
-const API_PROVIDERS: ApiProvider[] = [
-  'firstParty',
-  'bedrock',
-  'vertex',
-  'foundry',
-  'anthropicAws',
-  'anthropicGoogleCloud',
-  'mantle',
-  'gateway'
-]
-
 type InitReply =
   | { type?: unknown; response?: { subtype?: unknown; response?: { account?: { apiProvider?: unknown }; models?: unknown } } }
   | null
 
-const isApiProvider = (p: string | null): p is ApiProvider => (API_PROVIDERS as (string | null)[]).includes(p)
+const isApiProvider = (p: string | null): p is ApiProvider => (API_PROVIDERS as readonly (string | null)[]).includes(p)
 
 /** Initialize answered in 3 to 5s warm and 10.4s on a cold first start (CLI 2.1.319, this machine). */
 const PROBE_TIMEOUT_MS = 20000

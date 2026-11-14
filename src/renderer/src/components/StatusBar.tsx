@@ -11,7 +11,7 @@ import { formatCost } from '../lib/formatCost'
 export function StatusBar(): JSX.Element {
   const cwd = useActive((s) => s?.cwd ?? null)
   const sessionId = useActive((s) => s?.sessionId ?? null)
-  const costUsd = useActive((s) => s?.costUsd ?? null)
+  const costUsd = useActive((s) => (s && (s.costUsd !== null || s.sideCostUsd) ? (s.costUsd ?? 0) + s.sideCostUsd : null))
   const hasTasks = useActive((s) => Object.keys(s?.backgroundTasks ?? {}).length > 0)
   const sessionGroups = useSession((s) => s.sessionGroups)
   const sliceTitle = useActive((s) => sessionDisplayTitle(s))

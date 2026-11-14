@@ -52,6 +52,8 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(b.some((e) => e.type === 'context-usage' && e.usedTokens === 20001), 'mapper: different tokens at same % not deduped')
   const c = feed(m, [{ type: 'assistant', message: { content: [], usage: { input_tokens: 20001 } } }])
   ok(!c.some((e) => e.type === 'context-usage'), 'mapper: identical tuple deduped')
+  const d = feed(m, [{ type: 'assistant', message: { content: [], usage: { input_tokens: 3, cache_read_input_tokens: 21289, cache_creation_input_tokens: 680 } } }])
+  ok(d.some((e) => e.type === 'context-usage' && e.cacheRead === 21289 && e.cacheWrite === 680), "mapper: usage carries the request's own cache split")
 }
 
 // 'stopped' is terminal

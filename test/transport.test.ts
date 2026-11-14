@@ -3,6 +3,8 @@
 import { ClaudeSession, childEnv } from '../src/main/cli/session.ts'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { CHANGE_READ_TOOL } from '../src/shared/context.ts'
+import { HOOKS_TOKEN } from '../src/shared/settings.ts'
+import { SessionManager } from '../src/main/sessions/manager.ts'
 import { equal, ok } from './support/harness.mjs'
 
 equal(childEnv({ enableTaskTools: true }, { CLAUDE_CODE_ENABLE_TODO_TOOLS: '0' }).CLAUDE_CODE_ENABLE_TODO_TOOLS, '0', 'env: a shell task-tools value wins')
@@ -413,4 +415,74 @@ reset()
   ackInit(c)
   const r: any = await s.send(true, prep('now'))
   ok(r.ok && r.joined === false, 'transport: send now with no open turn starts one')
+}
+
+// A side fork is the parent's launch plus the fork, no-persistence, mode and deny-hook flags, and nothing else.
+reset()
+{
+  const parent = { model: 'claude-haiku-4-5', effort: 'low', ultracode: true, appendSystemPrompt: 'APPEND', disabledConfig: ['Agent(x)'], cluiMcp: { config: '{"mcpServers":{}}', allow: ['mcp__clui-browser'] }, name: 'p' }
+  const launch = (opts: Record<string, unknown>): { args: string[]; files: string[] } => {
+    reset()
+    mk(opts).start()
+    const args: string[] = spawns()[0].spawnargs
+    const at = (flag: string): string => readFileSync(args[args.indexOf(flag) + 1], 'utf8')
+    return { args, files: [at('--append-system-prompt-file'), at('--mcp-config')] }
+  }
+  const after = (args: string[], flag: string, n = 1): string => JSON.stringify(args.slice(args.indexOf(flag) + 1, args.indexOf(flag) + 1 + n))
+  const p = launch(parent)
+  const { name: _name, ...base } = parent
+  const sideOpts = { ...base, resumeSessionId: 's', fork: true, permissionMode: 'default', side: { hook: '/bin/sh /x' } }
+  const sd = launch(sideOpts)
+  const a = sd.args
+  ok(a.includes('--no-session-persistence') && after(a, '--permission-mode') === '["default"]', 'side argv: no persistence and an explicit mode')
+  equal(JSON.stringify(a.slice(-3)), '["--resume","s","--fork-session"]', 'side argv: the fork closes the argv')
+  ok(!a.includes('-n') && !a.includes('--tools') && !a.includes('--strict-mcp-config'), 'side argv: no name, no tool list, no strict MCP')
+  equal(a.filter((x) => x === '--settings').length, 1, 'side argv: one --settings')
+  const settings = JSON.parse(a[a.indexOf('--settings') + 1])
+  ok(settings.ultracode === true && !('disableAllHooks' in settings), "side argv: the settings keep the parent's ultracode and never disable hooks")
+  equal(JSON.stringify(settings.hooks.PreToolUse[0]), JSON.stringify({ matcher: '*', hooks: [{ type: 'command', command: '/bin/sh /x' }] }), 'side argv: the deny hook runs on every tool')
+  for (const flag of ['--model', '--effort', '--disallowedTools', '--allowedTools'])
+    equal(after(a, flag), after(p.args, flag), `side argv: ${flag} matches the parent's`)
+  ok(!a.includes('Task'), 'side argv: none of Quick’s withheld tools')
+  equal(JSON.stringify(sd.files), JSON.stringify(p.files), "side argv: the appended prompt and MCP config hold the parent's text")
+  reset()
+  let threw = false
+  try {
+    mk({ ...sideOpts, disabledConfig: ['Agent(x)', HOOKS_TOKEN] }).start()
+  } catch {
+    threw = true
+  }
+  ok(threw && !spawns().length, 'side argv: a side launched with hooks off never spawns')
+}
+
+// The initialize ACK reports the session ready, with the provider when the CLI names one.
+reset()
+{
+  const ready = (response: object): any[] => {
+    reset()
+    const s = mk()
+    const seen: any[] = []
+    s.on('event', (e) => e.type === 'session-ready' && seen.push(e))
+    s.start()
+    const c = spawns()[0]
+    c.stdout.emit('data', JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: initId(c), response } }) + '\n')
+    return seen
+  }
+  equal(JSON.stringify(ready({ account: { apiProvider: 'bedrock' } })), '[{"type":"session-ready","provider":"bedrock"}]', 'ready: the ACK names its provider')
+  equal(JSON.stringify(ready({})), '[{"type":"session-ready"}]', 'ready: an ACK without an account still reports ready')
+  equal(JSON.stringify(ready({ account: { apiProvider: 'nope' } })), '[{"type":"session-ready"}]', 'ready: an unknown provider is dropped')
+}
+
+// A verdict reaches the CLI as behavior plus its input or message, whatever else the renderer sent.
+reset()
+{
+  const m = new SessionManager(() => {}, () => {})
+  m.start('h', { cliPath: 'claude', cwd: '/tmp', gated: true })
+  const c = spawns()[0]
+  const last = (): any => W(c).at(-1).response.response
+  m.respondPermission('h', { requestId: 'r1', behavior: 'allow', updatedInput: { a: 1 }, updatedPermissions: [{ type: 'setMode' }] } as any)
+  equal(JSON.stringify(last()), '{"behavior":"allow","updatedInput":{"a":1}}', 'verdict: an allow carries only its input')
+  m.respondPermission('h', { requestId: 'r2', behavior: 'deny', message: 'no', interrupt: true } as any)
+  equal(JSON.stringify(last()), '{"behavior":"deny","message":"no"}', 'verdict: a deny carries only its message')
+  m.stopAll()
 }

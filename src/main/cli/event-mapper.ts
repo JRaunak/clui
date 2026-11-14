@@ -337,7 +337,15 @@ export class EventMapper {
     this.lastWindow = this.contextWindow
     const percent = Math.min(100, Math.round((used / this.contextWindow) * 100))
     return [
-      { type: 'context-usage', usedTokens: used, contextWindow: this.contextWindow, usedPercent: percent, measured: this.windowMeasured }
+      {
+        type: 'context-usage',
+        usedTokens: used,
+        contextWindow: this.contextWindow,
+        usedPercent: percent,
+        measured: this.windowMeasured,
+        cacheRead: usage.cache_read_input_tokens ?? 0,
+        cacheWrite: usage.cache_creation_input_tokens ?? 0
+      }
     ]
   }
 

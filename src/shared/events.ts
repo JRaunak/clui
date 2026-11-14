@@ -11,6 +11,7 @@
  */
 import type { CompactionMarker } from './sessions'
 import type { EffortChoice } from './settings'
+import type { ApiProvider } from './ipc'
 
 /**
  * One entry from the CLI's live task list (Task tool family), read from disk at
@@ -218,6 +219,8 @@ export type DomainEvent =
   /** A respawn finished its handshake. A session that hasn't run a turn emits no init, so this
    *  is what ends a respawn's "Reconnecting…" notice. */
   | { type: 'reconnected' }
+  /** The CLI ACKed `initialize`, at spawn (`session-init` waits for the first turn). `provider` is its `account.apiProvider`. */
+  | { type: 'session-ready'; provider?: ApiProvider }
   | { type: 'message-start' }
   /** A streamed chunk of assistant-visible text. */
   | { type: 'text-delta'; text: string }
@@ -426,6 +429,9 @@ export type DomainEvent =
       usedPercent: number
       /** The window came from a result's modelUsage; until then it's a guess from the model id. */
       measured: boolean
+      /** This request's own cache split, set only from an assistant message's usage. */
+      cacheRead?: number
+      cacheWrite?: number
     }
   /**
    * A background task (e.g. a Bash `run_in_background` shell, or a backgrounded

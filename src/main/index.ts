@@ -20,19 +20,23 @@ import {
   type PermissionModeChoice,
   type PermissionVerdict,
   type ChangeRefResult,
-  type StartSessionOptions
+  type StartSessionOptions,
+  type StartSideOptions,
+  type StartSideResult
 } from '../shared/ipc'
 import type { ElicitationResponse } from '../shared/events'
-import { effectiveDisabled, type EffortChoice, type ModelChoice } from '../shared/settings'
+import { HOOKS_TOKEN, PERMISSION_MODES, effectiveDisabled, type EffortChoice, type ModelChoice } from '../shared/settings'
 import { detectCli } from './cli/detect'
 import { loginShellAuthEnv } from './cli/shell-env'
 import { SessionManager } from './sessions/manager'
 import { listSessions, deleteSession, renameSession } from './sessions/store'
 import {
+  findTranscriptFile,
   readTranscript,
   readAgentTranscript,
   readAgentTranscriptByToolUseId
 } from './sessions/transcript'
+import { writeSideHook } from './sessions/side-hook'
 import { listRuns, readWorkflowRun } from './sessions/runs'
 import { searchSessions, warmSearchCache } from './sessions/search'
 import { exportSessionMarkdown, exportFilename } from './sessions/export'
@@ -500,7 +504,10 @@ function registerIpc(): void {
   browser.onDocumentGone = (handleId, tab, reason) => annotator.gone(handleId, tab, reason)
   browser.holdsPins = (handleId, tab) => annotator.holds(handleId, tab)
   browserManager = browser
+  /** Side-chat handles, each to its parent's. */
+  const sides = new Map<string, string>()
   const disposeBrowser = (handleId: string): void => {
+    sides.delete(handleId)
     annotator.dispose(handleId)
     browser.dispose(handleId)
     mcp.revoke(handleId)
@@ -756,6 +763,12 @@ function registerIpc(): void {
   // themeSource overrides what nativeTheme reports, but not the macOS default it reads.
   handle(IpcChannels.getOsTheme, () => (systemPreferences.getUserDefault('AppleInterfaceStyle', 'string') === 'Dark' ? 'dark' : 'light'))
 
+  // One shape for both launches: a side fork's MCP config must match its parent's server for server.
+  const cluiServers = async (handleId: string, withBrowser: boolean) => ({
+    'clui-surface': await surfaceRoute.entry(handleId),
+    ...(withBrowser ? { 'clui-browser': await mcp.entry(handleId) } : {})
+  })
+
   handle(IpcChannels.startSession, async (_e, opts: StartSessionOptions) => {
     const settings = await getSettings()
     const info = await detectCli(settings.cliPath || null)
@@ -768,7 +781,7 @@ function registerIpc(): void {
     // The token in the config is bound to the handle, so the handle exists before the process does.
     const handleId = randomUUID()
     const withBrowser = !opts.ephemeral
-    const servers = { 'clui-surface': await surfaceRoute.entry(handleId), ...(withBrowser ? { 'clui-browser': await mcp.entry(handleId) } : {}) }
+    const servers = await cluiServers(handleId, withBrowser)
     // Quick has no pane-backed session to present into.
     const presents = !opts.ephemeral
     surface.setPresentation(handleId, presents)
@@ -808,6 +821,37 @@ function registerIpc(): void {
     if (withBrowser) browser.enable(handleId, saved?.browserTabs)
     const surfaces: SurfacesRestore = saved ? { status: 'ok', entry: { ...saved, browserTabs: withBrowser ? browser.records(handleId) : null } } : restore
     return { handleId, browser: withBrowser, surfaces, disabled }
+  })
+
+  // The fork is the parent's live launch, cloned: the prompt cache keys on the tool list, MCP tools, system prompt,
+  // model and CLI binary, so nothing is rebuilt from settings or taken from the renderer.
+  handle(IpcChannels.startSide, async (_e, opts: unknown): Promise<StartSideResult> => {
+    const { parentHandleId, permissionMode: asked } = (opts ?? {}) as Record<string, unknown>
+    // Without a concrete mode the fork would take settings.json's, not the parent's.
+    const permissionMode = PERMISSION_MODES.find((m): m is StartSideOptions['permissionMode'] => m !== 'inherit' && m === asked)
+    if (typeof parentHandleId !== 'string' || !permissionMode) throw new Error('startSide: invalid options')
+    const parent = manager.optionsOf(parentHandleId)
+    const sessionId = manager.sessionIdOf(parentHandleId)
+    if (!parent || !sessionId) return { ok: false, reason: 'not-live' }
+    if (parent.ephemeral) return { ok: false, reason: 'quick' }
+    if (parent.disabledConfig?.includes(HOOKS_TOKEN)) return { ok: false, reason: 'hooks-off' }
+    if (!(await findTranscriptFile(sessionId))) return { ok: false, reason: 'no-transcript' }
+    const handleId = randomUUID()
+    const hook = await writeSideHook(app.getPath('userData'))
+    // Before the spawn: the CLI lists MCP tools once, at connect.
+    surfaceRoute.mirror(handleId, parentHandleId)
+    mcp.mirror(handleId, parentHandleId)
+    const { name: _name, ...base } = parent
+    manager.start(handleId, {
+      ...base,
+      resumeSessionId: sessionId,
+      fork: true,
+      permissionMode,
+      side: { hook },
+      cluiMcp: { config: JSON.stringify({ mcpServers: await cluiServers(handleId, true) }), allow: parent.cluiMcp?.allow ?? [] }
+    })
+    sides.set(handleId, parentHandleId)
+    return { ok: true, handleId }
   })
 
   handle(IpcChannels.sendMessage, async (_e, handleId: unknown, raw: unknown) => {
@@ -899,6 +943,11 @@ function registerIpc(): void {
   })
 
   handle(IpcChannels.stopSession, async (_e, handleId: string) => {
+    for (const [side, parent] of sides) {
+      if (parent !== handleId) continue
+      manager.stop(side)
+      disposeBrowser(side)
+    }
     manager.stop(handleId)
     disposeBrowser(handleId)
   })

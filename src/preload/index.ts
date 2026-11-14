@@ -33,6 +33,7 @@ const api: CluiApi = {
   getOsTheme: () => ipcRenderer.invoke(IpcChannels.getOsTheme),
   startSession: (opts: StartSessionOptions) =>
     ipcRenderer.invoke(IpcChannels.startSession, opts),
+  startSide: (opts) => ipcRenderer.invoke(IpcChannels.startSide, opts),
   sendMessage: (handleId, packet) => ipcRenderer.invoke(IpcChannels.sendMessage, handleId, packet),
   validateRefs: (handleId, refs) => ipcRenderer.invoke(IpcChannels.validateRefs, handleId, refs),
   syncAnnotationOrder: (handleId, order) => ipcRenderer.invoke(IpcChannels.syncAnnotationOrder, handleId, order),

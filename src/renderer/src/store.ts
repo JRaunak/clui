@@ -22,9 +22,9 @@ import { agentInfo, agentRunState, findAgentTool, isAgentTool, isLive, trailOf, 
 import { recordOf, workflowSummary } from './lib/workflow'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
-import type { CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, SessionRuns, WireAttachment } from '../../shared/ipc'
+import type { ApiProvider, StartSideOptions, CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, SessionRuns, WireAttachment } from '../../shared/ipc'
 import { loadFailureOf, siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
-import { PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, setLiveEfforts, supportsUltracodeToggle, contextWindowForModel, contextSizeLabel, latestModelInFamily, deriveModelInfo, modelCheckReason, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
+import { HOOKS_TOKEN, PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, setLiveEfforts, supportsUltracodeToggle, contextWindowForModel, contextSizeLabel, latestModelInFamily, deriveModelInfo, modelCheckReason, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
 import type { ProcessedAttachment } from './lib/images'
 import { pinWords, clipName, type AnnotateEvent, type PointAt } from '../../shared/annotate'
 import {
@@ -61,6 +61,7 @@ import { suffixes } from './lib/tree'
 import { fileLike, noPreview, presentationOf } from './lib/presentation'
 import { isHtml } from '../../shared/html-view'
 import { colName, isDelimited, parseA1 } from '../../shared/sheets'
+import { readOnlyLine, sideToolsAtFork } from './lib/side'
 
 export type SettingsSection = 'general' | 'sessions' | 'pane' | 'browser' | 'advanced'
 /** A group heading Settings can scroll to and focus on open. */
@@ -522,10 +523,59 @@ export interface PerSessionState {
   launchedDisabled: string[]
   /** The MCP servers from the latest init, with their connection status. Empty before the first one. */
   liveMcp: { name: string; status: string }[]
+  /** The tools from the latest init. Empty before the first one. */
+  initTools: string[]
+  /** The provider from this process's initialize ACK; null before it, or when the CLI named none. */
+  apiProvider: ApiProvider | null
+  /** Set only on a side slice (it lives in `sideSessions`, never `sessions`). */
+  side: SideState | null
+  /** A parent's side forks' spend, which its own cumulative `costUsd` never includes. */
+  sideCostUsd: number
+  /** A side's init listed tools or MCP servers its parent's didn't (prompt cache likely cold); null with no parent init
+   *  to compare. A diagnostic only. */
+  cacheCold: boolean | null
   /** Where File, Tree and page adds land: null is the draft, else a queued message under review. */
   referenceEditTarget: RefTarget
   /** The composer's polite announcement for its chips row and notices. */
   refAnnounce: string
+}
+
+export interface SideState {
+  parent: string
+  openedAt: number
+  /** The read-only line the first side message starts with. */
+  readOnly: string
+  readOnlySent: boolean
+  /** The side's initialize ACK arrived; until then it's Starting. */
+  ready: boolean
+  /** The first turn's first request, the only usage that tells a cache hit from a miss. */
+  firstRequest: { read: number; write: number } | null
+  /** The first answer missed the prompt cache: what it cost and how much it wrote. */
+  cacheMiss: { costUsd: number | null; written: number } | null
+}
+
+export type SideRefusal = 'not-live' | 'quick' | 'hooks-off' | 'no-first-message' | 'no-transcript'
+
+/** The one rule every side-chat entry point disables on. `no-transcript` only main can tell. */
+export function canFork(s: PerSessionState | null): SideRefusal | null {
+  if (!s || s.exited) return 'not-live'
+  if (s.ephemeral) return 'quick'
+  if (s.launchedDisabled.includes(HOOKS_TOKEN)) return 'hooks-off'
+  return s.sessionId ? null : 'no-first-message'
+}
+
+export const sideFor = (st: SessionStore, parent: string): PerSessionState | null =>
+  Object.values(st.sideSessions).find((x) => x.side?.parent === parent) ?? null
+
+const sliceOf = (s: SessionStore, h: string): PerSessionState | undefined => s.sessions[h] ?? s.sideSessions[h]
+
+/** Tools and MCP server names in one init and not the other: `+x` the side's only, `-x` the parent's only. Server
+ *  status is ignored, since connect timing can differ while the tools match. */
+export function toolSurfaceDiff(parent: { initTools: string[]; liveMcp: { name: string }[] }, init: { tools: string[]; mcpServers: { name: string }[] }): string[] {
+  const diff = (a: string[], b: string[], sign: string): string[] => a.filter((x) => !b.includes(x)).map((x) => sign + x)
+  const ps = parent.liveMcp.map((m) => m.name)
+  const ss = init.mcpServers.map((m) => m.name)
+  return [...diff(init.tools, parent.initTools, '+'), ...diff(parent.initTools, init.tools, '-'), ...diff(ss, ps, '+'), ...diff(ps, ss, '-')]
 }
 
 /** A tab the cap closed, held for its card's lifetime so Reopen can put it back where it was. */
@@ -756,6 +806,12 @@ interface SessionStore {
   renameLiveSession: (handleId: string, name: string) => void
   /** Stop a live session's process and drop its slice. */
   closeSession: (handleId: string) => Promise<void>
+  /** Side-chat forks by their own handle. Never listed, activated, evicted or counted as sessions. */
+  sideSessions: Record<string, PerSessionState>
+  /** Opens the session's side fork, ending any open one. Resolves with the reason when it can't fork. */
+  openSide: (parentHandleId: string, question?: string) => Promise<{ ok: true } | { ok: false; reason: SideRefusal }>
+  sendSide: (sideHandleId: string, text: string) => Promise<void>
+  endSide: (parentHandleId: string) => Promise<void>
   /** Move the active view to the next (dir=1) / previous (dir=-1) live session,
    *  in sidebar order, wrapping around. No-op with fewer than 2 live sessions. */
   cycleSession: (dir: 1 | -1) => void
@@ -780,7 +836,8 @@ interface SessionStore {
   removeDraftAttachment: (handleId: string, id: string) => void
   /** Clear a session's draft (text + attachments) once a successful send has consumed it. */
   clearDraft: (handleId: string) => void
-  interrupt: () => Promise<void>
+  /** Stops the turn of `handleId` (a side's, say), else the active session's. */
+  interrupt: (handleId?: string) => Promise<void>
   stopBackgroundTask: (handleId: string, taskId: string) => Promise<void>
   /** An agent or workflow tab's Stop. */
   stopRun: (handleId: string, target: StopTarget) => Promise<void>
@@ -805,7 +862,7 @@ interface SessionStore {
   setEffort: (effort: EffortChoice) => Promise<void>
   /** Toggle ultracode live for the active session (per-session only). */
   setUltracode: (on: boolean) => Promise<void>
-  respondPermission: (verdict: PermissionVerdict) => Promise<void>
+  respondPermission: (verdict: PermissionVerdict, handleId?: string) => Promise<void>
   /** Dismiss the in-chat compact suggestion for the active session at the current
    *  runway (it re-arms once near auto-compact; resets when context drops). */
   dismissCompactSuggestion: () => void
@@ -859,7 +916,7 @@ interface SessionStore {
   /** Repeats in the browser pane's live region even when `text` matches the last announcement. */
   announceBrowser: (text: string) => void
   /** Answer an MCP elicitation Gate. */
-  respondElicitation: (requestId: string, response: ElicitationResponse) => Promise<void>
+  respondElicitation: (requestId: string, response: ElicitationResponse, handleId?: string) => Promise<void>
   /** Set the active session's pane. Opening it replaces a subagent view and needs a cwd; with no tabs it
    *  shows the picker. Half or full is an explicit size choice, kept for that session. */
   setPane: (next: BrowserPaneState) => void
@@ -953,8 +1010,9 @@ function patchSlice(
   handleId: string,
   patch: Partial<PerSessionState>
 ): Partial<SessionStore> {
-  const cur = s.sessions[handleId]
+  const cur = sliceOf(s, handleId)
   if (!cur) return {}
+  if (cur.side) return { sideSessions: { ...s.sideSessions, [handleId]: { ...cur, ...patch } } }
   let next = { ...cur, ...patch }
   if (next.browser !== cur.browser) next = placeBrowser(next)
   if (next.restoreNote && next.surfaces.order.length) next = { ...next, restoreNote: null }
@@ -1729,6 +1787,92 @@ function prepareChanges(handleId: string, prev: PerSessionState, next: FileChang
   if (set0.active === null && !useSession.getState().sessions[handleId].paneOpen) useSession.setState((s) => patchSlice(s, handleId, { surfaces: { ...s.sessions[handleId].surfaces, active: 'diff' } }))
 }
 
+/** A slice with nothing in it yet. A session's and a side's start from it. */
+function blankSlice(o: { handleId: string; cwd: string; now: number; modeChoice: PermissionModeChoice; modelChoice: ModelChoice; effortChoice: EffortChoice }): PerSessionState {
+  return {
+    handleId: o.handleId,
+    sessionId: null,
+    title: null,
+    cwd: o.cwd,
+    model: null,
+    permissionMode: null,
+    modeChoice: o.modeChoice,
+    modelMode: null,
+    modelChoice: o.modelChoice,
+    modelPending: false,
+    effortChoice: o.effortChoice,
+    ultracode: false,
+    contextPercent: null,
+    contextTokens: null,
+    contextWindow: null,
+    compactDismissedAtRunway: null,
+    costUsd: null,
+    resumed: false,
+    ephemeral: false,
+    historyCount: 0,
+    busy: false,
+    interrupting: false,
+    turnStartMs: null,
+    thinkingTokens: null,
+    compacting: false,
+    statusAnnounce: '',
+    messages: EMPTY_MESSAGES,
+    queuedMessages: EMPTY_QUEUED,
+    draftText: '',
+    draftAttachments: EMPTY_ATTACHMENTS,
+    pendingPermissions: [],
+    changes: EMPTY_CHANGES,
+    backgroundTasks: {},
+    modStatus: EMPTY_MOD_STATUS,
+    subagentMessages: {},
+    subagentChildren: {},
+    nestedLaunches: {},
+    agentMetas: {},
+    workflows: {},
+    workflowReads: {},
+    runs: IDLE_RUNS,
+    agentToolUses: {},
+    agentActivity: {},
+    monitors: EMPTY_MONITORS,
+    slashCommands: EMPTY_SLASH_COMMANDS,
+    tasks: EMPTY_TASKS,
+    lastError: null,
+    apiRetry: null,
+    apiRetryDismissed: false,
+    apiRetryAnnounce: '',
+    checkingTools: EMPTY_CHECKING,
+    rateLimit: null,
+    rateLimitDismissed: false,
+    rateLimitAnnounce: '',
+    turnTasks: EMPTY_STRINGS,
+    endedTasks: EMPTY_WOKEN,
+    exited: false,
+    createdMs: o.now,
+    lastActivityMs: o.now,
+    browser: null,
+    paneOpen: false,
+    surfacePaneFull: false,
+    paneAutoOpen: false,
+    paneAutoOpenSuppressed: false,
+    surfaces: EMPTY_SURFACES,
+    restoreNote: null,
+    tabsEvicted: false,
+    annotate: IDLE_ANNOTATE,
+    contextRefs: EMPTY_REFS,
+    referenceNotices: EMPTY_NOTICES,
+    changeRead: null,
+    launchedDisabled: EMPTY_STRINGS,
+    liveMcp: [],
+    initTools: EMPTY_STRINGS,
+    apiProvider: null,
+    side: null,
+    sideCostUsd: 0,
+    cacheCold: null,
+    referenceEditTarget: null,
+    refAnnounce: ''
+  }
+}
+
 /** Insert a freshly-created slice and flush any events that raced ahead of it. */
 function insertSlice(
   set: (fn: (s: SessionStore) => Partial<SessionStore>) => void,
@@ -1744,11 +1888,26 @@ function insertSlice(
       activeHandleId: slice.handleId
     }
   })
-  const buffered = earlyBuffer.get(slice.handleId)
-  if (buffered) {
-    earlyBuffer.delete(slice.handleId)
-    for (const e of buffered) applyEvent(slice.handleId, e)
-  }
+  flushEarly(slice.handleId, applyEvent)
+}
+
+/** A side slice goes in beside the sessions, never activated or given a pane. */
+function insertSide(set: Setter, applyEvent: (handleId: string, e: DomainEvent) => void, slice: PerSessionState): void {
+  set((s) => ({ sideSessions: { ...s.sideSessions, [slice.handleId]: slice } }))
+  flushEarly(slice.handleId, applyEvent)
+}
+
+function flushEarly(handleId: string, applyEvent: (handleId: string, e: DomainEvent) => void): void {
+  const buffered = earlyBuffer.get(handleId)
+  if (!buffered) return
+  earlyBuffer.delete(handleId)
+  for (const e of buffered) applyEvent(handleId, e)
+}
+
+/** The mode in effect, as the CLI takes it. A mode the CLI reported but Clui doesn't know runs the side as Interactive. */
+function concreteMode(p: PerSessionState): StartSideOptions['permissionMode'] {
+  const { mode } = effectiveMode(p)
+  return mode === 'inherit' ? 'default' : mode
 }
 
 /** Shared start/resume: seed a slice, spawn the process, wire it up. */
@@ -1883,83 +2042,26 @@ async function beginSession(
     ultracode
   })
 
-  const now = Date.now()
   insertSlice(set, get().applyEvent, {
-    handleId,
+    ...blankSlice({ handleId, cwd: opts.cwd, now: Date.now(), modeChoice: choice, modelChoice, effortChoice }),
     // A fork gets a NEW id from the CLI, so don't seed the source's id: that would make the
     // fork masquerade as the source's on-disk row until session-init reconciles. Resume keeps it.
     sessionId: opts.fork ? null : (opts.resumeSessionId ?? null),
     // A hard-titled resume passes its name here, so the footer title agrees with the
     // sidebar (and the re-asserted `-n`) instead of falling back to the first message.
     title: opts.name ?? null,
-    cwd: opts.cwd,
-    model: null,
     permissionMode: seededMode,
-    modeChoice: choice,
-    modelMode: null,
-    modelChoice,
-    modelPending: false,
-    effortChoice,
     ultracode,
     contextPercent: seededPercent,
     contextTokens: seededTokens,
     contextWindow: seededTokens != null ? seededWindow : null,
-    compactDismissedAtRunway: null,
     costUsd: resumedCostUsd,
     resumed: Boolean(opts.resumeSessionId),
     ephemeral: Boolean(opts.ephemeral),
     historyCount: history.length,
-    busy: false,
-    interrupting: false,
-    turnStartMs: null,
-    thinkingTokens: null,
-    compacting: false,
-    statusAnnounce: '',
     messages: history,
-    queuedMessages: EMPTY_QUEUED,
-    draftText: '',
-    draftAttachments: EMPTY_ATTACHMENTS,
-    pendingPermissions: [],
-    changes: EMPTY_CHANGES,
-    backgroundTasks: {},
-    modStatus: EMPTY_MOD_STATUS,
-    subagentMessages: {},
-    subagentChildren: {},
-    nestedLaunches: {},
-    agentMetas: {},
-    workflows: {},
-    workflowReads: {},
-    runs: IDLE_RUNS,
-    agentToolUses: {},
-    agentActivity: {},
-    monitors: EMPTY_MONITORS,
-    slashCommands: EMPTY_SLASH_COMMANDS,
-    tasks: EMPTY_TASKS,
-    lastError: null,
-    apiRetry: null,
-    apiRetryDismissed: false,
-    apiRetryAnnounce: '',
-    checkingTools: EMPTY_CHECKING,
-    rateLimit: null,
-    rateLimitDismissed: false,
-    rateLimitAnnounce: '',
-    turnTasks: EMPTY_STRINGS,
-    endedTasks: EMPTY_WOKEN,
-    exited: false,
-    createdMs: now,
-    lastActivityMs: now,
     ...restoredPane(surfaces, browser),
-    paneAutoOpen: false,
-    paneAutoOpenSuppressed: false,
-    tabsEvicted: false,
-    annotate: IDLE_ANNOTATE,
-    contextRefs: EMPTY_REFS,
-    referenceNotices: EMPTY_NOTICES,
-    changeRead: null,
-    launchedDisabled: disabled,
-    liveMcp: [],
-    referenceEditTarget: null,
-    refAnnounce: ''
+    launchedDisabled: disabled
   })
   for (const t of Object.values(get().sessions[handleId]?.surfaces.tabs ?? {})) {
     if (t.kind === 'agent') ensureAgentData(handleId, t)
@@ -2022,6 +2124,7 @@ function evictIfOverCap(
 
   const label = victim.messages.find((m) => m.role === 'user')?.text.slice(0, 40) || 'a session'
   flushSurfaces(victim.handleId)
+  void get().endSide(victim.handleId)
   void window.clui.stopSession(victim.handleId)
   retireHandle(victim.handleId)
   set((s) => {
@@ -2164,7 +2267,7 @@ async function dispatchTurn(set: Setter, handleId: string, text: string, attachm
   const userMsg = userBubble(handleId, text, attachments, refs)
   const now = Date.now()
   set((s) => {
-    const slice = s.sessions[handleId]
+    const slice = sliceOf(s, handleId)
     if (!slice) return {}
     return patchSlice(s, handleId, {
       messages: [...slice.messages, userMsg],
@@ -2185,7 +2288,7 @@ function userBubble(handleId: string, text: string, attachments: SendAttachment[
   const { visualIndex, attachmentBase } = packetLayout(refs)
   let shown = text
   try {
-    shown = serializeContext(sentRefs(refs, useSession.getState().sessions[handleId]?.cwd ?? null), text, { packetId: null })
+    shown = serializeContext(sentRefs(refs, sliceOf(useSession.getState(), handleId)?.cwd ?? null), text, { packetId: null })
   } catch {
     // Main refuses the same packet as invalid and says so.
   }
@@ -2230,11 +2333,11 @@ async function deliver(
   try {
     r = await window.clui.sendMessage(handleId, { text: p.text, refs: p.refs, attachments: p.attachments?.map((a) => a.wire) ?? [], now: p.now })
   } catch {
-    set((s) => (s.sessions[handleId] ? patchSlice(s, handleId, { ...rollback, lastError: NOT_DELIVERED }) : {}))
+    set((s) => patchSlice(s, handleId, { ...rollback, lastError: NOT_DELIVERED }))
     return null
   }
   set((s) => {
-    const slice = s.sessions[handleId]
+    const slice = sliceOf(s, handleId)
     if (!slice) return {}
     if (r.ok) return patchSlice(s, handleId, { messages: slice.messages.map((m) => (m.id === bubbleId ? { ...m, text: r.text } : m)) })
     if (r.reason === 'invalid') return patchSlice(s, handleId, { ...rollback, lastError: NOT_BUILT })
@@ -2673,8 +2776,54 @@ export const useSession = create<SessionStore>((set, get) => ({
     else void window.clui.injectRename(handleId, name)
   },
 
+  sideSessions: {},
+  openSide: async (parentHandleId, question) => {
+    const p = get().sessions[parentHandleId] ?? null
+    const refused = canFork(p)
+    if (!p || refused) return { ok: false, reason: refused ?? 'not-live' }
+    await get().endSide(parentHandleId)
+    const permissionMode = concreteMode(p)
+    const r = await window.clui.startSide({ parentHandleId, permissionMode })
+    if (!r.ok) return r
+    // The parent closed while main spawned the fork.
+    if (!get().sessions[parentHandleId]) {
+      void window.clui.stopSession(r.handleId)
+      retireHandle(r.handleId)
+      return { ok: false, reason: 'not-live' }
+    }
+    const now = Date.now()
+    insertSide(set, get().applyEvent, {
+      ...blankSlice({ handleId: r.handleId, cwd: p.cwd, now, modeChoice: permissionMode, modelChoice: p.modelChoice, effortChoice: p.effortChoice }),
+      ultracode: p.ultracode,
+      side: { parent: parentHandleId, openedAt: now, readOnly: readOnlyLine(sideToolsAtFork(p.apiProvider)), readOnlySent: false, ready: false, firstRequest: null, cacheMiss: null }
+    })
+    // Main holds the write until the fork's handshake, so nothing waits for it here.
+    if (question?.trim()) void get().sendSide(r.handleId, question)
+    return { ok: true }
+  },
+  sendSide: async (handleId, text) => {
+    const x = get().sideSessions[handleId]
+    if (!x?.side || x.exited || !text.trim()) return
+    if (x.busy || x.interrupting || x.queuedMessages.length) {
+      const qm: QueuedMessage = { id: `q-${crypto.randomUUID()}`, text, refs: EMPTY_REFS }
+      set((s) => patchSlice(s, handleId, { queuedMessages: [...(s.sideSessions[handleId]?.queuedMessages ?? []), qm] }))
+      return
+    }
+    const { readOnly, readOnlySent } = x.side
+    if (!readOnlySent) set((s) => patchSlice(s, handleId, { side: { ...s.sideSessions[handleId]!.side!, readOnlySent: true } }))
+    await dispatchTurn(set, handleId, readOnlySent ? text : `${readOnly}\n\n${text}`)
+  },
+  endSide: async (parentHandleId) => {
+    const x = sideFor(get(), parentHandleId)
+    if (!x) return
+    retireHandle(x.handleId)
+    set((s) => ({ sideSessions: withoutKey(s.sideSessions, x.handleId) }))
+    await window.clui.stopSession(x.handleId)
+  },
+
   closeSession: async (handleId) => {
     flushSurfaces(handleId)
+    await get().endSide(handleId)
     await window.clui.stopSession(handleId)
     set((s) => {
       // Compute the neighbour BEFORE deleting, using the SAME order the sidebar
@@ -2967,8 +3116,8 @@ export const useSession = create<SessionStore>((set, get) => ({
       return patchSlice(s, handleId, { draftText: '', draftAttachments: EMPTY_ATTACHMENTS })
     }),
 
-  interrupt: async () => {
-    const active = activeSlice(get())
+  interrupt: async (handleId) => {
+    const active = handleId ? (sliceOf(get(), handleId) ?? null) : activeSlice(get())
     if (!active) return
     // Stop raced the turn's end (result already cleared busy): nothing outstanding to abandon,
     // just forward the interrupt (harmless no-op in main) so we never mark a phantom boundary.
@@ -3128,8 +3277,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     set((s) => (Object.entries(reply).every(([p, g]) => sameGit(s.gitStatus[p], g)) ? s : { gitStatus: { ...s.gitStatus, ...reply } }))
   },
 
-  respondPermission: async (verdict) => {
-    const active = activeSlice(get())
+  respondPermission: async (verdict, handleId) => {
+    const active = handleId ? (sliceOf(get(), handleId) ?? null) : activeSlice(get())
     if (!active) return
     // Browser Gates are raised by Clui's own MCP server, not the CLI, so their answer goes to main.
     const req = active.pendingPermissions.find((p) => p.requestId === verdict.requestId)
@@ -3171,8 +3320,10 @@ export const useSession = create<SessionStore>((set, get) => ({
     const rateLimitSchedule: { next: RateLimit | null } = { next: null }
     // An agent whose held step needs a release timer, armed after the commit.
     const activityWake: { id: string | null } = { id: null }
+    // A side's init that differs from its parent's, warned about after the commit.
+    const coldDiff: { diff: string[] | null } = { diff: null }
     set((state) => {
-      const slice = state.sessions[handleId]
+      const slice = sliceOf(state, handleId)
       // Slice not created yet: buffer until insertSlice flushes it (race guard). But a
       // RETIRED handle's slice will never be (re)inserted, so discard its late events
       // instead of buffering them forever; a pending start's buffer is capped.
@@ -3220,7 +3371,8 @@ export const useSession = create<SessionStore>((set, get) => ({
           // A pick made before the first message had no sessionId to persist under (null
           // until now), so persist it once the id exists. The null→real gate excludes a
           // resume, whose slice is already seeded from the sidecar, from re-flushing over it.
-          if (!slice.sessionId && e.sessionId) {
+          // A side's throwaway id must never reach session-models.json.
+          if (!slice.sessionId && e.sessionId && !slice.side) {
             flush.prefs = {
               sessionId: e.sessionId,
               model: slice.modelChoice,
@@ -3233,6 +3385,13 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.permissionMode = e.permissionMode
           patch.changeRead = e.tools.includes(CHANGE_READ_TOOL)
           patch.liveMcp = e.mcpServers
+          patch.initTools = e.tools
+          if (slice.side) {
+            const parent = state.sessions[slice.side.parent]
+            const diff = parent?.initTools.length ? toolSurfaceDiff(parent, e) : null
+            patch.cacheCold = diff && diff.length > 0
+            if (diff?.length) coldDiff.diff = diff
+          }
           // Reconcile the PICKER (modelChoice) to the model the CLI actually reports.
           // On resume, the CLI keeps the model the session last used (a mid-session
           // set_model survives --resume), but beginSession seeded modelChoice from the
@@ -3257,6 +3416,10 @@ export const useSession = create<SessionStore>((set, get) => ({
           // error and the app-level notice.
           patch.lastError = null
           clearNotice = true
+          break
+        case 'session-ready':
+          patch.apiProvider = e.provider ?? null
+          if (slice.side) patch.side = { ...slice.side, ready: true }
           break
         case 'permission-mode-changed': {
           // The model only switches INTO plan (via EnterPlanMode); any other reported mode is
@@ -3427,11 +3590,12 @@ export const useSession = create<SessionStore>((set, get) => ({
               input: e.input,
               displayName: e.displayName,
               description: e.description,
-              permissionSuggestions: e.permissionSuggestions,
+              // A side never persists a rule or switches mode: it offers Allow once and Deny only.
+              permissionSuggestions: slice.side ? undefined : e.permissionSuggestions,
               decisionReason: e.decisionReason,
               decisionReasonType: e.decisionReasonType,
               blockedPath: e.blockedPath,
-              suppressAlwaysAllow: e.suppressAlwaysAllow,
+              suppressAlwaysAllow: slice.side ? true : e.suppressAlwaysAllow,
               agentToolUseId: e.agentToolUseId,
               agentDescription: e.agentDescription,
               agentId: e.agentId
@@ -3459,8 +3623,11 @@ export const useSession = create<SessionStore>((set, get) => ({
           patch.contextPercent = Math.min(100, Math.round((e.usedTokens / window) * 100))
           patch.contextTokens = e.usedTokens
           patch.contextWindow = window
-          if (e.measured && slice.sessionId && modelPrefsBySessionId.get(slice.sessionId)?.contextWindow !== window)
+          if (e.measured && slice.sessionId && !slice.side && modelPrefsBySessionId.get(slice.sessionId)?.contextWindow !== window)
             flush.window = { sessionId: slice.sessionId, contextWindow: window }
+          // Only the first request tells a cache hit from a miss: later ones in the turn read back what it wrote.
+          if (slice.side && !slice.side.firstRequest && e.cacheRead !== undefined)
+            patch.side = { ...slice.side, firstRequest: { read: e.cacheRead, write: e.cacheWrite ?? 0 } }
           // Reset the compact-suggestion dismissal when context drops back below the
           // trigger (a fresh fill-cycle after a manual/auto compact) so the row can
           // offer again. Uses the same window-class threshold as the suggestion.
@@ -3822,7 +3989,7 @@ export const useSession = create<SessionStore>((set, get) => ({
             // Matched at the command boundary (leading token only), so a mid-sentence
             // "/rename" or another command never triggers the re-scan. Skip when the turn was
             // interrupted: a stopped `/rename` didn't complete, so there's nothing to re-scan.
-            if (!wasInterrupting) {
+            if (!wasInterrupting && !slice.side) {
               const lastUser = slice.messages.findLast((m) => m.role === 'user')
               if (lastUser && /^\/rename(\s|$)/.test(lastUser.text.trim())) rescanSessions.needed = true
               // A resume mirrors customTitle within the first turn or two but emits no stream
@@ -3840,6 +4007,15 @@ export const useSession = create<SessionStore>((set, get) => ({
           if (typeof e.totalCostUsd === 'number') {
             patch.costUsd = Math.max(slice.costUsd ?? 0, e.totalCostUsd)
           }
+          // A fork's total carries the parent's only when the parent's transcript already held its cost
+          // (a parent that has exited); a live parent's fork starts at 0. The turn's own usage is right either way.
+          const parent = slice.side && state.sessions[slice.side.parent]
+          const spent = e.usage?.costUSD ?? 0
+          if (parent && spent > 0) top.sessions = { ...state.sessions, [parent.handleId]: { ...parent, sideCostUsd: parent.sideCostUsd + spent } }
+          // Judged once, at the first answer.
+          const first = slice.side?.firstRequest
+          if (slice.side && first && !slice.messages.some((m) => m.turnEnd))
+            patch.side = { ...slice.side, cacheMiss: first.read < first.write ? { costUsd: e.usage?.costUSD ?? null, written: first.write } : null }
           // Result arrives after the assistant text, so the turn's record goes on its last assistant
           // message. A turn that never reached Claude (a hook-blocked prompt) has no reply of its own,
           // and the previous turn's record must not be overwritten. Before a sent-now message's
@@ -3907,7 +4083,7 @@ export const useSession = create<SessionStore>((set, get) => ({
           // drop), NOT also as the in-chat error box, which would (a) duplicate the
           // message and (b) vanish with the slice anyway. A mid-session error (model
           // already set) shows in-chat as before.
-          if (slice.model === null) topLevelNotice = { message: e.message, tone: 'error' }
+          if (slice.model === null && !slice.side) topLevelNotice = { message: e.message, tone: 'error' }
           else patch.lastError = e.message
           break
         case 'process-exit':
@@ -3945,7 +4121,8 @@ export const useSession = create<SessionStore>((set, get) => ({
       // picked as the fallback when another session closes, resurfacing its stale
       // error. The transcript (if any) is untouched on disk,
       // so it stays resumable from the sidebar once the folder is back.
-      if (e.type === 'process-exit' && slice.model === null) {
+      // A side keeps its slice and the question it was asked: the side tab shows it ended.
+      if (e.type === 'process-exit' && slice.model === null && !slice.side) {
         const next = { ...state.sessions }
         delete next[handleId]
         retireHandle(handleId)
@@ -3978,9 +4155,10 @@ export const useSession = create<SessionStore>((set, get) => ({
         }
       }
       if (touchesMessages(e.type)) patch.messages = messages
+      const home = slice.side ? { sideSessions: { ...state.sideSessions, [handleId]: { ...slice, ...patch } } } : { sessions: { ...state.sessions, [handleId]: { ...slice, ...patch } } }
       return {
         ...top,
-        sessions: { ...state.sessions, [handleId]: { ...slice, ...patch } },
+        ...home,
         ...(topLevelNotice !== null ? { notice: topLevelNotice } : clearNotice ? { notice: null } : {})
       }
     })
@@ -3993,6 +4171,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       void dispatchTurn(set, h, msg.text, msg.attachments, msg.refs)
     }
     if (rescanSessions.needed) void get().refreshSessions(true)
+    if (coldDiff.diff) console.warn('[side] tool list differs from the parent; prompt cache likely cold:', coldDiff.diff.join(', '))
     const woke = activityWake.id
     const hold = woke === null ? undefined : activityHolds.get(`${handleId}\0${woke}`)
     if (woke !== null && hold && !hold.timer) {
@@ -4014,7 +4193,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       if (limit.status !== 'allowed' && limit.resetsAt !== undefined) {
         const clear = (): void => {
           rateLimitTimers.delete(handleId)
-          set((s) => (s.sessions[handleId]?.rateLimit === limit ? patchSlice(s, handleId, { rateLimit: null, rateLimitDismissed: false }) : {}))
+          set((s) => (sliceOf(s, handleId)?.rateLimit === limit ? patchSlice(s, handleId, { rateLimit: null, rateLimitDismissed: false }) : {}))
         }
         const ms = limit.resetsAt * 1000 - Date.now()
         if (ms <= 0) clear()
@@ -4236,8 +4415,8 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
   announceBrowser: (text) => set({ browserAnnounce: toggled(text) }),
 
-  respondElicitation: async (requestId, response) => {
-    const active = activeSlice(get())
+  respondElicitation: async (requestId, response, handleId) => {
+    const active = handleId ? (sliceOf(get(), handleId) ?? null) : activeSlice(get())
     if (!active) return
     set((s) =>
       patchSlice(s, active.handleId, {
@@ -4317,6 +4496,8 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
 
   openSurface: (handleId, asked, intent, actor, openedBy) => {
+    // A file link in a side transcript opens in its parent's pane.
+    handleId = get().sideSessions[handleId]?.side?.parent ?? handleId
     // Openers ask for a file by path; the path decides whether it opens as an image.
     const spec = asked.kind === 'file' ? { ...asked, kind: kindForPath(asked.key) } : asked
     const browserTab = spec.kind === 'browser' ? spec.tab : null

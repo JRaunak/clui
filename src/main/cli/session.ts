@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { normalizeSlashCommands, type DomainEvent, type ElicitationResponse } from '../../shared/events'
-import type { DispatchResult, ModeChangeResult, ModelSwitchResult } from '../../shared/ipc'
+import { API_PROVIDERS, type DispatchResult, type ModeChangeResult, type ModelSwitchResult } from '../../shared/ipc'
 import { HOOKS_TOKEN, clampEffort, deriveModelInfo, effortsFromCatalog, isEffortChoice, setLiveEfforts } from '../../shared/settings'
 import { NdjsonParser } from './ndjson'
 import { EventMapper } from './event-mapper'
@@ -93,6 +93,9 @@ export interface ClaudeSessionOptions {
   env?: Record<string, string>
   /** Config switched off for this launch, as DisabledConfig tokens (see effectiveDisabled). */
   disabledConfig?: string[]
+  /** Side-chat fork: no transcript, and `hook` runs as a PreToolUse hook on every tool call. Unlike `ephemeral`
+   *  it keeps the launch's tool set, which the prompt cache depends on. */
+  side?: { hook: string }
 }
 
 /**
@@ -215,6 +218,11 @@ export class ClaudeSession extends EventEmitter {
     return this.sessionId
   }
 
+  /** The launch options as they stand now; model, effort, mode and ultracode follow live changes. */
+  options(): ClaudeSessionOptions {
+    return { ...this.opts }
+  }
+
   private buildArgs(): string[] {
     this.dropSpawnDir()
     const args = [
@@ -249,20 +257,21 @@ export class ClaudeSession extends EventEmitter {
     }
     // Ultracode is a session setting (not --effort), passed at launch via --settings inline JSON
     // (verified) so a resume restores it. Clui's own arg, never ~/.claude.
+    // disableAllHooks would switch off the deny hook too, the only barrier in bypassPermissions.
+    if (this.opts.side && this.opts.disabledConfig?.includes(HOOKS_TOKEN)) throw new Error('side chat needs hooks on: disableAllHooks would switch off its deny hook')
     const flagSettings = {
       ...(this.opts.ultracode ? { ultracode: true } : {}),
       ...(this.opts.blockOutsideWrites && !this.opts.ephemeral
         ? { permissions: { blockWritesOutsideWorkingDirectories: true } }
         : {}),
-      ...(this.opts.disabledConfig?.includes(HOOKS_TOKEN) ? { disableAllHooks: true } : {})
+      ...(this.opts.disabledConfig?.includes(HOOKS_TOKEN) ? { disableAllHooks: true } : {}),
+      ...(this.opts.side ? { hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: this.opts.side.hook }] }] } } : {})
     }
     if (Object.keys(flagSettings).length) args.push('--settings', JSON.stringify(flagSettings))
     // Ahead of the variadic flags below, which would swallow it as a list item.
     if (this.opts.appendSystemPrompt) args.push('--append-system-prompt-file', this.privateFile('append.md', this.opts.appendSystemPrompt))
-    if (this.opts.ephemeral) {
-      // Quick chat: the CLI streams normally but writes no transcript to disk.
-      args.push('--no-session-persistence')
-    }
+    // The CLI streams normally but writes no transcript to disk.
+    if (this.opts.ephemeral || this.opts.side) args.push('--no-session-persistence')
     // One list: Quick's locked-down tool set plus the agents and MCP servers switched off. It's
     // variadic, so the next flag (--mcp-config, --resume) or the end of the bare args terminates it.
     const disallowed = [
@@ -554,6 +563,9 @@ export class ClaudeSession extends EventEmitter {
       // (event-mapper) replaces it mid-session.
       const commands = normalizeSlashCommands(env.response?.response?.commands)
       if (commands.length) this.emitEvent({ type: 'slash-commands', commands })
+      const account = env.response?.response?.account as { apiProvider?: unknown } | undefined
+      const provider = API_PROVIDERS.find((p) => p === account?.apiProvider)
+      this.emitEvent({ type: 'session-ready', ...(provider ? { provider } : {}) })
       const efforts = effortsFromCatalog(env.response?.response?.models)
       if (Object.keys(efforts).length) {
         setLiveEfforts(efforts)
@@ -618,7 +630,8 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private emitEvent(e: DomainEvent): void {
-    if (e.type === 'result' && e.usage && e.messageId) void recordTurnUsage(e.sessionId, e.messageId, e.usage).catch(() => {})
+    // A session with no transcript has nothing to key turn usage against.
+    if (e.type === 'result' && e.usage && e.messageId && !this.opts.ephemeral && !this.opts.side) void recordTurnUsage(e.sessionId, e.messageId, e.usage).catch(() => {})
     this.emit('event', e)
   }
 

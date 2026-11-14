@@ -41,7 +41,10 @@ export class SessionManager {
   private readonly ledger: ChangeLedger
   private readonly cwds = new Map<string, string>()
 
-  constructor(private readonly sink: EventSink, publishChanges: PublishFn) {
+  private readonly sink: EventSink
+
+  constructor(sink: EventSink, publishChanges: PublishFn) {
+    this.sink = sink
     this.ledger = new ChangeLedger(publishChanges)
   }
 
@@ -51,7 +54,8 @@ export class SessionManager {
     // A resume keeps its id, so its ledger key is known now. A fork or a new session goes by its
     // handle until init names the session; a fork's inherited history is the source's transcript.
     this.ledger.attach(handleId, opts.resumeSessionId && !opts.fork ? opts.resumeSessionId : handleId)
-    if (opts.resumeSessionId && !opts.ephemeral) void this.ledger.replay(handleId, opts.resumeSessionId)
+    // A side has no changes of its own, and the replay would re-read the parent's transcript.
+    if (opts.resumeSessionId && !opts.ephemeral && !opts.side) void this.ledger.replay(handleId, opts.resumeSessionId)
     session.on('wire', (raw) => this.ledger.wire(handleId, raw))
     session.on('event', (e) => {
       if (e.type === 'session-init' && e.sessionId) this.ledger.rekey(handleId, e.sessionId)
@@ -160,6 +164,10 @@ export class SessionManager {
 
   setUltracode(handleId: string, on: boolean): Promise<boolean> {
     return this.sessions.get(handleId)?.setUltracode(on) ?? Promise.resolve(false)
+  }
+
+  optionsOf(handleId: string): ClaudeSessionOptions | null {
+    return this.sessions.get(handleId)?.options() ?? null
   }
 
   sessionIdOf(handleId: string): string | null {

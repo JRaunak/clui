@@ -1,4 +1,4 @@
-import { CHANGE_REFS, loadWorkflowRun, surfacesSave, watchAgentTabs, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
+import { CHANGE_REFS, canFork, toolSurfaceDiff, loadWorkflowRun, surfacesSave, watchAgentTabs, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
 import { noticeLead } from '../src/renderer/src/lib/refCopy.ts'
@@ -6,6 +6,7 @@ import { activityLine, agentRows, agentRunState, hasAgents, runningAgents, toolU
 import { mock } from 'node:test'
 import { hasWorkflows, workflowRows } from '../src/renderer/src/lib/workflow.ts'
 import { equal, ok } from './support/harness.mjs'
+import { HOOKS_TOKEN } from '../src/shared/settings.ts'
 
 // The store's IPC is stubbed: each call is recorded and resolves true unless `replies` overrides it.
 const calls: { name: string; args: unknown[] }[] = []
@@ -1413,4 +1414,150 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   await st().stopRun('h1', { kind: 'workflow', taskId: 'w1', stopping: false })
   ok(!calls.length, 'stopRun: an ended workflow sends nothing')
   delete replies.stopTask
+}
+
+// Side chat: a hidden fork in its own map, addressed by its own handle.
+{
+  const sides = (): any[] => Object.values(st().sideSessions)
+  const side = (): any => sides()[0]
+  const sent = (h: string): string[] => calls.filter((c) => c.name === 'sendMessage' && c.args[0] === h).map((c) => (c.args[1] as { text: string }).text)
+  let nextSide = 0
+  const parent = (over: Record<string, unknown> = {}): void => {
+    reset({ sessionId: 'sess-1', busy: false, ephemeral: false, modeChoice: 'default', permissionMode: 'default', modelMode: null, apiProvider: 'bedrock', initTools: [], sideCostUsd: 0, ...over })
+    useSession.setState({ sideSessions: {} })
+    replies.startSide = () => ({ ok: true, handleId: `s${++nextSide}` })
+    replies.sendMessage = (_h: string, p: { text: string }) => ({ ok: true, packetId: 'p', text: p.text, joined: false })
+  }
+  const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+  const ev = (e: any): void => st().applyEvent(side().handleId, e)
+  const usage = (cacheRead: number, cacheWrite: number) => ({ type: 'context-usage', usedTokens: cacheRead + cacheWrite + 3, contextWindow: 200_000, usedPercent: 6, measured: false, cacheRead, cacheWrite })
+  const answer = (total: number, costUSD = 0.01): void => {
+    ev({ type: 'text-delta', text: 'kiwi' })
+    ev({ type: 'result', sessionId: 'fork', isError: false, result: 'kiwi', totalCostUsd: total, usage: { costUSD, inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, models: [] } })
+  }
+
+  parent()
+  const keys = Object.keys(st().sessions).join()
+  ok((await st().openSide('h1', 'q')).ok, 'side: opens')
+  await tick()
+  ok(sides().length === 1 && side().side.parent === 'h1', 'side: one side slice, keyed to its parent')
+  ok(Object.keys(st().sessions).join() === keys && st().activeHandleId === 'h1', 'side: the sessions map and the active session are untouched')
+  equal(JSON.stringify(calls.find((c) => c.name === 'startSide')?.args), '[{"parentHandleId":"h1","permissionMode":"default"}]', 'side: startSide gets the parent and a concrete mode, nothing else')
+  const line = side().side.readOnly
+  equal(line, 'This is a read-only side chat. Only Read, Grep, Glob and WebFetch will run here; any other tool call is denied.', 'side: a Bedrock parent names four tools')
+  equal(JSON.stringify(sent(side().handleId)), JSON.stringify([`${line}\n\nq`]), 'side: the first message carries the read-only line, sent to the side handle')
+  equal(side().messages[0].text, `${line}\n\nq`, 'side: the bubble holds the same string')
+  ok(!sent('h1').length, 'side: nothing goes to the parent')
+  ok(side().side.ready === false, 'side: Starting until the handshake')
+  ev({ type: 'session-ready', provider: 'bedrock' })
+  ok(side().side.ready === true && side().apiProvider === 'bedrock', 'side: ready on its ACK')
+
+  ev(usage(0, 11983))
+  ev(usage(11983, 200))
+  answer(0.05, 0.04)
+  equal(JSON.stringify(side().side.cacheMiss), '{"costUsd":0.04,"written":11983}', "side: a first request that wrote more than it read is a miss, from that answer's own cost")
+  await st().sendSide(side().handleId, 'again')
+  equal(sent(side().handleId).at(-1), 'again', 'side: a follow-up goes bare')
+
+  parent({ apiProvider: null })
+  await st().openSide('h1')
+  ok(side().side.readOnly.includes('WebFetch and WebSearch') && !side().side.readOnly.includes('ToolSearch'), 'side: an unknown provider names WebSearch, never ToolSearch')
+  ok(!calls.some((c) => c.name === 'sendMessage'), 'side: no question sends nothing')
+  await st().sendSide(side().handleId, 'x')
+  equal(side().messages[0].text, `${side().side.readOnly}\n\nx`, 'side: the line rides the first message the user sends')
+  ev(usage(21289, 680))
+  answer(0.01)
+  ok(side().side.firstRequest.read === 21289 && side().side.cacheMiss === null, 'side: a first request that read the cache is a hit')
+  await st().sendSide(side().handleId, 'y')
+  ev(usage(0, 30000))
+  answer(0.02)
+  ok(side().side.cacheMiss === null && side().side.firstRequest.read === 21289, 'side: a later turn is never judged')
+
+  // Cost: each turn's own usage, since the fork's total may or may not carry the parent's (live CLI 2.1.323).
+  parent({ costUsd: 1 })
+  await st().openSide('h1')
+  answer(0.2, 0.2)
+  answer(0.5, 0.3)
+  ok(Math.abs(cur().sideCostUsd - 0.5) < 1e-9 && cur().costUsd === 1, "side: its turns' spend lands on the parent's sideCostUsd, never its costUsd")
+  await st().openSide('h1')
+  answer(1.25, 0.25)
+  ok(Math.abs(cur().sideCostUsd - 0.75) < 1e-9, "side: a fork whose total carries the parent's still adds only its turn's usage")
+
+  // Gates hold no suggestions, so nothing can persist a rule or switch mode.
+  const req = { type: 'permission-request', requestId: 'r', toolName: 'WebFetch', input: {}, permissionSuggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] }
+  ev(req)
+  ok(side().pendingPermissions[0].permissionSuggestions === undefined && side().pendingPermissions[0].suppressAlwaysAllow === true, 'side gate: no suggestions, no always-allow')
+  st().applyEvent('h1', req as any)
+  ok(cur().pendingPermissions[0].permissionSuggestions?.length === 1, 'side gate: a main gate keeps its suggestions')
+  await st().respondPermission({ requestId: 'r', behavior: 'allow', updatedInput: {} }, side().handleId)
+  ok(!side().pendingPermissions.length && calls.some((c) => c.name === 'respondPermission' && c.args[0] === side().handleId), "side gate: answered on the side's own handle")
+  ev({ type: 'text-delta', text: 'z' })
+  ok(side().messages.at(-1).text.endsWith('z'), 'side: events land in sideSessions')
+
+  // Init: a diagnostic, never a stop.
+  parent({ initTools: ['Read', 'Bash'], liveMcp: [{ name: 'clui-surface', status: 'connected' }] })
+  await st().openSide('h1')
+  const warn = mock.method(console, 'warn', () => {})
+  ev({ type: 'session-init', sessionId: 'fork-1', model: 'm', permissionMode: 'default', tools: ['Read', 'Bash'], mcpServers: [{ name: 'clui-surface', status: 'pending' }], cwd: '/tmp/w' })
+  ok(side().cacheCold === false && side().initTools.join() === 'Read,Bash', 'side init: same tools and servers is warm')
+  ev({ type: 'session-init', sessionId: 'fork-1', model: 'm', permissionMode: 'default', tools: ['Read', 'Bash', 'Agent'], mcpServers: [{ name: 'clui-surface', status: 'connected' }], cwd: '/tmp/w' })
+  ok(side().cacheCold === true && warn.mock.callCount() === 1 && !calls.some((c) => c.name === 'stopSession'), 'side init: an extra tool is cold, warned once, and the side keeps running')
+  warn.mock.restore()
+  ok(!calls.some((c) => c.name === 'setSessionModel'), "side init: the fork's id never reaches session-models")
+  parent()
+  await st().openSide('h1')
+  ev({ type: 'session-init', sessionId: 'fork-2', model: 'm', permissionMode: 'default', tools: ['Read'], mcpServers: [], cwd: '/tmp/w' })
+  ok(side().cacheCold === null, 'side init: no parent init to compare is null')
+  equal(JSON.stringify(toolSurfaceDiff({ initTools: ['Read', 'Bash'], liveMcp: [{ name: 'a' }] }, { tools: ['Read', 'Agent'], mcpServers: [{ name: 'b' }] })), '["+Agent","-Bash","+b","-a"]', 'toolSurfaceDiff: tools and server names both ways')
+
+  // Replace and end.
+  parent()
+  await st().openSide('h1')
+  const first = side().handleId
+  await st().openSide('h1')
+  ok(sides().length === 1 && side().handleId !== first && calls.some((c) => c.name === 'stopSession' && c.args[0] === first), 'side: a second open stops the first and leaves one')
+  const second = side().handleId
+  await st().endSide('h1')
+  st().applyEvent(second, { type: 'text-delta', text: 'late' } as any)
+  ok(!sides().length && !st().sessions[second], 'side: events after endSide are dropped')
+
+  // Lifetimes: the parent's close ends it, the parent's crash doesn't, its own exit keeps the transcript.
+  parent()
+  await st().openSide('h1')
+  st().applyEvent('h1', { type: 'process-exit', code: 1 } as any)
+  ok(sides().length === 1 && !calls.some((c) => c.name === 'stopSession'), "side: the parent's process exiting leaves the side running")
+  const live = side().handleId
+  await st().closeSession('h1')
+  ok(!sides().length && calls.some((c) => c.name === 'stopSession' && c.args[0] === live), "side: closing the parent stops it")
+  parent()
+  await st().openSide('h1', 'q')
+  ev({ type: 'process-exit', code: 1 })
+  ok(sides().length === 1 && side().exited && side().messages[0].text.endsWith('\n\nq'), 'side: one that dies before init keeps its question')
+  parent()
+  await st().openSide('h1')
+  ev({ type: 'session-init', sessionId: 'f', model: 'm', permissionMode: 'default', tools: [], mcpServers: [], cwd: '/tmp/w' })
+  answer(0.01)
+  ev({ type: 'process-exit', code: 0 })
+  ok(sides().length === 1 && side().exited && side().messages.length === 1, 'side: one that exits after init keeps its slice and messages')
+
+  // Refusals.
+  for (const [over, why] of [[{ ephemeral: true }, 'quick'], [{ sessionId: null }, 'no-first-message'], [{ exited: true }, 'not-live'], [{ launchedDisabled: [HOOKS_TOKEN] }, 'hooks-off']] as const) {
+    parent(over)
+    equal(canFork(cur()), why, `canFork: ${why}`)
+    const r = await st().openSide('h1', 'q')
+    ok(!r.ok && r.reason === why && !calls.some((c) => c.name === 'startSide'), `side: ${why} refuses before main`)
+  }
+  parent()
+  replies.startSide = () => ({ ok: false, reason: 'hooks-off' })
+  const r = await st().openSide('h1')
+  ok(!r.ok && r.reason === 'hooks-off' && !sides().length, "side: main's refusal maps through")
+  parent({ modeChoice: 'inherit', permissionMode: 'acceptEdits' })
+  await st().openSide('h1')
+  equal((calls.find((c) => c.name === 'startSide')?.args[0] as any).permissionMode, 'acceptEdits', 'side: an inherited mode arrives concrete')
+  parent({ modeChoice: 'default', modelMode: 'plan' })
+  await st().openSide('h1')
+  equal((calls.find((c) => c.name === 'startSide')?.args[0] as any).permissionMode, 'plan', "side: a model-entered plan mode is the mode in effect")
+  delete replies.startSide
+  delete replies.sendMessage
+  useSession.setState({ sideSessions: {} })
 }

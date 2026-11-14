@@ -86,6 +86,29 @@ equal((await call({ ...S, body: list })).status, 401, 'route: a revoked token is
 equal((await call({ path: path(s2.url), token: s2.token, body: list })).status, 200, "route: revoke leaves another handle's token")
 equal((await call({ path: path(b1.url), token: b1.token, body: list })).status, 200, "route: and another route's token for the same handle")
 
+// A side chat's handle has its own token, lists its parent's tools and reaches no handler.
+{
+  let reached = 0
+  const mirrored = listener.route('mcp-surface', {
+    name: 'clui-surface',
+    tools: (h) => (h === 'p' ? [{ name: 'surface_state' }, { name: 'surface_open' }] : [{ name: 'change_read' }]),
+    call: async () => (reached++, { content: [{ type: 'text', text: 'ran' }] })
+  })
+  const P = await mirrored.endpoint('p')
+  const Sd = await mirrored.endpoint('s')
+  mirrored.mirror('s', 'p')
+  const side = { path: path(Sd.url), token: Sd.token }
+  const tools = (await call({ ...side, body: list })).json?.result?.tools?.map((t: { name: string }) => t.name)
+  equal(JSON.stringify(tools), '["surface_state","surface_open"]', "mirror: the side lists the parent's tools")
+  const r = (await call({ ...side, body: rpc('tools/call', { name: 'surface_open', arguments: {} }) })).json?.result
+  ok(r?.isError === true && r.content?.[0]?.text === 'Side chat is read-only: surface_open is not available here.' && reached === 0, 'mirror: a side call is refused before the handler')
+  equal((await call({ path: side.path, token: P.token, body: list })).status, 401, "mirror: the parent's token can't open the side's path")
+  mirrored.revoke('s')
+  equal((await call({ ...side, body: list })).status, 401, 'mirror: revoke drops the side token')
+  const again = await mirrored.endpoint('s')
+  equal((await call({ path: path(again.url), token: again.token, body: list })).json?.result?.tools?.[0]?.name, 'change_read', 'mirror: and its mirror')
+}
+
 // change_read and the grant registry. Every ref that doesn't resolve gets one reply, byte for byte.
 {
   const hex = (c: string): string => c.repeat(32)
