@@ -152,7 +152,7 @@ export function useKeyboardShortcuts(opts: {
           openFile()
           break
         case 'side-chat':
-          if (store.activeHandleId) void showSide(store.activeHandleId)
+          if (store.activeHandleId) void showSide(store.activeHandleId, true)
           break
         // Find/search route straight to store flags (no App callback needed).
         // ⌘F only means something with a session open; ⌘⇧F is always available.

@@ -410,6 +410,16 @@ export function IconCircle(p: IconProps): JSX.Element {
   )
 }
 
+export function IconInfo(p: IconProps): JSX.Element {
+  return (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 11v5" />
+      <path d="M12 8h.01" />
+    </Svg>
+  )
+}
+
 /** Pushpin: pins the task checklist panel open (aria-pressed carries the state; the
  *  glyph is the affordance, no accent tint). */
 export function IconPin(p: IconProps): JSX.Element {

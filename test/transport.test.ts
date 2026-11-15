@@ -110,6 +110,20 @@ reset()
   ok(W(c2).some((o: any) => o.type === 'user' && o.message.content === 'during-reconnect'), 'transport: queued send flushed to new child')
 }
 
+// A resume knows its id before turn 1's init; a fork doesn't until init reports the new one.
+reset()
+{
+  equal(mk({ resumeSessionId: 'ORIG' }).getSessionId(), 'ORIG', 'transport: a resume reports its id before init')
+  equal(mk().getSessionId(), null, 'transport: a fresh session has no id before init')
+  const f = mk({ resumeSessionId: 'ORIG', fork: true })
+  equal(f.getSessionId(), null, "transport: a fork doesn't claim its source's id")
+  f.start()
+  const c = spawns()[0]
+  c.stdout.emit('data', JSON.stringify({ type: 'system', subtype: 'init', session_id: 'FORKED', cwd: '/tmp', tools: [], model: 'orig' }) + '\n')
+  equal(f.getSessionId(), 'FORKED', 'transport: a fork reports the id its init gave')
+  f.stop()
+}
+
 // A fork that respawns before its init reported an id forks the source again instead of resuming it.
 reset()
 {

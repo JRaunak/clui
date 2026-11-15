@@ -60,7 +60,7 @@ function openSingleton(spec: SurfaceSpec & { kind: 'tree' | 'diff' | 'agents' | 
   if (shown) document.querySelector<HTMLElement>('[data-ui="pane-secondary"] [data-pane-title]')?.focus()
 }
 
-export function runPaneItem(key: PaneItemKey, cwd: string): void {
+export function runPaneItem(key: PaneItemKey, cwd: string, keyed = false): void {
   switch (key) {
     case 'open-file':
       return openFilePalette()
@@ -68,7 +68,7 @@ export function runPaneItem(key: PaneItemKey, cwd: string): void {
       return openSingleton({ kind: 'tree', key: '', title: cwd.slice(cwd.lastIndexOf('/') + 1) || cwd })
     case 'side': {
       const h = useSession.getState().activeHandleId
-      return void (h && showSide(h))
+      return void (h && showSide(h, keyed))
     }
     case 'changes':
       return openSingleton({ kind: 'diff', key: '', title: 'Claude changes' })
@@ -105,7 +105,7 @@ export function usePaneEntries(): PaneEntry[] {
     if (!cwd) return []
     const agents = agentsOffered ? { running: agentsRunning, total: agentsTotal } : undefined
     const workflows = workflowsOffered ? { running: workflowsRunning, total: workflowsTotal } : undefined
-    return paneItems({ cwd, home: window.clui.homeDir, changes, browser, treeOpen, changesOpen, agents, workflows, side: !sideRefused }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) }))
+    return paneItems({ cwd, home: window.clui.homeDir, changes, browser, treeOpen, changesOpen, agents, workflows, side: !sideRefused || sideRefused === 'stopped' }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) }))
   }, [cwd, changes, browser, treeOpen, changesOpen, agentsOffered, agentsRunning, agentsTotal, workflowsOffered, workflowsRunning, workflowsTotal, sideRefused])
 }
 

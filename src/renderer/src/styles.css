@@ -284,19 +284,19 @@
   --glass-row-hover: rgb(255 255 255 / 0.06);
   /* Fill opacity under the stroke for a closed folder's body and an open folder's front face. */
   --ft-folder-fill: 0.18;
-  /* Agent face head fills, in FACES order; adjacent faces sit at least 116° apart in OKLCH hue. */
-  --face-bear: #403817;
-  --face-cat: #123f47;
-  --face-antenna: #472e44;
-  --face-sprocket: #1b4032;
-  --face-bolt: #353451;
-  --face-hat: #353c1d;
-  --face-stadium: #1c3c4f;
-  --face-loaf: #4c2d39;
-  --face-hex: #11403d;
-  --face-cone: #3f314c;
-  --face-kite: #283f26;
-  --face-bunny: #293852;
+  /* Agent face head fills, in FACES order; adjacent faces sit at least 115° apart in OKLCH hue. */
+  --face-bear: #54470d;
+  --face-cat: #02515d;
+  --face-antenna: #5f385a;
+  --face-sprocket: #11543f;
+  --face-bolt: #44416e;
+  --face-hat: #434d1a;
+  --face-stadium: #164d6b;
+  --face-loaf: #67354a;
+  --face-hex: #01534f;
+  --face-cone: #533c67;
+  --face-kite: #2e522b;
+  --face-bunny: #304770;
   --window-material: solid;
   /* Solved against the measured dark material; the worst case is a white window behind (12-sidebar-glass.md §13.8). */
   --sidebar-glass-a: 85%;
@@ -412,18 +412,18 @@
   --lumen-scale-min: 0.9;
   --glass-row-hover: rgb(0 0 0 / 0.05);
   --ft-folder-fill: 0.14;
-  --face-bear: #ede5c7;
-  --face-cat: #c7ecf5;
-  --face-antenna: #f5dbf1;
-  --face-sprocket: #cdeede;
-  --face-bolt: #e1e2ff;
-  --face-hat: #e1e9cb;
-  --face-stadium: #cde9fc;
-  --face-loaf: #fcdae6;
-  --face-hex: #c7eeea;
-  --face-cone: #ecdefa;
-  --face-kite: #d6ecd3;
-  --face-bunny: #d6e6ff;
+  --face-bear: #dfd199;
+  --face-cat: #96dfed;
+  --face-antenna: #eec0e8;
+  --face-sprocket: #a2e1c6;
+  --face-bolt: #cbcbff;
+  --face-hat: #cbd9a1;
+  --face-stadium: #a2d9fc;
+  --face-loaf: #fabdd3;
+  --face-hex: #96e1db;
+  --face-cone: #dec4f8;
+  --face-kite: #b5deb1;
+  --face-bunny: #b9d2fe;
   /* The lowest tint that keeps every sidebar foreground at AA over a black window, the hover visible and warm
      show-through under the chroma cap, solved from the native material. The row lift is solved for visibility only:
      every row foreground passes on both the sidebar and the opaque lift, so it passes on any mix of them. */

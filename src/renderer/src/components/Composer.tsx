@@ -86,6 +86,7 @@ export function Composer(): JSX.Element {
   const busy = useActive((s) => s?.busy ?? false)
   const turnStartMs = useActive((s) => s?.turnStartMs ?? null)
   const hasSession = useActive((s) => !!s)
+  const exited = useActive((s) => s?.exited ?? false)
   const cwd = useActive((s) => s?.cwd ?? null)
   // Main gives a folder at or above home no workspace scope, so a drop there can only become @ text.
   const scoped = !!cwd && !`${window.clui.homeDir}/`.startsWith(cwd.endsWith('/') ? cwd : `${cwd}/`)
@@ -295,12 +296,12 @@ export function Composer(): JSX.Element {
     if (target) void respawnIn(target)
   }
 
-  const submit = async (now = false): Promise<void> => {
+  const submit = async (now = false, keyed = false): Promise<void> => {
     const typed = text.trim()
     if ((!typed && attachments.length === 0 && refs.length === 0) || !handleId) return
     // Side input is text only, so attachments and chips stay here for the next message.
     const side = parseSide(typed)
-    if (side) return void askSide(handleId, side.question)
+    if (side) return void askSide(handleId, side.question, keyed)
     const files: SendAttachment[] = attachments.map((a) => ({
       wire: toWireAttachment(a),
       display:
@@ -312,6 +313,8 @@ export function Composer(): JSX.Element {
               ? { kind: 'text', name: a.name, bytes: a.bytes, lines: a.lines, origin: a.origin, side: a.side, text: a.text }
               : { kind: 'text', name: a.name, bytes: a.bytes, lines: a.lines }
     }))
+    // A stopped session keeps the draft; the notice's Resume sends it.
+    if (exited) return sendMessage(typed, files.length ? files : undefined, { now, refs, keyed })
     // Consumed by id in this tick, so a reference added while the send awaits stays in the draft.
     clearDraft(handleId)
     clearRefs(handleId, refs.map((d) => d.ref.id))
@@ -332,7 +335,7 @@ export function Composer(): JSX.Element {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       // ⌘↵ during a turn sends into it instead of queuing; when idle it's a plain send.
-      void submit(e.metaKey)
+      void submit(e.metaKey, true)
     }
   }
 

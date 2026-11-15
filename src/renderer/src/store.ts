@@ -556,7 +556,7 @@ export interface SideState {
   cacheMiss: { costUsd: number | null; written: number } | null
 }
 
-export type SideRefusal = 'not-live' | 'quick' | 'hooks-off' | 'no-first-message' | 'no-transcript'
+export type SideRefusal = 'not-live' | 'stopped' | 'parent-closed' | 'quick' | 'hooks-off' | 'no-first-message' | 'no-transcript'
 
 export type SideOpened = { ok: true } | { ok: false; reason: SideRefusal }
 
@@ -564,8 +564,9 @@ export type SideConfirm = { parent: string; reason: 'close' } | { parent: string
 
 /** The one rule every side-chat entry point disables on. `no-transcript` only main can tell. */
 export function canFork(s: PerSessionState | null): SideRefusal | null {
-  if (!s || s.exited) return 'not-live'
+  if (!s) return 'not-live'
   if (s.ephemeral) return 'quick'
+  if (s.exited) return s.sessionId ? 'stopped' : 'not-live'
   if (s.launchedDisabled.includes(HOOKS_TOKEN)) return 'hooks-off'
   return s.sessionId ? null : 'no-first-message'
 }
@@ -699,6 +700,14 @@ export function rateLimitCopy(r: RateLimit, now = new Date()): string {
 export interface Notice {
   message: string
   tone: NoticeTone
+  action?: NoticeAction
+}
+
+export interface NoticeAction {
+  label: string
+  run: () => void
+  /** Raised from the keyboard, so focus moves onto the action. */
+  focus?: boolean
 }
 
 interface SessionStore {
@@ -812,7 +821,7 @@ interface SessionStore {
     resumeSessionId: string,
     mode?: PermissionModeChoice,
     hardTitle?: string
-  ) => Promise<void>
+  ) => Promise<string | null>
   /** Fork a session (live or dormant) → a NEW live branch carrying its context,
    *  original untouched (`--fork-session`). Fork-from-HEAD; never short-circuits to an
    *  existing live session (the point is a new branch). */
@@ -844,7 +853,7 @@ interface SessionStore {
    * Send a user turn. `attachments` carries both the lean wire payload (image
    * blocks sent to the CLI) and a display thumbnail for the user's own bubble.
    */
-  sendMessage: (text: string, attachments?: SendAttachment[], opts?: { now?: boolean; refs?: DraftReference[] }) => Promise<void>
+  sendMessage: (text: string, attachments?: SendAttachment[], opts?: { now?: boolean; refs?: DraftReference[]; keyed?: boolean }) => Promise<void>
   /** Send a queued message now, cutting the running turn's step, instead of at the turn's end. */
   sendQueuedNow: (id: string, handleId?: string) => void
   /** Edit a still-queued message's text (before it's dispatched at the turn boundary). */
@@ -894,7 +903,7 @@ interface SessionStore {
   applyEvent: (handleId: string, e: DomainEvent) => void
   /** Set the transient app-level notice. Tone defaults to 'warn' so a caller that omits it
    *  gets the amber banner. */
-  setNotice: (message: string, tone?: NoticeTone) => void
+  setNotice: (message: string, tone?: NoticeTone, action?: NoticeAction) => void
   /** Dismiss the transient app-level notice. */
   dismissNotice: () => void
   dismissModToast: (id: string) => void
@@ -1976,7 +1985,7 @@ async function beginSession(
     /** Quick session: spawn with `--no-session-persistence` (no on-disk transcript). */
     ephemeral?: boolean
   }
-): Promise<void> {
+): Promise<string> {
   ensureSubscribed(get().applyEvent)
   evictIfOverCap(get, set, opts.cwd)
   // Refresh the effort caps at each session start so a settings.json edit is reflected.
@@ -2118,6 +2127,7 @@ async function beginSession(
   // Main rebuilds a resume's changes from its transcripts. A push that lands before the slice
   // exists is dropped, so pull once the slice is in.
   if (opts.resumeSessionId) void get().refreshChanges(handleId)
+  return handleId
 }
 
 /** In-flight resume ids: a reservation so two concurrent resumes of the SAME durable
@@ -2737,30 +2747,36 @@ export const useSession = create<SessionStore>((set, get) => ({
     const live = slices.find((s) => !s.exited && s.sessionId === resumeSessionId)
     if (live) {
       get().activateSession(live.handleId)
-      return
+      return live.handleId
     }
     // Two concurrent resumes of the same durable id would both miss the (not-yet-inserted)
     // slice and spawn two writers for one conversation, so reserve the id.
-    if (resumingIds.has(resumeSessionId)) return
+    if (resumingIds.has(resumeSessionId)) return null
     resumingIds.add(resumeSessionId)
-    // Drop a retired slice for this id so the fresh session replaces it instead of leaving
-    // a dead handle the sidebar could still offer.
+    let handle: string
+    try {
+      // Only a hard title becomes `-n`; a derived (first-message) session passes nothing so
+      // resume doesn't pin a paraphrase as the discovery name.
+      handle = await beginSession(get, set, { cwd, resumeSessionId, permissionMode: mode, name: hardTitle })
+    } catch (e) {
+      get().setNotice(`Couldn't resume this session. ${cleanError(e).trim()}`.trim(), 'error')
+      return null
+    } finally {
+      resumingIds.delete(resumeSessionId)
+    }
+    // The stopped slice stays until the new process is up, so a failed resume loses nothing. Its draft
+    // moves over, and dropping it leaves no dead handle the sidebar could still offer.
     const dead = slices.find((s) => s.exited && s.sessionId === resumeSessionId)
     if (dead) {
       retireHandle(dead.handleId)
       set((s) => {
-        const next = { ...s.sessions }
-        delete next[dead.handleId]
-        return { sessions: next }
+        const { [dead.handleId]: old, ...rest } = s.sessions
+        const fresh = rest[handle]
+        if (!old || !fresh) return { sessions: rest }
+        return { sessions: { ...rest, [handle]: { ...fresh, draftText: old.draftText, draftAttachments: old.draftAttachments, contextRefs: old.contextRefs } } }
       })
     }
-    try {
-      // Only a hard title becomes `-n`; a derived (first-message) session passes nothing so
-      // resume doesn't pin a paraphrase as the discovery name.
-      await beginSession(get, set, { cwd, resumeSessionId, permissionMode: mode, name: hardTitle })
-    } finally {
-      resumingIds.delete(resumeSessionId)
-    }
+    return handle
   },
 
   // Fork a session: branch it to a NEW live session carrying the full context,
@@ -2841,7 +2857,7 @@ export const useSession = create<SessionStore>((set, get) => ({
       if (!get().sessions[parentHandleId]) {
         void window.clui.stopSession(r.handleId)
         retireHandle(r.handleId)
-        return { ok: false, reason: 'not-live' }
+        return { ok: false, reason: 'parent-closed' }
       }
       const now = Date.now()
       insertSide(set, get().applyEvent, {
@@ -3111,12 +3127,16 @@ export const useSession = create<SessionStore>((set, get) => ({
     const refs = opts?.refs ?? EMPTY_REFS
     if (!active || (!text.trim() && !attachments?.length && !refs.length)) return
     // The process is gone; a send would silently no-op in main while the UI spun busy.
-    // Tell the user to resume instead.
     if (active.exited) {
-      set(() => ({
-        notice: { message: 'This session has stopped. Resume it from the sidebar to continue.', tone: 'warn' }
-      }))
-      return
+      const resume = async (): Promise<void> => {
+        const h = await resumeStopped(active.handleId)
+        if (!h) return
+        // The draft moved over with the resume. This send carries it, unless it was edited since.
+        if (get().sessions[h]?.draftText === active.draftText) get().clearDraft(h)
+        get().clearRefs(h, refs.map((d) => d.ref.id))
+        await get().sendMessage(text, attachments, opts)
+      }
+      return get().setNotice('This session has stopped.', 'warn', active.sessionId && !active.ephemeral ? { label: 'Resume session', run: () => void resume(), focus: !!opts?.keyed } : undefined)
     }
     // A new prompt hands a stopped browser back to Claude. It runs before the queue check because the
     // prompt after a Stop usually queues behind the interrupted turn.
@@ -4154,12 +4174,11 @@ export const useSession = create<SessionStore>((set, get) => ({
             break
           }
           // A launch that fails before the CLI ever initialized (model===null),
-          // e.g. a missing workspace folder or a bad CLI path, will have its slice
+          // e.g. a missing workspace folder or a bad CLI path, usually has its slice
           // dropped on the imminent process-exit, taking a per-slice lastError with
           // it. So surface it ONLY as the app-level notice (top banner, survives the
-          // drop), NOT also as the in-chat error box, which would (a) duplicate the
-          // message and (b) vanish with the slice anyway. A mid-session error (model
-          // already set) shows in-chat as before.
+          // drop), NOT also as the in-chat error box, which would duplicate the
+          // message. A mid-session error (model already set) shows in-chat as before.
           if (slice.model === null && !slice.side) topLevelNotice = { message: e.message, tone: 'error' }
           else patch.lastError = e.message
           break
@@ -4190,16 +4209,14 @@ export const useSession = create<SessionStore>((set, get) => ({
           break
       }
 
-      // A session that exits WITHOUT the CLI ever initializing THIS run is a
-      // failed launch: ENOENT (bad CLI path) or a missing workspace folder. The
-      // process never came up (model stays null until session-init), so there's no
-      // live session to keep; drop the slice entirely instead of leaving a zombie
-      // "exited" session that lingers in the store, mis-counts as live, and gets
-      // picked as the fallback when another session closes, resurfacing its stale
-      // error. The transcript (if any) is untouched on disk,
-      // so it stays resumable from the sidebar once the folder is back.
+      // A fresh session that exits before its first session-init (model stays null until then) is a
+      // failed launch: ENOENT (bad CLI path) or a missing workspace folder. There's nothing to keep, so
+      // drop the slice instead of leaving a zombie "exited" session that lingers in the store and gets
+      // picked as the fallback when another session closes, resurfacing its stale error.
+      // A resume carries its sessionId from launch and stays pre-init until its first turn, so it
+      // keeps the slice and its draft as a stopped session that offers Resume again.
       // A side keeps its slice and the question it was asked: the side tab shows it ended.
-      if (e.type === 'process-exit' && slice.model === null && !slice.side) {
+      if (e.type === 'process-exit' && slice.model === null && !slice.side && !slice.sessionId) {
         const next = { ...state.sessions }
         delete next[handleId]
         retireHandle(handleId)
@@ -4294,7 +4311,7 @@ export const useSession = create<SessionStore>((set, get) => ({
     }
   },
 
-  setNotice: (message, tone = 'warn') => set(() => ({ notice: { message, tone } })),
+  setNotice: (message, tone = 'warn', action) => set(() => ({ notice: action ? { message, tone, action } : { message, tone } })),
   dismissNotice: () => set(() => ({ notice: null })),
   dismissModToast: (id) => set((s) => ({ modToasts: s.modToasts.filter((t) => t.id !== id) })),
   dismissApiRetry: () =>
@@ -5047,3 +5064,15 @@ export const useSession = create<SessionStore>((set, get) => ({
     await window.clui.browserNewTab(active.handleId)
   }
 }))
+
+/** An IPC rejection's message without Electron's `Error invoking remote method` wrapper. */
+export const cleanError = (e: unknown): string => String((e as Error)?.message ?? e).replace(/^Error invoking remote method '[^']*': (Error: )?/, '')
+
+/** Resumes a stopped session the way its sidebar row does. Resolves to the new handle, or null when nothing started. */
+export function resumeStopped(handleId: string): Promise<string | null> {
+  const st = useSession.getState()
+  const s = st.sessions[handleId]
+  if (!s?.exited || !s.sessionId) return Promise.resolve(null)
+  const row = st.sessionGroups.flatMap((g) => g.sessions).find((x) => x.id === s.sessionId)
+  return st.resumeSession(s.cwd, s.sessionId, undefined, row?.hardTitle)
+}

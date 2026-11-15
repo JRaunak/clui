@@ -214,8 +214,9 @@ export class ClaudeSession extends EventEmitter {
     this.opts = opts
   }
 
+  /** A plain resume keeps its id, and the CLI only reports it in the init that comes with turn 1. */
   getSessionId(): string | null {
-    return this.sessionId
+    return this.sessionId ?? (this.opts.fork ? null : (this.opts.resumeSessionId ?? null))
   }
 
   /** The launch options as they stand now; model, effort, mode and ultracode follow live changes. */

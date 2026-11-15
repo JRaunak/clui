@@ -26,7 +26,9 @@ export function parseSide(text: string): { question: string } | null {
 
 /** Why an entry point can't open a side chat, short enough for a row's meta. */
 export const SIDE_REFUSAL: Record<SideRefusal, string> = {
-  'not-live': 'Available once the session is running',
+  'not-live': 'Session stopped',
+  stopped: 'Session stopped',
+  'parent-closed': 'Session closed',
   quick: 'Not available in Quick sessions',
   'hooks-off': 'Needs hooks on to stay read-only',
   'no-first-message': 'Send a message first',
@@ -35,7 +37,9 @@ export const SIDE_REFUSAL: Record<SideRefusal, string> = {
 
 /** The notice an entry point shows on refusal. Hooks-off says what to do; Configuration's switch doesn't relaunch. */
 export const REFUSAL_NOTICE: Record<SideRefusal, string> = {
-  'not-live': 'Side chat is available once the session is running.',
+  'not-live': "This session stopped before it was saved, so side chat can't open. Start a new session.",
+  stopped: 'This session has stopped.',
+  'parent-closed': 'The session closed before the side chat opened.',
   quick: "Side chat isn't available in Quick sessions.",
   'hooks-off': 'Side chat needs hooks on to stay read-only. Turn hooks on in Configuration, then start a new session.',
   'no-first-message': 'Send a message first, then open a side chat.',

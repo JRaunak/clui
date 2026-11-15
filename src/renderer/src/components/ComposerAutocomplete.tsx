@@ -11,8 +11,9 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { CAP_NOTE, refKey, type RefInput } from '../../../shared/context'
 import type { ChangeRefRequest } from '../../../shared/ipc'
-import { canFork, denyChangeRead, useActive, useSession, EMPTY_REFS, EMPTY_SLASH_COMMANDS } from '../store'
-import { REFUSAL_NOTICE, SIDE_REFUSAL } from '../lib/side'
+import { canFork, denyChangeRead, useActive, useSession, EMPTY_REFS, EMPTY_SLASH_COMMANDS, type SideRefusal } from '../store'
+import { SIDE_REFUSAL } from '../lib/side'
+import { refuse } from '../lib/sideEntry'
 import { fuzzyMatch, highlightRuns, rankPaths } from '../lib/fuzzy'
 import { resolveSkillCommands, resolveSlashCommands, type SkillCommand } from '../lib/slashCommands'
 import { paneRows, removeToken } from '../lib/composerRefs'
@@ -115,17 +116,24 @@ const SIDE_ROWS = [
 ] as const
 const clui = (name: string): boolean => SIDE_ROWS.some((r) => r.value === name)
 
-const sideItems = (unavailable: string | undefined): Item[] =>
-  SIDE_ROWS.map(({ value, hint }) => ({
-    key: `clui:${value}`,
-    value,
-    label: `/${value}`,
-    hint: unavailable ?? hint,
-    args: '<question>',
-    kind: 'command',
-    aria: `/${value}, ${unavailable ? `unavailable, ${unavailable}` : hint[0].toLowerCase() + hint.slice(1)}`,
-    ...(unavailable ? { unavailable } : {})
-  }))
+/** A stopped session's rows stay enabled: picking one offers the resume. */
+const sideItems = (refused: SideRefusal | null): Item[] => {
+  const meta = refused ? SIDE_REFUSAL[refused] : undefined
+  const unavailable = refused === 'stopped' ? undefined : meta
+  return SIDE_ROWS.map(({ value, hint }) => {
+    const shown = meta ?? hint
+    return {
+      key: `clui:${value}`,
+      value,
+      label: `/${value}`,
+      hint: shown,
+      args: '<question>',
+      kind: 'command',
+      aria: `/${value}, ${unavailable ? `unavailable, ${unavailable}` : shown[0].toLowerCase() + shown.slice(1)}`,
+      ...(unavailable ? { unavailable } : {})
+    }
+  })
+}
 
 export function useComposerAutocomplete(
   text: string,
@@ -167,7 +175,7 @@ export function useComposerAutocomplete(
 
   const commandItems = useMemo<Item[]>(
     () => [
-      ...sideItems(refused ? SIDE_REFUSAL[refused] : undefined),
+      ...sideItems(refused),
       ...commands.filter((c) => !clui(c.name)).map((c) => ({ key: `command:${c.name}`, value: c.name, label: `/${c.name}`, hint: c.description, args: c.argumentHint, kind: 'command' as const })),
       ...skills.filter((s) => !clui(s.name)).map((s) => ({
         key: `skill:${s.scope ?? 'skill'}:${s.name}`,
@@ -268,12 +276,12 @@ export function useComposerAutocomplete(
   }, [visible, truncated, trigger?.char, handleId, cwd])
 
   const pick = useCallback(
-    (i: number) => {
+    (i: number, keyed = false) => {
       if (!trigger) return
       const chosen = flat[i]?.it
       if (!chosen) return
-      if (chosen.unavailable) {
-        useSession.getState().setNotice(refused ? REFUSAL_NOTICE[refused] : chosen.unavailable, 'info')
+      if (refused && chosen.kind === 'command' && clui(chosen.value)) {
+        refuse(handleId, refused, undefined, keyed)
         return setDismissed(true)
       }
       if (chosen.mint && handleId) return pickChange(handleId, chosen.mint, trigger.start, `@${trigger.query}`)
@@ -357,7 +365,7 @@ export function useComposerAutocomplete(
       }
       if (e.key === 'Tab') {
         e.preventDefault()
-        pick(sel)
+        pick(sel, true)
         return true
       }
       if (e.key === 'Enter') {
@@ -366,7 +374,7 @@ export function useComposerAutocomplete(
         const typed = q.trim().toLowerCase()
         if (trigger?.char === '/' && flat.some((r) => r.it.value.toLowerCase() === typed)) return false
         e.preventDefault()
-        pick(sel)
+        pick(sel, true)
         return true
       }
       if (e.key === 'Escape') {

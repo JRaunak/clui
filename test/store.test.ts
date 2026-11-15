@@ -1544,7 +1544,7 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   ok(sides().length === 1 && side().exited && side().messages.length === 1, 'side: one that exits after init keeps its slice and messages')
 
   // Refusals.
-  for (const [over, why] of [[{ ephemeral: true }, 'quick'], [{ sessionId: null }, 'no-first-message'], [{ exited: true }, 'not-live'], [{ launchedDisabled: [HOOKS_TOKEN] }, 'hooks-off']] as const) {
+  for (const [over, why] of [[{ ephemeral: true }, 'quick'], [{ ephemeral: true, exited: true }, 'quick'], [{ sessionId: null }, 'no-first-message'], [{ exited: true }, 'stopped'], [{ exited: true, sessionId: null }, 'not-live'], [{ launchedDisabled: [HOOKS_TOKEN] }, 'hooks-off']] as const) {
     parent(over)
     equal(canFork(cur()), why, `canFork: ${why}`)
     const r = await st().openSide('h1', 'q')
@@ -1674,4 +1674,50 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   delete replies.startSide
   delete replies.sendMessage
   useSession.setState({ sideSessions: {} })
+}
+
+// A send on a stopped session offers Resume session, which resumes the same id and sends on the new handle.
+// beginSession needs a DOM, so resumeSession is stubbed to what it leaves behind.
+{
+  const realResume = st().resumeSession
+  const resumed: unknown[][] = []
+  reset({ sessionId: 'sess-1', exited: true })
+  useSession.setState({
+    sessionGroups: [],
+    resumeSession: async (...args) => {
+      resumed.push(args)
+      useSession.setState((s) => {
+        const { h1: _dead, ...rest } = s.sessions
+        return { sessions: { ...rest, h2: slice({ handleId: 'h2', sessionId: 'sess-1', busy: false }) }, activeHandleId: 'h2' }
+      })
+      return 'h2'
+    }
+  })
+  replies.sendMessage = (_h: string, p: { text: string }) => ({ ok: true, packetId: 'p', text: p.text, joined: false })
+  await st().sendMessage('keep me')
+  ok(st().notice?.action && !st().notice?.action?.focus, 'stopped send: a clicked Send leaves focus alone')
+  await st().sendMessage('keep me', undefined, { keyed: true })
+  const n = st().notice
+  ok(n?.message === 'This session has stopped.' && n.tone === 'warn' && n.action?.label === 'Resume session', 'stopped send: the notice offers Resume session')
+  ok(n?.action?.focus === true, 'stopped send: Enter puts focus on Resume session')
+  ok(!calls.some((c) => c.name === 'sendMessage'), 'stopped send: nothing reaches main')
+  n!.action!.run()
+  for (let i = 0; i < 20 && !calls.some((c) => c.name === 'sendMessage'); i++) await new Promise((r) => setTimeout(r, 0))
+  ok(resumed.length === 1 && resumed[0][0] === '/tmp/w' && resumed[0][1] === 'sess-1', 'stopped send: Resume resumes the same id')
+  equal(calls.find((c) => c.name === 'sendMessage')?.args[0], 'h2', 'stopped send: the draft goes to the new handle')
+  reset({ sessionId: null, exited: true })
+  await st().sendMessage('x')
+  ok(st().notice?.message === 'This session has stopped.' && !st().notice?.action, 'stopped send: an unsaved session gets no Resume')
+  useSession.setState({ resumeSession: realResume })
+  delete replies.sendMessage
+}
+
+// An exit before init drops a fresh session's failed launch, but a resume keeps its slice and draft as stopped.
+{
+  reset({ model: null, sessionId: 'sess-1', draftText: 'keep me' })
+  st().applyEvent('h1', { type: 'process-exit', code: 1 })
+  ok(cur()?.exited === true && cur().draftText === 'keep me', 'pre-init exit: a resume stays, stopped, with its draft')
+  reset({ model: null, sessionId: null, draftText: 'gone' })
+  st().applyEvent('h1', { type: 'process-exit', code: 1 })
+  ok(!cur(), 'pre-init exit: a fresh failed launch is dropped')
 }

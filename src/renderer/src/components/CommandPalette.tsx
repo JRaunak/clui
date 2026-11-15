@@ -63,7 +63,7 @@ interface PaletteItem {
   stay?: boolean
   /** Why it can't act now; the reason replaces the hint, and running it only shows the reason. */
   unavailable?: string
-  run: () => void
+  run: (via: Via) => void
 }
 
 export function CommandPalette({
@@ -231,7 +231,7 @@ export function CommandPalette({
     const paneCommands = (cwd: string): PaletteItem[] => {
       const n = slice?.changes.length ?? 0
       const shown = selectPaneOpen(slice)
-      const item = (key: string, label: string, hint: string, icon: PaletteItem['icon'], run: () => void): PaletteItem => ({ key: `cmd:${key}`, kind: 'command', label, hint, icon, recency: 0, run })
+      const item = (key: string, label: string, hint: string, icon: PaletteItem['icon'], run: PaletteItem['run']): PaletteItem => ({ key: `cmd:${key}`, kind: 'command', label, hint, icon, recency: 0, run })
       const sideOpen = !!activeId && !!sideFor(store, activeId)
       const refused = sideOpen ? null : canFork(slice)
       const sideUnavailable = refused ? SIDE_REFUSAL[refused] : undefined
@@ -246,8 +246,8 @@ export function CommandPalette({
         },
         item('tree', 'Show file tree', cwd.slice(cwd.lastIndexOf('/') + 1) || cwd, IconFolder, () => runPaneItem('tree', cwd)),
         {
-          ...item('side', sideOpen ? 'Show side chat' : 'Ask a side question', sideUnavailable ?? '⌘/', IconSideChat, () => runPaneItem('side', cwd)),
-          ...(sideUnavailable ? { unavailable: sideUnavailable } : {})
+          ...item('side', sideOpen ? 'Show side chat' : 'Ask a side question', sideUnavailable ?? '⌘/', IconSideChat, (via) => runPaneItem('side', cwd, via === 'keyboard')),
+          ...(sideUnavailable && refused !== 'stopped' ? { unavailable: sideUnavailable } : {})
         },
         ...(n > 0 ? [item('changes', 'Show Claude changes', fileCount(n), IconDiff, () => runPaneItem('changes', cwd))] : []),
         ...(slice?.browser ? [item('browser', 'Show browser', '⇧⌘B', IconAgentBrowser, () => void store.revealBrowser(null))] : []),
@@ -408,7 +408,7 @@ export function CommandPalette({
       const row = filtered[i]
       if (!row) return
       if (!row.it.stay) onClose()
-      row.it.run()
+      row.it.run(via)
     },
     [fileMode, files, handleId, line, filtered, onClose]
   )
