@@ -1,6 +1,6 @@
 import { IMAGE_TYPES } from '../../../shared/attachments'
 import { changeLabel, refLabel, type RefInput } from '../../../shared/context'
-import type { ChangeRefRequest } from '../../../shared/ipc'
+import type { ChangeRefRequest, PathClass } from '../../../shared/ipc'
 import type { SurfaceTab } from '../../../shared/surfaces'
 import { requestOf } from './changeRefs'
 import { CHANGE_DENIED_HERE, spokenChange, spokenRef } from './refCopy'
@@ -88,16 +88,6 @@ export function paneRows(tabs: readonly SurfaceTab[], cwd: string | null, home: 
   return out
 }
 
-/** The `@` text for a path that can't be a chip: workspace-relative when under cwd, else absolute. */
-export function toWorkspaceRef(abs: string, cwd: string | null): string {
-  if (cwd) {
-    const base = cwd.endsWith('/') ? cwd : cwd + '/'
-    if (abs === cwd) return abs
-    if (abs.startsWith(base)) return abs.slice(base.length)
-  }
-  return abs
-}
-
 /** How drop, paste and pick split files: a supported image or a file with no path (a pasted screenshot) inlines its
  *  bytes, any other file goes by its path. */
 export function splitFiles(files: readonly File[], pathOf: (file: File) => string): { inline: File[]; paths: string[] } {
@@ -111,25 +101,12 @@ export function splitFiles(files: readonly File[], pathOf: (file: File) => strin
   return { inline, paths }
 }
 
-/** Puts `insert` at `at`, with a space first when it would otherwise run into the word before. */
-export function spliceText(text: string, at: number, insert: string): { text: string; caret: number } {
-  const lead = at > 0 && !/\s/.test(text[at - 1]) ? ' ' : ''
-  return { text: text.slice(0, at) + lead + insert + text.slice(at), caret: at + lead.length + insert.length }
-}
-
-/** Pathful dropped items split by what main authorized: chips in drop order, and `@` text for the rest. Main also
- *  refuses paths inside the folder (a symlink, a session in `~`), so `outside` counts only the ones that really are. */
-export function routeDrop(paths: readonly string[], kinds: readonly ('file' | 'folder' | null | undefined)[], cwd: string | null): { refs: RefInput[]; mentions: string[]; outside: number } {
-  const refs: RefInput[] = []
-  const mentions: string[] = []
-  let outside = 0
-  paths.forEach((path, i) => {
-    const kind = kinds[i]
-    if (kind) return void refs.push(kind === 'file' ? { kind: 'file', path } : { kind: 'folder', path })
-    // The CLI expands a spaced path only when it's quoted.
-    const ref = toWorkspaceRef(path, cwd)
-    mentions.push(/\s/.test(ref) ? `@"${ref}"` : '@' + ref)
-    if (!cwd || (path !== cwd && !path.startsWith(cwd.endsWith('/') ? cwd : `${cwd}/`))) outside++
+/** Pathful dropped items as references in drop order: a file or folder main authorized, else a path-only pointer to
+ *  what is there. A path main found nothing at (or never answered for) gets none. */
+export function routeDrop(paths: readonly string[], kinds: readonly (PathClass | undefined)[]): RefInput[] {
+  return paths.flatMap((path, i): RefInput[] => {
+    const c = kinds[i]
+    if (!c) return []
+    return [c.granted ? (c.kind === 'file' ? { kind: 'file', path } : { kind: 'folder', path }) : { kind: 'path', path, target: c.kind }]
   })
-  return { refs, mentions, outside }
 }

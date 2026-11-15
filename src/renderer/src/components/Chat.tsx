@@ -711,7 +711,7 @@ function QueuedAttachments({ atts, refs }: { atts: SendAttachment[]; refs: Draft
           ) : r.kind === 'change' ? (
             <IconDiff className="h-3 w-3 shrink-0" />
           ) : (
-            <FileIcon name={r.path} kind={r.kind === 'folder' ? 'folder' : 'file'} className="h-3 w-3 shrink-0" />
+            <FileIcon name={r.path} kind={r.kind === 'folder' || (r.kind === 'path' && r.target === 'folder') ? 'folder' : 'file'} className="h-3 w-3 shrink-0" />
           )}
           <span className="truncate">{refLabel(r)}</span>
           {r.note && <span className="shrink-0"> · note</span>}

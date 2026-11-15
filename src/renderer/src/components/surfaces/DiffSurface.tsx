@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
-import { denyChangeRead, refsOf, useActive, useSession, EMPTY_CHANGES, type PerSessionState } from '../../store'
+import { cleanError, denyChangeRead, refsOf, useActive, useSession, EMPTY_CHANGES, type PerSessionState } from '../../store'
 import { changeSelection, type DiffHunk, type FileChangeSummary, type FileDiff, type HunkRows } from '../../../../shared/changes'
 import type { ChangeSide } from '../../../../shared/context'
 import type { ChangeRefResult } from '../../../../shared/ipc'
@@ -48,7 +48,6 @@ const NONE_COPY =
 const baseOf = (p: string): string => p.slice(p.lastIndexOf('/') + 1) || p
 const lines = (n: number): string => `${n} ${n === 1 ? 'line' : 'lines'}`
 const files = (n: number): string => `${n} ${n === 1 ? 'file' : 'files'}`
-const cleanError = (e: unknown): string => String((e as Error)?.message ?? e).replace(/^Error invoking remote method '[^']*': (Error: )?/, '')
 
 /** The file the Claude changes tab shows: its `location.file` while the ledger holds it, else the first. */
 export function selectedChange(s: PerSessionState | null): FileChangeSummary | null {

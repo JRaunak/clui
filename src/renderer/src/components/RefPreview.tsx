@@ -9,7 +9,7 @@ import { Code, DiffLine } from './surfaces/HunkView'
 import { IconWarn } from './Icon'
 
 /** What a card's preview holds. `gone` hides Open and Add; `plain` keeps both; `lost` is a change Clui no longer holds.
- *  Folder, browser and legacy previews show the record and never leave `loading`. */
+ *  Folder, path, browser and legacy previews show the record and never leave `loading`. */
 export type Peek =
   | { t: 'loading' }
   | { t: 'code'; rows: PeekRow[]; html: (string | null)[] | null; diff: boolean; label: string; footer: string; bytes?: number }
@@ -67,8 +67,8 @@ function expectedRows(r: ContextReference): number {
 }
 
 /** Reads what a file or change reference points at, from the record (never the ledger's current hunk), each time
- *  the card opens: the source can move on between two looks. `abs` is its resolved path. Folder, browser and legacy
- *  references read nothing. */
+ *  the card opens: the source can move on between two looks. `abs` is its resolved path. Folder, path, browser and
+ *  legacy references read nothing. */
 export function usePeek(handleId: string, r: ContextReference | null, abs: string, open: boolean): [Peek, (p: Peek) => void] {
   const [peek, setPeek] = useState<Peek>({ t: 'loading' })
   const key = r ? `${refKey(r)}\0${abs}` : ''
@@ -157,6 +157,7 @@ export function RefPreview({ r, legacy, crop, alt, peek, stateId }: {
     )
   if (!r) return null
   if (r.kind === 'folder') return <p className={`mt-3 ${NOTE}`}>Folder. Claude lists it with its own tools.</p>
+  if (r.kind === 'path') return <p className={`mt-3 ${NOTE}`}>Sent as a path only.</p>
   // The selector is a hint for Claude, so a page pin's card shows only the picture and the element's text.
   if (r.kind === 'page') {
     const text = r.target.text && r.target.text !== pinWords(r.target).name ? r.target.text : ''

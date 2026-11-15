@@ -49,6 +49,14 @@ const FIRMLINK = /^\/private(?=\/(?:tmp|var|etc)(?:\/|$))/
 export const unfirmlink = (p: string): string => p.replace(FIRMLINK, '')
 export const shownPath = (p: string, home: string): string => tilde(unfirmlink(p), home)
 
+/** A shown folder by its last name only: `~/Downloads/`, `/tmp/`, `…/clui-attach-outside/`, or `~/` and `/` for home
+ *  and the root. */
+export function folderLine(dir: string): string {
+  if (dir === '/' || dir === '~') return `${dir === '~' ? '~' : ''}/`
+  const above = dir.slice(0, dir.lastIndexOf('/'))
+  return `${above === '' ? '' : above === '~' ? '~' : '…'}/${nameOf(dir)}/`
+}
+
 /** The fewest trailing directory names that tell apart file tabs sharing a basename. */
 export function suffixes(paths: string[]): Map<string, string> {
   const out = new Map<string, string>()

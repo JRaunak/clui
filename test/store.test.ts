@@ -1,4 +1,4 @@
-import { CHANGE_REFS, canFork, paneFacts, sidePending, sideShown, toolSurfaceDiff, loadWorkflowRun, surfacesSave, watchAgentTabs, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
+import { CHANGE_REFS, stoppedNotice, canFork, paneFacts, sidePending, sideShown, toolSurfaceDiff, loadWorkflowRun, surfacesSave, watchAgentTabs, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
 import { noticeLead } from '../src/renderer/src/lib/refCopy.ts'
@@ -74,6 +74,29 @@ const reset = (over?: Record<string, unknown>, caps = {}): void => {
 }
 const cur = (): any => useSession.getState().sessions.h1
 const st = useSession.getState
+
+// A pre-init error: a fresh launch's slice is about to be dropped, so the banner; a resumed one stays, so in-chat.
+{
+  reset({ model: null, sessionId: null, lastError: null })
+  st().applyEvent('h1', { type: 'error', message: 'spawn claude ENOENT' })
+  ok(st().notice?.message === 'spawn claude ENOENT' && st().notice?.tone === 'error' && cur().lastError === null, 'pre-init error: a fresh launch goes to the banner only')
+  reset({ model: null, sessionId: 'sess-1', lastError: null })
+  st().applyEvent('h1', { type: 'error', message: 'spawn claude ENOENT' })
+  ok(cur().lastError === 'spawn claude ENOENT' && st().notice === null, 'pre-init error: a resumed slice shows it in-chat only')
+}
+
+// An attach or send on a stopped session offers Resume, focused only from the keyboard; a Quick one has nothing to resume.
+{
+  reset({ exited: true, sessionId: 'sess-1' })
+  stoppedNotice(cur(), true)
+  const n = st().notice
+  ok(n?.message === 'This session has stopped.' && n.tone === 'warn' && n.action?.label === 'Resume session' && n.action.focus === true, 'stopped: Resume, focused when keyed')
+  stoppedNotice(cur(), false)
+  ok(st().notice?.action?.focus === false, 'stopped: a drop or paste does not take focus')
+  reset({ exited: true, sessionId: 'sess-1', ephemeral: true })
+  stoppedNotice(cur(), false)
+  ok(st().notice?.message === 'This session has stopped.' && !st().notice?.action, 'stopped: a Quick session gets no Resume')
+}
 
 // Ultra is only gated by the model: a cap keeps it on, a model without Ultra drops it.
 {

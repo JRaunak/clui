@@ -1450,7 +1450,13 @@ function registerIpc(): void {
     return listWorkspaceFiles(root)
   })
 
-  handle(IpcChannels.classifyRefPaths, (_e, handleId: unknown, paths: unknown) => classifyRefPaths(packetDeps, handleId, paths))
+  // Metadata only: an ungranted path's chip needs its kind, and Clui reads nothing in it.
+  const kindOf = (p: string): Promise<'file' | 'folder' | null> =>
+    stat(p).then(
+      (s) => (s.isFile() ? 'file' : s.isDirectory() ? 'folder' : null),
+      () => null
+    )
+  handle(IpcChannels.classifyRefPaths, (_e, handleId: unknown, paths: unknown) => classifyRefPaths({ authorize: packetDeps.authorize, kindOf }, handleId, paths))
   handle(IpcChannels.createChangeRef, (_e, handleId: unknown, req: unknown) => createChangeRef(handleId, req))
   handle(IpcChannels.changeRefStatus, (_e, handleId: unknown, refs: unknown) => changeRefStatus(packetDeps, handleId, refs))
   handle(IpcChannels.changeRefPeek, (_e, handleId: unknown, ref: unknown) => {

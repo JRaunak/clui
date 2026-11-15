@@ -1,7 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
-import { useSession, activeSlice, type PerSessionState } from './store'
+import { useSession, activeSlice, subscribeStore, type PerSessionState } from './store'
 import { trackReducedTransparency } from './lib/theme'
 import { resetHeroForTests } from './components/Hero'
 import { mermaidTestHooks } from './lib/mermaid'
@@ -30,6 +30,7 @@ w.__cluiMermaid = mermaidTestHooks
 w.__cluiDocx = docxTestHooks
 
 trackReducedTransparency()
+subscribeStore()
 
 const container = document.getElementById('root')
 if (!container) throw new Error('#root not found')

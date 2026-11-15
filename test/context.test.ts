@@ -492,3 +492,30 @@ Why did this line change?`
   equal(diagramBlocked({ ...base, type: 'gantt', labels: [] }, true), undefined, 'pre-check: an empty area with pictures on adds the picture')
   equal(diagramBlocked(one as Extract<RefInput, { kind: 'diagram' }>, false), undefined, 'pre-check: one part adds')
 }
+
+// A path ref is a pointer Clui never read: always absolute, said as path-only to Claude, and back as a chip.
+{
+  const pdf: ContextReference = { id: 'r1', kind: 'path', path: '/Users/x/Downloads/report.pdf', target: 'file' }
+  const dir: ContextReference = { id: 'r2', kind: 'path', path: '/Users/x/Downloads', target: 'folder' }
+  const input: RefInput = { kind: 'path', path: '/Users/x/Downloads/report.pdf', target: 'file' }
+  ok(isRefInput(input) && isRefInput({ kind: 'path', path: '/a', target: 'folder' }), 'path: an absolute file or folder passes')
+  ok(!isRefInput({ kind: 'path', path: 'Downloads/report.pdf', target: 'file' }), 'path: a relative path is refused')
+  ok(!isRefInput({ kind: 'path', path: '/a', target: 'link' }) && !isRefInput({ kind: 'path', path: '/a' }), 'path: a bad or missing target is refused')
+  equal(refKey(pdf), 'path\0/Users/x/Downloads/report.pdf', 'path: refKey')
+  equal(resourceOf(pdf), 'path:/Users/x/Downloads/report.pdf', 'path: resourceOf')
+  equal(refLabel(pdf), 'report.pdf', 'path: file label')
+  equal(refLabel(dir), 'Downloads/', 'path: folder label')
+  equal(spokenRef(pdf), 'report.pdf', 'path: spoken')
+  equal(addedText(input), 'Added report.pdf to the message, path only.', 'path: added text')
+  const sentish = sentRefs([{ ref: { ...pdf, path: '/w/a.ts' } }], '/w')
+  equal(sentish[0].ref.kind === 'path' ? sentish[0].ref.path : '', '/w/a.ts', 'path: never made cwd-relative, even inside the folder')
+  const PATH_SENTENCE = 'A path reference is only a location: Clui sent none of its content and granted no access to it. Read it with your own tools if the task needs it.'
+  const text = serializeContext([sent(pdf), sent(dir)], 'look', { packetId: null })
+  ok(text.includes(PATH_SENTENCE), 'path: the packet says what a path ref is')
+  ok(text.includes('<clui-ref n="1">{"version":1,"ref":{"id":"r1","kind":"path","path":"/Users/x/Downloads/report.pdf","target":"file"}}</clui-ref>'), 'path: the record is the plain JSON')
+  ok(!serializeContext([sent({ id: 'r1', kind: 'file', path: 'a.ts' })], '', { packetId: null }).includes(PATH_SENTENCE), 'path: no sentence without a path ref')
+  const back = parseRefs(text)
+  equal(JSON.stringify(back.refs.map((r) => (r.kind === 'current' ? r.value.ref : null))), JSON.stringify([pdf, dir]), 'path: parse restores both refs')
+  equal(back.rest, 'look', 'path: parse keeps the typed text')
+  ok(!parseRefs(text.replace('"/Users/x/Downloads/report.pdf"', '"Downloads/report.pdf"')).refs.length, 'path: a relative path on the wire makes the message plain text')
+}

@@ -9,7 +9,7 @@ import { absOf } from '../lib/peek'
 import { openFileAt } from '../lib/openLink'
 import type { usePopover } from './Popover'
 import { Button } from './Button'
-import { BADGE, kb, legacyChip } from './ContextChip'
+import { BADGE, kb, legacyChip, OUTLINE_BADGE } from './ContextChip'
 import { addFromSurface } from './ContextChips'
 import { readPeek, RefPreview, STALE_TEXT, usePeek, WELL } from './RefPreview'
 import { forkedAt, SIDE_TITLE, sideCounts, type SideChat } from '../lib/side'
@@ -34,6 +34,8 @@ function headOf(r: ContextReference, cwd: string | null): { main: string; tail: 
       return { main: relativeTo(cwd, r.path), tail: r.lines ? lineText(r.lines) : '' }
     case 'folder':
       return { main: relativeTo(cwd, r.path), tail: '' }
+    case 'path':
+      return { main: r.path, tail: '' }
     case 'browser':
       return { main: refLabel(r), tail: hostOf(r.pin.target.url) }
     case 'page':
@@ -110,6 +112,8 @@ export function RefCard({ pop, handleId, shown, n, cwd, onOpen }: {
         return peek.t === 'loading' || peek.t === 'gone' || stale ? null : r.lines ? { kind: 'file', path: abs, lines: r.lines, sourceVersion: r.sourceVersion } : { kind: 'file', path: abs }
       case 'folder':
         return { kind: 'folder', path: abs }
+      case 'path':
+        return { kind: 'path', path: r.path, target: r.target }
       case 'change':
         return peek.t !== 'code' || !shown.addable || changeRead === false
           ? null
@@ -167,7 +171,7 @@ export function RefCard({ pop, handleId, shown, n, cwd, onOpen }: {
       {shown && head && (
         <>
           <div className="flex min-w-0 items-center gap-2">
-            <span aria-hidden="true" className={BADGE}>
+            <span aria-hidden="true" className={r?.kind === 'path' ? OUTLINE_BADGE : BADGE}>
               {n}
             </span>
             <span title={head.main} className="min-w-0 truncate text-xs font-medium text-content">

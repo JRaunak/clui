@@ -21,7 +21,7 @@ import {
 } from '../../shared/context'
 import { CHANGE_TEXT_BUDGET } from '../../shared/changes'
 import type { Refusal } from '../../shared/files'
-import type { DispatchResult, OutgoingPacket, WireAttachment } from '../../shared/ipc'
+import type { DispatchResult, OutgoingPacket, PathClass, WireAttachment } from '../../shared/ipc'
 import { scrub } from '../browser/cdp'
 
 export interface PacketDeps {
@@ -102,13 +102,21 @@ export function readFailure(reason: Refusal['reason']): 'missing' | 'denied' | '
 /** One drop's worth; a longer list is refused whole. */
 export const CLASSIFY_MAX = 256
 
-/** The reference kind each dropped path would pass dispatch as, so a chip made from a drop is never refused at send. */
-export async function classifyRefPaths(deps: Pick<PacketDeps, 'authorize'>, handleId: unknown, paths: unknown): Promise<('file' | 'folder' | null)[]> {
+/** What each dropped path becomes: `granted` when dispatch would pass it as a file or folder reference, so that chip
+ *  is never refused at send, else a path-only reference to what `kindOf` found there. null: nothing is there. */
+export async function classifyRefPaths(
+  deps: Pick<PacketDeps, 'authorize'> & { kindOf(path: string): Promise<'file' | 'folder' | null> },
+  handleId: unknown,
+  paths: unknown
+): Promise<PathClass[]> {
   if (typeof handleId !== 'string' || !Array.isArray(paths) || paths.length > CLASSIFY_MAX || !paths.every((p) => typeof p === 'string')) return []
   return Promise.all(
-    paths.map(async (p: string) =>
-      (await deps.authorize(handleId, p, 'file')) === 'ok' ? 'file' : (await deps.authorize(handleId, p, 'folder')) === 'ok' ? 'folder' : null
-    )
+    paths.map(async (p: string): Promise<PathClass> => {
+      if ((await deps.authorize(handleId, p, 'file')) === 'ok') return { kind: 'file', granted: true }
+      if ((await deps.authorize(handleId, p, 'folder')) === 'ok') return { kind: 'folder', granted: true }
+      const kind = p.startsWith('/') && !p.includes('\0') ? await deps.kindOf(p) : null
+      return kind && { kind, granted: false }
+    })
   )
 }
 
@@ -145,6 +153,9 @@ export async function validateRefs(deps: PacketDeps, handleId: string, refs: rea
       }
       case 'folder':
         return (await once(`d\0${ref.path}`, () => deps.authorize(handleId, ref.path, 'folder'))) === 'denied' ? 'denied' : null
+      // Claude gets only the location, so there is nothing to authorize or go stale.
+      case 'path':
+        return null
       case 'browser': {
         const { tabId, docId } = ref.pin.source
         const doc = await once(`b\0${tabId}`, () => deps.docOf(handleId, tabId))

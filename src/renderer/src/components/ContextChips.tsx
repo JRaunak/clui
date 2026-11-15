@@ -77,6 +77,9 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
       return
     case 'folder':
       return openFileAt(handleId, r.path, {}, true, via)
+    // Opening would have Clui read what the user sent as a path only.
+    case 'path':
+      return
     case 'browser':
       if (handleId === st.activeHandleId && !st.sessions[handleId]?.paneOpen) st.setPane('half')
       return st.activateSurface(handleId, placement(r.pin.source.tabId))
@@ -169,6 +172,7 @@ export function ContextChips({
   const [flash, setFlash] = useState<string | null>(null)
   const chips = useRef(new Map<string, HTMLDivElement>())
   const refHint = useId()
+  const pathHint = useId()
   const attHint = useId()
   const sideHint = useId()
   const setRefNote = useSession((s) => s.setRefNote)
@@ -197,7 +201,7 @@ export function ContextChips({
     return notedChip(refChip(d.ref, i + 1, cwd, thumb, (d.ref.kind === 'file' || d.ref.kind === 'change') && (names.get(baseOf(d.ref.path)) ?? 0) > 1), d.ref.note)
   })
   // A change to a file no longer in the session's changes has nothing to show: the Diff tab would show another file.
-  const openable = ({ ref: r }: DraftReference): boolean => r.kind !== 'change' || !!changes?.some((c) => c.path === r.path)
+  const openable = ({ ref: r }: DraftReference): boolean => (r.kind === 'change' ? !!changes?.some((c) => c.path === r.path) : r.kind !== 'path')
   const keys = [...views.map((v) => v.key), ...attachments.map((a) => a.view.key)]
   const current = active && keys.includes(active) ? active : keys[0]
   const signature = keys.join('\0')
@@ -309,7 +313,7 @@ export function ContextChips({
         e.preventDefault()
         return openRef(handleId, d, 'keyboard')
       case ' ':
-        if (!d) return
+        if (!d || d.ref.kind === 'path') return
         e.preventDefault()
         return showCard(v.key, 'keyboard')
       case 'Escape':
@@ -371,13 +375,17 @@ export function ContextChips({
             <ContextChip
               key={v.key}
               view={v}
-              describedBy={refHint}
+              describedBy={v.pathOnly ? pathHint : refHint}
               onKeyDown={(e) => onKey(e, v, refs[i])}
-              onOpen={(e) => {
-                if (dismissedBy.current === v.key) return void (dismissedBy.current = null)
-                if (!e.metaKey) return showCard(v.key, viaOf(e))
-                if (openable(refs[i])) openRef(handleId, refs[i], viaOf(e))
-              }}
+              onOpen={
+                v.pathOnly
+                  ? undefined
+                  : (e) => {
+                      if (dismissedBy.current === v.key) return void (dismissedBy.current = null)
+                      if (!e.metaKey) return showCard(v.key, viaOf(e))
+                      if (openable(refs[i])) openRef(handleId, refs[i], viaOf(e))
+                    }
+              }
               style={card?.key === v.key ? pop.triggerProps.style : undefined}
               onRemove={() => {
                 removeRef(handleId, v.key, target)
@@ -414,6 +422,9 @@ export function ContextChips({
       )}
       <span id={refHint} hidden>
         Enter opens. Space shows a preview. Delete removes. Option and arrow keys reorder.
+      </span>
+      <span id={pathHint} hidden>
+        Delete removes. Option and arrow keys reorder.
       </span>
       <span id={attHint} hidden>
         Delete removes.

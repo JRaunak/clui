@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { diffLines } from 'diff'
-import { refsOf, restoredTab, useActive, useSession } from '../../store'
+import { cleanError, refsOf, restoredTab, useActive, useSession } from '../../store'
 import type { DraftReference } from '../../../../shared/context'
 import type { Refusal } from '../../../../shared/files'
 import { movedLine, survivingLines } from '../../../../shared/lines'
@@ -84,7 +84,6 @@ export const STATE_BODY = 'flex flex-col items-start gap-2 px-4 py-6'
 const CHOOSE = 'Choose file\u2026'
 
 export const baseOf = (p: string): string => p.slice(p.lastIndexOf('/') + 1) || p
-export const cleanError = (e: unknown): string => String((e as Error)?.message ?? e).replace(/^Error invoking remote method '[^']*': (Error: )?/, '')
 export const toLines = (t: string): string[] => {
   const ls = t.split('\n')
   if (ls.length > 1 && ls.at(-1) === '') ls.pop()

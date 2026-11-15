@@ -4,7 +4,7 @@
 import { summary } from './support/harness.mjs'
 
 let suiteError = false
-for (const name of ['transport', 'side-hook', 'side', 'mapper', 'settings', 'security', 'config', 'store', 'faces', 'providers', 'guarded-async', 'spectacle', 'shell', 'instrument', 'browser', 'surface-mcp', 'annotate', 'elicit', 'ledger', 'git-status', 'files', 'diff', 'tree', 'file-icons', 'picker', 'persist', 'runs', 'workflow', 'links', 'context', 'packet', 'composer', 'change-refs', 'peek', 'html-view', 'html-ui', 'markdown', 'mermaid', 'images', 'pdf', 'sheets', 'workbook', 'office', 'soffice', 'start-dir', 'file-landing', 'resume']) {
+for (const name of ['transport', 'side-hook', 'side', 'mapper', 'settings', 'security', 'config', 'store', 'resume', 'faces', 'providers', 'guarded-async', 'spectacle', 'shell', 'instrument', 'browser', 'surface-mcp', 'annotate', 'elicit', 'ledger', 'git-status', 'files', 'diff', 'tree', 'file-icons', 'picker', 'persist', 'runs', 'workflow', 'links', 'context', 'packet', 'composer', 'change-refs', 'peek', 'html-view', 'html-ui', 'markdown', 'mermaid', 'images', 'pdf', 'sheets', 'workbook', 'office', 'soffice', 'start-dir', 'file-landing']) {
   console.log(`\n# ${name}`)
   try {
     await import(`./${name}.test.ts`)

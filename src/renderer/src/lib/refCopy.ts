@@ -79,6 +79,8 @@ export function spokenRef(r: RefInput): string {
       return r.lines ? `${baseOf(r.path)}, ${spokenRange(r.lines)}` : baseOf(r.path)
     case 'folder':
       return `${baseOf(r.path)} folder`
+    case 'path':
+      return r.target === 'folder' ? `${baseOf(r.path)} folder` : baseOf(r.path)
     case 'browser':
     case 'page': {
       const { kind, name } = pinWords(r.kind === 'browser' ? r.pin.target : r.target)
@@ -210,7 +212,7 @@ export function addedText(r: RefInput, queued = false, unpictured = false): stri
           : r.kind === 'change'
             ? `${spokenRef(r)},`
             : spokenRef(r)
-  return `Added ${what} to the ${queued ? 'queued ' : ''}message${unpictured ? ', without picture' : ''}.`
+  return `Added ${what} to the ${queued ? 'queued ' : ''}message${unpictured ? ', without picture' : r.kind === 'path' ? ', path only' : ''}.`
 }
 
 export const couldNotAdd = (r: RefInput): string => `Couldn't add ${spokenRef(r)}.`
@@ -227,14 +229,13 @@ export const noMatchText = (q: string): string => `No files match “${q}”.`
 /** The row note when a drop ran into the cap: the rest are skipped, never sent as text instead. */
 export const skippedNote = (n: number): string => `${MAX_REFS} references max. ${n} ${n === 1 ? 'file was' : 'files were'} not added.`
 
-/** One drop's announcement: `Added 3 references to the message. 1 was already attached.` */
-export function dropText(added: readonly RefInput[], mentions: { inside: number; outside: number }, dupes: readonly RefInput[], skipped: number): string {
-  const { inside, outside } = mentions
-  if (dupes.length === 1 && !added.length && !inside && !outside && !skipped) return `Already attached: ${spokenRef(dupes[0])}`
+/** One drop's announcement: `Added 3 references to the message. 1 is sent as a path only. 1 was already attached.` */
+export function dropText(added: readonly RefInput[], dupes: readonly RefInput[], skipped: number): string {
+  if (dupes.length === 1 && !added.length && !skipped) return `Already attached: ${spokenRef(dupes[0])}`
+  const paths = added.length > 1 ? added.filter((r) => r.kind === 'path').length : 0
   return [
     added.length === 1 ? addedText(added[0]) : added.length ? `Added ${added.length} references to the message.` : '',
-    outside === 1 ? '1 item outside the session folder was added as an @ mention.' : outside ? `${outside} items outside the session folder were added as @ mentions.` : '',
-    inside === 1 ? '1 item was added as an @ mention.' : inside ? `${inside} items were added as @ mentions.` : '',
+    paths === 1 ? '1 is sent as a path only.' : paths ? `${paths} are sent as paths only.` : '',
     dupes.length ? `${dupes.length} ${dupes.length === 1 ? 'was' : 'were'} already attached.` : '',
     skipped ? skippedNote(skipped) : ''
   ]

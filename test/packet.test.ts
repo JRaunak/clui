@@ -61,7 +61,12 @@ ok((await reasons([whole()])) === '', 'validate: a missing whole file still send
 files['/w/src/b.ts'] = 'denied'
 ok((await reasons([whole()])) === 'r2:denied', 'validate: a denied whole file')
 delete files['/w/src/b.ts']
-ok((await reasons([pin()], deps({ docOf: async () => 'B'.repeat(32) }))) === 'r3:navigated', 'validate: another document is navigated')
+{
+  let asked = 0
+  const d = deps({ authorize: async () => (asked++, 'denied') })
+  ok((await reasons([{ ref: { id: 'r5', kind: 'path', path: '/elsewhere/x.pdf', target: 'file' } }], d)) === '' && !asked, 'validate: a path ref is never authorized or denied')
+}
+ok((await reasons([pin()], deps({ docOf: async () => 'B'.repeat(32) }))) === 'r3:navigated','validate: another document is navigated')
 ok((await reasons([pin()], deps({ docOf: async () => null }))) === 'r3:closed', 'validate: no page is closed')
 {
   let reads = 0
@@ -108,14 +113,24 @@ ok((await reasons([pin()], deps({ docOf: async () => null }))) === 'r3:closed', 
   ok(!parseOutgoing(pkt({ now: 'yes' })), 'parse: now must be a boolean')
 }
 
-// A drop becomes a chip only where dispatch would let it through.
+// A drop becomes a file or folder chip only where dispatch would let it through, else a path-only ref to what is there.
 {
   const kinds: Record<string, 'file' | 'folder'> = { '/w/a.ts': 'file', '/w/src': 'folder' }
+  const onDisk: Record<string, 'file' | 'folder'> = { '/elsewhere/b.ts': 'file', '/w/link': 'folder' }
   const asked: string[] = []
-  const d = { authorize: async (_h: string, p: string, kind: 'file' | 'folder') => (asked.push(`${kind}:${p}`), kinds[p] === kind ? 'ok' as const : kinds[p] ? 'denied' as const : 'missing' as const) }
-  const got = await classifyRefPaths(d, 'h', ['/w/a.ts', '/w/src', '/elsewhere/b.ts'])
-  ok(got.join() === 'file,folder,', 'classify: a file, a folder, and a path dispatch would refuse')
+  const statted: string[] = []
+  const d = {
+    authorize: async (_h: string, p: string, kind: 'file' | 'folder') => (asked.push(`${kind}:${p}`), kinds[p] === kind ? 'ok' as const : kinds[p] ? 'denied' as const : 'missing' as const),
+    kindOf: async (p: string) => (statted.push(p), onDisk[p] ?? null)
+  }
+  const got = await classifyRefPaths(d, 'h', ['/w/a.ts', '/w/src', '/elsewhere/b.ts', '/w/link', '/gone', 'rel/c.ts'])
+  equal(
+    JSON.stringify(got),
+    JSON.stringify([{ kind: 'file', granted: true }, { kind: 'folder', granted: true }, { kind: 'file', granted: false }, { kind: 'folder', granted: false }, null, null]),
+    'classify: granted file and folder, an outside file, a refused folder, a missing path, a relative path'
+  )
   ok(asked.includes('folder:/w/src') && !asked.includes('folder:/w/a.ts'), 'classify: a folder is asked as a folder only after the file check fails')
+  ok(!statted.includes('/w/a.ts') && !statted.includes('/w/src') && !statted.includes('rel/c.ts'), 'classify: only an ungranted absolute path is statted')
   ok((await classifyRefPaths(d, 'h', 'not a list')).length === 0, 'classify: a non-array is refused')
   ok((await classifyRefPaths(d, 'h', ['/w/a.ts', 3])).length === 0, 'classify: a non-string path refuses the list')
   ok((await classifyRefPaths(d, 7, ['/w/a.ts'])).length === 0, 'classify: a non-string handle is refused')

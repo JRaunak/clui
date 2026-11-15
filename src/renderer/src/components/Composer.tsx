@@ -8,7 +8,7 @@ import {
   type DragEvent,
   type CSSProperties
 } from 'react'
-import { chipMode, effectiveMode, sidePending, sideShown, useActive, useSession, EMPTY_ATTACHMENTS, EMPTY_NOTICES, EMPTY_REFS, type SendAttachment } from '../store'
+import { chipMode, effectiveMode, sidePending, sideShown, stoppedNotice, useActive, useSession, EMPTY_ATTACHMENTS, EMPTY_NOTICES, EMPTY_REFS, type SendAttachment } from '../store'
 import { askOf, parseSide, SIDE_TITLE, sideChatOf } from '../lib/side'
 import { askSide } from '../lib/sideEntry'
 import { attachmentChip } from './ContextChip'
@@ -37,10 +37,10 @@ import {
   IconTarget
 } from './Icon'
 import { imageRefusal, processDroppedFiles, toWireAttachment, type ProcessedAttachment } from '../lib/images'
-import { routeDrop, spliceText, splitFiles } from '../lib/composerRefs'
+import { routeDrop, splitFiles } from '../lib/composerRefs'
 import { tilde } from '../lib/tree'
 import { basename, useProjectDirs } from '../lib/useProjectDirs'
-import { dropText, skippedNote } from '../lib/refCopy'
+import { baseOf, dropText, skippedNote } from '../lib/refCopy'
 import {
   PERMISSION_MODES,
   PERMISSION_MODE_LABELS,
@@ -88,8 +88,6 @@ export function Composer(): JSX.Element {
   const hasSession = useActive((s) => !!s)
   const exited = useActive((s) => s?.exited ?? false)
   const cwd = useActive((s) => s?.cwd ?? null)
-  // Main gives a folder at or above home no workspace scope, so a drop there can only become @ text.
-  const scoped = !!cwd && !`${window.clui.homeDir}/`.startsWith(cwd.endsWith('/') ? cwd : `${cwd}/`)
   // Editable only before the first turn: after a message is sent, the CLI has fixed the
   // transcript's folder-slug at process-create, so changing the dir would be a lie (that's a
   // fork/new session, out of scope). A directoryless session runs in the chat dir.
@@ -127,8 +125,8 @@ export function Composer(): JSX.Element {
 
   // Drop/paste/pick routing:
   //  - Images inline as thumbnails (the model can't @-read pixels; it needs the block).
-  //  - A pathful file or folder main would let a message point at becomes a reference chip. Any other path stays
-  //    an @path token at the caret (relative under cwd, else absolute), which the CLI resolves itself.
+  //  - A pathful file or folder main would let a message point at becomes a reference chip. Any other path becomes a
+  //    path-only chip. Never @ text: the CLI inlines an @ mention's whole content.
   //  - A file with no resolvable path (a pasted screenshot Blob) can't be referenced by path, so
   //    fall back to inlining its bytes so paste still works.
   // `h` is the handle the drop started on, so a conversion that finishes after the user switched sessions lands in
@@ -138,51 +136,44 @@ export function Composer(): JSX.Element {
       paths.length ? window.clui.classifyRefPaths(h, paths).catch(() => []) : [],
       inline.length ? processDroppedFiles(inline) : null
     ])
-    const slice = useSession.getState().sessions[h]
-    if (!slice) return false
-    const { refs: inputs, mentions, outside } = routeDrop(paths, kinds, slice.cwd)
+    if (!useSession.getState().sessions[h]) return false
+    const inputs = routeDrop(paths, kinds)
     const results = addToDraft(h, inputs, skippedNote)
-    if (mentions.length) insertText(h, mentions.join(' ') + ' ')
     const said = dropText(
       inputs.filter((_, i) => results[i].status === 'added'),
-      { inside: mentions.length - outside, outside },
       inputs.filter((_, i) => results[i].status === 'duplicate'),
       results.filter((r) => r.status === 'cap').length
     )
     if (said) useSession.getState().announceRefs(h, said)
     if (processed?.attachments.length) addDraftAttachments(h, processed.attachments)
-    const errors = [...refused, ...(processed?.errors ?? [])]
+    const lost = paths.filter((_, i) => !kinds[i]).map((p) => `Couldn't add ${baseOf(p)}. It's missing or isn't a file or folder.`)
+    const errors = [...refused, ...lost, ...(processed?.errors ?? [])]
     if (errors.length) setNotice(errors.join(' '))
     return true
   }
 
+  // A stopped session's process is gone, so an attach asks main nothing and offers Resume instead.
+  const stopped = (focus: boolean): boolean => {
+    const slice = handleId ? useSession.getState().sessions[handleId] : undefined
+    if (!slice?.exited) return false
+    stoppedNotice(slice, focus)
+    return true
+  }
+
   const addFiles = (files: File[]): void => {
-    if (!files.length || !handleId) return
+    if (!files.length || !handleId || stopped(false)) return
     const { inline, paths } = splitFiles(files, window.clui.getPathForFile)
     void attach(handleId, inline, paths)
   }
 
-  const pickFiles = async (): Promise<void> => {
-    if (!handleId) return
+  const pickFiles = async (keyed: boolean): Promise<void> => {
+    if (!handleId || stopped(keyed)) return
     const h = handleId
     const picked = await window.clui.pickAttachments(h).catch(() => null)
     if (!picked) return
     const images = picked.images.map((i) => new File([i.bytes], i.name, { type: i.mime }))
     const alive = await attach(h, images, picked.paths, picked.refused.map(imageRefusal))
     if (alive && h === useSession.getState().activeHandleId) textareaRef.current?.focus()
-  }
-
-  // After an await: reads the draft now, so typing during the IPC isn't overwritten. Splices at the textarea's
-  // caret while `h` is still the active session, else appends to its draft.
-  const insertText = (h: string, insert: string): void => {
-    const st = useSession.getState()
-    const cur = st.sessions[h]?.draftText ?? ''
-    const ta = h === st.activeHandleId ? textareaRef.current : null
-    const next = spliceText(cur, ta ? Math.min(ta.selectionStart ?? cur.length, cur.length) : cur.length, insert)
-    setDraftText(h, next.text)
-    if (!ta) return
-    setCaret(next.caret)
-    requestAnimationFrame(() => ta.setSelectionRange(next.caret, next.caret))
   }
 
   const removeAttachment = (id: string): void => {
@@ -385,7 +376,7 @@ export function Composer(): JSX.Element {
                   <IconPlus className="h-5 w-5" />
                   Drop to add to the message
                 </div>
-                {scoped && <div className="text-meta text-dim">Images go as pictures. Files and folders go as references Claude opens itself.</div>}
+                <div className="text-meta text-dim">Images go as pictures. Files and folders go as references Claude opens itself.</div>
               </div>
             </div>
           )}
@@ -437,7 +428,7 @@ export function Composer(): JSX.Element {
               type="button"
               data-ui="attach-button"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-control text-dim transition-colors pointer-fine:hover:bg-control-hover pointer-fine:hover:text-content disabled:cursor-default disabled:opacity-50"
-              onClick={() => void pickFiles()}
+              onClick={(e) => void pickFiles(e.detail === 0)}
               disabled={!hasSession}
               title="Attach files or folders"
               aria-label="Attach files or folders"

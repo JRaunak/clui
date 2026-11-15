@@ -891,7 +891,7 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
   })
   // The sent revision may be stale, so a file opens scrolled to the range with nothing selected.
   const opener = (ref: ContextReference | null): ((via: Via) => void) | undefined => {
-    if (!handleId || !ref || ref.kind === 'browser') return undefined
+    if (!handleId || !ref || ref.kind === 'browser' || ref.kind === 'path') return undefined
     const abs = absOf(cwd, ref.path)
     if (ref.kind === 'change') return changes?.some((c) => c.path === abs) ? (via) => openRef(handleId, { ref: { ...ref, path: abs } }, via) : undefined
     const line = ref.kind === 'file' ? ref.lines?.start : undefined
@@ -920,7 +920,8 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
   }, [])
   const shown = card ? chips.find((c) => c.view.key === card.key) : undefined
   const openable = chips.some((c) => !!opener(c.ref))
-  const inert = chips.some((c) => !opener(c.ref))
+  const inert = chips.some((c) => !opener(c.ref) && c.ref?.kind !== 'path')
+  const pathOnly = chips.some((c) => c.ref?.kind === 'path')
   const notes = refs.flatMap((r) => (r.kind === 'current' && r.value.ref.note ? [{ n: r.n, note: r.value.ref.note }] : []))
   const used = new Set<MessageAttachment | undefined>(chips.map((c) => c.thumb))
   const rest = all
@@ -947,7 +948,7 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
                   key={key}
                   view={c.view}
                   {...peekOf(key)}
-                  describedBy={`${hintId}${o ? 'o' : 'i'}`}
+                  describedBy={`${hintId}${o ? 'o' : c.ref?.kind === 'path' ? 'p' : 'i'}`}
                   onOpen={(e) => {
                     if (dismissedBy.current === key) return void (dismissedBy.current = null)
                     if (e.metaKey) return o?.(viaOf(e))
@@ -967,6 +968,11 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
       {(inert || chats) && (
         <span id={`${hintId}i`} hidden>
           Shows a preview.
+        </span>
+      )}
+      {pathOnly && (
+        <span id={`${hintId}p`} hidden>
+          Shows the path.
         </span>
       )}
       {chat ? (

@@ -6,6 +6,7 @@ import type { ShownAttachment } from '../store'
 import { baseOf, CHANGE_UNAVAILABLE, noteTitle, quoteStart, spokenRef } from '../lib/refCopy'
 import { qualified } from '../../../shared/sheets'
 import { FileIcon } from './FileIcon'
+import { folderLine, shownPath } from '../lib/tree'
 import { forkedAt, SIDE_TITLE, sideChatOf, sideCounts } from '../lib/side'
 import { IconClose, IconDiff, IconFile, IconSideChat, IconTarget } from './Icon'
 
@@ -24,6 +25,8 @@ export interface ChipView {
   /** Main says Claude can't read this change any more; said after line2, never truncated. */
   unavailable?: boolean
   noted?: boolean
+  /** A path-only reference: its number sits in an outlined badge. */
+  pathOnly?: boolean
   title: string
   label: string
   /** For the remove button and announcements. */
@@ -56,6 +59,21 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
       const dir = parentOf(rel)
       const where = dir === './' ? '' : `, in ${dir.slice(0, -1)}`
       return { key, n, glyph: 'folder', line1: refLabel(ref), line2: dir, title: rel, label: `Reference ${n}: ${spokenRef(ref)}${where}`, spoken: spokenRef(ref) }
+    }
+    case 'path': {
+      const p = ref.path.replace(/\/+$/, '')
+      const dir = shownPath(p.slice(0, p.lastIndexOf('/')) || '/', window.clui.homeDir)
+      return {
+        key,
+        n,
+        glyph: ref.target,
+        line1: baseOf(ref.path),
+        line2: folderLine(dir),
+        pathOnly: true,
+        title: `${ref.path}\nClui sends only the path. Claude reads it with its own tools if it needs to.`,
+        label: `Reference ${n}: ${spokenRef(ref)}, path only, in ${dir}`,
+        spoken: spokenRef(ref)
+      }
     }
     case 'browser':
     case 'page': {
@@ -177,7 +195,9 @@ export function refChip(ref: ContextReference, n: number, cwd: string | null, th
 export const notedChip = (v: ChipView, note: string | undefined): ChipView =>
   note ? { ...v, noted: true, title: `${v.title}\n${noteTitle(note)}`, label: `${v.label}, with a note` } : v
 
-export const BADGE = 'flex size-4.5 shrink-0 items-center justify-center rounded-full bg-content text-badge font-semibold text-bg-elev'
+const BADGE_SHAPE = 'flex size-4.5 shrink-0 items-center justify-center rounded-full text-badge font-semibold'
+export const BADGE = `${BADGE_SHAPE} bg-content text-bg-elev`
+export const OUTLINE_BADGE = `${BADGE_SHAPE} border border-border-strong bg-bg-raised text-content`
 
 /** A sent change chip main says Claude can no longer read. */
 export const unavailableChip = (v: ChipView): ChipView => ({ ...v, unavailable: true, title: `${v.title}\n${CHANGE_UNAVAILABLE}`, label: `${v.label}, Claude can no longer read it` })
@@ -275,7 +295,7 @@ export function ContextChip({
           </span>
         )}
         {n !== undefined && (
-          <span aria-hidden="true" className={`absolute -left-1 -top-1 ${BADGE}`}>
+          <span aria-hidden="true" className={`absolute -left-1 -top-1 ${view.pathOnly ? OUTLINE_BADGE : BADGE}`}>
             {n}
           </span>
         )}

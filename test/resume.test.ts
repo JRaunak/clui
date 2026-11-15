@@ -1,5 +1,4 @@
-// A failed resume through the real beginSession. Runs last: beginSession installs the store's global
-// subscribers, which the other suites' fixtures don't satisfy.
+// A failed resume through the real beginSession.
 import { useSession } from '../src/renderer/src/store.ts'
 import { equal, ok } from './support/harness.mjs'
 

@@ -42,6 +42,8 @@ export type ContextReference = RefBase &
     | { kind: 'file'; path: string; lines?: undefined; sourceVersion?: undefined }
     | { kind: 'file'; path: string; lines: LineRange; sourceVersion: SourceVersion }
     | { kind: 'folder'; path: string }
+    /** A file or folder Clui neither read nor granted: only its absolute path goes to Claude. */
+    | { kind: 'path'; path: string; target: 'file' | 'folder' }
     | { kind: 'browser'; pin: PagePin }
     /** An element of a local HTML file as it rendered from the file at `revision`. `creatingEditId`: the ledger edit
      *  that created the file, when Claude made it in this session. */
@@ -127,7 +129,7 @@ export interface DraftReference {
 /** One <clui-ref> record. The wire JSON is this object, minus a target's empty `role`, `styles` and `html`. */
 export interface SentReference {
   version: 1
-  /** A file or folder `path` is cwd-relative when inside the session cwd, else absolute. */
+  /** A file or folder `path` is cwd-relative when inside the session cwd, else absolute. A `path` ref's is always absolute. */
   ref: ContextReference
   /** Index into the user message's content array. */
   visualAttachmentIndex?: number
@@ -311,6 +313,8 @@ function refOk(x: unknown, wire: boolean): boolean {
     }
     case 'folder':
       return pathOk(x.path, wire)
+    case 'path':
+      return pathOk(x.path, false) && (x.target === 'file' || x.target === 'folder')
     case 'browser': {
       const p = x.pin
       if (!isObj(p) || !isObj(p.source)) return false
@@ -375,6 +379,8 @@ export function refKey(r: RefInput): string {
       return ['file', r.path, r.lines ? `${r.lines.start}-${r.lines.end}` : '', r.sourceVersion ?? ''].join('\0')
     case 'folder':
       return `folder\0${r.path}`
+    case 'path':
+      return `path\0${r.path}`
     case 'browser':
       return ['browser', r.pin.source.tabId, r.pin.source.docId, r.pin.target.selector].join('\0')
     case 'page':
@@ -423,6 +429,8 @@ export function resourceOf(r: ContextReference): string {
       return `file:${r.path}`
     case 'folder':
       return `folder:${r.path}`
+    case 'path':
+      return `path:${r.path}`
     case 'browser':
       return `browser:${r.pin.source.tabId}:${r.pin.source.docId}`
     case 'page':
@@ -561,6 +569,8 @@ export function refLabel(r: RefInput): string {
     }
     case 'folder':
       return `${baseName(r.path)}/`
+    case 'path':
+      return r.target === 'folder' ? `${baseName(r.path)}/` : baseName(r.path)
     case 'browser':
     case 'page': {
       const { kind, name } = pinWords(r.kind === 'browser' ? r.pin.target : r.target)
@@ -604,6 +614,8 @@ const DIAGRAM_SENTENCE =
   "A diagram reference points at parts of a Mermaid diagram that Clui drew from lines of the file: read those lines with your own tools. type is the diagram's keyword in that source. A part's id, from and to are ids as written in the source, with [*] for a state diagram's start or end; label is the text drawn on it, and fromLabel and toLabel are the drawn text of its ends; nth counts earlier parts of the same kind between the same from and to, or for a note with the same label, or for a block with the same keyword and label, from 0 in source order; line is present only when exactly one line declares the part, and a block's lines run from its opening line to its end line."
 const DIAGRAM_AREA_SENTENCE =
   "A diagram reference with labels is an area the user marked on a diagram that has no part ids: labels lists the text drawn inside it, in reading order. A label's line is present only when its text appears on exactly one line of the diagram's source; a label without one may be text Mermaid generated, such as an axis date or a percentage."
+const PATH_SENTENCE =
+  'A path reference is only a location: Clui sent none of its content and granted no access to it. Read it with your own tools if the task needs it.'
 const NOTE_SENTENCE = "A note on a reference is the user's own words about it; treat it as part of their message."
 
 const attr = (v: string | number): string => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -634,6 +646,9 @@ function copyRef(r: ContextReference): ContextReference {
       break
     case 'folder':
       out = { id: r.id, kind: 'folder', path: r.path }
+      break
+    case 'path':
+      out = { id: r.id, kind: 'path', path: r.path, target: r.target }
       break
     case 'browser': {
       const { tabId, docId } = r.pin.source
@@ -739,6 +754,7 @@ export function serializeContext(refs: SentReference[], typed: string, opts: { p
     `<clui-context version="${attr(CONTEXT_VERSION)}"${id}>`,
     [
       HEADER,
+      refs.some((r) => r.ref.kind === 'path') && PATH_SENTENCE,
       refs.some((r) => r.ref.kind === 'change') && CHANGE_SENTENCE,
       refs.some((r) => r.ref.kind === 'page') && PAGE_SENTENCE,
       refs.some((r) => r.ref.kind === 'image') && IMAGE_SENTENCE,
@@ -855,11 +871,11 @@ export function relativeTo(cwd: string | null, p: string): string {
   return p.startsWith(base) ? p.slice(base.length) : p
 }
 
-/** The records for a draft's refs: paths inside `cwd` made relative, crops numbered by `packetLayout`. */
+/** The records for a draft's refs: paths inside `cwd` made relative except a `path` ref's, crops numbered by `packetLayout`. */
 export function sentRefs(refs: readonly DraftReference[], cwd: string | null): SentReference[] {
   const { visualIndex } = packetLayout(refs)
   return refs.map(({ ref }) => {
-    const r = ref.kind === 'browser' ? ref : { ...ref, path: relativeTo(cwd, ref.path) }
+    const r = ref.kind === 'browser' || ref.kind === 'path' ? ref : { ...ref, path: relativeTo(cwd, ref.path) }
     const vi = visualIndex.get(ref.id)
     return vi === undefined ? { version: 1, ref: r } : { version: 1, ref: r, visualAttachmentIndex: vi }
   })

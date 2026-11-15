@@ -12,7 +12,7 @@
  * Esc closes (via the shared escape-stack so a palette over a modal closes the palette first).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSession, activeSlice, canFork, selectPaneOpen, sideFor, useActive, EMPTY_CHANGES, EMPTY_SURFACES } from '../store'
+import { cleanError, useSession, activeSlice, canFork, selectPaneOpen, sideFor, useActive, EMPTY_CHANGES, EMPTY_SURFACES } from '../store'
 import { SIDE_REFUSAL } from '../lib/side'
 import { useEscape } from '../lib/useEscape'
 import { applyTheme } from '../lib/theme'
@@ -21,7 +21,7 @@ import { requestSurfaceFocus } from '../lib/surfaceFocus'
 import { viaOf, type Via } from '../lib/motion'
 import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage, IconFolder, IconDiff, IconAgentBrowser, IconPaneRight, IconHalfRing, IconSidebar, IconDownload, IconGitFork, IconSideChat, IconSubagents, IconWorkflows } from './Icon'
 import { FileIcon } from './FileIcon'
-import { cleanError, openEditor } from './surfaces/fileDoc'
+import { openEditor } from './surfaces/fileDoc'
 import { tilde } from '../lib/tree'
 import { fileCount, runCountMeta } from '../lib/paneItems'
 import { agentCount, hasAgents, runningAgents } from '../lib/agents'

@@ -145,6 +145,8 @@ export interface PickedAttachments {
 export type ChangeRefPeek = { ok: true; text: string; side: ChangeSide; old?: LineRange; new?: LineRange; bytes: number } | { ok: false }
 
 export interface AnnotationOrder { keep: number[]; shown: [pinId: number, n: number][]; room: number }
+/** A dropped path's kind, `granted` when it can be a file or folder reference; null when nothing is there. */
+export type PathClass = { kind: 'file' | 'folder'; granted: boolean } | null
 /** `bytes`: an image reference's, whose version is over every byte rather than the text a read returns. */
 export interface RefWatchEntry { path: string; version: SourceVersion; bytes?: true }
 export interface RefSourceChanged { handleId: string; path: string; reason: 'changed' | 'missing' | 'denied'; version?: SourceVersion; bytes?: true }
@@ -337,8 +339,8 @@ export interface CluiApi {
   /** List files under the session's workspace (git-aware; relative paths, capped) for the
    *  composer's @-file picker. Empty on error. */
   listWorkspaceFiles: (handleId: string) => Promise<{ files: string[]; truncated: boolean }>
-  /** Per absolute path, the reference kind a sent message would be allowed to point at, or null. */
-  classifyRefPaths: (handleId: string, paths: string[]) => Promise<('file' | 'folder' | null)[]>
+  /** Per absolute path, its kind and whether a sent message may point at it as a file or folder reference. */
+  classifyRefPaths: (handleId: string, paths: string[]) => Promise<PathClass[]>
   /** Snapshots one hunk slice of Claude's change history as a draft change reference. It grants nothing until a
    *  message carrying it is written. */
   createChangeRef: (handleId: string, req: ChangeRefRequest) => Promise<ChangeRefResult>

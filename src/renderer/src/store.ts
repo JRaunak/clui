@@ -1337,7 +1337,7 @@ const ENDS_AGENTS = new Set<DomainEvent['type']>(['tool-result', 'subagent-tool-
 /** Each session's one pending timer for its usage limit's reset, replaced by every new limit event. */
 const rateLimitTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-// --- One persistent event subscription (installed lazily on first use) ---
+// --- One persistent event subscription (installed by the app entry) ---
 
 let subscribed = false
 /**
@@ -1794,7 +1794,9 @@ export function answerSurface(cmd: SurfaceCommand): void {
   void openWithText(cmd.handleId, cmd.args).then((r) => window.clui.surfaceReply(cmd.reqId, r))
 }
 
-function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void): void {
+/** The store's IPC listeners and cross-slice watchers. The app entry installs them once; tests that drive store
+ *  actions leave them out. */
+export function subscribeStore(): void {
   if (subscribed) return
   subscribed = true
   watchSurfaces()
@@ -1802,7 +1804,7 @@ function ensureSubscribed(applyEvent: (handleId: string, e: DomainEvent) => void
   watchAgentTabs()
   window.clui.onSurfaceCommand(answerSurface)
   window.clui.onSessionEvent(({ handleId, event }) => {
-    applyEvent(handleId, event)
+    useSession.getState().applyEvent(handleId, event)
     // A turn can delete a changed file without a tool result naming it (Bash rm), so its
     // end re-checks which files are still on disk.
     if (event.type === 'result') void useSession.getState().refreshChanges(handleId)
@@ -1986,7 +1988,6 @@ async function beginSession(
     ephemeral?: boolean
   }
 ): Promise<string> {
-  ensureSubscribed(get().applyEvent)
   evictIfOverCap(get, set, opts.cwd)
   // Refresh the effort caps at each session start so a settings.json edit is reflected.
   void get().loadEffortCaps()
@@ -3127,17 +3128,13 @@ export const useSession = create<SessionStore>((set, get) => ({
     const refs = opts?.refs ?? EMPTY_REFS
     if (!active || (!text.trim() && !attachments?.length && !refs.length)) return
     // The process is gone; a send would silently no-op in main while the UI spun busy.
-    if (active.exited) {
-      const resume = async (): Promise<void> => {
-        const h = await resumeStopped(active.handleId)
-        if (!h) return
+    if (active.exited)
+      return stoppedNotice(active, !!opts?.keyed, async (h) => {
         // The draft moved over with the resume. This send carries it, unless it was edited since.
         if (get().sessions[h]?.draftText === active.draftText) get().clearDraft(h)
         get().clearRefs(h, refs.map((d) => d.ref.id))
         await get().sendMessage(text, attachments, opts)
-      }
-      return get().setNotice('This session has stopped.', 'warn', active.sessionId && !active.ephemeral ? { label: 'Resume session', run: () => void resume(), focus: !!opts?.keyed } : undefined)
-    }
+      })
     // A new prompt hands a stopped browser back to Claude. It runs before the queue check because the
     // prompt after a Stop usually queues behind the interrupted turn.
     if (anyTabIn(active.browser, 'stopped')) void window.clui.browserDrive(active.handleId, 'reset')
@@ -4173,13 +4170,10 @@ export const useSession = create<SessionStore>((set, get) => ({
             topLevelNotice = { message: e.message, tone: 'warn' }
             break
           }
-          // A launch that fails before the CLI ever initialized (model===null),
-          // e.g. a missing workspace folder or a bad CLI path, usually has its slice
-          // dropped on the imminent process-exit, taking a per-slice lastError with
-          // it. So surface it ONLY as the app-level notice (top banner, survives the
-          // drop), NOT also as the in-chat error box, which would duplicate the
-          // message. A mid-session error (model already set) shows in-chat as before.
-          if (slice.model === null && !slice.side) topLevelNotice = { message: e.message, tone: 'error' }
+          // A fresh launch that fails before init has its slice dropped on the coming process-exit (the same test
+          // below), taking any lastError with it, so its error goes to the top banner only. A resumed or side slice
+          // is kept, so it shows the error in-chat, never both.
+          if (slice.model === null && !slice.side && !slice.sessionId) topLevelNotice = { message: e.message, tone: 'error' }
           else patch.lastError = e.message
           break
         case 'process-exit':
@@ -5067,6 +5061,16 @@ export const useSession = create<SessionStore>((set, get) => ({
 
 /** An IPC rejection's message without Electron's `Error invoking remote method` wrapper. */
 export const cleanError = (e: unknown): string => String((e as Error)?.message ?? e).replace(/^Error invoking remote method '[^']*': (Error: )?/, '')
+
+/** What a stopped session answers a send or an attach with. Resume carries the draft over, then `then` runs on the new
+ *  handle. `focus`: the action that hit it came from the keyboard. */
+export function stoppedNotice(slice: PerSessionState, focus: boolean, then?: (handleId: string) => Promise<void>): void {
+  const resume = async (): Promise<void> => {
+    const h = await resumeStopped(slice.handleId)
+    if (h && then) await then(h)
+  }
+  useSession.getState().setNotice('This session has stopped.', 'warn', slice.sessionId && !slice.ephemeral ? { label: 'Resume session', run: () => void resume(), focus } : undefined)
+}
 
 /** Resumes a stopped session the way its sidebar row does. Resolves to the new handle, or null when nothing started. */
 export function resumeStopped(handleId: string): Promise<string | null> {
