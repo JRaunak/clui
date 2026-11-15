@@ -15,6 +15,7 @@
  * (`TaggedEvent`). So this store installs ONE persistent subscription and routes
  * each event into `sessions[handleId]`.
  */
+import { createContext, useContext } from 'react'
 import { create } from 'zustand'
 import { isListPriced, type DomainEvent, type ElicitationResponse, type PermissionDenial, type PermissionSuggestion, type RateLimit, type SessionTask, type SlashCommandInfo, type TurnEnd, type TurnUsage, type WorkflowAgent } from '../../shared/events'
 import type { AgentMeta, BlockedPrompt, CompactionMarker, HistoryMessage, ProjectGroup } from '../../shared/sessions'
@@ -25,7 +26,7 @@ import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
 import type { ApiProvider, StartSideOptions, CluiApi, DispatchResult, EffortCaps, PermissionModeChoice, PermissionVerdict, SessionRuns, WireAttachment } from '../../shared/ipc'
 import { loadFailureOf, siteKeyOf, type BrowserEvent, type BrowserPaneState, type BrowserState, type TabState } from '../../shared/browser'
 import { HOOKS_TOKEN, PERMISSION_MODE_LABELS, clampEffort, reconcileModelChoice, setLiveEfforts, supportsUltracodeToggle, contextWindowForModel, contextSizeLabel, latestModelInFamily, deriveModelInfo, modelCheckReason, EFFORT_CHOICES, type EffortChoice, type ModelChoice } from '../../shared/settings'
-import type { ProcessedAttachment } from './lib/images'
+import { MAX_TEXT_BYTES, type ProcessedAttachment, type SideMeta } from './lib/images'
 import { pinWords, clipName, type AnnotateEvent, type PointAt } from '../../shared/annotate'
 import {
   CAP_NOTE,
@@ -61,7 +62,7 @@ import { suffixes } from './lib/tree'
 import { fileLike, noPreview, presentationOf } from './lib/presentation'
 import { isHtml } from '../../shared/html-view'
 import { colName, isDelimited, parseA1 } from '../../shared/sheets'
-import { readOnlyLine, sideToolsAtFork } from './lib/side'
+import { readOnlyLine, SIDE_TITLE, sideThreadText, sideTools, sideToolsAtFork, sideTurns, sidePhase, unhanded, type SidePhase } from './lib/side'
 
 export type SettingsSection = 'general' | 'sessions' | 'pane' | 'browser' | 'advanced'
 /** A group heading Settings can scroll to and focus on open. */
@@ -204,7 +205,8 @@ export type MessageAttachment =
   | { kind: 'image'; previewUrl: string; name?: string; w?: number; h?: number; blockIndex?: number }
   | { kind: 'image-unavailable'; blockIndex: number }
   | { kind: 'document'; name: string; bytes: number; blockIndex?: number }
-  | { kind: 'text'; name: string; bytes: number; lines: number; blockIndex?: number }
+  /** A handed-back side chat keeps its text so the sent chip can show what Claude was given. */
+  | { kind: 'text'; name: string; bytes: number; lines: number; blockIndex?: number; origin?: 'side'; side?: SideMeta; text?: string }
 export type ShownAttachment = Exclude<MessageAttachment, { kind: 'image-unavailable' }>
 
 /** What the composer hands `sendMessage`: the wire payload for the CLI plus the
@@ -556,6 +558,10 @@ export interface SideState {
 
 export type SideRefusal = 'not-live' | 'quick' | 'hooks-off' | 'no-first-message' | 'no-transcript'
 
+export type SideOpened = { ok: true } | { ok: false; reason: SideRefusal }
+
+export type SideConfirm = { parent: string; reason: 'close' } | { parent: string; reason: 'replace'; question: string }
+
 /** The one rule every side-chat entry point disables on. `no-transcript` only main can tell. */
 export function canFork(s: PerSessionState | null): SideRefusal | null {
   if (!s || s.exited) return 'not-live'
@@ -567,7 +573,19 @@ export function canFork(s: PerSessionState | null): SideRefusal | null {
 export const sideFor = (st: SessionStore, parent: string): PerSessionState | null =>
   Object.values(st.sideSessions).find((x) => x.side?.parent === parent) ?? null
 
+/** The open in flight per parent session. */
+const sideOpening = new Map<string, Promise<SideOpened>>()
+
 const sliceOf = (s: SessionStore, h: string): PerSessionState | undefined => s.sessions[h] ?? s.sideSessions[h]
+
+/** The request a session's side chat waits on, if any. */
+export const sidePending = (st: SessionStore, parent: string): PendingPermission | null => sideFor(st, parent)?.pendingPermissions[0] ?? null
+
+/** The side tab is what the user is looking at: its session active, its pane open, the tab in front. */
+export function sideShown(st: SessionStore, parent: string): boolean {
+  const p = st.sessions[parent]
+  return parent === st.activeHandleId && !!p?.paneOpen && p.surfaces.active === 'side'
+}
 
 /** Tools and MCP server names in one init and not the other: `+x` the side's only, `-x` the parent's only. Server
  *  status is ignored, since connect timing can differ while the tools match. */
@@ -808,10 +826,16 @@ interface SessionStore {
   closeSession: (handleId: string) => Promise<void>
   /** Side-chat forks by their own handle. Never listed, activated, evicted or counted as sessions. */
   sideSessions: Record<string, PerSessionState>
-  /** Opens the session's side fork, ending any open one. Resolves with the reason when it can't fork. */
-  openSide: (parentHandleId: string, question?: string) => Promise<{ ok: true } | { ok: false; reason: SideRefusal }>
+  /** Opens the session's side fork, ending any open one. Resolves with the reason when it can't fork. A call while
+   *  one is opening for the same session gets that one's result, so two entry points never leave two sides. */
+  openSide: (parentHandleId: string, question?: string) => Promise<SideOpened>
+  /** A side chat with answers Claude hasn't seen, about to be closed or replaced by a new `/side`. */
+  sideConfirm: SideConfirm | null
   sendSide: (sideHandleId: string, text: string) => Promise<void>
   endSide: (parentHandleId: string) => Promise<void>
+  /** Drafts the side's completed answers into the parent's composer as one chip and ends the side. False, with a
+   *  notice when it's too long, if nothing was handed back. */
+  handBackSide: (parentHandleId: string) => boolean
   /** Move the active view to the next (dir=1) / previous (dir=-1) live session,
    *  in sidebar order, wrapping around. No-op with fewer than 2 live sessions. */
   cycleSession: (dir: 1 | -1) => void
@@ -822,11 +846,11 @@ interface SessionStore {
    */
   sendMessage: (text: string, attachments?: SendAttachment[], opts?: { now?: boolean; refs?: DraftReference[] }) => Promise<void>
   /** Send a queued message now, cutting the running turn's step, instead of at the turn's end. */
-  sendQueuedNow: (id: string) => void
+  sendQueuedNow: (id: string, handleId?: string) => void
   /** Edit a still-queued message's text (before it's dispatched at the turn boundary). */
-  editQueuedMessage: (id: string, text: string) => void
+  editQueuedMessage: (id: string, text: string, handleId?: string) => void
   /** Remove a still-queued message (never dispatched). */
-  cancelQueuedMessage: (id: string) => void
+  cancelQueuedMessage: (id: string, handleId?: string) => void
   /** Set a session's composer draft text (per-handle so it survives switches). */
   setDraftText: (handleId: string, text: string) => void
   /** Append staged attachments to a session's draft, bound to the handle the conversion
@@ -1233,7 +1257,17 @@ const focusInPane = (onBrowser: boolean): boolean =>
  * fallback so the reference stays identical across renders.
  */
 export function useActive<T>(selector: (slice: PerSessionState | null) => T): T {
-  return useSession((s) => selector(activeSlice(s)))
+  const scoped = useContext(SliceScope)
+  return useSession((s) => selector(scoped ? (s.sideSessions[scoped] ?? null) : activeSlice(s)))
+}
+
+/** Inside it, `useActive` reads this side chat's slice instead of the active session's. Serves side slices only. */
+export const SliceScope = createContext<string | null>(null)
+
+/** The handle `useActive` reads: the scoped side's, else the active session's. */
+export function useScopedHandle(): string | null {
+  const scoped = useContext(SliceScope)
+  return useSession((s) => scoped ?? s.activeHandleId)
 }
 
 /** Stable empty fallbacks for array selectors (see the useActive note above). */
@@ -1438,15 +1472,30 @@ function watchSurfaces(): void {
   })
 }
 
-/** An agent or workflow tab whose run stops while the user is elsewhere gets the unseen dot. A tab's first derived
- *  state is its baseline, so a restored tab never lights on load. */
+/** A side answer that finished, failed, or a side process that ended. A Starting with no question settling isn't news. */
+const sideNews = (was: SidePhase, now: SidePhase): boolean =>
+  was !== now && (now === 'failed' || now === 'ended' || (now === 'idle' && (was === 'answering' || was === 'stopping' || was === 'needs')))
+
+/** An agent, workflow or side tab whose run stops while the user is elsewhere gets the unseen dot. A tab's first
+ *  derived state is its baseline, so a restored tab never lights on load. */
 export function watchAgentTabs(): () => void {
   const last = new Map<string, RunStatusOf['state']>()
+  const sides = new Map<string, SidePhase>()
   return useSession.subscribe((s, prev) => {
-    if (s.sessions === prev.sessions) return
+    if (s.sessions === prev.sessions && s.sideSessions === prev.sideSessions) return
     const lit: [string, string][] = []
     for (const [handleId, slice] of Object.entries(s.sessions)) {
       for (const t of Object.values(slice.surfaces.tabs)) {
+        const seen = handleId === s.activeHandleId && slice.paneOpen && slice.surfaces.active === t.id
+        if (t.kind === 'side') {
+          const x = sideFor(s, handleId)
+          if (!x) continue
+          const now = sidePhase(x)
+          const was = sides.get(x.handleId)
+          sides.set(x.handleId, now)
+          if (was && sideNews(was, now) && !seen && !t.unseen) lit.push([handleId, t.id])
+          continue
+        }
         const ref = t.kind === 'agent' ? agentRefOf(t.key) : null
         const wf = t.kind === 'workflow' ? slice.workflows[t.key] : undefined
         const now = ref ? agentRunState(slice, ref).state : wf ? workflowSummary(wf, slice.pendingPermissions).state.state : null
@@ -1454,7 +1503,6 @@ export function watchAgentTabs(): () => void {
         const k = `${handleId}\n${t.id}`
         const was = last.get(k)
         last.set(k, now)
-        const seen = handleId === s.activeHandleId && slice.paneOpen && slice.surfaces.active === t.id
         if (was && isLive(was) && !isLive(now) && !seen && !t.unseen) lit.push([handleId, t.id])
       }
     }
@@ -2370,17 +2418,17 @@ const CUT_FOR_MESSAGE = 'Claude stopped its current step to answer.'
 async function sendNowTurn(set: Setter, handleId: string, text: string, attachments?: SendAttachment[], refs: DraftReference[] = EMPTY_REFS): Promise<void> {
   const userMsg = userBubble(handleId, text, attachments, refs)
   set((s) => {
-    const slice = s.sessions[handleId]
+    const slice = sliceOf(s, handleId)
     if (!slice) return {}
     return patchSlice(s, handleId, { messages: [...slice.messages, userMsg], lastActivityMs: Date.now() })
   })
   const r = await deliver(set, handleId, userMsg.id, { text, refs, attachments, now: true }, {})
   if (!r?.ok) return
-  if (r.joined) set((s) => (s.sessions[handleId] ? patchSlice(s, handleId, { statusAnnounce: toggled(SENT_NOW) }) : {}))
+  if (r.joined) set((s) => (sliceOf(s, handleId) ? patchSlice(s, handleId, { statusAnnounce: toggled(SENT_NOW) }) : {}))
   // The turn ended before the message reached the CLI, so it runs as a turn of its own.
   else {
     set((s) => {
-      const slice = s.sessions[handleId]
+      const slice = sliceOf(s, handleId)
       return slice && !slice.busy ? patchSlice(s, handleId, { busy: true, interrupting: false, turnStartMs: Date.now() }) : {}
     })
   }
@@ -2777,29 +2825,37 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
 
   sideSessions: {},
-  openSide: async (parentHandleId, question) => {
-    const p = get().sessions[parentHandleId] ?? null
-    const refused = canFork(p)
-    if (!p || refused) return { ok: false, reason: refused ?? 'not-live' }
-    await get().endSide(parentHandleId)
-    const permissionMode = concreteMode(p)
-    const r = await window.clui.startSide({ parentHandleId, permissionMode })
-    if (!r.ok) return r
-    // The parent closed while main spawned the fork.
-    if (!get().sessions[parentHandleId]) {
-      void window.clui.stopSession(r.handleId)
-      retireHandle(r.handleId)
-      return { ok: false, reason: 'not-live' }
-    }
-    const now = Date.now()
-    insertSide(set, get().applyEvent, {
-      ...blankSlice({ handleId: r.handleId, cwd: p.cwd, now, modeChoice: permissionMode, modelChoice: p.modelChoice, effortChoice: p.effortChoice }),
-      ultracode: p.ultracode,
-      side: { parent: parentHandleId, openedAt: now, readOnly: readOnlyLine(sideToolsAtFork(p.apiProvider)), readOnlySent: false, ready: false, firstRequest: null, cacheMiss: null }
-    })
-    // Main holds the write until the fork's handshake, so nothing waits for it here.
-    if (question?.trim()) void get().sendSide(r.handleId, question)
-    return { ok: true }
+  sideConfirm: null,
+  openSide: (parentHandleId, question) => {
+    const cur = sideOpening.get(parentHandleId)
+    if (cur) return cur
+    const run = (async (): Promise<SideOpened> => {
+      const p = get().sessions[parentHandleId] ?? null
+      const refused = canFork(p)
+      if (!p || refused) return { ok: false, reason: refused ?? 'not-live' }
+      await get().endSide(parentHandleId)
+      const permissionMode = concreteMode(p)
+      const r = await window.clui.startSide({ parentHandleId, permissionMode })
+      if (!r.ok) return r
+      // The parent closed while main spawned the fork.
+      if (!get().sessions[parentHandleId]) {
+        void window.clui.stopSession(r.handleId)
+        retireHandle(r.handleId)
+        return { ok: false, reason: 'not-live' }
+      }
+      const now = Date.now()
+      insertSide(set, get().applyEvent, {
+        ...blankSlice({ handleId: r.handleId, cwd: p.cwd, now, modeChoice: permissionMode, modelChoice: p.modelChoice, effortChoice: p.effortChoice }),
+        ultracode: p.ultracode,
+        side: { parent: parentHandleId, openedAt: now, readOnly: readOnlyLine(sideToolsAtFork(p.apiProvider)), readOnlySent: false, ready: false, firstRequest: null, cacheMiss: null }
+      })
+      get().openSurface(parentHandleId, { kind: 'side', key: '', title: SIDE_TITLE }, 'focus', 'user', 'user')
+      // Main holds the write until the fork's handshake, so nothing waits for it here.
+      if (question?.trim()) void get().sendSide(r.handleId, question)
+      return { ok: true }
+    })().finally(() => sideOpening.delete(parentHandleId))
+    sideOpening.set(parentHandleId, run)
+    return run
   },
   sendSide: async (handleId, text) => {
     const x = get().sideSessions[handleId]
@@ -2817,8 +2873,29 @@ export const useSession = create<SessionStore>((set, get) => ({
     const x = sideFor(get(), parentHandleId)
     if (!x) return
     retireHandle(x.handleId)
-    set((s) => ({ sideSessions: withoutKey(s.sideSessions, x.handleId) }))
+    set((s) => ({ sideSessions: withoutKey(s.sideSessions, x.handleId), sideConfirm: s.sideConfirm?.parent === parentHandleId ? null : s.sideConfirm }))
+    get().closeSurface(parentHandleId, 'side')
     await window.clui.stopSession(x.handleId)
+  },
+  handBackSide: (parentHandleId) => {
+    const st = get()
+    const x = sideFor(st, parentHandleId)
+    const p = st.sessions[parentHandleId]
+    if (!x?.side || !p) return false
+    // Built before the fork is killed, so an answer still streaming is left out by construction.
+    const turns = sideTurns(x)
+    if (!turns.length) return false
+    const text = sideThreadText(turns, sideTools(x.initTools, p.apiProvider))
+    const bytes = new TextEncoder().encode(text).length
+    if (bytes > MAX_TEXT_BYTES) {
+      st.setNotice(`This side chat is too long to hand back: ${Math.ceil(bytes / 1024)} KB, and the limit is ${MAX_TEXT_BYTES / 1024} KB. It stays open.`, 'warn')
+      return false
+    }
+    const side = { openedAt: x.side.openedAt, answers: turns.length, sources: turns.reduce((n, t) => n + t.evidence.length, 0) }
+    st.addDraftAttachments(parentHandleId, [{ kind: 'text', id: `side-${crypto.randomUUID()}`, name: SIDE_TITLE, text, bytes, lines: text.split('\n').length, origin: 'side', side }])
+    void st.endSide(parentHandleId)
+    st.announceRefs(parentHandleId, 'Side chat added to your message.')
+    return true
   },
 
   closeSession: async (handleId) => {
@@ -3066,8 +3143,8 @@ export const useSession = create<SessionStore>((set, get) => ({
     }
     await dispatchTurn(set, active.handleId, text, attachments, refs)
   },
-  sendQueuedNow: (id) => {
-    const active = activeSlice(get())
+  sendQueuedNow: (id, handleId) => {
+    const active = handleId ? (sliceOf(get(), handleId) ?? null) : activeSlice(get())
     const q = active?.queuedMessages.find((m) => m.id === id)
     if (!active || !q || q.needsReview?.length || !active.busy || active.interrupting) return
     // Out of the queue before anything awaits, so a result landing now can't release it a second time.
@@ -3075,16 +3152,16 @@ export const useSession = create<SessionStore>((set, get) => ({
     afterRefsChange(active.handleId)
     void sendNowTurn(set, active.handleId, q.text, q.attachments, q.refs)
   },
-  editQueuedMessage: (id, text) =>
+  editQueuedMessage: (id, text, handleId) =>
     set((s) => {
-      const active = activeSlice(s)
+      const active = handleId ? (sliceOf(s, handleId) ?? null) : activeSlice(s)
       if (!active) return {}
       return patchSlice(s, active.handleId, {
         queuedMessages: active.queuedMessages.map((q) => (q.id === id ? { ...q, text } : q))
       })
     }),
-  cancelQueuedMessage: (id) => {
-    const active = activeSlice(get())
+  cancelQueuedMessage: (id, handleId) => {
+    const active = handleId ? (sliceOf(get(), handleId) ?? null) : activeSlice(get())
     if (!active) return
     set((s) =>
       patchSlice(s, active.handleId, {
@@ -4572,6 +4649,9 @@ export const useSession = create<SessionStore>((set, get) => ({
   },
 
   closeSurface: (handleId, id) => {
+    // The tab and the thread live and die together; endSide closes the tab once the thread is gone.
+    const side = id === 'side' ? sideFor(get(), handleId) : null
+    if (side) return void (unhanded(side) ? set({ sideConfirm: { parent: handleId, reason: 'close' } }) : get().endSide(handleId))
     const s = get()
     const cur = s.sessions[handleId]
     if (!cur?.surfaces.order.includes(id)) return

@@ -1,4 +1,4 @@
-import type { PerSessionState } from '../store'
+import type { PendingPermission, PerSessionState } from '../store'
 import { isBackgroundedTool } from './lumen'
 import { highlightOf } from './toolHighlight'
 import { changeReadOf, isChangeRead, toolLabel } from './instrument'
@@ -21,11 +21,13 @@ type StatusSlice = Pick<
 >
 
 /**
- * A live session's state for the sidebar's row marks and line 2. "Failed" is the in-chat error box
+ * A live session's state for the sidebar's row marks and line 2. Its side chat's request counts only when the
+ * session's own queue is empty. "Failed" is the in-chat error box
  * (`lastError`): set by a mid-session error or a failed compact, cleared by the next init or send.
  */
-export function sessionStatusOf(s: StatusSlice): SessionStatus {
+export function sessionStatusOf(s: StatusSlice, side: PendingPermission | null = null): SessionStatus {
   const pending = s.pendingPermissions.length
+  if (!pending && side) return { kind: 'needs', lead: 'Needs you', rest: `Side chat, allow ${side.displayName || side.toolName}`, count: 1 }
   if (pending > 0) {
     const p = s.pendingPermissions[0]
     const rest =
@@ -51,8 +53,8 @@ export function sessionStatusOf(s: StatusSlice): SessionStatus {
 }
 
 /** A primitive key of everything a sidebar row shows from the status, for the sidebar's liveSig. */
-export function statusKey(s: StatusSlice): string {
-  const st = sessionStatusOf(s)
+export function statusKey(s: StatusSlice, side: PendingPermission | null = null): string {
+  const st = sessionStatusOf(s, side)
   return `${st.kind}|${st.lead}|${st.rest ?? ''}|${st.count}`
 }
 

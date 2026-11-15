@@ -21,6 +21,8 @@ export interface MenuItem {
   keys?: string
   /** Choosing it hands focus back to the trigger, for an item that opens a dialog over the page. */
   returnFocus?: boolean
+  /** Why it can't act now; choosing it still runs `onClick`, which explains. */
+  unavailable?: string
 }
 
 /**
@@ -95,10 +97,11 @@ export function Menu({
             ref={(el) => (itemRefs.current[i] = el)}
             role={it.type ? `menuitem${it.type}` : 'menuitem'}
             aria-checked={it.type ? !!it.checked : undefined}
+            aria-disabled={!!it.unavailable || undefined}
             tabIndex={i === focusIdx ? 0 : -1}
             aria-description={it.description}
             aria-keyshortcuts={it.keys}
-            className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-label text-content -outline-offset-2 hover:bg-[var(--glass-row-hover)] focus-visible:bg-[var(--glass-row-hover)] ${
+            className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-label -outline-offset-2 ${it.unavailable ? 'cursor-default text-dim' : 'text-content'} hover:bg-[var(--glass-row-hover)] focus-visible:bg-[var(--glass-row-hover)] ${
               it.danger || (i > 0 && it.type !== items[i - 1].type) ? 'mt-1 border-t border-[var(--glass-edge)] pt-2' : ''
             }`}
             onClick={(e) => {
@@ -109,12 +112,12 @@ export function Menu({
           >
             {/* Destructive reads by mark and icon, since err text fails on glass. */}
             {it.danger && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-err" aria-hidden="true" />}
-            <span className={`shrink-0 ${it.danger ? 'text-err' : 'text-dim'}`}>
+            <span className={`shrink-0 ${it.danger ? 'text-err' : it.unavailable ? 'text-faint' : 'text-dim'}`}>
               {it.type ? <IconCheck className={`h-3.5 w-3.5 ${it.checked ? '' : 'invisible'}`} /> : it.icon}
             </span>
             <span className="min-w-0 flex-1 truncate">{it.label}</span>
             {it.hint && (
-              <span aria-hidden="true" title={it.hintTitle} className="min-w-0 max-w-[55%] truncate text-meta text-dim">
+              <span aria-hidden="true" title={it.hintTitle} className={`text-meta text-dim ${it.unavailable ? 'shrink-0 whitespace-nowrap' : 'min-w-0 max-w-[55%] truncate'}`}>
                 {it.hint}
               </span>
             )}

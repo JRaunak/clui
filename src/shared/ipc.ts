@@ -558,6 +558,8 @@ export type MenuAction =
   /** F6 / ⇧F6 pressed inside a native page, handed back to the renderer's region cycle. */
   | 'region-next'
   | 'region-prev'
+  /** ⌘/: opens a side chat, or brings the open one to the front. */
+  | 'side-chat'
 
 /** IPC channel names (single source of truth). */
 export const IpcChannels = {

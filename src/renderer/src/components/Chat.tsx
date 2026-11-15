@@ -1,16 +1,17 @@
 import { changeTail, refLabel, relativeTo, type DraftReference } from '../../../shared/context'
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type StateSnapshot, type VirtuosoHandle } from 'react-virtuoso'
-import { useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
+import { SliceScope, useActive, useSession, EMPTY_MESSAGES, EMPTY_QUEUED, EMPTY_TASKS, type QueuedMessage, type SendAttachment } from '../store'
 import { ContextChips } from './ContextChips'
 import { Button } from './Button'
 import { FileIcon } from './FileIcon'
 import { noteTitle, pausedText } from '../lib/refCopy'
 import { MessageView } from './MessageView'
+import { focusComposer } from './gates/GateFrame'
 import { WorkingStatus } from './WorkingStatus'
 import { CompactSuggestion } from './CompactSuggestion'
 import { TaskPuck, useTaskUiActive } from './TaskPuck'
-import { IconArrowUp, IconChevron, IconClose, IconDiff, IconEdit, IconCheck, IconFile, IconImage, IconTarget, IconWarn } from './Icon'
+import { IconArrowUp, IconChevron, IconClose, IconDiff, IconEdit, IconCheck, IconFile, IconImage, IconSideChat, IconTarget, IconWarn } from './Icon'
 import { deriveModelInfo } from '../../../shared/settings'
 import { TURN_LINE_PX, currentTurnAt } from '../lib/instrument'
 import type { PermissionModeChoice } from '../../../shared/ipc'
@@ -485,15 +486,20 @@ function ChatFooter({ context }: { context: FooterContext }): JSX.Element {
           transcript, so they stay editable and cancelable before reaching the CLI. */}
       <QueuedMessages />
       <CompactSuggestion />
-      {lastError && (
-        <div role="alert" className="mt-2 whitespace-pre-wrap rounded-md border border-err/60 bg-err/10 px-3 py-2 text-xs text-err">
-          {lastError}
-        </div>
-      )}
+      {lastError && <TurnError text={lastError} />}
     </div>
   )
 }
-function QueuedMessages(): JSX.Element | null {
+
+export function TurnError({ text }: { text: string }): JSX.Element {
+  return (
+    <div role="alert" className="mt-2 whitespace-pre-wrap rounded-md border border-err/60 bg-err/10 px-3 py-2 text-xs text-err">
+      {text}
+    </div>
+  )
+}
+
+export function QueuedMessages(): JSX.Element | null {
   const queued = useActive((s) => s?.queuedMessages ?? EMPTY_QUEUED)
   if (queued.length === 0) return null
   return (
@@ -519,6 +525,7 @@ function QueuedRow({ q, later }: { q: QueuedMessage; later: boolean }): JSX.Elem
   const setTarget = useSession((s) => s.setReferenceEditTarget)
   const acceptReview = useSession((s) => s.acceptReview)
   const handleId = useActive((s) => s?.handleId ?? null)
+  const side = !!useContext(SliceScope)
   const interrupting = useActive((s) => !!s?.interrupting)
   const rowRef = useRef<HTMLDivElement>(null)
   const pausedId = useId()
@@ -533,8 +540,8 @@ function QueuedRow({ q, later }: { q: QueuedMessage; later: boolean }): JSX.Elem
   const sendNow = (): void => {
     if (interrupting || paused) return
     const next = rowRef.current?.nextElementSibling?.querySelector<HTMLElement>('[data-ui="queued-send-now"]')
-    sendQueuedNow(q.id)
-    requestAnimationFrame(() => (next ?? document.querySelector<HTMLElement>('[data-composer-input]'))?.focus())
+    sendQueuedNow(q.id, handleId ?? undefined)
+    requestAnimationFrame(() => (next ? next.focus() : focusComposer(side)))
   }
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(q.text)
@@ -563,7 +570,7 @@ function QueuedRow({ q, later }: { q: QueuedMessage; later: boolean }): JSX.Elem
   }
   const commit = (): void => {
     const t = draft.trim()
-    if (t && t !== q.text) edit(q.id, t)
+    if (t && t !== q.text) edit(q.id, t, handleId ?? undefined)
     close()
     if (paused && handleId) void acceptReview(handleId, q.id)
   }
@@ -674,7 +681,7 @@ function QueuedRow({ q, later }: { q: QueuedMessage; later: boolean }): JSX.Elem
         )}
         <button
           className={`${ROW_ACTION} hover:text-err`}
-          onClick={() => cancel(q.id)}
+          onClick={() => cancel(q.id, handleId ?? undefined)}
           aria-label="Cancel queued message"
           title="Remove before it sends"
         >
@@ -731,7 +738,7 @@ function QueuedAttachments({ atts, refs }: { atts: SendAttachment[]; refs: Draft
             className="flex items-center gap-1 rounded border border-border bg-bg-raised px-1.5 py-0.5 font-mono text-meta text-dim"
             title={d.name}
           >
-            <IconFile className="h-3 w-3 shrink-0" />
+            {d.kind === 'text' && d.origin === 'side' ? <IconSideChat className="h-3 w-3 shrink-0" /> : <IconFile className="h-3 w-3 shrink-0" />}
             <span className="max-w-[120px] truncate">{d.name}</span>
           </span>
         )

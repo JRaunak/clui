@@ -9,7 +9,8 @@ import { mintedRequest } from '../lib/changeRefs'
 import { requestSurfaceFocus } from '../lib/surfaceFocus'
 import { ContextChip, notedChip, refChip, type ChipView } from './ContextChip'
 import { usePopover } from './Popover'
-import { RefCard } from './RefCard'
+import { RefCard, SideCard } from './RefCard'
+import type { SideChat } from '../lib/side'
 import { IconClose, IconWarn } from './Icon'
 
 /** Held for --dur-stage, faded over --dur-slow. */
@@ -132,6 +133,8 @@ export function openRef(handleId: string, d: DraftReference, via: Via): void {
 export interface RowAttachment {
   view: ChipView
   onRemove: () => void
+  /** A side chat's chip opens a card with its text. */
+  chat?: SideChat | null
 }
 
 /**
@@ -167,6 +170,7 @@ export function ContextChips({
   const chips = useRef(new Map<string, HTMLDivElement>())
   const refHint = useId()
   const attHint = useId()
+  const sideHint = useId()
   const setRefNote = useSession((s) => s.setRefNote)
   const [card, setCard] = useState<{ key: string; via: Via } | null>(null)
   const cardKey = useRef<string | null>(null)
@@ -207,7 +211,7 @@ export function ContextChips({
   }, [card])
 
   // A chip that leaves while its card is open takes the card with it.
-  const cardGone = !!card && !refs.some((d) => d.ref.id === card.key)
+  const cardGone = !!card && !keys.includes(card.key)
   useEffect(() => {
     if (!cardGone || !pop.open) return
     pop.close({ returnFocus: false })
@@ -266,8 +270,12 @@ export function ContextChips({
     else focusText()
   }
 
-  const onKey = (e: KeyboardEvent<HTMLDivElement>, v: ChipView, d: DraftReference | undefined): void => {
+  const onKey = (e: KeyboardEvent<HTMLDivElement>, v: ChipView, d: DraftReference | undefined, chat = false): void => {
     const i = keys.indexOf(v.key)
+    if (chat && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault()
+      return showCard(v.key, 'keyboard')
+    }
     const go = (j: number): void => {
       e.preventDefault()
       const k = keys[Math.max(0, Math.min(keys.length - 1, j))]
@@ -319,6 +327,7 @@ export function ContextChips({
   })
 
   const shown = card ? refs.find((d) => d.ref.id === card.key) : undefined
+  const chat = card ? attachments.find((a) => a.view.key === card.key)?.chat : undefined
   if (!keys.length && !notices.length && !note) return null
   return (
     <>
@@ -382,10 +391,20 @@ export function ContextChips({
             <ContextChip
               key={a.view.key}
               view={a.view}
-              describedBy={attHint}
-              onKeyDown={(e) => onKey(e, a.view, undefined)}
+              describedBy={a.chat ? sideHint : attHint}
+              onKeyDown={(e) => onKey(e, a.view, undefined, !!a.chat)}
+              onOpen={
+                a.chat
+                  ? (e) => {
+                      if (dismissedBy.current === a.view.key) return void (dismissedBy.current = null)
+                      showCard(a.view.key, viaOf(e))
+                    }
+                  : undefined
+              }
+              style={card?.key === a.view.key ? pop.triggerProps.style : undefined}
               onRemove={() => {
                 a.onRemove()
+                announce(handleId, `Removed ${a.view.spoken}`)
                 focusText()
               }}
               {...bind(a.view.key)}
@@ -399,15 +418,22 @@ export function ContextChips({
       <span id={attHint} hidden>
         Delete removes.
       </span>
+      <span id={sideHint} hidden>
+        Enter or Space shows what Claude receives. Delete removes.
+      </span>
       {note && <p className="truncate px-1 text-meta text-dim">{note}</p>}
-      <RefCard
-        pop={pop}
-        handleId={handleId}
-        shown={shown && { form: 'draft', d: shown, target }}
-        n={shown ? refs.indexOf(shown) + 1 : 0}
-        cwd={cwd}
-        onOpen={shown && openable(shown) ? (via) => openRef(handleId, shown, via) : undefined}
-      />
+      {chat ? (
+        <SideCard pop={pop} chat={chat} />
+      ) : (
+        <RefCard
+          pop={pop}
+          handleId={handleId}
+          shown={shown && { form: 'draft', d: shown, target }}
+          n={shown ? refs.indexOf(shown) + 1 : 0}
+          cwd={cwd}
+          onOpen={shown && openable(shown) ? (via) => openRef(handleId, shown, via) : undefined}
+        />
+      )}
     </>
   )
 }

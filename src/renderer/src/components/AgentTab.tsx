@@ -82,10 +82,10 @@ function useAgentEntries(handleId: string, ref: AgentRef, running: boolean) {
   return { entries: stream.length ? stream : (disk?.entries ?? EMPTY_SUBAGENT_MSGS), phase, model, retry: () => setAttempt((n) => n + 1) }
 }
 
-/** The tail of a running agent's transcript. Running is a neutral shape, never the accent. */
-function WorkingTail({ bg, starting }: { bg: boolean; starting: boolean }): JSX.Element {
+/** The tail of a running transcript. Running is a neutral shape, never the accent. */
+export function WorkingTail({ ui, bg, starting }: { ui: string; bg: boolean; starting: boolean }): JSX.Element {
   return (
-    <span data-ui="subagent-working" className="flex items-center gap-2 text-label">
+    <span data-ui={ui} className="flex items-center gap-2 text-label">
       <RunMark state={bg ? 'background' : 'running'} />
       {starting ? <span className="text-dim">Starting…</span> : <span className="font-medium text-content">{bg ? 'Working in the background' : 'Working…'}</span>}
     </span>
@@ -303,7 +303,7 @@ function TranscriptBody({
       </div>
     )
   } else if (!entries.length && live) {
-    body = <WorkingTail bg={status.state === 'background'} starting />
+    body = <WorkingTail ui="subagent-working" bg={status.state === 'background'} starting />
   } else if (phase === 'loading') {
     body = skeleton ? (
       <div className="flex flex-col gap-2" aria-hidden="true">
@@ -321,7 +321,7 @@ function TranscriptBody({
     body = (
       <>
         <SubagentStream entries={entries} />
-        {live && <WorkingTail bg={status.state === 'background'} starting={false} />}
+        {live && <WorkingTail ui="subagent-working" bg={status.state === 'background'} starting={false} />}
         <SpawnedChildren items={children} onOpen={onOpenChild} />
       </>
     )

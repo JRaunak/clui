@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useId, useMemo, useRef, type KeyboardEvent } from 'react'
-import { activeSlice, useActive, useSession, type PerSessionState, type SurfaceSpec } from '../../store'
+import { activeSlice, canFork, sideFor, useActive, useSession, type PerSessionState, type SurfaceSpec } from '../../store'
 import { paneItems, type PaneItem, type PaneItemKey } from '../../lib/paneItems'
 import { agentCount, hasAgents, runningAgents } from '../../lib/agents'
 import { hasWorkflows, runningWorkflows, workflowRows } from '../../lib/workflow'
 import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
+import { SIDE_REFUSAL } from '../../lib/side'
+import { showSide } from '../../lib/sideEntry'
 import { useEscape } from '../../lib/useEscape'
 import { usePane } from '../Stage'
 import { openFilePalette } from '../CommandPalette'
-import { IconAgentBrowser, IconDiff, IconFolder, IconSearch, IconSubagents, IconWorkflows } from '../Icon'
+import { IconAgentBrowser, IconDiff, IconFolder, IconSearch, IconSideChat, IconSubagents, IconWorkflows } from '../Icon'
 
 const GLYPH: Record<PaneItemKey, (p: { className?: string }) => JSX.Element> = {
   'open-file': IconSearch,
   tree: IconFolder,
+  side: IconSideChat,
   changes: IconDiff,
   browser: IconAgentBrowser,
   agents: IconSubagents,
@@ -64,6 +67,10 @@ export function runPaneItem(key: PaneItemKey, cwd: string): void {
       return openFilePalette()
     case 'tree':
       return openSingleton({ kind: 'tree', key: '', title: cwd.slice(cwd.lastIndexOf('/') + 1) || cwd })
+    case 'side': {
+      const h = useSession.getState().activeHandleId
+      return void (h && showSide(h))
+    }
     case 'changes':
       return openSingleton({ kind: 'diff', key: '', title: 'Claude changes' })
     case 'browser':
@@ -91,12 +98,17 @@ export function usePaneEntries(): PaneEntry[] {
   const workflowsOffered = useActive((s) => !!s && !s.surfaces.tabs.workflows && hasWorkflows(s))
   const workflowsRunning = useActive((s) => (s ? runningWorkflows(s) : 0))
   const workflowsTotal = useActive((s) => (s && knownRuns(s) ? workflowRows(s, s.runs.data?.workflows ?? null).length : null))
+  const sideRefused = useSession((st) => {
+    const s = activeSlice(st)
+    return s && !sideFor(st, s.handleId) ? canFork(s) : null
+  })
   return useMemo(() => {
     if (!cwd) return []
     const agents = agentsOffered ? { running: agentsRunning, total: agentsTotal } : undefined
     const workflows = workflowsOffered ? { running: workflowsRunning, total: workflowsTotal } : undefined
-    return paneItems({ cwd, home: window.clui.homeDir, changes, browser, treeOpen, changesOpen, agents, workflows }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) }))
-  }, [cwd, changes, browser, treeOpen, changesOpen, agentsOffered, agentsRunning, agentsTotal, workflowsOffered, workflowsRunning, workflowsTotal])
+    const sideUnavailable = sideRefused ? SIDE_REFUSAL[sideRefused] : undefined
+    return paneItems({ cwd, home: window.clui.homeDir, changes, browser, treeOpen, changesOpen, agents, workflows, sideUnavailable }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) }))
+  }, [cwd, changes, browser, treeOpen, changesOpen, agentsOffered, agentsRunning, agentsTotal, workflowsOffered, workflowsRunning, workflowsTotal, sideRefused])
 }
 
 /** The pane with no tabs: what it can open, as a flat list. */
@@ -141,10 +153,11 @@ export function PanePicker(): JSX.Element {
                 {...(i === 0 ? { 'data-pane-title': '' } : {})}
                 aria-description={it.description}
                 aria-keyshortcuts={it.keys}
+                aria-disabled={!!it.unavailable || undefined}
                 onClick={it.run}
-                className="relative flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-left text-label text-content -outline-offset-2 pointer-fine:hover:bg-control-hover focus-visible:bg-control-hover"
+                className={`relative flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-left text-label -outline-offset-2 pointer-fine:hover:bg-control-hover focus-visible:bg-control-hover ${it.unavailable ? 'cursor-default text-dim' : 'text-content'}`}
               >
-                <it.Glyph className="h-3.5 w-3.5 shrink-0 text-dim" />
+                <it.Glyph className={`h-3.5 w-3.5 shrink-0 ${it.unavailable ? 'text-faint' : 'text-dim'}`} />
                 <span className="min-w-0 flex-1 truncate">{it.label}</span>
                 {it.meta && (
                   <span aria-hidden="true" title={it.meta} className={`min-w-0 max-w-[55%] truncate text-meta text-dim ${it.mono ? 'font-mono' : ''}`}>

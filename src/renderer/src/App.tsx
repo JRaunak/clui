@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useActive, useSession, ensureModelPrefsLoaded } from './store'
 import { SessionsSidebar } from './components/SessionsSidebar'
-import { GateAnnouncer } from './components/Gate'
+import { GateAnnouncer, SideNeedsAnnouncer } from './components/Gate'
 import { Customizations } from './components/Customizations'
 import { Settings } from './components/Settings'
+import { SideConfirm } from './components/SideConfirm'
 import { CommandPalette, type PaletteMode } from './components/CommandPalette'
 import { GlobalSearch } from './components/GlobalSearch'
 import { Stage } from './components/Stage'
@@ -46,6 +47,7 @@ export function App(): JSX.Element {
   const openSettingsAt = useSession((s) => s.openSettings)
   const [palette, setPalette] = useState<{ mode: PaletteMode; seq: number } | null>(null)
   const globalSearchOpen = useSession((s) => s.globalSearchOpen)
+  const sideConfirmOpen = useSession((s) => !!s.sideConfirm)
 
   // Native `inert` on the background regions contains focus and hides them from AT while a
   // dialog is open (WCAG 2.4.3 / 2.1.2), in one property instead of a hand-rolled Tab cycle.
@@ -59,7 +61,7 @@ export function App(): JSX.Element {
   // Holds the previous overlay state so the restore below skips the initial mount.
   const wasOverlayOpenRef = useRef(false)
   const floatOpen = !!palette || globalSearchOpen
-  const anyOverlayOpen = settingsOpen || showCustomizations || floatOpen
+  const anyOverlayOpen = settingsOpen || showCustomizations || floatOpen || sideConfirmOpen
 
   useEffect(() => {
     const refresh = (): void => void useSession.getState().refreshSystemPermissionMode()
@@ -433,9 +435,11 @@ export function App(): JSX.Element {
           inert effect above). `data-overlay-host` marks this subtree so the focus tracker ignores it. */}
       <div data-overlay-host>
         <GateAnnouncer />
+        <SideNeedsAnnouncer />
         <GlobalSearch />
         {showCustomizations && <Customizations onClose={() => setShowCustomizations(false)} covered={floatOpen} />}
         {settingsOpen && <Settings covered={floatOpen} />}
+        <SideConfirm covered={floatOpen} />
         {palette && (
           <CommandPalette
             mode={palette.mode}

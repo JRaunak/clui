@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { activeSlice, browserTabOf, restoredTab, surfaceLabel, useActive, useSession, EMPTY_STRINGS, EMPTY_SURFACES, EMPTY_TABS, type PerSessionState } from '../../store'
+import { activeSlice, browserTabOf, sideFor, restoredTab, surfaceLabel, useActive, useSession, EMPTY_STRINGS, EMPTY_SURFACES, EMPTY_TABS, type PerSessionState } from '../../store'
 import { blockedOf, recheck, useBlockedVersion, type Blocked } from '../../lib/blockedFiles'
 import { siteKeyOf, type TabState } from '../../../../shared/browser'
 import { agentRefOf, type PaneKind } from '../../../../shared/surfaces'
@@ -14,6 +14,8 @@ import { Menu } from '../Menu'
 import { usePaneEntries } from './PanePicker'
 import { AgentFace } from '../faces'
 import { RunMark } from '../RunMark'
+import { useSideStatus } from '../SideTab'
+import { forkedAt, SIDE_RUN, unhanded } from '../../lib/side'
 import { IconAgentBrowser, IconClose, IconDiff, IconFolder, IconPlus, IconSideChat, IconSubagents, IconWorkflow, IconWorkflows } from '../Icon'
 
 const NEAREST: ScrollIntoViewOptions = { block: 'nearest', inline: 'nearest' }
@@ -24,7 +26,7 @@ const BLOCKED: Record<Blocked, { suffix: string; line: string }> = {
   outside: { suffix: ", can't open", line: 'Outside this folder. Open it again to view it.' }
 }
 
-const tabButton = (id: string): HTMLElement | null =>
+export const tabButton = (id: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-ui="surface-tabs"] [data-tab="${CSS.escape(id)}"]`)
 
 const tabLabel = (t: Pick<TabState, 'title' | 'url'>): string => t.title || siteKeyOf(t.url) || 'New page'
@@ -40,6 +42,9 @@ export function closeTab(id: string, refocus: boolean): void {
   const order = slice?.surfaces.order ?? EMPTY_STRINGS
   const i = order.indexOf(id)
   if (!slice || i < 0) return
+  // A side chat that asks first keeps focus where it was, for the confirm to return it there.
+  const side = id === 'side' ? sideFor(st, slice.handleId) : null
+  if (side && unhanded(side)) return st.closeSurface(slice.handleId, id)
   const next = order[i + 1] ?? order[i - 1]
   if (next && refocus) tabButton(next)?.focus()
   if (order.length === 1) {
@@ -169,6 +174,7 @@ export function SurfaceTabs(): JSX.Element {
   const listRef = useRef<HTMLDivElement>(null)
   const rowRef = useRef<HTMLDivElement>(null)
   const sig = useActive((s) => (s ? runSig(s) : '{}'))
+  const side = useSideStatus(handleId)
   const runs = useMemo(() => JSON.parse(sig) as Record<string, RunView>, [sig])
   const [dense, setDense] = useState(false)
   // Tabs already here when the strip mounted don't fade, so reopening the pane stays still.
@@ -212,6 +218,12 @@ export function SurfaceTabs(): JSX.Element {
     if (t.kind === 'agents' || t.kind === 'workflows') {
       const r = run?.running ?? 0
       return [{ ...common, ...(r ? { run: { face: null, state: 'running' as const } } : {}), more: r ? `, ${r} running` : '', tip: `${label} in this session${r ? `\n${r} running` : ''}` }]
+    }
+    if (t.kind === 'side') {
+      const r = side && side.phase !== 'idle' ? SIDE_RUN[side.phase] : null
+      const line = r && side?.phase === 'needs' && side.ask ? `${r.word}: ${side.ask}` : r?.word
+      const tip = [label, side ? `Sees the conversation up to ${forkedAt(side.openedAt)}` : '', line ?? '']
+      return [{ ...common, ...(r ? { run: { face: null, state: r.state } } : {}), more: r ? `, ${r.spoken}` : '', tip: tip.filter(Boolean).join('\n'), closeName: 'Close side chat' }]
     }
     if (run && t.kind === 'workflow') {
       const w = RUN_WORDS[run.status.state]
@@ -459,7 +471,8 @@ export function SurfaceTabs(): JSX.Element {
             hintTitle: it.meta,
             description: it.description,
             keys: it.keys,
-            returnFocus: it.key === 'open-file'
+            returnFocus: it.key === 'open-file',
+            unavailable: it.unavailable
           }))}
           trigger={{ 'data-ui': 'pane-add', 'aria-label': 'Open in pane', title: 'Open in pane', className: `${PANE_BTN} ml-0.5 shrink-0` }}
         >

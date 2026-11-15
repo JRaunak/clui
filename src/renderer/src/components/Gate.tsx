@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useActive, useSession, EMPTY_PENDING, type PendingPermission } from '../store'
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { SliceScope, sidePending, sideShown, useActive, useScopedHandle, useSession, EMPTY_PENDING, type PendingPermission } from '../store'
 import { reducedMotion } from '../lib/motion'
 import { PermissionGate } from './gates/PermissionGate'
 import { PlanGate } from './gates/PlanGate'
@@ -8,16 +8,20 @@ import { LoginGate } from './gates/LoginGate'
 import { ElicitGate } from './gates/ElicitGate'
 import { focusComposer, type GateCount } from './gates/GateFrame'
 import { cssMs, cssVar } from '../lib/motion'
+import { askOf } from '../lib/side'
+
+const DOCKS = '[data-ui="composer-dock"], [data-ui="side-dock"]'
 
 /**
- * The active session's oldest pending request, rendered as a Gate at the top of the composer dock.
+ * The session's oldest pending request (a side chat's inside its SliceScope), rendered as a Gate at the top of the composer dock.
  * The dock and the Gate are one surface: on arrival the dock takes its new height at once and a clip
  * reveals the Gate upward, so it reads as the dock growing. The request leaves the store the moment
  * it's answered, so the leaving Gate is kept (inert) until its exit finishes.
  */
 export function GateHost(): JSX.Element | null {
   const pending = useActive((s) => s?.pendingPermissions ?? EMPTY_PENDING)
-  const handleId = useSession((s) => s.activeHandleId)
+  const handleId = useScopedHandle()
+  const side = !!useContext(SliceScope)
   const current = pending[0] ?? null
 
   const [shown, setShown] = useState<PendingPermission | null>(current)
@@ -61,7 +65,7 @@ export function GateHost(): JSX.Element | null {
       return
     }
     // The Gate goes inert while it leaves, which would drop focus to body.
-    if (wrapRef.current.contains(document.activeElement)) focusComposer()
+    if (wrapRef.current.contains(document.activeElement)) focusComposer(side)
     setLeaving(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.requestId, handleId])
@@ -80,7 +84,7 @@ export function GateHost(): JSX.Element | null {
         easing: cssVar('--ease-out')
       })
     )
-    const dock = wrap.closest<HTMLElement>('[data-ui="composer-dock"]')
+    const dock = wrap.closest<HTMLElement>(DOCKS)
     if (from === null && dock) {
       // The negative side and bottom insets keep the dock's halo outside the clip, so it doesn't
       // pop back when the clip releases.
@@ -97,7 +101,7 @@ export function GateHost(): JSX.Element | null {
   useEffect(() => {
     if (!leaving) return
     const wrap = wrapRef.current
-    const dock = wrap?.closest<HTMLElement>('[data-ui="composer-dock"]')
+    const dock = wrap?.closest<HTMLElement>(DOCKS)
     if (!wrap || !dock) {
       setLeaving(false)
       setShown(null)
@@ -234,6 +238,24 @@ export function GateAnnouncer(): JSX.Element {
   return (
     <div className="sr-only" aria-live="assertive">
       {head && <span key={head.requestId}>{announcementOf(head)}</span>}
+    </div>
+  )
+}
+
+/** Speaks a side chat's request once, politely, while its tab is out of sight. On screen, the side tab's own
+ *  GateAnnouncer speaks instead. */
+export function SideNeedsAnnouncer(): JSX.Element {
+  const head = useSession((s) => (s.activeHandleId && !sideShown(s, s.activeHandleId) ? sidePending(s, s.activeHandleId) : null))
+  const [said, setSaid] = useState<{ id: string; text: string } | null>(null)
+  const spoken = useRef(new Set<string>())
+  useEffect(() => {
+    if (!head || spoken.current.has(head.requestId)) return
+    spoken.current.add(head.requestId)
+    setSaid({ id: head.requestId, text: `Side chat needs you: ${askOf(head)}.` })
+  }, [head])
+  return (
+    <div className="sr-only" aria-live="polite">
+      {said && head?.requestId === said.id && <span key={said.id}>{said.text}</span>}
     </div>
   )
 }

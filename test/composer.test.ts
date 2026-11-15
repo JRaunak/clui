@@ -2,7 +2,14 @@
 // rows preview the chip they add, and a drop splits into chips and @ text the way main authorized it.
 import { paneRows, removeToken, routeDrop } from '../src/renderer/src/lib/composerRefs.ts'
 import { dropText, noticeLead, removalSpoken, removedText, skippedNote } from '../src/renderer/src/lib/refCopy.ts'
+import { parseSide } from '../src/renderer/src/lib/side.ts'
 import { equal, ok } from './support/harness.mjs'
+
+equal(JSON.stringify(parseSide('/side what is x')), '{"question":"what is x"}', 'side: /side takes the rest as the question')
+equal(JSON.stringify(parseSide('/btw what is x')), '{"question":"what is x"}', 'side: /btw is the same')
+equal(JSON.stringify(parseSide('/side')), '{"question":""}', 'side: /side alone opens with no question')
+equal(JSON.stringify(parseSide('  /side  line one\nline two ')), '{"question":"line one\\nline two"}', 'side: a multi-line question is kept whole')
+ok(parseSide('/sidebar x') === null && parseSide('/side-effects') === null && parseSide('see /side x') === null, 'side: a longer name or a mid-text /side does not match')
 
 const cut = (marked: string, start: number): string => {
   const caret = marked.indexOf('|')

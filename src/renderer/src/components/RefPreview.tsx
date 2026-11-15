@@ -125,7 +125,7 @@ export function usePeek(handleId: string, r: ContextReference | null, abs: strin
   return [peek, setPeek]
 }
 
-const WELL = 'max-h-[min(20rem,40vh)] overflow-auto rounded-md border border-border bg-bg'
+export const WELL = 'max-h-[min(20rem,40vh)] overflow-auto rounded-md border border-border bg-bg'
 const NOTE = 'text-meta text-dim'
 
 /** The preview a chip card shows between its header and its note: the code well, a state line, or the record. */

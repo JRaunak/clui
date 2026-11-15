@@ -190,7 +190,7 @@ export function Stage({
       needsYou: state === 'full' && gatePending,
       resolveNeedsYou: () => {
         if (state === 'full') useSession.getState().setPane(wide ? 'half' : 'collapsed')
-        requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="gate-title"]')?.focus())
+        requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="composer-dock"] [data-ui="gate-title"]')?.focus())
       },
       escapeActive: state === 'full' || focusInSecondary
     }),

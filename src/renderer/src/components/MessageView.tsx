@@ -14,10 +14,11 @@ import {
   type WokenTask
 } from '../store'
 import { FileLinkContext, Markdown, StreamingContext } from './Markdown'
-import { BADGE, ContextChip, legacyChip, refChip, unavailableChip } from './ContextChip'
+import { attachmentChip, BADGE, ContextChip, legacyChip, refChip, unavailableChip } from './ContextChip'
 import { openRef } from './ContextChips'
 import { usePopover } from './Popover'
-import { RefCard, type CardRef } from './RefCard'
+import { RefCard, SideCard, type CardRef } from './RefCard'
+import { sideChatOf } from '../lib/side'
 import { focusComposer } from './gates/GateFrame'
 import { absOf } from '../lib/peek'
 import { Button } from './Button'
@@ -847,7 +848,10 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
   const cwd = useActive((s) => s?.cwd ?? null)
   const changes = useActive((s) => s?.changes)
   const changeRead = useActive((s) => s?.changeRead ?? null)
-  const { refs, rest: text } = parseRefs(message.text)
+  // A side chat's first message leads with the read-only line it was sent with, shown as sent.
+  const readOnly = useActive((s) => s?.side?.readOnly ?? null)
+  const lead = readOnly && message.text.startsWith(`${readOnly}\n\n`) ? readOnly : null
+  const { refs, rest: text } = parseRefs(lead ? message.text.slice(lead.length + 2) : message.text)
   const changeKey = refs.flatMap((r) => (r.kind === 'current' && r.value.ref.kind === 'change' ? [r.value.ref.changeRef] : [])).join(',')
   // Only main knows whether a grant survived; a bubble sent in this renderer is never asked, since its grant
   // activates on write, after the bubble is already on screen.
@@ -919,13 +923,22 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
   const inert = chips.some((c) => !opener(c.ref))
   const notes = refs.flatMap((r) => (r.kind === 'current' && r.value.ref.note ? [{ n: r.n, note: r.value.ref.note }] : []))
   const used = new Set<MessageAttachment | undefined>(chips.map((c) => c.thumb))
-  const rest = all.filter((a): a is ShownAttachment => a.kind !== 'image-unavailable' && !used.has(a))
+  const rest = all
+    .filter((a): a is ShownAttachment => a.kind !== 'image-unavailable' && !used.has(a))
+    .map((att, i) => ({ att, key: `side${i}`, chat: sideChatOf(att) }))
+  const chat = rest.find((a) => a.key === card?.key)?.chat
+  const chats = rest.some((a) => a.chat)
   const lost = all.filter((a) => a.kind === 'image-unavailable').length
+  const peekOf = (key: string) => ({
+    peek: { expanded: pop.open && card?.key === key, ref: (el: HTMLButtonElement | null) => void (el ? buttons.current.set(key, el) : buttons.current.delete(key)) },
+    style: card?.key === key ? pop.triggerProps.style : undefined
+  })
+  const dismiss = (): void => void (dismissedBy.current = pop.open ? card?.key ?? null : null)
   return (
     <>
       {chips.length > 0 && (
         <>
-          <div className="flex flex-wrap gap-2" onPointerDownCapture={() => void (dismissedBy.current = pop.open ? card?.key ?? null : null)}>
+          <div className="flex flex-wrap gap-2" onPointerDownCapture={dismiss}>
             {chips.map((c) => {
               const o = opener(c.ref)
               const key = c.view.key
@@ -933,9 +946,8 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
                 <ContextChip
                   key={key}
                   view={c.view}
-                  peek={{ expanded: pop.open && card?.key === key, ref: (el) => void (el ? buttons.current.set(key, el) : buttons.current.delete(key)) }}
+                  {...peekOf(key)}
                   describedBy={`${hintId}${o ? 'o' : 'i'}`}
-                  style={card?.key === key ? pop.triggerProps.style : undefined}
                   onOpen={(e) => {
                     if (dismissedBy.current === key) return void (dismissedBy.current = null)
                     if (e.metaKey) return o?.(viaOf(e))
@@ -950,13 +962,17 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
               Shows a preview. Command-click opens it in the pane.
             </span>
           )}
-          {inert && (
-            <span id={`${hintId}i`} hidden>
-              Shows a preview.
-            </span>
-          )}
-          {handleId && <RefCard pop={pop} handleId={handleId} shown={shown?.card} n={shown?.view.n ?? 0} cwd={cwd} onOpen={opener(shown?.ref ?? null)} />}
         </>
+      )}
+      {(inert || chats) && (
+        <span id={`${hintId}i`} hidden>
+          Shows a preview.
+        </span>
+      )}
+      {chat ? (
+        <SideCard pop={pop} chat={chat} sent />
+      ) : (
+        (chips.length > 0 || chats) && handleId && <RefCard pop={pop} handleId={handleId} shown={shown?.card} n={shown?.view.n ?? 0} cwd={cwd} onOpen={opener(shown?.ref ?? null)} />
       )}
       {notes.length > 0 && (
         <ul aria-label="Notes" data-ui="ref-notes" className="flex flex-col gap-1">
@@ -974,13 +990,31 @@ function UserContent({ message, rebuilt }: { message: ChatMessage; rebuilt: bool
         </ul>
       )}
       {rest.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {rest.map((att, i) => (
-            <MessageAttachmentView key={i} att={att} />
-          ))}
+        <div className="flex flex-wrap gap-2" onPointerDownCapture={dismiss}>
+          {rest.map(({ att, key, chat }) =>
+            chat ? (
+              <ContextChip
+                key={key}
+                view={attachmentChip(key, att, true)}
+                {...peekOf(key)}
+                describedBy={`${hintId}i`}
+                onOpen={(e) => {
+                  if (dismissedBy.current === key) return void (dismissedBy.current = null)
+                  setCard({ key, via: viaOf(e) })
+                }}
+              />
+            ) : (
+              <MessageAttachmentView key={key} att={att} />
+            )
+          )}
         </div>
       )}
       {lost > 0 && <p data-ui="image-unavailable" className="text-meta text-dim">{lost === 1 ? 'Image not available' : `${lost} images not available`}</p>}
+      {lead && (
+        <p data-ui="side-readonly-line" className="mb-1.5 text-meta text-dim">
+          {lead}
+        </p>
+      )}
       {text && <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-content">{renderUserText(text)}</div>}
     </>
   )

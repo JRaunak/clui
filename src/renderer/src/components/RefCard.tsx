@@ -9,9 +9,11 @@ import { absOf } from '../lib/peek'
 import { openFileAt } from '../lib/openLink'
 import type { usePopover } from './Popover'
 import { Button } from './Button'
-import { BADGE, legacyChip } from './ContextChip'
+import { BADGE, kb, legacyChip } from './ContextChip'
 import { addFromSurface } from './ContextChips'
-import { readPeek, RefPreview, STALE_TEXT, usePeek } from './RefPreview'
+import { readPeek, RefPreview, STALE_TEXT, usePeek, WELL } from './RefPreview'
+import { forkedAt, SIDE_TITLE, sideCounts, type SideChat } from '../lib/side'
+import { IconSideChat } from './Icon'
 
 type Pop = Pick<ReturnType<typeof usePopover>, 'popoverProps' | 'close' | 'open'>
 
@@ -241,6 +243,39 @@ export function RefCard({ pop, handleId, shown, n, cwd, onOpen }: {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+/** A side chat chip's card: the exact text Claude receives, verbatim, since rendering it would change what it reads. */
+export function SideCard({ pop, chat, sent }: { pop: Pop; chat: SideChat; sent?: boolean }): JSX.Element {
+  const at = forkedAt(chat.side.openedAt)
+  return (
+    <div
+      {...pop.popoverProps}
+      data-ui="side-chip-card"
+      role="dialog"
+      aria-label={`${SIDE_TITLE} from ${at}`}
+      tabIndex={-1}
+      // The well is the card's only stop, so Tab stays on it rather than leaving a panel nobody is in.
+      onKeyDown={(e) => {
+        if (e.key !== 'Tab') return
+        e.preventDefault()
+        e.currentTarget.querySelector<HTMLElement>('[role="region"]')?.focus()
+      }}
+      className="pop-base pop glass-thick w-[min(480px,calc(100vw-32px))] rounded-lg p-3"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <IconSideChat className="h-3.5 w-3.5 shrink-0 text-dim" />
+        <span className="text-xs font-medium text-content">{SIDE_TITLE}</span>
+        <span className="shrink-0 font-mono text-meta text-dim">{`from ${at} · ${sideCounts(chat.side)}`}</span>
+      </div>
+      <div role="region" tabIndex={0} aria-label={sent ? 'Text Claude received' : 'Text Claude will receive'} className={`mt-3 ${WELL}`}>
+        <pre data-ui="side-chip-text" className="m-0 whitespace-pre-wrap break-words p-3 font-mono text-code text-content">
+          {chat.text}
+        </pre>
+      </div>
+      <p className="mt-1 text-meta text-dim">{`Claude ${sent ? 'received' : 'receives'} exactly this text. ${kb(chat.bytes)} KB.`}</p>
     </div>
   )
 }

@@ -1,5 +1,5 @@
-import { useId, useState, type ReactNode } from 'react'
-import { useSession, type PendingPermission } from '../../store'
+import { useContext, useId, useState, type ReactNode } from 'react'
+import { SliceScope, useSession, type PendingPermission } from '../../store'
 import type { ElicitationRequest, ElicitationResponse } from '../../../../shared/events'
 import { Button } from '../Button'
 import { Dropdown } from '../Dropdown'
@@ -13,8 +13,9 @@ import { contentOf, fieldError, fieldsOf, initialValues, linkOf, requestOf, type
  *  to fill a few fields (form mode). The tool call blocks until this card is answered. */
 export function ElicitGate({ request, count }: { request: PendingPermission; count: GateCount }): JSX.Element {
   const respond = useSession((s) => s.respondElicitation)
+  const side = useContext(SliceScope) ?? undefined
   const req = requestOf(request.input)
-  const answer = (r: ElicitationResponse): void => void respond(request.requestId, r)
+  const answer = (r: ElicitationResponse): void => void respond(request.requestId, r, side)
   const server = req?.serverName || request.displayName || 'An MCP server'
   if (req?.mode === 'url') return <UrlElicit req={req} server={server} count={count} answer={answer} />
   return <FormElicit req={req} server={server} count={count} answer={answer} />

@@ -12,13 +12,14 @@
  * Esc closes (via the shared escape-stack so a palette over a modal closes the palette first).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSession, activeSlice, selectPaneOpen, useActive, EMPTY_CHANGES, EMPTY_SURFACES } from '../store'
+import { useSession, activeSlice, canFork, selectPaneOpen, sideFor, useActive, EMPTY_CHANGES, EMPTY_SURFACES } from '../store'
+import { SIDE_REFUSAL } from '../lib/side'
 import { useEscape } from '../lib/useEscape'
 import { applyTheme } from '../lib/theme'
 import { fuzzyMatch, highlightRuns, rankPaths, splitLine } from '../lib/fuzzy'
 import { requestSurfaceFocus } from '../lib/surfaceFocus'
 import { viaOf, type Via } from '../lib/motion'
-import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage, IconFolder, IconDiff, IconAgentBrowser, IconPaneRight, IconHalfRing, IconSidebar, IconDownload, IconGitFork, IconSubagents, IconWorkflows } from './Icon'
+import { IconSearch, IconPlus, IconSettings, IconSliders, IconClose, IconMessage, IconFolder, IconDiff, IconAgentBrowser, IconPaneRight, IconHalfRing, IconSidebar, IconDownload, IconGitFork, IconSideChat, IconSubagents, IconWorkflows } from './Icon'
 import { FileIcon } from './FileIcon'
 import { cleanError, openEditor } from './surfaces/fileDoc'
 import { tilde } from '../lib/tree'
@@ -60,6 +61,8 @@ interface PaletteItem {
   live?: boolean
   /** Runs inside the palette instead of closing it. */
   stay?: boolean
+  /** Why it can't act now; the reason replaces the hint, and running it only shows the reason. */
+  unavailable?: string
   run: () => void
 }
 
@@ -229,6 +232,9 @@ export function CommandPalette({
       const n = slice?.changes.length ?? 0
       const shown = selectPaneOpen(slice)
       const item = (key: string, label: string, hint: string, icon: PaletteItem['icon'], run: () => void): PaletteItem => ({ key: `cmd:${key}`, kind: 'command', label, hint, icon, recency: 0, run })
+      const sideOpen = !!activeId && !!sideFor(store, activeId)
+      const refused = sideOpen ? null : canFork(slice)
+      const sideUnavailable = refused ? SIDE_REFUSAL[refused] : undefined
       return [
         {
           ...item('open-file', 'Open file…', '⌘P', IconSearch, () => {
@@ -239,6 +245,10 @@ export function CommandPalette({
           stay: true
         },
         item('tree', 'Show file tree', cwd.slice(cwd.lastIndexOf('/') + 1) || cwd, IconFolder, () => runPaneItem('tree', cwd)),
+        {
+          ...item('side', sideOpen ? 'Show side chat' : 'Ask a side question', sideUnavailable ?? '⌘/', IconSideChat, () => runPaneItem('side', cwd)),
+          ...(sideUnavailable ? { unavailable: sideUnavailable } : {})
+        },
         ...(n > 0 ? [item('changes', 'Show Claude changes', fileCount(n), IconDiff, () => runPaneItem('changes', cwd))] : []),
         ...(slice?.browser ? [item('browser', 'Show browser', '⇧⌘B', IconAgentBrowser, () => void store.revealBrowser(null))] : []),
         ...(slice && hasAgents(slice)
@@ -534,7 +544,9 @@ function Row({
     ? item.live
       ? `${item.label}, live session, switch instantly`
       : `${item.label}, dormant session, resume (starts a new process)`
-    : `${item.label}, command`
+    : item.unavailable
+      ? `${item.label}, command, unavailable, ${item.unavailable}`
+      : `${item.label}, command`
 
   return (
     // role=option in the input's listbox: keyboard focus stays in the combobox and
@@ -546,6 +558,7 @@ function Row({
       id={`palette-opt-${idx}`}
       aria-selected={selected}
       aria-label={aria}
+      aria-disabled={!!item.unavailable || undefined}
       onMouseMove={onHover}
       onClick={onClick}
       /* Keyboard-first surface: the selected row needs a perceivable marker; a ~1.08:1 fill
@@ -562,10 +575,10 @@ function Row({
       )}
       {/* Neutral, monochrome leading glyph: anchors the row + aligns with command icons;
           identical for live/dormant (it does not encode state). */}
-      <span className="shrink-0 text-dim">
+      <span className={`shrink-0 ${item.unavailable ? 'text-faint' : 'text-dim'}`}>
         {isSession ? <IconMessage className="h-3.5 w-3.5" /> : item.icon ? <item.icon className="h-3.5 w-3.5" /> : <Dot />}
       </span>
-      <span className={`min-w-0 flex-1 truncate text-sm ${dim ? 'text-dim' : 'text-content'}`}>
+      <span className={`min-w-0 flex-1 truncate text-sm ${dim || item.unavailable ? 'text-dim' : 'text-content'}`}>
         {runs.map((r, i) =>
           r.match ? (
             <span key={i} className="font-semibold text-content underline decoration-dim underline-offset-2">
@@ -576,7 +589,7 @@ function Row({
           )
         )}
       </span>
-      {selected ? (
+      {selected && !item.unavailable ? (
         // Focused row: the action affordance replaces the hint.
         <span className="flex shrink-0 items-center gap-1.5 text-meta text-dim">
           {verb}

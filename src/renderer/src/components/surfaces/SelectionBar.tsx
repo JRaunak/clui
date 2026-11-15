@@ -6,10 +6,6 @@ import { IconCheck, IconPlus } from '../Icon'
 /** How long a selection's announcement trails the keys that make it. */
 export const ANNOUNCE_MS = 300
 
-// The Button's own disabled look needs `disabled`, which drops focus; a blocked Add stays reachable to explain itself.
-const BLOCKED =
-  'aria-disabled:cursor-default aria-disabled:border-transparent aria-disabled:bg-bg-raised aria-disabled:text-faint aria-disabled:hover:bg-bg-raised'
-
 /**
  * Docked under a surface while it has a selection: what's selected, the source's own controls, and the one action
  * that stages it. `blocked` replaces the label with why it can't be added; activating Add then calls `onBlocked`.
@@ -50,7 +46,6 @@ export function SelectionBar({
         aria-describedby={blocked ? labelId : undefined}
         title={`${add} ↵`}
         busy={busy}
-        className={BLOCKED}
         onClick={blocked ? onBlocked : onAdd}
       >
         {attached ? <IconCheck className="h-3.5 w-3.5" /> : <IconPlus className="h-3.5 w-3.5" />}

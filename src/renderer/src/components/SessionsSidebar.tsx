@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { SessionSummary } from '../../../shared/sessions'
-import { useSession, forgetSessionModel, sessionDisplayTitle, surfaceLabel, expireEvicted, UNDO_MS } from '../store'
+import { useSession, forgetSessionModel, sidePending, sessionDisplayTitle, surfaceLabel, expireEvicted, UNDO_MS } from '../store'
 import { SURFACE_TAB_CAP } from '../../../shared/surfaces'
 import { sessionStatusOf, statusKey, statusText, type SessionStatus } from '../lib/sessionStatus'
 import {
@@ -199,7 +199,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
     useShallow((s) =>
       Object.values(s.sessions).map(
         (v) =>
-          `${v.handleId} ${v.sessionId ?? ''} ${v.cwd} ${v.busy ? 1 : 0} ${v.exited ? 1 : 0} ${v.pendingPermissions.length} ${Object.values(v.backgroundTasks).filter((t) => t.status === 'running').length} ${v.createdMs} ${v.title ?? ''} ${statusKey(v)}`
+          `${v.handleId} ${v.sessionId ?? ''} ${v.cwd} ${v.busy ? 1 : 0} ${v.exited ? 1 : 0} ${v.pendingPermissions.length} ${Object.values(v.backgroundTasks).filter((t) => t.status === 'running').length} ${v.createdMs} ${v.title ?? ''} ${statusKey(v, sidePending(s, v.handleId))}`
       )
     )
   )
@@ -212,7 +212,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
       for (const v of Object.values(s.sessions)) {
         if (v.exited) continue
         live++
-        const k = sessionStatusOf(v).kind
+        const k = sessionStatusOf(v, sidePending(s, v.handleId)).kind
         if (k === 'working') working++
         else if (k === 'needs') needs++
       }
@@ -277,7 +277,8 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
 
   // Merge on-disk groups with live sessions (read the store non-reactively; liveSig drives the re-render).
   const merged = useMemo<MergedGroup[]>(() => {
-    const live = Object.values(useSession.getState().sessions)
+    const st = useSession.getState()
+    const live = Object.values(st.sessions)
     const liveBySessionId = new Map<string, (typeof live)[number]>()
     for (const s of live) if (s.sessionId) liveBySessionId.set(s.sessionId, s)
 
@@ -318,7 +319,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
           bgCount: liveMatch
             ? Object.values(liveMatch.backgroundTasks).filter((t) => t.status === 'running').length
             : 0,
-          status: stillLive ? sessionStatusOf(liveMatch!) : null
+          status: stillLive ? sessionStatusOf(liveMatch!, sidePending(st, liveMatch!.handleId)) : null
         })
       }
     }
@@ -343,7 +344,7 @@ export function SessionsSidebar({ collapsed: railMode = false }: { collapsed?: b
         busy: s.busy,
         pendingCount: s.pendingPermissions.length,
         bgCount: Object.values(s.backgroundTasks).filter((t) => t.status === 'running').length,
-        status: sessionStatusOf(s)
+        status: sessionStatusOf(s, sidePending(st, s.handleId))
       })
     }
 

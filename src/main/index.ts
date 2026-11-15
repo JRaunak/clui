@@ -190,7 +190,7 @@ app.on('web-contents-created', (_e, wc) => {
  * and standard window commands keep working in text fields (a custom menu that
  * omits them silently breaks clipboard shortcuts, the classic Electron gotcha).
  */
-const TAKES_TYPING = new Set<MenuAction>(['find-in-conversation', 'find-next', 'find-prev', 'open-file', 'file-goto', 'open-palette', 'open-command-palette', 'search-global'])
+const TAKES_TYPING = new Set<MenuAction>(['find-in-conversation', 'find-next', 'find-prev', 'open-file', 'file-goto', 'open-palette', 'open-command-palette', 'search-global', 'side-chat'])
 let menuState: MenuState = { browser: 'none', pane: 'none', surface: 'none', canPane: false, close: 'session', external: { kind: 'none', enabled: false }, fileLines: false, presentation: 'none', reload: false, back: false, zoom: 'none', pages: false }
 const EXTERNAL_LABEL: Record<MenuState['external']['kind'], string> = {
   file: 'Open in Editor',
@@ -255,6 +255,8 @@ function buildMenu(): void {
         { type: 'separator' },
         // Native accelerators, not DOM keys, so they still fire while focus sits inside a native view.
         { label: 'Open File…', accelerator: 'CmdOrCtrl+P', enabled: menuState.canPane, click: () => send('open-file') },
+        // Enabled wherever a fork isn't possible too, so ⌘/ answers with the reason instead of doing nothing.
+        { label: 'Side Chat', accelerator: 'CmdOrCtrl+/', enabled: menuState.canPane, click: () => send('side-chat') },
         {
           label: menuState.surface === 'none' ? 'Show Pane' : 'Hide Pane',
           accelerator: 'Alt+CmdOrCtrl+0',

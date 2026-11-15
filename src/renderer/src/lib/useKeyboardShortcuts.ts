@@ -18,7 +18,7 @@
  * safety guarantee against hijacking typing.
  */
 import { useEffect } from 'react'
-import { activeSlice, anyTabIn, browserTabOf, surfaceKindOf, useSession } from '../store'
+import { activeSlice, anyTabIn, browserTabOf, sideFor, surfaceKindOf, useSession } from '../store'
 import { closeTab } from '../components/surfaces/SurfaceTabs'
 import { point } from '../components/surfaces/PointButton'
 import { OPEN_FILE_EVENT, type PaletteMode } from '../components/CommandPalette'
@@ -26,6 +26,7 @@ import { FILE_GOTO_EVENT } from '../components/surfaces/FileSurface'
 import { FILE_FIND_EVENT } from '../components/surfaces/fileDoc'
 import { TRANSCRIPT_FIND_EVENT } from '../components/FindBar'
 import { fileLike, hasFind } from './presentation'
+import { showSide } from './sideEntry'
 import { isTranscriptKind, isViewKind } from '../../../shared/surfaces'
 
 /** Focus is in the Surfaces pane: its DOM, or a native page in it, which only main can report. */
@@ -150,6 +151,9 @@ export function useKeyboardShortcuts(opts: {
         case 'open-file':
           openFile()
           break
+        case 'side-chat':
+          if (store.activeHandleId) void showSide(store.activeHandleId)
+          break
         // Find/search route straight to store flags (no App callback needed).
         // ⌘F only means something with a session open; ⌘⇧F is always available.
         case 'find-in-conversation':
@@ -245,6 +249,15 @@ export function useKeyboardShortcuts(opts: {
       // means that when nothing is running, ⌃C is a no-op and the browser's
       // native copy-of-selection still works for users with that habit.
       if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === 'c' || e.key === 'C')) {
+        // From inside the side tab it stops the side's answer and never Claude's turn.
+        if (document.activeElement?.closest('[data-ui="side-tab"]')) {
+          const side = store.activeHandleId ? sideFor(store, store.activeHandleId) : null
+          if (side?.busy) {
+            e.preventDefault()
+            void store.interrupt(side.handleId)
+          }
+          return
+        }
         const active = store.activeHandleId ? store.sessions[store.activeHandleId] : null
         if (active?.busy) {
           e.preventDefault()

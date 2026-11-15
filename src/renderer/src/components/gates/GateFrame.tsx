@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useContext, useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { SliceScope } from '../../store'
 
 /** Position of this Gate in the session's pending queue; the header shows "1 of N" when N > 1. */
 export interface GateCount {
@@ -6,8 +7,12 @@ export interface GateCount {
   total: number
 }
 
-export function focusComposer(): void {
-  document.querySelector<HTMLElement>('[data-composer-input]')?.focus()
+const COMPOSER = '[data-composer-input]'
+const SIDE_COMPOSER = '[data-ui="side-composer"]'
+
+/** A side gate hands focus back to the side's composer, never to main's. */
+export function focusComposer(side = false): void {
+  document.querySelector<HTMLElement>(side ? SIDE_COMPOSER : COMPOSER)?.focus()
 }
 
 /**
@@ -42,19 +47,23 @@ export function GateFrame({
 }): JSX.Element {
   const titleId = useId()
   const ref = useRef<HTMLDivElement>(null)
+  const side = !!useContext(SliceScope)
 
   useEffect(() => {
     const a = document.activeElement as HTMLTextAreaElement | null
     // Taking the caret from a half-typed message would drop whatever is typed next; the announcer
     // still speaks and the Gate is one Tab away.
-    const drafting = !!a?.matches('[data-composer-input]') && a.value.trim() !== ''
-    if (!drafting) ref.current?.focus({ preventScroll: true })
+    const drafting = !!a?.matches(side ? SIDE_COMPOSER : COMPOSER) && a.value.trim() !== ''
+    // A side gate never pulls focus out of main or the rest of the pane.
+    const near = !side || !a || a === document.body || !!a.closest('[data-ui="side-dock"]')
+    if (near && !drafting) ref.current?.focus({ preventScroll: true })
     return () => {
       // A decided Gate unmounts with focus inside it, which drops focus to body. Hand it to the
       // composer, unless the user has already moved somewhere else.
       const a = document.activeElement
-      if (!a || a === document.body) focusComposer()
+      if (!a || a === document.body) focusComposer(side)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const onKey = (e: KeyboardEvent): void => {
@@ -64,7 +73,7 @@ export function GateFrame({
       if (document.querySelector('[role="listbox"]:popover-open')) return
       e.preventDefault()
       e.stopPropagation()
-      focusComposer()
+      focusComposer(side)
       return
     }
     onKeyDown?.(e)

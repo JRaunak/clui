@@ -33,7 +33,7 @@ const MAX_BYTES = 30 * 1024 * 1024
 const MAX_PDF_BYTES = 20 * 1024 * 1024
 /** Text file cap (bytes): ~256 KB ≈ 64k tokens; a dropped log/csv above this should
  *  be referenced (@) or trimmed, not silently inlined (context-eviction risk). */
-const MAX_TEXT_BYTES = 256 * 1024
+export const MAX_TEXT_BYTES = 256 * 1024
 
 /** Extensions treated as inlinable text (union with a `text/*` MIME sniff). Covers the
  *  common real drops: notes, data, logs, config, source. Binaries are excluded and
@@ -181,12 +181,19 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
 // Generalized attachments (drop-file): image | document(PDF) | text
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** A handed-back side chat's chip meta, never sent: when the fork was taken and the answers and evidence lines in `text`. */
+export interface SideMeta {
+  openedAt: number
+  answers: number
+  sources: number
+}
+
 /** A processed non-image attachment (PDF or inlined text file). Images keep their
  *  richer `ProcessedImage` shape; this union is what the composer stages + renders. */
 export type ProcessedAttachment =
   | ({ kind: 'image' } & ProcessedImage)
   | { kind: 'document'; id: string; name: string; mediaType: string; data: string; bytes: number }
-  | { kind: 'text'; id: string; name: string; text: string; bytes: number; lines: number }
+  | { kind: 'text'; id: string; name: string; text: string; bytes: number; lines: number; origin?: 'side'; side?: SideMeta }
 
 function extOf(name: string): string {
   const i = name.lastIndexOf('.')

@@ -44,7 +44,7 @@ export const Button = forwardRef<
       /* Disabled: don't just fade the fill. A faded terracotta primary still reads as a live
          button, and in dark it's near-indistinguishable from enabled. Override to a neutral
          inert surface + dim label in both themes so "disabled" is unambiguous and legible. */
-      className={`inline-flex cursor-pointer items-center justify-center rounded-md font-semibold transition-[background-color,border-color,color,filter] duration-150 ease-out disabled:cursor-default disabled:border-transparent disabled:bg-bg-raised disabled:text-faint disabled:hover:bg-bg-raised disabled:hover:brightness-100 ${VARIANTS[variant]} ${SIZES[size]} ${busy ? 'pointer-events-none opacity-60' : ''} ${className}`}
+      className={`inline-flex cursor-pointer items-center justify-center rounded-md font-semibold transition-[background-color,border-color,color,filter] duration-150 ease-out disabled:cursor-default disabled:border-transparent disabled:bg-bg-raised disabled:text-faint disabled:hover:bg-bg-raised disabled:hover:brightness-100 aria-disabled:cursor-default aria-disabled:border-transparent aria-disabled:bg-bg-raised aria-disabled:text-faint aria-disabled:hover:bg-bg-raised aria-disabled:hover:brightness-100 ${VARIANTS[variant]} ${SIZES[size]} ${busy ? 'pointer-events-none opacity-60' : ''} ${className}`}
       {...rest}
     >
       {children}

@@ -65,7 +65,7 @@ export function useOverlayCovered(rootRef: RefObject<HTMLElement>, covered: bool
   useLayoutEffect(() => {
     const root = rootRef.current
     if (!root) return
-    const dialog = root.querySelector<HTMLElement>('[role="dialog"]')
+    const dialog = root.querySelector<HTMLElement>('[role="dialog"], [role="alertdialog"]')
     const active = document.activeElement
     if (covered) held.current = active instanceof HTMLElement && root.contains(active) ? active : dialog
     // React 18 doesn't forward the `inert` attribute, so set the DOM property.

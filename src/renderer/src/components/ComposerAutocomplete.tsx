@@ -11,7 +11,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { CAP_NOTE, refKey, type RefInput } from '../../../shared/context'
 import type { ChangeRefRequest } from '../../../shared/ipc'
-import { denyChangeRead, useActive, useSession, EMPTY_REFS, EMPTY_SLASH_COMMANDS } from '../store'
+import { canFork, denyChangeRead, useActive, useSession, EMPTY_REFS, EMPTY_SLASH_COMMANDS } from '../store'
+import { REFUSAL_NOTICE, SIDE_REFUSAL } from '../lib/side'
 import { fuzzyMatch, highlightRuns, rankPaths } from '../lib/fuzzy'
 import { resolveSkillCommands, resolveSlashCommands, type SkillCommand } from '../lib/slashCommands'
 import { paneRows, removeToken } from '../lib/composerRefs'
@@ -39,6 +40,8 @@ interface Item {
   /** A Diff selection a pick mints, then adds. */
   mint?: ChangeRefRequest
   aria?: string
+  /** Why picking it does nothing; its presence is the disabled state. */
+  unavailable?: string
 }
 
 interface Row {
@@ -105,6 +108,25 @@ export interface AutocompleteApi {
 
 const lift = (it: Item): number => (it.kind === 'file' ? 0 : 10000)
 
+/** Clui's own commands: the composer takes them before the CLI would see them, so a skill of the same name is hidden. */
+const SIDE_ROWS = [
+  { value: 'side', hint: 'Ask on the side without interrupting Claude' },
+  { value: 'btw', hint: 'Same as /side' }
+] as const
+const clui = (name: string): boolean => SIDE_ROWS.some((r) => r.value === name)
+
+const sideItems = (unavailable: string | undefined): Item[] =>
+  SIDE_ROWS.map(({ value, hint }) => ({
+    key: `clui:${value}`,
+    value,
+    label: `/${value}`,
+    hint: unavailable ?? hint,
+    args: '<question>',
+    kind: 'command',
+    aria: `/${value}, ${unavailable ? `unavailable, ${unavailable}` : hint[0].toLowerCase() + hint.slice(1)}`,
+    ...(unavailable ? { unavailable } : {})
+  }))
+
 export function useComposerAutocomplete(
   text: string,
   caret: number,
@@ -141,11 +163,13 @@ export function useComposerAutocomplete(
   const diskSkills = useActiveSkills(trigger?.char === '/' && !marked)
   const skills = marked ? liveSkills : diskSkills
   const attached = useMemo(() => new Set(refs.map((d) => refKey(d.ref))), [refs])
+  const refused = useActive((s) => canFork(s))
 
   const commandItems = useMemo<Item[]>(
     () => [
-      ...commands.map((c) => ({ key: `command:${c.name}`, value: c.name, label: `/${c.name}`, hint: c.description, args: c.argumentHint, kind: 'command' as const })),
-      ...skills.map((s) => ({
+      ...sideItems(refused ? SIDE_REFUSAL[refused] : undefined),
+      ...commands.filter((c) => !clui(c.name)).map((c) => ({ key: `command:${c.name}`, value: c.name, label: `/${c.name}`, hint: c.description, args: c.argumentHint, kind: 'command' as const })),
+      ...skills.filter((s) => !clui(s.name)).map((s) => ({
         key: `skill:${s.scope ?? 'skill'}:${s.name}`,
         value: s.name,
         label: `/${s.name}`,
@@ -156,7 +180,7 @@ export function useComposerAutocomplete(
         plugin: s.plugin
       }))
     ],
-    [commands, skills]
+    [commands, skills, refused]
   )
   // Agents first (delegate the turn), then files. Empty query keeps this order
   // since the fuzzy sort is skipped, so agents sit above files naturally.
@@ -248,6 +272,10 @@ export function useComposerAutocomplete(
       if (!trigger) return
       const chosen = flat[i]?.it
       if (!chosen) return
+      if (chosen.unavailable) {
+        useSession.getState().setNotice(refused ? REFUSAL_NOTICE[refused] : chosen.unavailable, 'info')
+        return setDismissed(true)
+      }
       if (chosen.mint && handleId) return pickChange(handleId, chosen.mint, trigger.start, `@${trigger.query}`)
       const input = chosen.input
       if (input && handleId) {
@@ -270,7 +298,7 @@ export function useComposerAutocomplete(
       const nextText = text.slice(0, trigger.start) + insert + text.slice(caret)
       apply(nextText, trigger.start + insert.length)
     },
-    [trigger, flat, text, caret, apply, handleId, changeRead]
+    [trigger, flat, text, caret, apply, handleId, changeRead, refused]
   )
 
   // Mint is a round trip, so the draft is read again after it: typing in the meantime is kept, and the token goes
@@ -397,14 +425,15 @@ export function useComposerAutocomplete(
                       role="option"
                       aria-selected={i === sel}
                       aria-label={r.it.aria}
+                      aria-disabled={!!r.it.unavailable || undefined}
                       onMouseMove={() => setSel(i)}
                       onClick={() => pick(i)}
                       className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left ${i === sel ? 'bg-[var(--glass-row-hover)]' : ''}`}
                     >
-                      <span className="max-w-[45%] shrink-0 truncate font-mono text-xs text-content">
+                      <span className={`max-w-[45%] shrink-0 truncate font-mono text-xs ${r.it.unavailable ? 'text-dim' : 'text-content'}`}>
                         {runs.map((run, j) =>
                           run.match ? (
-                            <span key={j} className="font-semibold text-content underline decoration-dim underline-offset-2">
+                            <span key={j} className={`font-semibold underline decoration-dim underline-offset-2 ${r.it.unavailable ? 'text-dim' : 'text-content'}`}>
                               {run.text}
                             </span>
                           ) : (
@@ -417,14 +446,14 @@ export function useComposerAutocomplete(
                           {r.it.args}
                         </span>
                       )}
-                      {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
-                        <span className="shrink-0 rounded bg-[var(--glass-row-hover)] px-1.5 py-0.5 text-badge text-dim" title={r.it.plugin && `Plugin: ${r.it.plugin}`}>
-                          {r.it.scope ?? r.it.kind}
-                        </span>
-                      )}
                       {r.it.hint && (
                         <span className="min-w-0 flex-1 truncate text-meta text-dim" title={r.it.hint}>
                           {r.it.hint}
+                        </span>
+                      )}
+                      {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
+                        <span className="ml-auto shrink-0 rounded bg-[var(--glass-row-hover)] px-1.5 py-0.5 text-badge text-dim" title={r.it.plugin && `Plugin: ${r.it.plugin}`}>
+                          {r.it.scope ?? r.it.kind}
                         </span>
                       )}
                     </button>

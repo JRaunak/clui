@@ -1,5 +1,5 @@
-import { useId, useMemo, useState, type ReactNode } from 'react'
-import { useActive, useSession, type PendingPermission } from '../../store'
+import { useContext, useId, useMemo, useState, type ReactNode } from 'react'
+import { SliceScope, useActive, useSession, type PendingPermission } from '../../store'
 import { Button } from '../Button'
 import { IconCheck, IconOpenPane, IconShield } from '../Icon'
 import { subagentType } from '../../lib/agents'
@@ -25,29 +25,31 @@ export function PermissionGate({
   copy?: { title: ReactNode; description: ReactNode; allowLabel: string; note?: string }
 }): JSX.Element {
   const respond = useSession((s) => s.respondPermission)
+  const side = useContext(SliceScope) ?? undefined
   const setPermissionMode = useSession((s) => s.setPermissionMode)
   // Arms the "also switch mode" quick action; plain Allow stays a one-off.
   const [armed, setArmed] = useState(false)
 
   const allow = (): void => {
-    void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: request.input })
+    void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: request.input }, side)
   }
   const deny = (): void => {
     void respond({
       requestId: request.requestId,
       behavior: 'deny',
       message: 'The user denied this action.'
-    })
+    }, side)
   }
   // Session-scoped mode switch. setPermissionMode is per-session, so a project- or
   // user-scoped suggestion would under-apply.
   const suggestion = copy || request.suppressAlwaysAllow ? null : pickModeSuggestion(request.permissionSuggestions)
   const allowAndSwitch = (): void => {
-    void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: request.input })
+    void respond({ requestId: request.requestId, behavior: 'allow', updatedInput: request.input }, side)
     if (suggestion) void setPermissionMode(suggestion.mode)
   }
   // Label tracks the armed effect so the click's consequence is legible before pressing.
-  const allowLabel = copy ? copy.allowLabel : !suggestion ? 'Allow' : armed ? `Allow & switch to ${suggestion.label}` : 'Allow once'
+  // A side gate offers no other grant, so its label says this one ends with the call.
+  const allowLabel = copy ? copy.allowLabel : side ? 'Allow once' : !suggestion ? 'Allow' : armed ? `Allow & switch to ${suggestion.label}` : 'Allow once'
   const sessionMode = useActive((s) => s?.permissionMode ?? null)
   const reason = request.decisionReason?.trim()
   const sourceId = useId()
@@ -89,6 +91,7 @@ export function PermissionGate({
               variant="primary"
               size="md"
               className="flex-none whitespace-nowrap"
+              aria-description={side ? 'Allows this call only. Side chat never saves a permission rule.' : undefined}
               onClick={armed && suggestion ? allowAndSwitch : allow}
             >
               {allowLabel}

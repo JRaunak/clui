@@ -9,7 +9,9 @@ import {
   type ChangeEvent,
   type CSSProperties
 } from 'react'
-import { chipMode, effectiveMode, useActive, useSession, EMPTY_ATTACHMENTS, EMPTY_NOTICES, EMPTY_REFS, type SendAttachment } from '../store'
+import { chipMode, effectiveMode, sidePending, sideShown, useActive, useSession, EMPTY_ATTACHMENTS, EMPTY_NOTICES, EMPTY_REFS, type SendAttachment } from '../store'
+import { askOf, parseSide, SIDE_TITLE, sideChatOf } from '../lib/side'
+import { askSide } from '../lib/sideEntry'
 import { attachmentChip } from './ContextChip'
 import { addToDraft, ContextChips, signalRefs } from './ContextChips'
 import { useComposerAutocomplete } from './ComposerAutocomplete'
@@ -32,6 +34,7 @@ import {
   IconFolder,
   IconFolderOpen,
   IconGhost,
+  IconShield,
   IconTarget
 } from './Icon'
 import { processDroppedFiles, toWireAttachment, type ProcessedAttachment } from '../lib/images'
@@ -294,6 +297,9 @@ export function Composer(): JSX.Element {
   const submit = async (now = false): Promise<void> => {
     const typed = text.trim()
     if ((!typed && attachments.length === 0 && refs.length === 0) || !handleId) return
+    // Side input is text only, so attachments and chips stay here for the next message.
+    const side = parseSide(typed)
+    if (side) return void askSide(handleId, side.question)
     const files: SendAttachment[] = attachments.map((a) => ({
       wire: toWireAttachment(a),
       display:
@@ -301,7 +307,9 @@ export function Composer(): JSX.Element {
           ? { kind: 'image', previewUrl: a.previewUrl, name: a.name, w: a.w, h: a.h }
           : a.kind === 'document'
             ? { kind: 'document', name: a.name, bytes: a.bytes }
-            : { kind: 'text', name: a.name, bytes: a.bytes, lines: a.lines }
+            : a.origin === 'side'
+              ? { kind: 'text', name: a.name, bytes: a.bytes, lines: a.lines, origin: a.origin, side: a.side, text: a.text }
+              : { kind: 'text', name: a.name, bytes: a.bytes, lines: a.lines }
     }))
     // Consumed by id in this tick, so a reference added while the send awaits stays in the draft.
     clearDraft(handleId)
@@ -364,6 +372,7 @@ export function Composer(): JSX.Element {
           onDragLeave={onDragLeave}
         >
           <GateHost />
+          <SideNeedsYou />
           {/* Drag-to-attach overlay: accent is legit here (a live, transient state cue). */}
           {dragOver && (
             <div data-ui="drop-overlay" className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-bg-elev/85">
@@ -382,7 +391,7 @@ export function Composer(): JSX.Element {
               target={null}
               refs={refs}
               notices={notices}
-              attachments={attachments.map((a) => ({ view: attachmentChip(a.id, a), onRemove: () => removeAttachment(a.id) }))}
+              attachments={attachments.map((a) => ({ view: attachmentChip(a.id, a), chat: sideChatOf(a), onRemove: () => removeAttachment(a.id) }))}
               focusText={focusText}
             />
           )}
@@ -508,47 +517,76 @@ export function Composer(): JSX.Element {
                 usedTokens={contextTokens}
                 contextWindow={contextWindow}
               />
-              {(() => {
-                const empty = !text.trim() && attachments.length === 0 && refs.length === 0
-                const inert = !busy && empty
-                return (
-                  <button
-                    type="button"
-                    data-ui={busy ? 'stop-button' : 'send-button'}
-                    aria-label={busy ? 'Stop' : 'Send'}
-                    aria-disabled={inert || undefined}
-                    title={busy ? 'Stop  ⌃C' : 'Send  ↵'}
-                    onClick={() => {
-                      if (busy) {
-                        // The second click of a double-click lands here once the first has started the
-                        // turn; ignoring the first 400ms keeps it from stopping the turn it just began.
-                        if (turnStartMs !== null && Date.now() - turnStartMs < 400) return
-                        void interrupt()
-                      } else if (!inert) void submit()
-                    }}
-                    className={`relative flex h-[28px] w-[28px] items-center justify-center rounded-full transition-transform active:scale-95 ${
-                      busy
-                        ? 'bg-err text-on-err'
-                        : inert
-                          ? 'cursor-default bg-border text-faint'
-                          : 'bg-accent text-on-accent hover:bg-accent-hover'
-                    }`}
-                  >
-                    {/* One element for both states so focus survives the turn starting and ending; only the glyph crossfades. */}
-                    <IconArrowUp
-                      className={`absolute h-3 w-3 translate-y-[0.5px] transition-opacity duration-[var(--dur-fast)] ${busy ? 'opacity-0' : 'opacity-100'}`}
-                    />
-                    <IconStop
-                      className={`absolute h-3 w-3 transition-opacity duration-[var(--dur-fast)] ${busy ? 'opacity-100' : 'opacity-0'}`}
-                    />
-                  </button>
-                )
-              })()}
+              <SendStop
+                busy={busy}
+                inert={!busy && !text.trim() && attachments.length === 0 && refs.length === 0}
+                turnStartMs={turnStartMs}
+                onStop={() => void interrupt()}
+                onSend={() => void submit()}
+              />
             </div>
           </div>
         </div>
       </div>
     </div>
+  )
+}
+
+/** Send and Stop as one element, so focus survives a turn starting and ending; only the glyph crossfades. `ui`
+ *  prefixes its data-ui, and `title` replaces Send's while it's inert for a reason. */
+export function SendStop({ busy, inert, turnStartMs, onStop, onSend, ui = '', title }: { busy: boolean; inert: boolean; turnStartMs: number | null; onStop: () => void; onSend: () => void; ui?: string; title?: string }): JSX.Element {
+  return (
+    <button
+      type="button"
+      data-ui={`${ui}${busy ? 'stop-button' : 'send-button'}`}
+      aria-label={busy ? 'Stop' : 'Send'}
+      aria-disabled={(!busy && inert) || undefined}
+      aria-description={!busy && inert ? title : undefined}
+      title={busy ? 'Stop  ⌃C' : (title ?? 'Send  ↵')}
+      onClick={() => {
+        if (busy) {
+          // The second click of a double-click lands here once the first has started the
+          // turn; ignoring the first 400ms keeps it from stopping the turn it just began.
+          if (turnStartMs !== null && Date.now() - turnStartMs < 400) return
+          onStop()
+        } else if (!inert) onSend()
+      }}
+      className={`relative flex h-[28px] w-[28px] items-center justify-center rounded-full transition-transform active:scale-95 ${
+        busy ? 'bg-err text-on-err' : inert ? 'cursor-default bg-border text-faint' : 'bg-accent text-on-accent hover:bg-accent-hover'
+      }`}
+    >
+      <IconArrowUp className={`absolute h-3 w-3 translate-y-[0.5px] transition-opacity duration-[var(--dur-fast)] ${busy ? 'opacity-0' : 'opacity-100'}`} />
+      <IconStop className={`absolute h-3 w-3 transition-opacity duration-[var(--dur-fast)] ${busy ? 'opacity-100' : 'opacity-0'}`} />
+    </button>
+  )
+}
+
+/** A side chat's gate waits while its tab is out of sight. The line shows it from main's dock and leads to it. */
+function SideNeedsYou(): JSX.Element | null {
+  const handleId = useSession((s) => s.activeHandleId)
+  const ask = useSession((s) => {
+    const p = handleId && !sideShown(s, handleId) ? sidePending(s, handleId) : null
+    return p ? askOf(p) : null
+  })
+  if (!handleId || !ask) return null
+  const show = (): void => {
+    useSession.getState().openSurface(handleId, { kind: 'side', key: '', title: SIDE_TITLE }, 'focus', 'user', 'user')
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-ui="side-dock"] [data-ui="gate-title"]')?.focus())
+  }
+  return (
+    <button
+      type="button"
+      data-ui="side-needs-you"
+      aria-label={`Side chat needs you: ${ask}. Show request`}
+      onClick={show}
+      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-meta transition-opacity duration-fast ease-out starting:opacity-0 motion-reduce:transition-none pointer-fine:hover:bg-[var(--glass-row-hover)]"
+    >
+      <IconShield className="h-3.5 w-3.5 shrink-0 text-warn" />
+      <span className="min-w-0 truncate text-dim">
+        <span className="font-medium text-content">Side chat needs you</span>: {ask}
+      </span>
+      <span className="ml-auto shrink-0 text-content">Show</span>
+    </button>
   )
 }
 

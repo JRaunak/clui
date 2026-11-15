@@ -21,6 +21,7 @@ import { fileLike, isMarkdown, isMermaid, opensDefault, presentationOf, useNoPre
 import { isHtml } from '../../../../shared/html-view'
 import { AgentTab } from '../AgentTab'
 import { WorkflowTab } from '../WorkflowTab'
+import { SideTab } from '../SideTab'
 import { AgentsList, WorkflowsList } from './RunLists'
 
 /** The Surfaces pane: one header whose tab strip outlives a switch between kinds, over the active
@@ -106,6 +107,7 @@ export function SurfaceHost(): JSX.Element | null {
         ))}
       {viewTab?.kind === 'agent' && <AgentTab key={`${handleId}\0${viewTab.id}`} handleId={handleId} tab={viewTab} />}
       {viewTab?.kind === 'workflow' && <WorkflowTab key={`${handleId}\0${viewTab.id}`} handleId={handleId} tab={viewTab} />}
+      {kind === 'side' && <SideTab key={handleId} handleId={handleId} />}
       {kind === 'agents' && <AgentsList key={handleId} handleId={handleId} />}
       {kind === 'workflows' && <WorkflowsList key={handleId} handleId={handleId} />}
       {!kind && <PanePicker key={handleId} />}

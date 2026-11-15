@@ -6,13 +6,14 @@ import type { ShownAttachment } from '../store'
 import { baseOf, CHANGE_UNAVAILABLE, noteTitle, quoteStart, spokenRef } from '../lib/refCopy'
 import { qualified } from '../../../shared/sheets'
 import { FileIcon } from './FileIcon'
-import { IconClose, IconDiff, IconFile, IconTarget } from './Icon'
+import { forkedAt, SIDE_TITLE, sideChatOf, sideCounts } from '../lib/side'
+import { IconClose, IconDiff, IconFile, IconSideChat, IconTarget } from './Icon'
 
 /** What one chip shows and says. References carry a number; attachments don't. */
 export interface ChipView {
   key: string
   n?: number
-  glyph: 'file' | 'folder' | 'target' | 'change' | 'attachment'
+  glyph: 'file' | 'folder' | 'target' | 'change' | 'attachment' | 'side'
   thumb?: string
   line1: string
   line2: string
@@ -27,6 +28,7 @@ export interface ChipView {
   label: string
   /** For the remove button and announcements. */
   spoken: string
+  removeTitle?: string
 }
 
 const parentOf = (p: string): string => {
@@ -187,9 +189,24 @@ export function legacyChip(key: string, n: number, kind: string, name: string, h
   return { key, n, glyph: 'target', thumb, line1, line2: host, title: name ? `${kind} "${name}"` : kind, label: `Reference ${n}: ${spoken}${host ? `, on ${host}` : ''}`, spoken }
 }
 
-const kb = (bytes: number): number => Math.max(1, Math.round(bytes / 1024))
+export const kb = (bytes: number): number => Math.max(1, Math.round(bytes / 1024))
 
-export function attachmentChip(key: string, a: ProcessedAttachment | ShownAttachment): ChipView {
+export function attachmentChip(key: string, a: ProcessedAttachment | ShownAttachment, sent?: boolean): ChipView {
+  const chat = sideChatOf(a)
+  if (chat) {
+    const counts = sideCounts(chat.side)
+    const at = forkedAt(chat.side.openedAt)
+    return {
+      key,
+      glyph: 'side',
+      line1: SIDE_TITLE,
+      line2: counts,
+      title: `${SIDE_TITLE} from ${at}\n${counts}\nClick to see exactly what Claude ${sent ? 'received' : 'receives'}`,
+      label: `Attachment: ${SIDE_TITLE} from ${at}, ${counts.replace(' · ', ', ')}`,
+      spoken: 'side chat',
+      removeTitle: "Remove. The side chat is closed, so this can't be undone."
+    }
+  }
   const name = a.kind === 'image' ? a.name || 'pasted image' : a.name
   const size = 'bytes' in a && a.bytes !== undefined ? kb(a.bytes) : null
   if (a.kind === 'image') {
@@ -250,6 +267,8 @@ export function ContextChip({
               <IconTarget className="h-5 w-5" />
             ) : glyph === 'change' ? (
               <IconDiff className="h-5 w-5" />
+            ) : glyph === 'side' ? (
+              <IconSideChat className="h-5 w-5" />
             ) : (
               <IconFile className="h-5 w-5" />
             )}
@@ -321,6 +340,7 @@ export function ContextChip({
             onRemove()
           }}
           aria-label={`Remove ${view.spoken}`}
+          title={view.removeTitle}
         >
           <IconClose className="h-3.5 w-3.5" />
         </button>

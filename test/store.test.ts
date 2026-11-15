@@ -1,4 +1,4 @@
-import { CHANGE_REFS, canFork, toolSurfaceDiff, loadWorkflowRun, surfacesSave, watchAgentTabs, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
+import { CHANGE_REFS, canFork, paneFacts, sidePending, sideShown, toolSurfaceDiff, loadWorkflowRun, surfacesSave, watchAgentTabs, useSession, wakeCandidates, countWake, apiRetryCopy, effectiveMode, rateLimitCopy, chipMode, notePaneInput, paneTarget, restoredPane, evictionVictim, expireEvicted, PANE_RECENT_MS } from '../src/renderer/src/store.ts'
 import { turnEndLine, wokenLine } from '../src/renderer/src/lib/turnEnd.ts'
 import { monitorMeta } from '../src/renderer/src/lib/instrument.ts'
 import { noticeLead } from '../src/renderer/src/lib/refCopy.ts'
@@ -7,6 +7,9 @@ import { mock } from 'node:test'
 import { hasWorkflows, workflowRows } from '../src/renderer/src/lib/workflow.ts'
 import { equal, ok } from './support/harness.mjs'
 import { HOOKS_TOKEN } from '../src/shared/settings.ts'
+import { sidePhase, sideThreadText, sideTools, sideTurns, unhanded } from '../src/renderer/src/lib/side.ts'
+import { MAX_TEXT_BYTES, toWireAttachment } from '../src/renderer/src/lib/images.ts'
+import { sessionStatusOf } from '../src/renderer/src/lib/sessionStatus.ts'
 
 // The store's IPC is stubbed: each call is recorded and resolves true unless `replies` overrides it.
 const calls: { name: string; args: unknown[] }[] = []
@@ -1557,6 +1560,117 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   parent({ modeChoice: 'default', modelMode: 'plan' })
   await st().openSide('h1')
   equal((calls.find((c) => c.name === 'startSide')?.args[0] as any).permissionMode, 'plan', "side: a model-entered plan mode is the mode in effect")
+  delete replies.startSide
+  delete replies.sendMessage
+  useSession.setState({ sideSessions: {} })
+}
+
+// The side tab: it lives and dies with its thread, is never saved, evicted or reported, and lights when an answer
+// lands out of sight.
+{
+  const sides = (): any[] => Object.values(st().sideSessions)
+  const side = (): any => sides()[0]
+  const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+  const diff = { id: 'diff', kind: 'diff', key: '', title: 'Claude changes', openedBy: 'user', openedAt: 1, lastViewedAt: 1 }
+  const open = async (over: Record<string, unknown> = {}): Promise<void> => {
+    reset({ sessionId: 'sess-1', busy: false, apiProvider: 'bedrock', initTools: [], sideCostUsd: 0, changes: [], paneOpen: false, surfaces: { order: ['diff'], active: 'diff', tabs: { diff }, browserLastViewedAt: {}, browserUnseen: {} }, ...over })
+    useSession.setState({ sideSessions: {} })
+    replies.startSide = () => ({ ok: true, handleId: 'sx' })
+    replies.sendMessage = (_h: string, p: { text: string }) => ({ ok: true, packetId: 'p', text: p.text, joined: false })
+    await st().openSide('h1')
+  }
+  const ev = (e: any): void => st().applyEvent('sx', e)
+  const answer = (): void => {
+    ev({ type: 'text-delta', text: 'kiwi' })
+    ev({ type: 'result', sessionId: 'fork', isError: false, result: 'kiwi', totalCostUsd: 0.01, usage: { costUSD: 0.01, inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, models: [] } })
+  }
+
+  await open()
+  ok(cur().surfaces.active === 'side' && cur().paneOpen && cur().surfaces.tabs.side.title === 'Side chat', 'side tab: opening the thread opens and shows its tab')
+  const facts: any = paneFacts('h1')
+  ok(facts.session === 'covered' && !facts.active && !facts.tabs.some((t: any) => t.kind === 'side'), 'side tab: surface_state reports covered and never lists it')
+  ok(sideShown(st(), 'h1') && !surfacesSave(cur()).set.order.includes('side'), 'side tab: shown, and never saved')
+  st().closeSurface('h1', 'side')
+  await tick()
+  ok(!sides().length && !cur().surfaces.tabs.side && calls.some((c) => c.name === 'stopSession' && c.args[0] === 'sx'), 'side tab: closing it ends the thread')
+  await open()
+  await st().endSide('h1')
+  ok(!cur().surfaces.tabs.side && cur().surfaces.active === 'diff', 'side tab: ending the thread closes its tab')
+
+  const file = (i: number): any => ({ id: `file:/w/${i}.ts`, kind: 'file', key: `/w/${i}.ts`, title: `${i}.ts`, openedBy: 'user', openedAt: 1, lastViewedAt: 10 + i })
+  const tabs = [{ ...diff, id: 'side', kind: 'side', title: 'Side chat', lastViewedAt: 0 }, ...Array.from({ length: 23 }, (_, i) => file(i))]
+  equal(evictionVictim({ order: tabs.map((t) => t.id), active: 'file:/w/5.ts', tabs: Object.fromEntries(tabs.map((t) => [t.id, t])), browserLastViewedAt: {}, browserUnseen: {} }, 'file:/w/new.ts'), 'file:/w/0.ts', 'side tab: the cap never evicts it')
+
+  const stop = watchAgentTabs()
+  await open()
+  ev({ type: 'session-ready', provider: 'bedrock' })
+  st().activateSurface('h1', 'diff')
+  await tick()
+  ok(!cur().surfaces.tabs.side.unseen, 'side unseen: a Starting that settles with no question lights nothing')
+  await st().sendSide('sx', 'q')
+  answer()
+  await tick()
+  ok(cur().surfaces.tabs.side.unseen === true && unhanded(side()), 'side unseen: an answer landing behind another tab lights it, and it is unhanded')
+  st().activateSurface('h1', 'side')
+  await st().sendSide('sx', 'again')
+  answer()
+  await tick()
+  ok(!cur().surfaces.tabs.side.unseen, 'side unseen: an answer landing on screen lights nothing')
+  stop()
+
+  const stops = (): number => calls.filter((c) => c.name === 'stopSession' && c.args[0] === 'sx').length
+  const before = stops()
+  st().closeSurface('h1', 'side')
+  await tick()
+  ok(JSON.stringify(st().sideConfirm) === '{"parent":"h1","reason":"close"}' && sides().length === 1 && !!cur().surfaces.tabs.side && stops() === before, 'side close: unhanded answers ask first and keep the thread and its tab')
+  useSession.setState({ sideConfirm: null })
+
+  // Hand back: the thread goes into the parent's draft as one chip beside what's there, and the side ends.
+  const note = { kind: 'text', id: 'a1', name: 'notes.txt', text: 'n', bytes: 1, lines: 1 }
+  useSession.setState((s) => ({ sessions: { ...s.sessions, h1: { ...s.sessions.h1, draftText: 'see this', draftAttachments: [note] } } }))
+  st().addRef('h1', { kind: 'file', path: '/tmp/w/a.ts' })
+  const thread = sideThreadText(sideTurns(side()), sideTools(side().initTools, 'bedrock'))
+  const sentBefore = calls.filter((c) => c.name === 'sendMessage').length
+  ok(st().handBackSide('h1'), 'hand back: succeeds')
+  const [kept, chip] = cur().draftAttachments
+  ok(kept === note && cur().draftText === 'see this' && cur().contextRefs.length === 1, "hand back: the draft's text, attachments and refs are untouched")
+  ok(chip.origin === 'side' && chip.name === 'Side chat' && chip.text === thread && chip.bytes === new TextEncoder().encode(thread).length, 'hand back: one side chip carrying the thread text')
+  equal(JSON.stringify({ ...chip.side, openedAt: 0 }), '{"openedAt":0,"answers":2,"sources":0}', 'hand back: its meta counts the completed answers and their evidence')
+  ok(chip.side.openedAt > 0 && chip.text.includes('Question 1: q\n') && !chip.text.includes('read-only side chat'), "hand back: the fork's time rides the meta and the read-only line stays out")
+  ok(!sides().length && !cur().surfaces.tabs.side && stops() === before + 1 && st().sideConfirm === null, 'hand back: the thread and its tab close without asking')
+  ok(calls.filter((c) => c.name === 'sendMessage').length === sentBefore, 'hand back: nothing is sent')
+  ok(cur().refAnnounce.includes('Side chat added to your message.'), 'hand back: announced in the composer')
+  equal(JSON.stringify(toWireAttachment(chip)), JSON.stringify({ kind: 'text', name: 'Side chat', text: thread }), 'hand back: the wire carries the text only')
+  ok(!st().handBackSide('h1'), 'hand back: nothing open is a no-op')
+
+  await open()
+  await st().sendSide('sx', 'long')
+  ev({ type: 'text-delta', text: 'x'.repeat(MAX_TEXT_BYTES) })
+  ev({ type: 'result', sessionId: 'fork', isError: false, result: 'x', totalCostUsd: 0.01, usage: { costUSD: 0.01, inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, models: [] } })
+  ok(!st().handBackSide('h1') && sides().length === 1 && !cur().draftAttachments?.length, 'hand back: over the cap it refuses and keeps the side')
+  ok(/^This side chat is too long to hand back: 257 KB, and the limit is 256 KB\. It stays open\.$/.test(st().notice?.message ?? '') && st().notice?.tone === 'warn', 'hand back: the refusal says how long and the limit')
+  await st().endSide('h1')
+  await open()
+  answer()
+  st().closeSurface('h1', 'side')
+  await st().endSide('h1')
+  ok(st().sideConfirm === null && !sides().length, 'side close: ending the thread drops a confirm left open for it')
+
+  const starts = calls.filter((c) => c.name === 'startSide').length
+  await Promise.all([st().openSide('h1'), st().openSide('h1')])
+  ok(sides().length === 1 && calls.filter((c) => c.name === 'startSide').length === starts + 1, 'side open: two opens at once start one side')
+  await st().endSide('h1')
+
+  await open()
+  ev({ type: 'session-ready', provider: 'bedrock' })
+  equal(sidePhase(side()), 'idle', 'side phase: idle once ready')
+  ev({ type: 'permission-request', requestId: 'r', toolName: 'WebFetch', displayName: 'WebFetch', input: {} })
+  equal(sidePhase(side()), 'needs', 'side phase: a gate is needs')
+  ok(sidePending(st(), 'h1')?.requestId === 'r', 'side pending: the parent sees its side gate')
+  const status = sessionStatusOf(cur(), sidePending(st(), 'h1'))
+  ok(status.kind === 'needs' && status.rest === 'Side chat, allow WebFetch', "side pending: the parent's sidebar line reads it")
+  ev({ type: 'process-exit', code: 1 })
+  equal(sidePhase(side()), 'ended', 'side phase: ended outranks a waiting gate')
   delete replies.startSide
   delete replies.sendMessage
   useSession.setState({ sideSessions: {} })
