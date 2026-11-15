@@ -10,8 +10,6 @@ export interface PaneItem {
   mono?: boolean
   description?: string
   keys?: string
-  /** Why choosing it only explains itself. The reason stands in for the meta and the description. */
-  unavailable?: string
 }
 
 /** A list tab's offer: how many run now, and how many the session has once its files were read. */
@@ -32,9 +30,9 @@ const runItem = (key: 'agents' | 'workflows', label: string, noun: string, c: Ru
 
 /**
  * What the empty pane and the "+" menu offer, in one fixed order. The conditional items come last, so a session
- * gaining its first change never moves the rows above it. An open singleton isn't offered again, except Side chat:
- * it always shows, brings an open thread to the front, and is disabled with `sideUnavailable` as its reason. The
- * Subagents and Workflows lists are offered once the session has one, so `agents`/`workflows` are absent until then.
+ * gaining its first change never moves the rows above it. An open singleton isn't offered again. Side chat is
+ * offered once the session can fork one, or has one open. The Subagents and Workflows lists are offered once the
+ * session has one, so `agents`/`workflows` are absent until then.
  */
 export function paneItems({
   cwd,
@@ -45,7 +43,7 @@ export function paneItems({
   changesOpen,
   agents,
   workflows,
-  sideUnavailable
+  side
 }: {
   cwd: string
   home: string
@@ -55,17 +53,13 @@ export function paneItems({
   changesOpen: boolean
   agents?: RunCount
   workflows?: RunCount
-  sideUnavailable?: string
+  side: boolean
 }): PaneItem[] {
   const name = cwd.slice(cwd.lastIndexOf('/') + 1) || cwd
   const files = fileCount(changes)
   const items: PaneItem[] = [{ key: 'open-file', label: 'Open file…', meta: '⌘P', keys: 'Meta+P' }]
   if (!treeOpen) items.push({ key: 'tree', label: 'File tree', meta: name, mono: true, description: `Folder ${shownPath(cwd, home)}` })
-  items.push(
-    sideUnavailable
-      ? { key: 'side', label: 'Side chat', meta: sideUnavailable, description: sideUnavailable, keys: 'Meta+/', unavailable: sideUnavailable }
-      : { key: 'side', label: 'Side chat', meta: '⌘/', description: 'Ask on the side without interrupting Claude', keys: 'Meta+/' }
-  )
+  if (side) items.push({ key: 'side', label: 'Side chat', meta: '⌘/', description: 'Ask on the side without interrupting Claude', keys: 'Meta+/' })
   if (changes > 0 && !changesOpen) items.push({ key: 'changes', label: 'Claude changes', meta: files, description: `${files} changed by Claude` })
   if (browser) items.push({ key: 'browser', label: 'New browser tab', meta: '' })
   if (agents) items.push(runItem('agents', 'Subagents', 'subagent', agents))

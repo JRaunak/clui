@@ -9,6 +9,7 @@ import type { MenuItemConstructorOptions, WebContents } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { basename, dirname, isAbsolute } from 'node:path'
+import { imageMime, MAX_IMAGE_BYTES } from '../shared/attachments'
 import { open, readFile, writeFile, mkdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -20,6 +21,7 @@ import {
   type PermissionModeChoice,
   type PermissionVerdict,
   type ChangeRefResult,
+  type PickedAttachments,
   type StartSessionOptions,
   type StartSideOptions,
   type StartSideResult
@@ -1152,6 +1154,37 @@ function registerIpc(): void {
     if (!picked || !(await files.grant(handleId, 'file', picked))) return null
     const r = await files.resolveAllowed(handleId, picked, { consumer: 'file', operation: 'read-file' })
     return r.ok ? r.path : null
+  })
+  // An image comes back as bytes because the sandboxed renderer can't read a path. Every other path is only
+  // returned, so the renderer classifies it exactly as it does a dropped one.
+  handle(IpcChannels.pickAttachments, async (_e, handleId: unknown): Promise<PickedAttachments | null> => {
+    const cwd = typeof handleId === 'string' ? manager.cwd(handleId) : null
+    if (!mainWindow || cwd === null) return null
+    const res = await dialog.showOpenDialog(mainWindow, {
+      buttonLabel: 'Attach',
+      defaultPath: cwd,
+      // Windows and Linux dialogs pick files or folders, never both.
+      properties: process.platform === 'darwin' ? ['openFile', 'openDirectory', 'multiSelections'] : ['openFile', 'multiSelections']
+    })
+    if (res.canceled) return null
+    const picked: PickedAttachments = { images: [], paths: [], refused: [] }
+    const read = await Promise.all(
+      res.filePaths.map(async (path): Promise<string | PickedAttachments['images'][number] | PickedAttachments['refused'][number]> => {
+        const mime = imageMime(path)
+        const s = mime ? await stat(path).catch(() => null) : null
+        if (!mime || s?.isDirectory()) return path
+        const name = basename(path)
+        if (s && s.size > MAX_IMAGE_BYTES) return { name, reason: 'too-large' as const }
+        const bytes = await readFile(path).catch(() => null)
+        return bytes ? { name, mime, bytes } : { name, reason: 'unreadable' as const }
+      })
+    )
+    for (const r of read) {
+      if (typeof r === 'string') picked.paths.push(r)
+      else if ('mime' in r) picked.images.push(r)
+      else picked.refused.push(r)
+    }
+    return picked
   })
 
   // The sources readConfig returns are the only files the editor may open without a session.

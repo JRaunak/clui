@@ -95,6 +95,7 @@ const api: CluiApi = {
   saveSurfaces: (handleId, save) => ipcRenderer.invoke(IpcChannels.saveSurfaces, handleId, save),
   saveSurfacesSync: (handleId, save) => void ipcRenderer.sendSync(IpcChannels.saveSurfacesSync, handleId, save),
   chooseSurfaceFile: (handleId, defaultPath) => ipcRenderer.invoke(IpcChannels.chooseSurfaceFile, handleId, defaultPath),
+  pickAttachments: (handleId) => ipcRenderer.invoke(IpcChannels.pickAttachments, handleId),
   readConfig: (cwd: string | null) => ipcRenderer.invoke(IpcChannels.readConfig, cwd),
   openInEditor: (handleId: string | null, filePath: string, line?: number) => ipcRenderer.invoke(IpcChannels.openInEditor, handleId, filePath, line),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.openExternal, url),

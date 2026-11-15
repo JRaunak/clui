@@ -4,7 +4,6 @@ import { paneItems, type PaneItem, type PaneItemKey } from '../../lib/paneItems'
 import { agentCount, hasAgents, runningAgents } from '../../lib/agents'
 import { hasWorkflows, runningWorkflows, workflowRows } from '../../lib/workflow'
 import { requestSurfaceFocus, takeSurfaceFocus } from '../../lib/surfaceFocus'
-import { SIDE_REFUSAL } from '../../lib/side'
 import { showSide } from '../../lib/sideEntry'
 import { useEscape } from '../../lib/useEscape'
 import { usePane } from '../Stage'
@@ -106,8 +105,7 @@ export function usePaneEntries(): PaneEntry[] {
     if (!cwd) return []
     const agents = agentsOffered ? { running: agentsRunning, total: agentsTotal } : undefined
     const workflows = workflowsOffered ? { running: workflowsRunning, total: workflowsTotal } : undefined
-    const sideUnavailable = sideRefused ? SIDE_REFUSAL[sideRefused] : undefined
-    return paneItems({ cwd, home: window.clui.homeDir, changes, browser, treeOpen, changesOpen, agents, workflows, sideUnavailable }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) }))
+    return paneItems({ cwd, home: window.clui.homeDir, changes, browser, treeOpen, changesOpen, agents, workflows, side: !sideRefused }).map((it) => ({ ...it, Glyph: GLYPH[it.key], run: () => runPaneItem(it.key, cwd) }))
   }, [cwd, changes, browser, treeOpen, changesOpen, agentsOffered, agentsRunning, agentsTotal, workflowsOffered, workflowsRunning, workflowsTotal, sideRefused])
 }
 
@@ -153,11 +151,10 @@ export function PanePicker(): JSX.Element {
                 {...(i === 0 ? { 'data-pane-title': '' } : {})}
                 aria-description={it.description}
                 aria-keyshortcuts={it.keys}
-                aria-disabled={!!it.unavailable || undefined}
                 onClick={it.run}
-                className={`relative flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-left text-label -outline-offset-2 pointer-fine:hover:bg-control-hover focus-visible:bg-control-hover ${it.unavailable ? 'cursor-default text-dim' : 'text-content'}`}
+                className="relative flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-left text-label text-content -outline-offset-2 pointer-fine:hover:bg-control-hover focus-visible:bg-control-hover"
               >
-                <it.Glyph className={`h-3.5 w-3.5 shrink-0 ${it.unavailable ? 'text-faint' : 'text-dim'}`} />
+                <it.Glyph className="h-3.5 w-3.5 shrink-0 text-dim" />
                 <span className="min-w-0 flex-1 truncate">{it.label}</span>
                 {it.meta && (
                   <span aria-hidden="true" title={it.meta} className={`min-w-0 max-w-[55%] truncate text-meta text-dim ${it.mono ? 'font-mono' : ''}`}>

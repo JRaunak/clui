@@ -135,6 +135,13 @@ export type ChangeRefResult =
   | { ok: true; ref: Extract<RefInput, { kind: 'change' }>; bytes: number }
   | { ok: false; reason: 'changed' | 'empty' | 'too-large' | 'denied' | 'unavailable'; lines?: number; bytes?: number }
 
+/** What the composer's attach dialog picked, in pick order. `paths` holds everything that isn't an image. */
+export interface PickedAttachments {
+  images: { name: string; mime: string; bytes: Uint8Array<ArrayBuffer> }[]
+  paths: string[]
+  refused: { name: string; reason: 'too-large' | 'unreadable' }[]
+}
+
 export type ChangeRefPeek = { ok: true; text: string; side: ChangeSide; old?: LineRange; new?: LineRange; bytes: number } | { ok: false }
 
 export interface AnnotationOrder { keep: number[]; shown: [pinId: number, n: number][]; room: number }
@@ -310,6 +317,9 @@ export interface CluiApi {
   /** The native open dialog at `defaultPath`. Main grants this session exactly the file chosen and returns its
    *  canonical path; null when cancelled. */
   chooseSurfaceFile: (handleId: string, defaultPath: string) => Promise<string | null>
+  /** The native open dialog for the composer's attach button, at the session folder. Null when cancelled or the
+   *  session is gone. Grants nothing. */
+  pickAttachments: (handleId: string) => Promise<PickedAttachments | null>
   /** Read the Customizations bundle (agents/skills/hooks/mcp) for a workspace. */
   readConfig: (cwd: string | null) => Promise<ConfigBundle>
   /** Open a file in the configured editor: one the session may see, or with a null handle, a
@@ -607,6 +617,7 @@ export const IpcChannels = {
   /** SYNCHRONOUS (ipcRenderer.sendSync), from beforeunload. */
   saveSurfacesSync: 'clui:saveSurfacesSync',
   chooseSurfaceFile: 'clui:chooseSurfaceFile',
+  pickAttachments: 'clui:pickAttachments',
   readConfig: 'clui:readConfig',
   openInEditor: 'clui:openInEditor',
   openExternal: 'clui:openExternal',

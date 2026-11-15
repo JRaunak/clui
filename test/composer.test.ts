@@ -1,6 +1,6 @@
 // The composer's `@` picks and drops: the token a chip replaces leaves no fragment or double space, the Open in pane
 // rows preview the chip they add, and a drop splits into chips and @ text the way main authorized it.
-import { paneRows, removeToken, routeDrop } from '../src/renderer/src/lib/composerRefs.ts'
+import { paneRows, removeToken, routeDrop, spliceText, splitFiles } from '../src/renderer/src/lib/composerRefs.ts'
 import { dropText, noticeLead, removalSpoken, removedText, skippedNote } from '../src/renderer/src/lib/refCopy.ts'
 import { parseSide } from '../src/renderer/src/lib/side.ts'
 import { equal, ok } from './support/harness.mjs'
@@ -75,12 +75,31 @@ const drop = routeDrop(['/w/a.ts', '/w/src', '/elsewhere/b.ts', '/w/denied.ts'],
 ok(drop.refs.length === 2 && drop.refs[0].kind === 'file' && drop.refs[1].kind === 'folder', 'drop: authorized paths become chips in order')
 equal(drop.mentions.join(' '), '@/elsewhere/b.ts @denied.ts', 'drop: the rest stay @ text, relative under the folder')
 equal(drop.outside, 1, 'drop: a refused path inside the folder is not counted as outside')
-equal(dropText([], { inside: 1, outside: 0 }, [], 0), '1 file was added as an @ mention.', 'drop text: a refused path inside the folder')
+// A path holding a literal `"` is unhandled: the quoted mention would end early.
+equal(routeDrop(['/w/my notes/a.md', '/else where'], [null, null], '/w').mentions.join(' '), '@"my notes/a.md" @"/else where"', 'drop: a spaced path is quoted so the CLI expands it')
+equal(dropText([], { inside: 1, outside: 0 }, [], 0), '1 item was added as an @ mention.', 'drop text: a refused path inside the folder')
+
+{
+  const file = (name: string, type: string): File => new File(['x'], name, { type })
+  const onDisk = new Map<File, string>()
+  const png = file('a.png', 'image/png')
+  const src = file('b.ts', 'text/plain')
+  const blob = file('pasted.txt', 'text/plain')
+  const svg = file('c.svg', 'image/svg+xml')
+  const pastedSvg = file('d.svg', 'image/svg+xml')
+  onDisk.set(png, '/w/a.png').set(src, '/w/b.ts').set(svg, '/w/c.svg')
+  const split = splitFiles([png, src, blob, svg, pastedSvg], (f) => onDisk.get(f) ?? '')
+  ok(split.inline.length === 3 && split.inline[0] === png && split.inline[1] === blob && split.inline[2] === pastedSvg, 'split: a supported image inlines even with a path, as does any file with none')
+  equal(split.paths.join(), '/w/b.ts,/w/c.svg', 'split: any other file goes by its path, an unsupported image too, as a pick sends it')
+}
+equal(JSON.stringify(spliceText('the folder', 10, '@src ')), '{"text":"the folder @src ","caret":16}', 'mention: spaced off the word before the caret')
+equal(JSON.stringify(spliceText('see  now', 4, '@a ')), '{"text":"see @a  now","caret":7}', 'mention: no extra space after whitespace')
+equal(JSON.stringify(spliceText('now', 0, '@a ')), '{"text":"@a now","caret":3}', 'mention: none at the start')
 
 const f = (path: string): any => ({ kind: 'file', path })
 equal(dropText([f('/w/a.ts')], { inside: 0, outside: 0 }, [], 0), 'Added a.ts to the message.', 'drop text: one chip')
-equal(dropText([f('/w/a.ts'), f('/w/b.ts')], { inside: 0, outside: 2 }, [f('/w/c.ts')], 0), 'Added 2 references to the message. 2 files outside this folder were added as @ mentions. 1 was already attached.', 'drop text: chips, mentions, a duplicate')
-equal(dropText([], { inside: 0, outside: 1 }, [], 0), '1 file outside this folder was added as an @ mention.', 'drop text: one mention')
+equal(dropText([f('/w/a.ts'), f('/w/b.ts')], { inside: 0, outside: 2 }, [f('/w/c.ts')], 0), 'Added 2 references to the message. 2 items outside the session folder were added as @ mentions. 1 was already attached.', 'drop text: chips, mentions, a duplicate')
+equal(dropText([], { inside: 0, outside: 1 }, [], 0), '1 item outside the session folder was added as an @ mention.', 'drop text: one mention')
 equal(dropText([], { inside: 0, outside: 0 }, [f('/w/c.ts')], 0), 'Already attached: c.ts', 'drop text: a lone duplicate names it')
 equal(dropText([f('/w/a.ts')], { inside: 0, outside: 0 }, [], 2), `Added a.ts to the message. ${skippedNote(2)}`, 'drop text: the cap')
 equal(skippedNote(1), '20 references max. 1 file was not added.', 'drop text: one skipped')

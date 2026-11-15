@@ -19,15 +19,12 @@
  *    surfaces it via the notice banner), never silently dropped.
  * Nothing commits until the user hits Send (staged as removable pills).
  */
-import type { WireAttachment } from '../../../shared/ipc'
-
-/** Media types the vision model accepts. */
-const ACCEPTED = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+import { IMAGE_TYPES as ACCEPTED, MAX_IMAGE_BYTES as MAX_BYTES } from '../../../shared/attachments'
+import type { PickedAttachments, WireAttachment } from '../../../shared/ipc'
 
 /** Downscale target: the longest edge, in px. Matches the model's own resample. */
 const MAX_EDGE = 1568
 const PREVIEW_EDGE = 256
-const MAX_BYTES = 30 * 1024 * 1024
 /** PDF hard cap (bytes): the Anthropic document limit is 32 MB; 20 MB keeps a single
  *  turn sane on cost (a PDF bills ~1.5–3k tokens per page, every page). */
 const MAX_PDF_BYTES = 20 * 1024 * 1024
@@ -65,6 +62,10 @@ export interface ProcessedImage {
 
 /** Thrown for a rejected file; `message` is user-facing. */
 export class ImageError extends Error {}
+
+/** A picked image main didn't send, said as a dropped one would be. */
+export const imageRefusal = ({ name, reason }: PickedAttachments['refused'][number]): string =>
+  reason === 'too-large' ? `${name || 'That image'} is too large (max 30 MB).` : `Could not read ${name || 'the image file'}.`
 
 let idCounter = 0
 function nextId(): string {
@@ -129,7 +130,7 @@ export async function processImageFile(file: File): Promise<ProcessedImage> {
     )
   }
   if (file.size > MAX_BYTES) {
-    throw new ImageError(`${file.name || 'That image'} is too large (max 30 MB).`)
+    throw new ImageError(imageRefusal({ name: file.name, reason: 'too-large' }))
   }
 
   const originalUrl = await readAsDataUrl(file)

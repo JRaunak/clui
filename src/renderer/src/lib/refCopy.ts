@@ -233,8 +233,8 @@ export function dropText(added: readonly RefInput[], mentions: { inside: number;
   if (dupes.length === 1 && !added.length && !inside && !outside && !skipped) return `Already attached: ${spokenRef(dupes[0])}`
   return [
     added.length === 1 ? addedText(added[0]) : added.length ? `Added ${added.length} references to the message.` : '',
-    outside === 1 ? '1 file outside this folder was added as an @ mention.' : outside ? `${outside} files outside this folder were added as @ mentions.` : '',
-    inside === 1 ? '1 file was added as an @ mention.' : inside ? `${inside} files were added as @ mentions.` : '',
+    outside === 1 ? '1 item outside the session folder was added as an @ mention.' : outside ? `${outside} items outside the session folder were added as @ mentions.` : '',
+    inside === 1 ? '1 item was added as an @ mention.' : inside ? `${inside} items were added as @ mentions.` : '',
     dupes.length ? `${dupes.length} ${dupes.length === 1 ? 'was' : 'were'} already attached.` : '',
     skipped ? skippedNote(skipped) : ''
   ]

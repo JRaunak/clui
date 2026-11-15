@@ -6,7 +6,6 @@ import {
   type KeyboardEvent,
   type ClipboardEvent,
   type DragEvent,
-  type ChangeEvent,
   type CSSProperties
 } from 'react'
 import { chipMode, effectiveMode, sidePending, sideShown, useActive, useSession, EMPTY_ATTACHMENTS, EMPTY_NOTICES, EMPTY_REFS, type SendAttachment } from '../store'
@@ -37,8 +36,8 @@ import {
   IconShield,
   IconTarget
 } from './Icon'
-import { processDroppedFiles, toWireAttachment, type ProcessedAttachment } from '../lib/images'
-import { routeDrop } from '../lib/composerRefs'
+import { imageRefusal, processDroppedFiles, toWireAttachment, type ProcessedAttachment } from '../lib/images'
+import { routeDrop, spliceText, splitFiles } from '../lib/composerRefs'
 import { tilde } from '../lib/tree'
 import { basename, useProjectDirs } from '../lib/useProjectDirs'
 import { dropText, skippedNote } from '../lib/refCopy'
@@ -81,7 +80,6 @@ export function Composer(): JSX.Element {
   const [caret, setCaret] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   // Depth counter so nested dragenter/dragleave (over child elements) don't flicker the
   // drop highlight; only the outermost enter/leave toggles it.
   const dragDepth = useRef(0)
@@ -132,24 +130,15 @@ export function Composer(): JSX.Element {
   //    an @path token at the caret (relative under cwd, else absolute), which the CLI resolves itself.
   //  - A file with no resolvable path (a pasted screenshot Blob) can't be referenced by path, so
   //    fall back to inlining its bytes so paste still works.
-  const addFiles = async (files: File[]): Promise<void> => {
-    if (files.length === 0 || !handleId) return
-    // Bind to the handle the drop started on, so a conversion that finishes after the user
-    // switched sessions lands in this session's draft, not whichever is active then.
-    const h = handleId
-    const inline: File[] = []
-    const paths: string[] = []
-    for (const file of files) {
-      const abs = file.type.startsWith('image/') ? '' : window.clui.getPathForFile(file)
-      if (abs) paths.push(abs)
-      else inline.push(file)
-    }
+  // `h` is the handle the drop started on, so a conversion that finishes after the user switched sessions lands in
+  // this session's draft. False when that session is gone.
+  const attach = async (h: string, inline: File[], paths: string[], refused: string[] = []): Promise<boolean> => {
     const [kinds, processed] = await Promise.all([
       paths.length ? window.clui.classifyRefPaths(h, paths).catch(() => []) : [],
       inline.length ? processDroppedFiles(inline) : null
     ])
     const slice = useSession.getState().sessions[h]
-    if (!slice) return
+    if (!slice) return false
     const { refs: inputs, mentions, outside } = routeDrop(paths, kinds, slice.cwd)
     const results = addToDraft(h, inputs, skippedNote)
     if (mentions.length) insertText(h, mentions.join(' ') + ' ')
@@ -161,7 +150,25 @@ export function Composer(): JSX.Element {
     )
     if (said) useSession.getState().announceRefs(h, said)
     if (processed?.attachments.length) addDraftAttachments(h, processed.attachments)
-    if (processed?.errors.length) setNotice(processed.errors.join(' '))
+    const errors = [...refused, ...(processed?.errors ?? [])]
+    if (errors.length) setNotice(errors.join(' '))
+    return true
+  }
+
+  const addFiles = (files: File[]): void => {
+    if (!files.length || !handleId) return
+    const { inline, paths } = splitFiles(files, window.clui.getPathForFile)
+    void attach(handleId, inline, paths)
+  }
+
+  const pickFiles = async (): Promise<void> => {
+    if (!handleId) return
+    const h = handleId
+    const picked = await window.clui.pickAttachments(h).catch(() => null)
+    if (!picked) return
+    const images = picked.images.map((i) => new File([i.bytes], i.name, { type: i.mime }))
+    const alive = await attach(h, images, picked.paths, picked.refused.map(imageRefusal))
+    if (alive && h === useSession.getState().activeHandleId) textareaRef.current?.focus()
   }
 
   // After an await: reads the draft now, so typing during the IPC isn't overwritten. Splices at the textarea's
@@ -169,12 +176,12 @@ export function Composer(): JSX.Element {
   const insertText = (h: string, insert: string): void => {
     const st = useSession.getState()
     const cur = st.sessions[h]?.draftText ?? ''
-    const ta = textareaRef.current
-    if (h !== st.activeHandleId || !ta) return setDraftText(h, cur + (cur && !/\s$/.test(cur) ? ' ' : '') + insert)
-    const at = Math.min(ta.selectionStart ?? cur.length, cur.length)
-    setDraftText(h, cur.slice(0, at) + insert + cur.slice(at))
-    setCaret(at + insert.length)
-    requestAnimationFrame(() => ta.setSelectionRange(at + insert.length, at + insert.length))
+    const ta = h === st.activeHandleId ? textareaRef.current : null
+    const next = spliceText(cur, ta ? Math.min(ta.selectionStart ?? cur.length, cur.length) : cur.length, insert)
+    setDraftText(h, next.text)
+    if (!ta) return
+    setCaret(next.caret)
+    requestAnimationFrame(() => ta.setSelectionRange(next.caret, next.caret))
   }
 
   const removeAttachment = (id: string): void => {
@@ -187,7 +194,7 @@ export function Composer(): JSX.Element {
     const files = Array.from(e.clipboardData.files)
     if (files.length === 0) return
     e.preventDefault()
-    void addFiles(files)
+    addFiles(files)
   }
 
   const onDrop = (e: DragEvent<HTMLDivElement>): void => {
@@ -195,7 +202,7 @@ export function Composer(): JSX.Element {
     dragDepth.current = 0
     setDragOver(false)
     const files = Array.from(e.dataTransfer.files)
-    if (files.length) void addFiles(files)
+    addFiles(files)
   }
 
   const onDragEnter = (e: DragEvent<HTMLDivElement>): void => {
@@ -212,12 +219,6 @@ export function Composer(): JSX.Element {
   const onDragLeave = (): void => {
     dragDepth.current = Math.max(0, dragDepth.current - 1)
     if (dragDepth.current === 0) setDragOver(false)
-  }
-
-  const onPickFiles = (e: ChangeEvent<HTMLInputElement>): void => {
-    const files = e.target.files ? Array.from(e.target.files) : []
-    void addFiles(files)
-    e.target.value = ''
   }
 
   // Apply an autocomplete pick: set text + restore the caret to just after the inserted
@@ -429,24 +430,14 @@ export function Composer(): JSX.Element {
             />
           </div>
           <div className="flex min-w-0 items-center">
-             {/* Attach-file button (keyboard/a11y affordance for paste + drop). */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={onPickFiles}
-              tabIndex={-1}
-              aria-hidden="true"
-            />
             <button
               type="button"
               data-ui="attach-button"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-control text-dim transition-colors hover:bg-control-hover hover:text-content disabled:cursor-default disabled:opacity-50"
-              onClick={() => fileInputRef.current?.click()}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-control text-dim transition-colors pointer-fine:hover:bg-control-hover pointer-fine:hover:text-content disabled:cursor-default disabled:opacity-50"
+              onClick={() => void pickFiles()}
               disabled={!hasSession}
-              title="Attach an image or file"
-              aria-label="Attach an image or file"
+              title="Attach files or folders"
+              aria-label="Attach files or folders"
             >
               <IconPlus className="h-4 w-4" />
             </button>

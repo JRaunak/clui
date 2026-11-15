@@ -471,8 +471,7 @@ export function SurfaceTabs(): JSX.Element {
             hintTitle: it.meta,
             description: it.description,
             keys: it.keys,
-            returnFocus: it.key === 'open-file',
-            unavailable: it.unavailable
+            returnFocus: it.key === 'open-file'
           }))}
           trigger={{ 'data-ui': 'pane-add', 'aria-label': 'Open in pane', title: 'Open in pane', className: `${PANE_BTN} ml-0.5 shrink-0` }}
         >
