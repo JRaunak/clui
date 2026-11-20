@@ -10,6 +10,8 @@ import { HOOKS_TOKEN } from '../src/shared/settings.ts'
 import { sidePhase, sideThreadText, sideTools, sideTurns, unhanded } from '../src/renderer/src/lib/side.ts'
 import { MAX_TEXT_BYTES, toWireAttachment } from '../src/renderer/src/lib/images.ts'
 import { sessionStatusOf } from '../src/renderer/src/lib/sessionStatus.ts'
+import { noticeCopy } from '../src/renderer/src/lib/denialNotice.ts'
+import { EventMapper } from '../src/main/cli/event-mapper.ts'
 
 // The store's IPC is stubbed: each call is recorded and resolves true unless `replies` overrides it.
 const calls: { name: string; args: unknown[] }[] = []
@@ -1743,4 +1745,55 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   reset({ model: null, sessionId: null, draftText: 'gone' })
   st().applyEvent('h1', { type: 'process-exit', code: 1 })
   ok(!cur(), 'pre-init exit: a fresh failed launch is dropped')
+}
+
+// A safety notice advises a mode switch only outside Interactive, where some safety denials can be approved.
+{
+  const d = (reason?: string): any => ({ toolName: 'Write', input: { file_path: '/c/.credentials.json' }, source: 'safety', ...(reason ? { reason } : {}) })
+  const tokens = 'This would change Claude Code’s sign-in tokens'
+  const one = noticeCopy('safety', [d(tokens)], true)
+  equal(one.headline, '1 action stopped by a safety check', 'safety notice: the headline keeps its wording')
+  equal(one.hint, `${tokens}.`, 'safety notice: one denial in Interactive shows its reason, closed with a period')
+  ok(one.reasonInHint === true, 'safety notice: a reason in the hint is flagged so its row skips it')
+  equal(noticeCopy('safety', [d('Blocked!')], true).hint, 'Blocked!', 'safety notice: a reason that already ends a sentence is kept as is')
+  equal(noticeCopy('safety', [d(tokens), d('other')], true).hint, 'Claude Code blocks these in every permission mode.', 'safety notice: several in Interactive say no mode allows them')
+  const bare = noticeCopy('safety', [d()], true)
+  ok(bare.hint === 'Claude Code blocks this in every permission mode.' && !bare.reasonInHint, 'safety notice: one in Interactive with no reason')
+  ok(!noticeCopy('safety', [d(tokens), d('other')], true).reasonInHint, 'safety notice: several keep their reasons in the rows')
+  equal(noticeCopy('safety', [d(tokens)], false).hint, 'To approve it yourself, switch to Interactive, then ask Claude to try again. Some actions stay blocked in every mode.', 'safety notice: outside Interactive the switch advice hedges')
+  equal(noticeCopy('safety', [d(), d()], false).headline, '2 actions stopped by a safety check', 'safety notice: the count headline')
+  ok(!/Interactive/.test(noticeCopy('safety', [d(), d()], true).hint ?? ''), 'safety notice: never advises Interactive inside Interactive')
+  equal(noticeCopy('classifier', [d()], true).hint, 'To approve it yourself, switch to Interactive, then ask Claude to try again.', 'classifier notice: copy unchanged')
+  ok(!noticeCopy('rule', [d()], false).hint, 'rule notice: still no hint')
+}
+
+// The store fixes the turn's mode with its denials, so a later switch doesn't reword the notice.
+{
+  const turn = (over: Record<string, unknown>): void => {
+    reset({ modelMode: null, ...over, messages: [{ id: 'a', role: 'assistant', text: 'x', thinking: '', tools: [], blocks: [] }] })
+    st().applyEvent('h1', res({ denials: [{ toolName: 'Write', input: {}, source: 'safety' }] }))
+  }
+  turn({ modeChoice: 'default', permissionMode: 'default' })
+  ok(cur().messages[0].denialsInInteractive === true, 'store: denials from an Interactive turn are marked')
+  useSession.setState({ sessions: { h1: { ...cur(), modeChoice: 'dontAsk', permissionMode: 'dontAsk' } } })
+  ok(cur().messages[0].denialsInInteractive === true, 'store: a later mode switch keeps the mark')
+  turn({ modeChoice: 'dontAsk', permissionMode: 'dontAsk' })
+  ok(!('denialsInInteractive' in cur().messages[0]), 'store: denials outside Interactive are unmarked')
+  turn({ modeChoice: 'default', permissionMode: 'auto' })
+  ok(!('denialsInInteractive' in cur().messages[0]), 'store: the reported mode outranks the pick')
+}
+
+// A Stop while a Bedrock credential_process hangs: "remote-cancel" reaches no bubble, error or side failure.
+{
+  reset({ busy: true, messages: [{ id: 'u', role: 'user', text: 'hi', thinking: '', tools: [], blocks: [] }] })
+  const m = new EventMapper()
+  m.markInterrupted()
+  const evs = [
+    { type: 'assistant', message: { id: 'm1', model: '<synthetic>', content: [{ type: 'text', text: 'remote-cancel' }] }, is_api_error_message: true, session_id: 's' },
+    { type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'model_error', result: 'remote-cancel', session_id: 's' }
+  ].flatMap((e) => m.map(e))
+  for (const e of evs) st().applyEvent('h1', e as any)
+  ok(!JSON.stringify(cur().messages).includes('remote-cancel'), 'store: remote-cancel reaches no message')
+  ok(cur().lastError === null && !cur().busy, 'store: a stopped turn ends with no error')
+  equal(sidePhase({ ...cur(), side: { ready: true } }), 'idle', 'side phase: a stopped turn is not failed')
 }

@@ -154,8 +154,8 @@ const EPHEMERAL_DISALLOWED_TOOLS = [
 
 /** Bounded wait for the initialize ACK. The first launch is cold (Bedrock auth + model-list
  *  warm-up precede the ACK) and can take tens of seconds; a stall past this is a failed
- *  start, not slow reasoning. */
-const INIT_TIMEOUT_MS = 60_000
+ *  start, not slow reasoning. A hung AWS sign-in helper has been seen to hold the ACK to 60.2s. */
+const INIT_TIMEOUT_MS = 64_000
 
 export class ClaudeSession extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null
@@ -266,7 +266,7 @@ export class ClaudeSession extends EventEmitter {
         ? { permissions: { blockWritesOutsideWorkingDirectories: true } }
         : {}),
       ...(this.opts.disabledConfig?.includes(HOOKS_TOKEN) ? { disableAllHooks: true } : {}),
-      ...(this.opts.side ? { hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: this.opts.side.hook }] }] } } : {})
+      ...(this.opts.side ? { hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: this.opts.side.hook, onFailure: 'block' }] }] } } : {})
     }
     if (Object.keys(flagSettings).length) args.push('--settings', JSON.stringify(flagSettings))
     // Ahead of the variadic flags below, which would swallow it as a list item.

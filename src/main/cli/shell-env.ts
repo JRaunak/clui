@@ -50,11 +50,19 @@ const AUTH_EXACT = new Set([
   'HTTP_PROXY',
   'HTTPS_PROXY',
   'NO_PROXY',
+  'ALL_PROXY',
   'http_proxy',
   'https_proxy',
   'no_proxy',
+  'all_proxy',
   'NODE_EXTRA_CA_CERTS',
-  'SSL_CERT_FILE'
+  'NODE_USE_SYSTEM_CA',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  // Stream timeouts a user raises for a slow proxy or gateway; outside the CLAUDE_CODE_ prefix.
+  'API_TIMEOUT_MS',
+  'CLAUDE_STREAM_IDLE_TIMEOUT_MS',
+  'CLAUDE_ENABLE_STREAM_WATCHDOG'
 ])
 /**
  * Claude keys that are per-session RUNTIME markers, not auth. These must NOT be

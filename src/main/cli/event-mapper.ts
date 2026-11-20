@@ -400,8 +400,10 @@ export class EventMapper {
             remedy: env.api_error_params?.remedy,
             text: content.map((c) => (c && c.type === 'text' && typeof c.text === 'string' ? c.text : '')).join('')
           }
-          // A classified error is rewritten at the result, so its raw text never shows as a bubble.
-          if (this.classifiedError()) return this.usageEvent(env.message?.usage)
+          // A classified error is rewritten at the result, so its raw text never shows as a bubble. A Stop
+          // while the request is still pending (a hung AWS credential_process) also comes back as an API
+          // error, but the turn ends as stopped, so there is no failure to show.
+          if (this.classifiedError() || this.interrupted) return this.usageEvent(env.message?.usage)
         }
         // Slash-command output (/usage, /cost, /context, …) arrives as a bare
         // snapshot with text but no message_start/text_delta. If we streamed no

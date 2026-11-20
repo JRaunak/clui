@@ -266,6 +266,28 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(JSON.stringify(tagged) === JSON.stringify(plain), 'mapper: unclassified API error output is unchanged')
 }
 
+// Stop while a Bedrock credential_process hangs: the CLI ends the turn with a synthetic API-error snapshot
+// and an errored result, shaped as the 2.1.329 audit recorded them. It reads as stopped, with no bubble and no box.
+{
+  const envs = [
+    { type: 'system', subtype: 'init', model: 'us.anthropic.claude-sonnet-4-6', session_id: 's' },
+    {
+      type: 'assistant',
+      message: { id: 'm1', model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: 'remote-cancel' }], usage: { input_tokens: 0, output_tokens: 0 } },
+      is_api_error_message: true,
+      session_id: 's'
+    },
+    { type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'model_error', result: 'remote-cancel', session_id: 's' }
+  ]
+  const m = new EventMapper()
+  m.markInterrupted()
+  const out = feed(m, envs)
+  ok(!out.some((e) => e.type === 'message-start' || e.type === 'text-delta' || e.type === 'error'), 'mapper: a Stop during a pending request shows no API-error bubble or box')
+  equal(out.find((e) => e.type === 'result')?.endReason?.kind, 'stopped', 'mapper: a Stop during a pending request reads as stopped')
+  const plain = feed(new EventMapper(), envs)
+  ok(plain.some((e) => e.type === 'text-delta' && e.text === 'remote-cancel'), 'mapper: without a Stop the same API error still shows its text')
+}
+
 // Copy carries no dash, en dash or ellipsis
 {
   const copies = [

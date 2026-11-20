@@ -280,6 +280,9 @@ export interface ChatMessage {
   peer?: PeerMessage
   /** Rule-denied tool calls this turn, rendered as a notice under the turn. */
   denials?: PermissionDenial[]
+  /** The turn ended in Interactive, so its safety denials are ones no mode allows. Set at the result,
+   *  so switching modes afterwards, as the notice may advise, doesn't change what it says. */
+  denialsInInteractive?: true
   /** This turn's usage breakdown, rendered as a disclosure trailer. Absent on
    *  rebuilt-from-disk history (not persisted). */
   usage?: TurnUsage
@@ -4136,7 +4139,7 @@ export const useSession = create<SessionStore>((set, get) => ({
             messages[idx] = {
               ...(guessed ? rest : host),
               ...(e.usage ? { usage: e.usage } : {}),
-              ...(e.denials?.length ? { denials: e.denials } : {}),
+              ...(e.denials?.length ? { denials: e.denials, ...(effectiveMode(slice).mode === 'default' ? { denialsInInteractive: true as const } : {}) } : {}),
               turnEnd
             }
             // A call the turn left without a result ended with it: stopped only when the user ended

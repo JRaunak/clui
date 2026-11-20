@@ -31,8 +31,9 @@ import { highlightOf } from '../lib/toolHighlight'
 import { openFileAt, useLinkRoot } from '../lib/openLink'
 import { formatCost } from '../lib/formatCost'
 import { turnEndLine, wokenLine } from '../lib/turnEnd'
-import { isListPriced, type DenialSource, type PermissionDenial, type TurnUsage } from '../../../shared/events'
-import { deriveModelInfo, PERMISSION_MODE_LABELS } from '../../../shared/settings'
+import { isListPriced, type PermissionDenial, type TurnUsage } from '../../../shared/events'
+import { noticeCopy, type NoticeSource } from '../lib/denialNotice'
+import { deriveModelInfo } from '../../../shared/settings'
 
 export { summarizeInput } from '../lib/instrument'
 
@@ -166,7 +167,7 @@ export function MessageView({ message, hideThinking = false, rebuilt = false }: 
           )}
           {isUser && message.hookNotes && <HookNotes notes={message.hookNotes} />}
           {isUser && message.blocked && <BlockedPromptNotice prompt={parseRefs(message.text).rest} blocked={message.blocked} />}
-          {!isUser && message.denials && message.denials.length > 0 && <BlockedActions denials={message.denials} />}
+          {!isUser && message.denials && message.denials.length > 0 && <BlockedActions denials={message.denials} interactive={!!message.denialsInInteractive} />}
           {!isUser && (message.turnEnd || message.usage) && <TurnFooter message={message} />}
         </div>
       </FileLinkContext.Provider>
@@ -239,38 +240,11 @@ function dedupeDenials(denials: PermissionDenial[]): DeniedRow[] {
   return rows
 }
 
-type NoticeSource = Exclude<DenialSource, 'you'> | undefined
-
 const NOTICE_ORDER: NoticeSource[] = ['safety', 'classifier', 'rule', undefined]
-
-function noticeCopy(source: NoticeSource, n: number): { headline: string; label: string; hint?: string } {
-  const one = n === 1
-  const count = one ? '1 action' : `${n} actions`
-  const interactive = PERMISSION_MODE_LABELS.default
-  const adaptive = PERMISSION_MODE_LABELS.auto
-  switch (source) {
-    case 'safety':
-      return {
-        headline: `${count} stopped by a safety check`,
-        label: 'Actions stopped by a safety check',
-        hint: `Only you can approve ${one ? 'this' : 'these'}. Switch to ${interactive}, then ask Claude to try again.`
-      }
-    case 'classifier':
-      return {
-        headline: `${count} held back by ${adaptive} mode`,
-        label: `Actions held back by ${adaptive} mode`,
-        hint: `To approve ${one ? 'it' : 'them'} yourself, switch to ${interactive}, then ask Claude to try again.`
-      }
-    case 'rule':
-      return { headline: `${count} blocked by your permission settings`, label: 'Actions blocked by your permission settings' }
-    default:
-      return { headline: `${count} blocked`, label: 'Blocked actions' }
-  }
-}
 
 /** One notice per source, since each carries different guidance. The user's own gate Deny gets
  *  none: repeating their answer back reads as if something else intervened. */
-function BlockedActions({ denials }: { denials: PermissionDenial[] }): JSX.Element | null {
+function BlockedActions({ denials, interactive }: { denials: PermissionDenial[]; interactive: boolean }): JSX.Element | null {
   const groups = NOTICE_ORDER.map((source) => ({ source, denials: denials.filter((d) => d.source === source) })).filter(
     (g) => g.denials.length > 0
   )
@@ -278,19 +252,19 @@ function BlockedActions({ denials }: { denials: PermissionDenial[] }): JSX.Eleme
   return (
     <div className="flex flex-col gap-1.5">
       {groups.map((g) => (
-        <BlockedActionsNotice key={g.source ?? 'unknown'} source={g.source} denials={g.denials} />
+        <BlockedActionsNotice key={g.source ?? 'unknown'} source={g.source} denials={g.denials} interactive={interactive} />
       ))}
     </div>
   )
 }
 
 /** Info-blue, not error: a guard or rule acting as designed is not a fault. */
-function BlockedActionsNotice({ source, denials }: { source: NoticeSource; denials: PermissionDenial[] }): JSX.Element {
+function BlockedActionsNotice({ source, denials, interactive }: { source: NoticeSource; denials: PermissionDenial[]; interactive: boolean }): JSX.Element {
   const [open, setOpen] = useState(false)
   const hintId = useId()
   const rows = dedupeDenials(denials)
   const first = rows[0]
-  const { headline, label, hint } = noticeCopy(source, denials.length)
+  const { headline, label, hint, reasonInHint } = noticeCopy(source, denials, interactive)
   const Icon = source === 'safety' || source === 'classifier' ? IconShield : IconShieldOff
   return (
     <section className="rounded-r-md border-l-2 border-info bg-info/7 py-[9px] pl-[13px] pr-3" aria-label={label}>
@@ -344,7 +318,7 @@ function BlockedActionsNotice({ source, denials }: { source: NoticeSource; denia
                 )}
                 {r.count > 1 && <span className="shrink-0 text-faint">×{r.count}</span>}
               </div>
-              {r.reason && <p className="break-words text-dim">{r.reason}</p>}
+              {r.reason && !reasonInHint && <p className="break-words text-dim">{r.reason}</p>}
             </li>
           ))}
         </ul>

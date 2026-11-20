@@ -25,7 +25,8 @@ import { spanAttr, textOf, type Span } from '../lib/markdownDoc'
 import { viaOf, type Via } from '../lib/motion'
 import { useActive } from '../store'
 import { IMAGE_PATHS_MAX, type ImageCap } from '../../../shared/files'
-import { parseUsageReport, UsageCard, parseContextReport, ContextCard } from './CommandOutput'
+import { UsageCard, parseContextReport, ContextCard } from './CommandOutput'
+import { parseUsageReport } from '../lib/usageReport'
 import { MermaidDiagram } from './Mermaid'
 
 type Highlighted = { html: string; used: string | null }
