@@ -119,7 +119,7 @@ assets/       Icon source SVGs
 
 ## Troubleshooting
 
-- **"Not logged in · run /login" in every session.** The `claude` CLI isn't authenticated in the environment Clui launched from. Confirm `claude` works from your terminal, then relaunch Clui.
+- **"You're not signed in to Claude" in every session.** The `claude` CLI found no credentials. Run `claude auth login` in a terminal. For Bedrock or Vertex, export your provider variables (for example `CLAUDE_CODE_USE_BEDROCK=1` and `AWS_PROFILE`) from `~/.zprofile` or `~/.zshrc`: Clui opened from Finder or the Dock reads auth settings from your shell profile. Then start a new session.
 - **App won't launch after `npm install`.** Approve the post-install scripts (see the install warning above), then reinstall.
 - **Gatekeeper blocks the packaged app.** See the unsigned-app warning above.
 - **Type or build errors after pulling changes.** Run `npm install` again, then `npm run typecheck`.

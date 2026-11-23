@@ -171,6 +171,40 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(e2?.message.startsWith("This model isn't enabled"), 'mapper: model-access copy without a known model')
 }
 
+// No credentials (live 2.1.330): the CLI's copy sends the user to /login, which Clui hides
+{
+  const { readFileSync } = await import('node:fs')
+  const envs = readFileSync(new URL('./fixtures/not-logged-in.jsonl', import.meta.url), 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l))
+  const m = new EventMapper()
+  m.map({ type: 'system', subtype: 'init', model: 'claude-opus-5-5', session_id: 's' })
+  const evs = feed(m, envs)
+  const errors = evs.filter((e) => e.type === 'error')
+  ok(
+    errors.length === 1 &&
+      errors[0].message ===
+        "You're not signed in to Claude. Run claude auth login in a terminal, or export your Bedrock or Vertex variables from your shell profile, then start a new session.",
+    'mapper: a missing login reads as Clui sign-in copy'
+  )
+  ok(!evs.some((e) => e.type === 'text-delta' && e.text.includes('Not logged in')), 'mapper: the raw /login text never renders')
+  const other = feed(new EventMapper(), [
+    {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Invalid API key · Fix external API key' }] },
+      error: 'authentication_failed',
+      is_api_error_message: true
+    },
+    { type: 'result', is_error: true, api_error_status: null, result: 'Invalid API key · Fix external API key', session_id: 's' }
+  ])
+  ok(
+    !other.some((e) => e.type === 'error' && e.message.startsWith("You're not signed in")) &&
+      other.some((e) => e.type === 'text-delta' && e.text === 'Invalid API key · Fix external API key'),
+    'mapper: another authentication_failed keeps the CLI text'
+  )
+}
+
 // A switched model is the one named; the next turn starts clean
 {
   const m = new EventMapper()

@@ -138,6 +138,8 @@ interface RawEnvelope {
   /** The result's error category, e.g. 'provider_credentials' for a Bedrock credential or entitlement refusal. */
   api_error?: string | null
   api_error_params?: { remedy?: string }
+  /** An API error envelope's category. 'authentication_failed' covers both a missing login and a Bedrock 403. */
+  error?: string
   total_cost_usd?: number
   modelUsage?: ModelUsage
   /** Usage since the previous result. Unlike modelUsage, it never carries a resumed session's earlier total. */
@@ -398,6 +400,7 @@ export class EventMapper {
           this.apiError = {
             status: env.api_error_status ?? undefined,
             remedy: env.api_error_params?.remedy,
+            category: env.error,
             text: content.map((c) => (c && c.type === 'text' && typeof c.text === 'string' ? c.text : '')).join('')
           }
           // A classified error is rewritten at the result, so its raw text never shows as a bubble. A Stop
@@ -945,6 +948,10 @@ export class EventMapper {
       const command = /`([^`]+)`/.exec(err.text)?.[1] ?? 'your AWS sign-in command'
       return `Your AWS sign-in has expired. Run ${command} in a terminal, then send your message again.`
     }
+    // The CLI's own copy points at /login, which Clui doesn't offer.
+    if (err?.category === 'authentication_failed' && err.text.startsWith('Not logged in')) {
+      return "You're not signed in to Claude. Run claude auth login in a terminal, or export your Bedrock or Vertex variables from your shell profile, then start a new session."
+    }
     return null
   }
 
@@ -1137,6 +1144,7 @@ function turnEndOf(env: RawEnvelope, stoppedByUser: boolean, cutForMessage: bool
 interface ApiError {
   status?: number
   remedy?: string
+  category?: string
   text: string
 }
 
