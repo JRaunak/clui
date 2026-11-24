@@ -112,3 +112,33 @@ equal(summarizeInput({ skill: 'create-cso-pr', args: '--help' }), 'create-cso-pr
   equal(monitorRowState(mon('ok'), false, false, rec('killed')), 'stopped', 'monitor row: killed reads stopped')
   equal(monitorRowState(mon('ok'), false, false, undefined), 'ended', 'monitor row: no record reads ended')
 }
+
+// SendMessage: the result is JSON with `success`, and a failed send is not an error result. The two success strings
+// are from test/fixtures/sendmessage; the failure is a live 2.1.331 send to an id nobody holds.
+{
+  const { toolLabel } = await import('../src/renderer/src/lib/instrument.ts')
+  const { sendResultOf, sendInputOf } = await import('../src/renderer/src/lib/agents.ts')
+  const queued = '{"success":true,"message":"Message queued for delivery to a346a162ba7618e7e at its next tool round. If it finishes first, it is resumed with the message and notifies again, so wait for that notification before resending.","pin":{"id":"a346a162ba7618e7e","name":"a346a162ba7618e7e","ref":"d0cf36"}}'
+  const resumed = '{"success":true,"message":"Resuming agent a346a16","resumedAgentId":"a346a162ba7618e7e","pin":{"id":"a346a162ba7618e7e","name":"a346a162ba7618e7e","ref":"d0cf36"}}'
+  const failed = '{"success":false,"message":"No agent named \'a0000000000000bogus\' is reachable.\\nUse ListAgents to see everyone you can message."}'
+  equal(JSON.stringify(sendResultOf(queued)), JSON.stringify({ ok: true, note: JSON.parse(queued).message, pinId: 'a346a162ba7618e7e' }), 'send: a queued result is ok, with its note and pinned id')
+  equal(JSON.stringify(sendResultOf(resumed)), JSON.stringify({ ok: true, note: 'Resuming agent a346a16', pinId: 'a346a162ba7618e7e' }), 'send: a resume result is ok')
+  equal(JSON.stringify(sendResultOf(failed)), JSON.stringify({ ok: false, note: "No agent named 'a0000000000000bogus' is reachable.\nUse ListAgents to see everyone you can message.", pinId: null }), 'send: a failed send is not ok and pins nothing')
+  equal(sendResultOf('Message sent'), null, 'send: a non-JSON result is no send result')
+  equal(sendResultOf('{"success":"yes","message":"x"}'), null, 'send: a non-boolean success is no send result')
+  equal(sendResultOf('null'), null, 'send: JSON null is no send result')
+
+  const send = (result: string, o: Record<string, unknown> = {}) => tool({ name: 'SendMessage', input: { to: 'a1', message: 'hi' }, result, ...o })
+  equal(rowState(send(resumed), false), 'sent', 'row: an ok send reads sent')
+  equal(rowState(send(failed), false), 'failed', 'row: a send that did not go through is failed')
+  equal(rowState(send('boom', { isError: true }), false), 'failed', 'row: an error result is failed')
+  equal(rowState(send('Message sent'), false), 'done', 'row: an unparsed send result reads done')
+  equal(worstState(['sent', 'done']), 'sent', 'worst: sent outranks done')
+  equal(toolLabel('SendMessage'), 'Message', 'toolLabel: SendMessage says Message')
+
+  const input = { to: 'a346a162ba7618e7e', message: 'Now reply with the word CHERRY.', type: 'message', recipient: 'a346a162ba7618e7e', recipient_kind: 'agent', content: 'Now reply with the word CHERRY.' }
+  equal(JSON.stringify(sendInputOf(input)), JSON.stringify({ to: 'a346a162ba7618e7e', text: 'Now reply with the word CHERRY.', kind: 'agent' }), 'send input: the CLI-normalized input')
+  equal(JSON.stringify(sendInputOf({ recipient: 'peer-1', content: 'yo' })), JSON.stringify({ to: 'peer-1', text: 'yo', kind: null }), 'send input: recipient and content alone, no kind')
+  equal(JSON.stringify(sendInputOf({ to: 'team', message: { type: 'shutdown_request' }, content: 'stop' })), JSON.stringify({ to: 'team', text: 'stop', kind: null }), 'send input: an object message falls back to content')
+  equal(sendInputOf({ to: 'team', message: { type: 'shutdown_request' } }), null, 'send input: no string text is no send input')
+}

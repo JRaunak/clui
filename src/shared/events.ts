@@ -278,8 +278,9 @@ export type DomainEvent =
   /** A workflow reached a terminal state (from its task_notification). */
   | { type: 'workflow-ended'; taskId: string; status?: string; summary?: string }
   /** A running Agent-tool subagent's tool calls so far and the CLI's line for its current step, from its `task_progress`.
-   *  A stop's notification carries none. */
-  | { type: 'agent-usage'; toolUseId: string; toolUses?: number; activity?: string }
+   *  A stop's notification carries none. `toolUseId` is the call that started this run, which for a run SendMessage
+   *  resumed is the SendMessage, so the store keys it by the task's Agent call. */
+  | { type: 'agent-usage'; taskId: string; toolUseId: string; toolUses?: number; activity?: string }
   /**
    * Forwarded internal output of a RUNNING subagent, unlocked by
    * `initialize {forwardSubagentText:true}`. The CLI streams the subagent's own

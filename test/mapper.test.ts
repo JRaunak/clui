@@ -1,5 +1,6 @@
 // Boundary: the wire→DomainEvent mapper.
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { EventMapper } from '../src/main/cli/event-mapper.ts'
 import { equal, ok } from './support/harness.mjs'
 
@@ -442,6 +443,48 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   else process.env.CLAUDE_CONFIG_DIR = prev
   ok(hit.found && JSON.stringify(hit.agentMeta) === JSON.stringify({ shape: 'background', finished: true }), 'agent read: found, with the sidecar outcome', JSON.stringify(hit.agentMeta))
   ok(!miss.found && miss.agentMeta === null, 'agent read: no file anywhere is not found')
+}
+
+// SendMessage on disk (test/fixtures/sendmessage, CLI 2.1.331): main's message reaches the agent as an isMeta
+// `coordinator` record, read as a coordinator entry in delivery order. A resume's notice names the SendMessage, which
+// is no Agent call, so only the first run stamps the Agent.
+{
+  const { mkdtempSync, mkdirSync, copyFileSync, readFileSync: read, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { readTranscriptAtPath, readAgentTranscriptByToolUseId } = await import('../src/main/sessions/transcript.ts')
+  const { entriesOf } = await import('../src/renderer/src/lib/agents.ts')
+  const fx = (f: string): URL => new URL(`./fixtures/sendmessage/${f}`, import.meta.url)
+  const home = mkdtempSync(join(tmpdir(), 'clui-send-'))
+  const dir = join(home, 'projects', 'p', 's', 'subagents')
+  mkdirSync(dir, { recursive: true })
+  copyFileSync(fx('subagent.meta.json'), join(dir, 'agent-a346a162ba7618e7e.meta.json'))
+  copyFileSync(fx('subagent.jsonl'), join(dir, 'agent-a346a162ba7618e7e.jsonl'))
+  const reworded = read(fx('subagent.jsonl'), 'utf8').replace('The coordinator sent a message while you were working:', 'The coordinator says:')
+  writeFileSync(join(dir, 'agent-b2.meta.json'), JSON.stringify({ toolUseId: 'tu-b2' }))
+  writeFileSync(join(dir, 'agent-b2.jsonl'), reworded)
+  const prev = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = home
+  const sub = await readAgentTranscriptByToolUseId('toolu_bdrk_01HjJsSWv8obUaMYrUUKZHuq')
+  const alt = await readAgentTranscriptByToolUseId('tu-b2')
+  if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR
+  else process.env.CLAUDE_CONFIG_DIR = prev
+  const coord = sub.messages.filter((m) => m.coordinator)
+  equal(JSON.stringify(coord.map((m) => m.text)), JSON.stringify(['Also include the word BANANA in your reply.', 'Now reply with the word CHERRY.']), 'send disk: two coordinator messages, wrapper stripped')
+  ok(!sub.messages.some((m) => m.text.includes('The coordinator sent')), 'send disk: the CLI wrapper shows nowhere')
+  const altCoord = alt.messages.filter((m) => m.coordinator)
+  ok(altCoord.length === 2 && altCoord[0].text.startsWith('The coordinator says:\nAlso include the word BANANA') && altCoord[0].text.endsWith('current task.'), 'send disk: a reworded wrapper keeps the full text', JSON.stringify(altCoord[0]?.text))
+  const entries = entriesOf(sub.messages)
+  const banana = entries.findIndex((e) => e.kind === 'coordinator' && e.text.includes('BANANA'))
+  const before = entries.findIndex((e) => e.kind === 'text' && e.text.startsWith('All three'))
+  ok(before >= 0 && banana > before && entries.filter((e) => e.kind === 'coordinator').length === 2, 'send disk: entries keep delivery order, BANANA after the first report', `${before} ${banana}`)
+
+  const { messages } = await readTranscriptAtPath(fileURLToPath(fx('main.jsonl')))
+  const tools = messages.flatMap((m) => m.tools)
+  const agent = tools.find((t) => t.name === 'Agent')
+  const sends = tools.filter((t) => t.name === 'SendMessage')
+  ok(agent?.notifiedAt !== undefined, 'send disk: the Agent keeps its first notice', JSON.stringify(agent?.notifiedAt))
+  ok(sends.length === 2 && sends.every((t) => t.notifiedAt === undefined && typeof t.result === 'string' && t.result.startsWith('{"success":true')), 'send disk: no SendMessage is stamped, each keeps its JSON result', JSON.stringify(sends.map((t) => [t.notifiedAt, t.result?.slice(0, 20)])))
 }
 
 // Plugin UI messages: sanitized in main, deduped by uuid, routed by subtype.

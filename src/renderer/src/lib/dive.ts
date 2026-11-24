@@ -20,8 +20,9 @@ export function focusPaneTitle(): void {
 }
 
 /** Open a subagent's transcript tab from its Agent row, or a workflow's tab from its Workflow row. Into a closed pane
- *  by pointer, the row morphs into the pane; otherwise the tab opens as any tab does. Focus lands on the tab. */
-export function diveInto(toolId: string, via: Via, workflow?: { taskId: string; title: string }): void {
+ *  by pointer, the row morphs into the pane; otherwise the tab opens as any tab does. Focus lands on the tab. `rowId`
+ *  names the row that morphs when it isn't the one that launched the agent, as with a Message row. */
+export function diveInto(toolId: string, via: Via, workflow?: { taskId: string; title: string }, rowId = toolId): void {
   const st = useSession.getState()
   const handleId = st.activeHandleId
   if (!handleId) return
@@ -32,7 +33,7 @@ export function diveInto(toolId: string, via: Via, workflow?: { taskId: string; 
     return void requestAnimationFrame(focusPaneTitle)
   }
   const stage = getStage()
-  const row = openButtonFor(toolId)?.closest<HTMLElement>('[data-ui="instrument-row"]') ?? null
+  const row = openButtonFor(rowId)?.closest<HTMLElement>('[data-ui="instrument-row"]') ?? null
   row?.style.setProperty('view-transition-name', 'dive')
   const t = runTagged('dive', {
     via,

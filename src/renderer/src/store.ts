@@ -19,7 +19,7 @@ import { createContext, useContext } from 'react'
 import { create } from 'zustand'
 import { isListPriced, type DomainEvent, type ElicitationResponse, type PermissionDenial, type PermissionSuggestion, type RateLimit, type SessionTask, type SlashCommandInfo, type TurnEnd, type TurnUsage, type WorkflowAgent } from '../../shared/events'
 import type { AgentMeta, BlockedPrompt, CompactionMarker, HistoryMessage, ProjectGroup } from '../../shared/sessions'
-import { agentInfo, agentRunState, findAgentTool, isAgentTool, isLive, trailOf, type RunStatusOf, type StopTarget } from './lib/agents'
+import { agentInfo, agentRunState, agentToolOf, findAgentTool, isAgentTool, isLive, sendInputOf, sendResultOf, sendTargetOf, trailOf, type RunStatusOf, type StopTarget } from './lib/agents'
 import { recordOf, workflowSummary } from './lib/workflow'
 import type { CurrentTurn } from './lib/instrument'
 import { autoCompactPercent, suggestCompactPercent } from './lib/compaction'
@@ -121,6 +121,7 @@ export interface BackgroundTask {
 export type SubagentMessage =
   | { kind: 'text' | 'thinking'; role: 'assistant' | 'user'; text: string }
   | { kind: 'tool'; tool: ToolCall }
+  | { kind: 'coordinator'; text: string }
 
 /** Nesting: a child subagent spawned by another subagent, surfaced as a
  *  clickable card inside the parent's transcript. `childToolUseId` is the child's own
@@ -3652,6 +3653,12 @@ export const useSession = create<SessionStore>((set, get) => ({
               if (e.stopped) t.stopped = true
               if (e.toolUses !== undefined) t.toolUses = e.toolUses
               if (e.resolvedModel) t.resolvedModel = e.resolvedModel
+              const sent = t.name === 'SendMessage' && !e.isError ? sendResultOf(e.content) : null
+              const send = sent?.ok ? sendInputOf(t.input) : null
+              const to = sent && send ? sendTargetOf(slice, send, sent.pinId) : null
+              // ponytail: placed at send time, while disk places it where the agent took it in, so a queued send reads
+              // earlier live than after a restart; move it if the CLI ever reports delivery
+              if (to && send) patch.subagentMessages = { ...slice.subagentMessages, [to.id]: [...(slice.subagentMessages[to.id] ?? EMPTY_SUBAGENT_MSGS), { kind: 'coordinator', text: send.text }] }
               break
             }
           }
@@ -3853,20 +3860,21 @@ export const useSession = create<SessionStore>((set, get) => ({
           break
         }
         case 'agent-usage': {
-          if (e.toolUses !== undefined) patch.agentToolUses = { ...slice.agentToolUses, [e.toolUseId]: e.toolUses }
+          const id = slice.backgroundTasks[e.taskId]?.toolUseId ?? e.toolUseId
+          if (e.toolUses !== undefined) patch.agentToolUses = { ...slice.agentToolUses, [id]: e.toolUses }
           if (!e.activity) break
-          const key = `${handleId}\0${e.toolUseId}`
+          const key = `${handleId}\0${id}`
           const hold = activityHolds.get(key)
           const now = Date.now()
           // While the agent waits on the user its line reads paused, so the newest step goes straight under it.
-          if (hold && now < hold.until && !slice.pendingPermissions.some((p) => p.agentToolUseId === e.toolUseId)) {
+          if (hold && now < hold.until && !slice.pendingPermissions.some((p) => p.agentToolUseId === id)) {
             hold.next = e.activity
-            activityWake.id = e.toolUseId
+            activityWake.id = id
             break
           }
           clearTimeout(hold?.timer)
           activityHolds.set(key, { until: now + ACTIVITY_HOLD_MS })
-          patch.agentActivity = { ...slice.agentActivity, [e.toolUseId]: e.activity }
+          patch.agentActivity = { ...slice.agentActivity, [id]: e.activity }
           break
         }
         case 'workflow-ended': {
@@ -3879,10 +3887,13 @@ export const useSession = create<SessionStore>((set, get) => ({
           break
         }
         case 'bg-task-started': {
+          // A SendMessage that resumes a finished agent restarts its task under the SendMessage's id. The task id is
+          // the agent's, and before its launch result lands no call names it, so the event's id stands.
+          const toolUseId = e.taskType === 'local_agent' ? (agentToolOf(slice, e.taskId)?.id ?? e.toolUseId) : e.toolUseId
           // The running turn's own launch counts toward its footer; a subagent's is nested under that agent.
           const last = messages[messages.length - 1]
           const turnOpen = slice.busy || (last?.role === 'assistant' && !last.turnEnd)
-          if (turnOpen && !subagentOwnerOfTask(e.toolUseId, slice.subagentMessages, slice.subagentChildren)) {
+          if (turnOpen && !slice.turnTasks.includes(e.taskId) && !subagentOwnerOfTask(toolUseId, slice.subagentMessages, slice.subagentChildren)) {
             patch.turnTasks = [...slice.turnTasks, e.taskId]
           }
           patch.backgroundTasks = {
@@ -3893,12 +3904,12 @@ export const useSession = create<SessionStore>((set, get) => ({
               taskType: e.taskType,
               // Carried for backgrounded subagents so the tray row can open the
               // forwarded-transcript agent tab (keyed by this = the PTU).
-              toolUseId: e.toolUseId,
+              toolUseId,
               status: 'running',
               startMs: Date.now()
             }
           }
-          const call = e.toolUseId ? messages.findLast((m) => m.tools.some((t) => t.id === e.toolUseId))?.tools.find((t) => t.id === e.toolUseId) : undefined
+          const call = toolUseId ? messages.findLast((m) => m.tools.some((t) => t.id === toolUseId))?.tools.find((t) => t.id === toolUseId) : undefined
           if (call?.name === 'Monitor') {
             const desc = (call.input as { description?: unknown } | null)?.description
             patch.monitors = {
@@ -3955,8 +3966,11 @@ export const useSession = create<SessionStore>((set, get) => ({
             // its only trace). Both still toast.
             if (prev.taskType === 'local_agent') {
               patch.backgroundTasks = { ...slice.backgroundTasks, [e.taskId]: { ...prev, status, endMs: prev.endMs ?? Date.now() } }
-              // Where the agent let go of its face for the agents launched after it.
-              const at = prev.toolUseId ? messages.findIndex((m) => m.tools.some((t) => t.id === prev.toolUseId)) : -1
+              // Where the agent let go of its face for the agents launched after it. Only its first run's end counts,
+              // so a resume never moves the faces of agents launched since.
+              // ponytail: a resume holds no face of its own, and a resumed foreground agent reads as held since launch;
+              // re-hold per run if users see a clash
+              const at = prev.toolUseId ? messages.findIndex((m) => m.tools.some((t) => t.id === prev.toolUseId && t.notifiedAt === undefined)) : -1
               if (at >= 0) {
                 const next = messages.slice()
                 next[at] = { ...messages[at], tools: messages[at].tools.map((t) => (t.id === prev.toolUseId ? { ...t, notifiedAt: messages.length } : t)) }

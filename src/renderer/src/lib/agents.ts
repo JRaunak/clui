@@ -34,14 +34,33 @@ export function findAgentTool(messages: readonly { tools: ToolCall[] }[], id: st
   return null
 }
 
-/** The launching Agent call for a subagent: main's card, else the entry in its parent's live stream (which
- *  `subagent-tool-result` completes), else the call in its parent's transcript read from disk. */
-export function launcherOf(slice: Pick<PerSessionState, 'messages' | 'subagentMessages' | 'nestedLaunches'>, id: string): ToolCall | null {
-  const main = findAgentTool(slice.messages, id)
-  if (main) return main
-  for (const entries of Object.values(slice.subagentMessages)) for (const e of entries) if (e.kind === 'tool' && e.tool.id === id) return e.tool
-  for (const tools of Object.values(slice.nestedLaunches)) for (const t of tools) if (t.id === id) return t
+type ToolSources = Pick<PerSessionState, 'messages' | 'subagentMessages' | 'nestedLaunches'>
+
+/** The first call `pred` matches: main's cards, else the entries in a parent's live stream (which
+ *  `subagent-tool-result` completes), else the calls in a parent's transcript read from disk. */
+function toolWhere(slice: ToolSources, pred: (t: ToolCall) => boolean): ToolCall | null {
+  for (const m of slice.messages) {
+    const t = m.tools.find(pred)
+    if (t) return t
+  }
+  for (const entries of Object.values(slice.subagentMessages)) for (const e of entries) if (e.kind === 'tool' && pred(e.tool)) return e.tool
+  for (const tools of Object.values(slice.nestedLaunches)) for (const t of tools) if (pred(t)) return t
   return null
+}
+
+export const launcherOf = (slice: ToolSources, id: string): ToolCall | null => toolWhere(slice, (t) => t.id === id)
+
+/** The agent id an Agent result names, the one SendMessage and the CLI's task events use. Line-anchored: the CLI
+ *  indents a foreground agent's report above it, so a report can't forge it. */
+export const agentIdOf = (result?: string): string | null => /^agentId: ([\w-]+)/m.exec(result ?? '')?.[1] ?? null
+
+export const agentToolOf = (slice: ToolSources, agentId: string): ToolCall | null => toolWhere(slice, (t) => isAgentTool(t.name) && agentIdOf(t.result) === agentId)
+
+/** The Agent call a SendMessage writes to: by the result's pinned id, else by its `to`. Null for a peer or team
+ *  recipient, and for an agent the session can't place. */
+export function sendTargetOf(slice: ToolSources, send: { to: string; kind: string | null }, pinId: string | null): ToolCall | null {
+  if (send.kind !== null && send.kind !== 'agent') return null
+  return (pinId ? agentToolOf(slice, pinId) : null) ?? agentToolOf(slice, send.to)
 }
 
 /** The agent that launched a nested one, by tool_use id, else null for main's own. */
@@ -296,13 +315,15 @@ export function runningAgents(slice: PerSessionState, disk: readonly AgentRun[] 
  *  then tools, as the main transcript's rebuilt fallback does. */
 export function entriesOf(history: readonly HistoryMessage[]): SubagentMessage[] {
   return history.flatMap((m): SubagentMessage[] =>
-    m.peer
-      ? []
-      : [
-          ...(m.thinking ? [{ kind: 'thinking' as const, role: m.role, text: m.thinking }] : []),
-          ...(m.text ? [{ kind: 'text' as const, role: m.role, text: m.text }] : []),
-          ...m.tools.map((t) => ({ kind: 'tool' as const, tool: { ...t } }))
-        ]
+    m.coordinator
+      ? [{ kind: 'coordinator', text: m.text }]
+      : m.peer
+        ? []
+        : [
+            ...(m.thinking ? [{ kind: 'thinking' as const, role: m.role, text: m.thinking }] : []),
+            ...(m.text ? [{ kind: 'text' as const, role: m.role, text: m.text }] : []),
+            ...m.tools.map((t) => ({ kind: 'tool' as const, tool: { ...t } }))
+          ]
   )
 }
 
@@ -367,4 +388,32 @@ export function workflowFaces(w: WorkflowState): Map<string, number> {
 export function denseNext(n: number, width: number, wasDense: boolean): boolean {
   const need = 120 * n + 4 * Math.max(0, n - 1)
   return wasDense ? need > width - 24 : need > width
+}
+
+/** A SendMessage result: `{ success, message, pin? }` as JSON. A failed send is still a plain result, never an
+ *  error one. Null for any other shape, which then reads as a plain tool. */
+export function sendResultOf(result: string | undefined): { ok: boolean; note: string; pinId: string | null } | null {
+  if (!result) return null
+  let r: unknown
+  try {
+    r = JSON.parse(result)
+  } catch {
+    return null
+  }
+  if (!r || typeof r !== 'object') return null
+  const { success, message, pin } = r as Record<string, unknown>
+  if (typeof success !== 'boolean' || typeof message !== 'string') return null
+  const id = pin && typeof pin === 'object' ? (pin as Record<string, unknown>).id : undefined
+  return { ok: success, note: message, pinId: typeof id === 'string' ? id : null }
+}
+
+/** Who a SendMessage call writes to and what it says. The team protocol's `message` can be an object, so only
+ *  strings count. `kind` is the CLI's `recipient_kind` ('agent', 'name', ...), null when absent. */
+export function sendInputOf(input: unknown): { to: string; text: string; kind: string | null } | null {
+  if (!input || typeof input !== 'object') return null
+  const o = input as Record<string, unknown>
+  const to = typeof o.to === 'string' ? o.to : o.recipient
+  const text = typeof o.message === 'string' ? o.message : o.content
+  if (typeof to !== 'string' || typeof text !== 'string') return null
+  return { to, text, kind: typeof o.recipient_kind === 'string' ? o.recipient_kind : null }
 }

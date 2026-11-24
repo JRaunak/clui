@@ -11,7 +11,7 @@ import { useSay } from '../lib/useSay'
 import { useStopFocus } from '../lib/useStopFocus'
 import { useTranscriptFind } from '../lib/useTranscriptFind'
 import { Markdown } from './Markdown'
-import { ToolGroup } from './MessageView'
+import { MessageBlock, ToolGroup } from './MessageView'
 import { subagentEffort } from './InstrumentRow'
 import { usePane } from './Stage'
 import { Button } from './Button'
@@ -37,18 +37,21 @@ function useRunStatus(ref: AgentRef | null): RunStatusOf {
 type Phase = 'live' | 'loading' | 'ready' | 'gone' | 'error'
 
 /**
- * An agent's entries: its live stream when one arrived, else its transcript on disk in the stream's shape. The disk
- * read also carries its model and effort (the stream has neither). It re-reads every 2s while the agent runs and
- * there's something the stream can't give yet.
+ * An agent's entries: its live stream when this process watched it launch, else its transcript on disk in the
+ * stream's shape. An agent from an earlier process that a message resumes streams only the new run, so its disk
+ * history wins, and the stream only stands in until a disk read finds it. The disk read also carries its model and
+ * effort (the stream has neither). It re-reads every 2s while the agent runs and there's something the stream can't
+ * give yet.
  */
 function useAgentEntries(handleId: string, ref: AgentRef, running: boolean) {
   const stream = useActive((s) => (ref.by === 'tool' ? (s?.subagentMessages[ref.id] ?? EMPTY_SUBAGENT_MSGS) : EMPTY_SUBAGENT_MSGS))
+  const watched = useActive((s) => ref.by === 'tool' && !!s && launcherOf(s, ref.id)?.startMs !== undefined)
   const [disk, setDisk] = useState<{ entries: SubagentMessage[]; found: boolean } | null>(null)
   const [failed, setFailed] = useState(false)
   const [model, setModel] = useState<{ model?: string; effort?: string | null }>({})
   const [attempt, setAttempt] = useState(0)
   const need = useRef(true)
-  need.current = !stream.length || !model.model
+  need.current = !stream.length || !model.model || !watched
   const key = agentKey(ref)
   useEffect(() => {
     let cancelled = false
@@ -78,8 +81,9 @@ function useAgentEntries(handleId: string, ref: AgentRef, running: boolean) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, handleId, running, attempt])
-  const phase: Phase = stream.length ? 'live' : !disk ? (failed ? 'error' : 'loading') : disk.found ? 'ready' : 'gone'
-  return { entries: stream.length ? stream : (disk?.entries ?? EMPTY_SUBAGENT_MSGS), phase, model, retry: () => setAttempt((n) => n + 1) }
+  const live = !!stream.length && (watched || !disk?.found)
+  const phase: Phase = live ? 'live' : !disk ? (failed ? 'error' : 'loading') : disk.found ? 'ready' : 'gone'
+  return { entries: live ? stream : (disk?.entries ?? EMPTY_SUBAGENT_MSGS), phase, model, retry: () => setAttempt((n) => n + 1) }
 }
 
 /** The tail of a running transcript. Running is a neutral shape, never the accent. */
@@ -230,6 +234,11 @@ function SubagentStream({ entries }: { entries: SubagentMessage[] }): JSX.Elemen
           <ToolGroup tools={run} />
         </div>
       )
+      continue
+    }
+    if (e.kind === 'coordinator') {
+      out.push(<MessageBlock key={`c${i}`} from="Claude" text={e.text} defaultOpen />)
+      i++
       continue
     }
     out.push(

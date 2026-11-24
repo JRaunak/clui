@@ -56,7 +56,12 @@ interface RawEntry {
   durationMs?: number
   /** On a tool-result record; a string for some tools. */
   toolUseResult?: unknown
+  /** On a CLI-injected record: what produced it, e.g. `coordinator` for a message main sent a subagent. */
+  origin?: { kind?: string }
 }
+
+/** Exact: a reworded wrapper keeps its full text. */
+const COORDINATOR = /^The coordinator sent a message while you were working:\n([\s\S]*)\n\nAddress this before completing your current task\.$/
 
 /** Unwrap <local-command-stdout>…</local-command-stdout> to the inner text. */
 function stripCommandStdout(raw: unknown): string {
@@ -513,6 +518,12 @@ async function parseTranscriptFile(
       // A skill's instructions reach the model as a meta "user" record tied to the Skill call; the live
       // stream never renders them, so a resumed transcript mustn't show them as the user's words.
       if (entry.isMeta && entry.type === 'user' && entry.sourceToolUseID && toolCallsById.get(entry.sourceToolUseID)?.name === 'Skill') continue
+      // Main's SendMessage reaches an agent as a meta record where the agent took it in, so it sits in delivery order.
+      if (entry.isMeta && entry.type === 'user' && entry.origin?.kind === 'coordinator') {
+        const t = contentText(entry.message?.content)
+        messages.push({ id: `h-${seq++}-${entry.uuid ?? ''}`, role: 'user', text: COORDINATOR.exec(t)?.[1] ?? t, thinking: '', tools: [], coordinator: true })
+        continue
+      }
 
       // Slash-command output is logged as a `system` record of subtype
       // `local_command` carrying <local-command-stdout>…</local-command-stdout>

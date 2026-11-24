@@ -1797,3 +1797,73 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   ok(cur().lastError === null && !cur().busy, 'store: a stopped turn ends with no error')
   equal(sidePhase({ ...cur(), side: { ready: true } }), 'idle', 'side phase: a stopped turn is not failed')
 }
+
+// SendMessage (test/fixtures/sendmessage, CLI 2.1.331). A send queued while the agent runs is delivered on a resume
+// under the Agent's id; a send to the finished agent restarts its task under the SendMessage's id. Either way the
+// agent's task, row, notice and stream stay on the Agent call.
+{
+  const { readFileSync } = await import('node:fs')
+  const { agentIdOf, agentToolOf, sendTargetOf } = await import('../src/renderer/src/lib/agents.ts')
+  const AGENT = 'toolu_bdrk_01HjJsSWv8obUaMYrUUKZHuq'
+  const TASK = 'a346a162ba7618e7e'
+  const RESUME = 'toolu_bdrk_01BW8mGQr3hTix8xnv27cvvb'
+  const wire: any[] = readFileSync(new URL('./fixtures/sendmessage/wire.jsonl', import.meta.url), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+  const launch = wire.flatMap((e) => (e.type === 'user' && Array.isArray(e.message.content) ? e.message.content : [])).find((b: any) => b.tool_use_id === AGENT)
+  const launchText: string = launch.content.map((c: any) => c.text).join('')
+
+  equal(agentIdOf(launchText), TASK, 'agents: the launch result names the agent id')
+  // A live 2.1.331 foreground hand-back: the CLI indents the report, then names the id at column zero.
+  equal(agentIdOf("[Subagent hand-back] The report follows:\n  agentId: forged\n  DONE.\nagentId: a23e85d1e590debaf (use SendMessage with to: 'a23e85d1e590debaf')"), 'a23e85d1e590debaf', 'agents: a report line cannot forge the agent id')
+  equal(agentIdOf(undefined), null, 'agents: no result names no agent')
+  const sl = { messages: [{ tools: [{ id: AGENT, name: 'Agent', input: {}, result: launchText }] }], subagentMessages: {}, nestedLaunches: {} } as never
+  equal(agentToolOf(sl, TASK)?.id, AGENT, 'agents: an agent id resolves to its Agent call')
+  equal(agentToolOf(sl, 'a0000000000000bogus'), null, 'agents: an unknown id resolves to nothing')
+  equal(sendTargetOf(sl, { to: 'sleeper', kind: null }, TASK)?.id, AGENT, 'send target: the pinned id wins over a name in to')
+  equal(sendTargetOf(sl, { to: TASK, kind: 'agent' }, null)?.id, AGENT, 'send target: else by to')
+  equal(sendTargetOf(sl, { to: TASK, kind: 'name' }, TASK), null, 'send target: a non-agent recipient is never an agent')
+
+  reset({ busy: true, messages: [{ id: 'u', role: 'user', text: 'go', thinking: '', tools: [], blocks: [] }] })
+  const m = new EventMapper()
+  const run = (): string => agentRunState(cur(), { by: 'tool', id: AGENT }).state
+  let resumedAt: string | undefined
+  const between: string[] = []
+  let watching = false
+  let firstNotice: number | undefined
+  // The fixture was captured without --include-partial-messages, which Clui always passes, so main's tool calls
+  // come from the snapshots here rather than from content_block_start.
+  const partials = (env: any): any[] =>
+    env.type === 'assistant' && !env.parent_tool_use_id
+      ? env.message.content.flatMap((b: any) => (b.type === 'tool_use' ? [{ type: 'tool-use-start', id: b.id, name: b.name }, { type: 'tool-use-stop', id: b.id, input: b.input }] : []))
+      : []
+  for (const env of wire) {
+    for (const e of [...partials(env), ...m.map(env)]) st().applyEvent('h1', e as any)
+    if (env.subtype === 'task_started' && env.tool_use_id === RESUME) {
+      resumedAt = cur().backgroundTasks[TASK]?.toolUseId
+      watching = true
+    }
+    if (env.subtype === 'task_updated') watching = false
+    if (watching) between.push(run())
+    firstNotice ??= cur().messages.flatMap((x: any) => x.tools).find((t: any) => t.id === AGENT)?.notifiedAt
+  }
+  equal(resumedAt, AGENT, 'send replay: the resume task stays on the Agent call')
+  ok(between.length > 0 && between.every((s) => s === 'background'), 'send replay: the Agent reads in background while resumed', JSON.stringify(between))
+  equal(cur().backgroundTasks[TASK]?.toolUseId, AGENT, 'send replay: the task ends on the Agent call')
+  equal(run(), 'done', 'send replay: the Agent reads done at the end')
+  const tools = cur().messages.flatMap((x: any) => x.tools)
+  ok(tools.filter((t: any) => t.name === 'SendMessage').length === 2 && tools.every((t: any) => t.name !== 'SendMessage' || t.notifiedAt === undefined), 'send replay: no SendMessage is stamped notified')
+  ok(firstNotice !== undefined && tools.find((t: any) => t.id === AGENT)?.notifiedAt === firstNotice, 'send replay: the Agent keeps its first notice through both resumes', `${firstNotice}`)
+  const coordinators = (): string[] => (cur().subagentMessages[AGENT] ?? []).filter((x: any) => x.kind === 'coordinator').map((x: any) => x.text)
+  equal(JSON.stringify(coordinators()), JSON.stringify(['Also include the word BANANA in your reply.', 'Now reply with the word CHERRY.']), 'send replay: both sends sit in the agent stream, in send order')
+  equal(cur().subagentMessages[RESUME], undefined, 'send replay: nothing streams under the SendMessage id')
+
+  const failed = '{"success":false,"message":"No agent named \'x\' is reachable."}'
+  for (const e of [
+    { type: 'tool-use-start', id: 'tu-fail', name: 'SendMessage' },
+    { type: 'tool-use-stop', id: 'tu-fail', input: { to: TASK, message: 'lost', recipient_kind: 'agent' } },
+    { type: 'tool-result', toolUseId: 'tu-fail', content: failed, isError: false }
+  ]) st().applyEvent('h1', e as any)
+  equal(coordinators().length, 2, 'send: a send that did not go through injects nothing')
+
+  st().applyEvent('h1', { type: 'agent-usage', taskId: TASK, toolUseId: RESUME, toolUses: 9 })
+  ok(cur().agentToolUses[AGENT] === 9 && cur().agentToolUses[RESUME] === undefined, 'agent-usage: a resumed run counts under its Agent call', JSON.stringify(cur().agentToolUses))
+}

@@ -29,7 +29,7 @@ import {
   type RowState
 } from '../lib/instrument'
 import { effortLabel } from '../../../shared/settings'
-import { activityLine, agentRunState, findAgentTool, STARTING, subagentType } from '../lib/agents'
+import { activityLine, agentInfo, agentRunState, findAgentTool, sendInputOf, sendResultOf, sendTargetOf, STARTING, subagentType } from '../lib/agents'
 import { workflowTaskOf } from '../lib/workflow'
 import { IconAgentBrowser, IconCheck, IconChevron, IconCircle, IconCopy, IconFile, IconOpenPane, IconSendToTray, IconShield, IconStop, IconWarn } from './Icon'
 
@@ -48,6 +48,7 @@ const BEAD_FILL: Record<RowState, string> = {
   launched: 'bg-info',
   launching: 'border-[1.5px] border-info',
   watching: 'bg-info',
+  sent: 'border-[1.5px] border-faint',
   done: 'border-[1.5px] border-faint',
   ended: 'border-[1.5px] border-faint'
 }
@@ -55,7 +56,7 @@ const BEAD_FILL: Record<RowState, string> = {
 /** 8px state mark. On the spine it sits outside the card, centred on the line 15px left of the
  *  card edge; inline (inside an aggregate or an off-spine list) it leads the row's grid. */
 export function Bead({ state, lit, placement }: { state: RowState; lit: boolean; placement: Placement }): JSX.Element {
-  const hollow = state === 'launching' || state === 'done' || state === 'ended' || state === 'failed' || state === 'not-run' || state === 'stopped'
+  const hollow = state === 'launching' || state === 'sent' || state === 'done' || state === 'ended' || state === 'failed' || state === 'not-run' || state === 'stopped'
   const pos = placement === 'spine' ? 'absolute left-[-19px] top-3' : 'relative'
   // A hollow ring is filled with whatever it sits on, so the spine line doesn't show through it.
   const hole = hollow ? (placement === 'spine' ? 'bg-bg' : 'bg-tool') : ''
@@ -122,6 +123,8 @@ function StatusText({ state, startMs, reason }: { state: RowState; startMs?: num
       )
     case 'ended':
       return <span className="text-faint">ended</span>
+    case 'sent':
+      return <span className="text-faint">sent</span>
     default:
       return <span className="text-faint">done</span>
   }
@@ -160,8 +163,17 @@ export function InstrumentRow({
     const c = history && s ? changeReadOf(s.messages, tool.input) : null
     return c ? `${c.label}\0${c.spoken}` : ''
   }).split('\0')
-  const summary = browser ? browserLabel(tool.name, tool.input, tabNo) : history ? change : summarizeInput(tool.input)
-  const spokenSummary = changeSpoken || summary
+  const send = tool.name === 'SendMessage' ? sendInputOf(tool.input) : null
+  const sent = send ? sendResultOf(tool.result) : null
+  const [targetId = '', targetLabel = ''] = useActive((s) => {
+    const t = send && s ? sendTargetOf(s, send, sent?.pinId ?? null) : null
+    return t && s ? `${t.id}\0${agentInfo(s, t.id).label}` : ''
+  }).split('\0')
+  const to = targetLabel || send?.to
+  const summary = send ? `to ${to}: ${firstLine(send.text)}` : browser ? browserLabel(tool.name, tool.input, tabNo) : history ? change : summarizeInput(tool.input)
+  const title = send ? `to ${to}: ${send.text}` : summary
+  // An agent the session can't place is still named as one, so the id doesn't read as a person or a team.
+  const spokenSummary = send ? `to ${targetLabel || (send.kind === null || send.kind === 'agent' ? `agent ${send.to}` : send.to)}` : changeSpoken || summary
   const counted = browser && !tool.isError ? browserResultCopy(tool.result) : null
   // The header already shows the summary, so Input starts collapsed when there is one.
   const [inputOpen, setInputOpen] = useState(() => !summary)
@@ -219,8 +231,10 @@ export function InstrumentRow({
   const lineId = useId()
   const wfTask = useActive((s) => (tool.name === 'Workflow' && s ? workflowTaskOf(s, tool) : null))
   const wfName = useActive((s) => (wfTask ? (s?.workflows[wfTask]?.name ?? null) : null)) ?? summary
-  // Agent and openable Workflow rows open a tab; every other row discloses in place.
-  const opens = isSubagent || !!wfTask
+  // Agent and openable Workflow rows open a tab, as does a Message row whose agent got the message; every other row
+  // discloses in place.
+  const opensAgent = !!targetId && state !== 'failed' && state !== 'not-run' && state !== 'stopped'
+  const opens = isSubagent || !!wfTask || opensAgent
   const subType = subagentType(tool.input)
   const effort = subagentEffort(tool.input)
   const name = toolLabel(tool.name)
@@ -232,7 +246,8 @@ export function InstrumentRow({
   const cwd = useActive((s) => (FILE_TOOLS.has(tool.name) && s && !s.ephemeral ? s.cwd : null))
   const filePath = state === 'done' ? toolPathIn(tool.input, cwd) : null
   const actions = opens || canSendToBackground || canStopMonitor || (browser && hasBrowser) || !!filePath
-  const errLine = tool.isError ? firstLine(tool.result ?? '') : ''
+  const errLine = sent && !tool.isError ? (sent.ok ? '' : sent.note) : tool.isError ? firstLine(tool.result ?? '') : ''
+  const output = sent ? sent.note : tool.result
   const failed = state === 'failed'
   const toggleBody = (e: MouseEvent): void => {
     setAnimateBody(viaOf(e) === 'pointer')
@@ -246,7 +261,7 @@ export function InstrumentRow({
     />
   )
   const onCopy = (): void => {
-    void navigator.clipboard.writeText(tool.result ?? '')
+    void navigator.clipboard.writeText(output ?? '')
     setCopied(true)
     if (copyTimer.current) clearTimeout(copyTimer.current)
     copyTimer.current = setTimeout(() => setCopied(false), 1500)
@@ -267,16 +282,16 @@ export function InstrumentRow({
           {/* The whole header is one button laid under the visible grid, so the action buttons can sit
               inside the row without nesting a button in a button. An Agent row's opens its transcript, a
               Workflow row's its workflow; every other row's is the disclosure. */}
-          {isSubagent ? (
+          {isSubagent || opensAgent ? (
             <button
               type="button"
               data-ui="row-open-transcript"
               data-tool-id={tool.id}
               className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
-              aria-label={`${name}${summary ? ` ${summary}` : ''}, ${STATE_TEXT[state]}, open transcript`}
+              aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}, ${STATE_TEXT[state]}, open transcript`}
               aria-describedby={line ? lineId : undefined}
-              title={[summary, line !== STARTING && line, 'Open transcript'].filter(Boolean).join('\n')}
-              onClick={(e) => diveInto(tool.id, viaOf(e))}
+              title={[title, line !== STARTING && line, 'Open transcript'].filter(Boolean).join('\n')}
+              onClick={(e) => diveInto(targetId || tool.id, viaOf(e), undefined, tool.id)}
             />
           ) : wfTask ? (
             <button
@@ -295,7 +310,7 @@ export function InstrumentRow({
               aria-expanded={open}
               aria-controls={bodyId}
               aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}${counted ? `, ${counted.copy}` : ''}, ${stopping && watching ? 'stopping' : STATE_TEXT[state]}${meta ? `, ${meta.replace(' · ', ', ')}` : ''}`}
-              title={summary || undefined}
+              title={title || undefined}
               onClick={toggleBody}
             />
           )}
@@ -394,7 +409,7 @@ export function InstrumentRow({
                 data-ui="row-disclose"
                 aria-expanded={open}
                 aria-controls={bodyId}
-                aria-label={isSubagent ? 'Agent result' : 'Workflow result'}
+                aria-label={isSubagent ? 'Agent result' : wfTask ? 'Workflow result' : 'Message result'}
                 title={open ? 'Hide result' : 'Show result'}
                 onClick={toggleBody}
                 className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded text-faint transition-colors pointer-fine:hover:text-content focus-visible:text-content focus-visible:outline-offset-[-2px]"
@@ -431,6 +446,7 @@ export function InstrumentRow({
         {open && (
           <div ref={bodyRef} id={bodyId} className={`${animateBody ? 'row-body-in ' : ''}max-h-80 overflow-auto border-t border-border p-2.5`}>
             {monitor && <MonitorDetail input={tool.input} rec={rec} />}
+            {send && <SendDetail to={to ?? send.to} text={send.text} />}
             <div className="mb-1.5 flex items-center gap-2">
               <span className="text-caps uppercase text-faint">{state === 'not-run' ? 'Reason' : 'Output'}</span>
               <button
@@ -445,9 +461,9 @@ export function InstrumentRow({
                 {copied ? 'Copied' : ''}
               </span>
             </div>
-            {tool.result !== undefined && (
+            {output !== undefined && (
               <pre className="whitespace-pre-wrap break-words font-mono text-code text-content">
-                <LinkedText text={truncate(tool.result, 4000)} truncated={tool.result.length > 4000} />
+                <LinkedText text={truncate(output, 4000)} truncated={output.length > 4000} />
               </pre>
             )}
             <button
@@ -472,29 +488,48 @@ export function InstrumentRow({
   )
 }
 
-function MonitorDetail({ input, rec }: { input: unknown; rec: MonitorRecord | undefined }): JSX.Element {
-  const { command, timeout_ms } = (input && typeof input === 'object' ? input : {}) as { command?: unknown; timeout_ms?: unknown }
-  const row = (label: string, value: React.ReactNode): JSX.Element => (
+const DETAIL_LIST = 'grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1 text-meta text-dim'
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+  return (
     <>
       <dt className="text-caps uppercase text-faint">{label}</dt>
-      <dd className="min-w-0">{value}</dd>
+      <dd className="min-w-0">{children}</dd>
     </>
   )
+}
+
+function MonitorDetail({ input, rec }: { input: unknown; rec: MonitorRecord | undefined }): JSX.Element {
+  const { command, timeout_ms } = (input && typeof input === 'object' ? input : {}) as { command?: unknown; timeout_ms?: unknown }
   return (
     <div data-ui="monitor-detail" className="mb-2.5 flex flex-col gap-1.5">
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1 text-meta text-dim">
-        {typeof command === 'string' &&
-          row('Command', <span className="whitespace-pre-wrap break-words font-mono text-code text-content">{command}</span>)}
-        {typeof timeout_ms === 'number' && row('Timeout', formatElapsed(timeout_ms))}
-        {rec &&
-          row(
-            'Wakes',
-            `${rec.wakes}${rec.sharedWakes ? ` (${rec.sharedWakes} shared with another monitor, so they may belong to either)` : ''}`
-          )}
-        {rec && row('Wake cost', `${formatCost(rec.costUsd)}${rec.estimated ? ' estimated at list price' : ''}`)}
+      <dl className={DETAIL_LIST}>
+        {typeof command === 'string' && (
+          <DetailRow label="Command">
+            <span className="whitespace-pre-wrap break-words font-mono text-code text-content">{command}</span>
+          </DetailRow>
+        )}
+        {typeof timeout_ms === 'number' && <DetailRow label="Timeout">{formatElapsed(timeout_ms)}</DetailRow>}
+        {rec && (
+          <DetailRow label="Wakes">
+            {`${rec.wakes}${rec.sharedWakes ? ` (${rec.sharedWakes} shared with another monitor, so they may belong to either)` : ''}`}
+          </DetailRow>
+        )}
+        {rec && <DetailRow label="Wake cost">{`${formatCost(rec.costUsd)}${rec.estimated ? ' estimated at list price' : ''}`}</DetailRow>}
       </dl>
       <p className="text-meta text-dim">Each event wakes Claude for a billed turn that re-reads this conversation.</p>
     </div>
+  )
+}
+
+function SendDetail({ to, text }: { to: string; text: string }): JSX.Element {
+  return (
+    <dl data-ui="send-detail" className={`mb-2.5 ${DETAIL_LIST}`}>
+      <DetailRow label="To">{to}</DetailRow>
+      <DetailRow label="Message">
+        <span className="whitespace-pre-wrap break-words text-content">{text}</span>
+      </DetailRow>
+    </dl>
   )
 }
 
@@ -566,7 +601,7 @@ export function AggregateRow({
     return t.name === 'Monitor' ? monitorRowState(t, t.id === needsYouId, checking, monitors?.[t.id]) : rowState(t, t.id === needsYouId, checking)
   })
   const worst = worstState(states)
-  const done = states.filter((s) => s === 'done' || s === 'launched' || s === 'ended').length
+  const done = states.filter((s) => s === 'done' || s === 'sent' || s === 'launched' || s === 'ended').length
   const failed = states.filter((s) => s === 'failed').length
   const notRun = states.filter((s) => s === 'not-run').length
   const stopped = states.filter((s) => s === 'stopped').length
@@ -586,7 +621,7 @@ export function AggregateRow({
   // Collapsed, only what still matters shows: failures pinned first, then anything unresolved.
   const visible =
     collapse && !expanded
-      ? [...tools.filter((t) => t.result !== undefined && t.isError && !t.notRun && !t.stopped), ...tools.filter((t) => t.result === undefined)]
+      ? [...tools.filter((_, i) => states[i] === 'failed'), ...tools.filter((t) => t.result === undefined)]
       : tools
   const label = [
     `${tools.length} tool calls`,

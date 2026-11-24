@@ -1,5 +1,6 @@
 import { CHANGE_READ_TOOL, changeLabel, messageGist, parseRefs, type ContextReference } from '../../../shared/context'
 import type { ChatMessage, MonitorRecord, PerSessionState, ToolCall } from '../store'
+import { sendResultOf } from './agents'
 import { isBackgroundedTool } from './lumen'
 import { READ_CHANGE, spokenChange } from './refCopy'
 import { formatCost } from './formatCost'
@@ -8,7 +9,7 @@ import { SURFACE_OPEN_TOOL, SURFACE_STATE_TOOL } from '../../../shared/surface-t
 export { isBackgroundedTool }
 
 /** Backgrounded tools read info blue; amber is reserved for "needs you". */
-export type RowState = 'running' | 'needs-you' | 'checking' | 'failed' | 'not-run' | 'stopped' | 'launching' | 'launched' | 'watching' | 'done' | 'ended'
+export type RowState = 'running' | 'needs-you' | 'checking' | 'failed' | 'not-run' | 'stopped' | 'launching' | 'launched' | 'watching' | 'sent' | 'done' | 'ended'
 
 export const STATE_TEXT: Record<RowState, string> = {
   running: 'running',
@@ -20,6 +21,7 @@ export const STATE_TEXT: Record<RowState, string> = {
   launching: 'launching',
   launched: 'launched',
   watching: 'watching',
+  sent: 'sent',
   done: 'done',
   ended: 'ended'
 }
@@ -35,6 +37,8 @@ export function rowState(tool: ToolCall, needsYou: boolean, checking = false): R
   if (tool.notRun) return 'not-run'
   if (tool.stopped) return 'stopped'
   if (tool.isError) return 'failed'
+  const sent = tool.name === 'SendMessage' ? sendResultOf(tool.result) : null
+  if (sent) return sent.ok ? 'sent' : 'failed'
   return bg ? 'launched' : 'done'
 }
 
@@ -53,7 +57,7 @@ export function monitorMeta(rec: MonitorRecord, watching: boolean): string {
   return `${rec.wakes} wake${rec.wakes === 1 ? '' : 's'}${shared} · ${formatCost(rec.costUsd)}`
 }
 
-const SEVERITY: RowState[] = ['failed', 'needs-you', 'checking', 'running', 'launching', 'launched', 'watching', 'not-run', 'stopped', 'ended', 'done']
+const SEVERITY: RowState[] = ['failed', 'needs-you', 'checking', 'running', 'launching', 'launched', 'watching', 'not-run', 'stopped', 'ended', 'sent', 'done']
 
 /** The aggregate row's single bead shows the most urgent child. */
 export function worstState(states: RowState[]): RowState {
@@ -141,6 +145,7 @@ export const isChangeRead = (name: string): boolean => name === CHANGE_READ_TOOL
  *  doesn't fold into one name. */
 export function toolLabel(name: string): string {
   if (name === 'Task' || name === 'Agent') return 'Agent'
+  if (name === 'SendMessage') return 'Message'
   if (isBrowserTool(name)) return 'Browser'
   return name === SURFACE_OPEN_TOOL || name === SURFACE_STATE_TOOL ? 'Pane' : isChangeRead(name) ? READ_CHANGE : name
 }

@@ -587,17 +587,19 @@ function TurnUsageTrailer({ usage, id }: { usage: TurnUsage; id: string }): JSX.
 
 /** A body that fits one line renders expanded with no chevron (collapsing a one-liner is
  *  pointless friction); longer bodies collapse by default to a one-line preview. */
-const PEER_COLLAPSE_OVER = 72
+const MESSAGE_COLLAPSE_OVER = 72
+
+const MESSAGE_SHELL = 'rounded-r-md border-l-2 border-info bg-info/7 py-[9px] pl-[13px] pr-3'
+// A fixed leading slot for the chevron; the pending and short headers hold an empty one so
+// the glyph/name column aligns across states (else stacked short + collapsed blocks don't).
+const gutter = <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 
 /**
  * An inbound cross-session peer message. Info-blue (never terracotta), with identity on the
  * glyph + @ sigil + name + verb, not hue alone. Pending is the anonymous placeholder
- * that backfills in place when the peer-origin result lands. Collapsible via ToolGroup's
- * local-state pattern; Virtuoso remeasures on the height change.
+ * that backfills in place when the peer-origin result lands.
  */
 function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMessage }): JSX.Element {
-  const long = message.text.includes('\n') || message.text.length > PEER_COLLAPSE_OVER
-  const [open, setOpen] = useState(!long)
   // Crossfade the resolved header only on the live pending-to-resolved flip (same mounted
   // item), not on a fresh mount of an already-resolved block (resume / scroll re-entry),
   // where prevPending starts false.
@@ -614,14 +616,9 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
     return undefined
   }, [peer.pending])
 
-  const shell = 'rounded-r-md border-l-2 border-info bg-info/7 py-[9px] pl-[13px] pr-3'
-  // A fixed leading slot for the chevron; the pending and short headers hold an empty one so
-  // the glyph/name column aligns across states (else stacked short + collapsed blocks don't).
-  const gutter = <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-
   if (peer.pending) {
     return (
-      <div className={`${shell} border-dashed`}>
+      <div className={`${MESSAGE_SHELL} border-dashed`}>
         <div className="flex items-center gap-2">
           {gutter}
           <IconMessage className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
@@ -638,15 +635,22 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
       </div>
     )
   }
+  return <MessageBlock from={`@${peer.from}`} text={message.text} fresh={justResolved} />
+}
 
-  const head = justResolved ? 'peer-head-in' : ''
+/** A message someone sent in: a peer session to this one, or Claude to one of its agents. Collapsible via
+ *  ToolGroup's local-state pattern; Virtuoso remeasures on the height change. */
+export function MessageBlock({ from, text, defaultOpen, fresh }: { from: string; text: string; defaultOpen?: boolean; fresh?: boolean }): JSX.Element {
+  const long = text.includes('\n') || text.length > MESSAGE_COLLAPSE_OVER
+  const [open, setOpen] = useState(defaultOpen ?? !long)
+  const head = fresh ? 'peer-head-in' : ''
   const glyph = <IconMessage className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
-  const name = <span className="shrink-0 text-label font-semibold text-info">@{peer.from}</span>
+  const name = <span className="shrink-0 text-label font-semibold text-info">{from}</span>
   // Full-strength info (not reduced opacity) for the contrast margin verified.
   const verb = <span className="shrink-0 text-meta text-info">messaged</span>
 
   return (
-    <div className={shell}>
+    <div className={MESSAGE_SHELL}>
       {long ? (
         <button
           type="button"
@@ -663,7 +667,7 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
           {open ? (
             verb
           ) : (
-            <span className="min-w-0 flex-1 truncate text-label italic text-dim">{message.text}</span>
+            <span className="min-w-0 flex-1 truncate text-label italic text-dim">{text}</span>
           )}
         </button>
       ) : (
@@ -676,7 +680,7 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
       )}
       {open && (
         <div className="mb-px mt-2 whitespace-pre-wrap pl-[43px] text-sm text-content max-w-[70ch]">
-          {message.text}
+          {text}
         </div>
       )}
     </div>

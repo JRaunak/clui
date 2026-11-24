@@ -117,6 +117,9 @@ export interface HistoryMessage {
    *  holds the body. Role stays 'user' so search/export are untouched; the renderer promotes
    *  it to a 'peer' block on resume. */
   peer?: { from: string }
+  /** Set on a message main sent a subagent with SendMessage, read off the agent's transcript; `text` holds the
+   *  message without the CLI's wrapper. */
+  coordinator?: true
   /** The turn's own usage, saved by Clui when it finished (assistant messages only). */
   usage?: TurnUsage
   /** How long the turn took, when the jsonl recorded it (assistant messages only). */
