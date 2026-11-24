@@ -1,17 +1,9 @@
 import { useMemo } from 'react'
 import { browserTabOf, useActive, viewedTabOf, type PerSessionState, type ToolCall } from '../store'
+import { isBackgroundedTool } from './agents'
 
 /** Where the active session's single light sits. */
 export type LumenSite = null | { kind: 'tail' } | { kind: 'tool'; toolId: string }
-
-/** A backgrounded tool returns at launch while its work continues in the tray, so it never holds the light. */
-export function isBackgroundedTool(t: ToolCall): boolean {
-  return (
-    t.name === 'Workflow' ||
-    !!t.sentToBackground ||
-    (!!t.input && typeof t.input === 'object' && (t.input as { run_in_background?: unknown }).run_in_background === true)
-  )
-}
 
 /** A primitive key, so the store selector below never builds an object (a fresh object per render loops Zustand).
  *  Idle wins over a dangling unresolved tool: an interrupted turn can leave a result-less tool behind. */

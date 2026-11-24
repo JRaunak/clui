@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react'
 import type { BlockedPrompt, CompactionMarker } from '../../../shared/sessions'
 import { fmtTokens } from '../lib/formatTokens'
 import {
@@ -25,6 +25,8 @@ import { Button } from './Button'
 import { parseRefs, type ContextReference } from '../../../shared/context'
 import { baseOf } from '../lib/refCopy'
 import { viaOf, type Via } from '../lib/motion'
+import { peerSenderOf } from '../lib/agents'
+import { diveInto } from '../lib/dive'
 import { AggregateRow, InstrumentRow } from './InstrumentRow'
 import { IconArrowUp, IconChevron, IconClose, IconEye, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShield, IconShieldOff, IconStop, IconWarn } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
@@ -595,9 +597,10 @@ const MESSAGE_SHELL = 'rounded-r-md border-l-2 border-info bg-info/7 py-[9px] pl
 const gutter = <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 
 /**
- * An inbound cross-session peer message. Info-blue (never terracotta), with identity on the
- * glyph + @ sigil + name + verb, not hue alone. Pending is the anonymous placeholder
- * that backfills in place when the peer-origin result lands.
+ * An inbound peer message, from another session or from one of this session's subagents.
+ * Info-blue (never terracotta), with identity on the glyph + name + verb, not hue alone; a
+ * session's name carries an @ sigil. Pending is the anonymous placeholder that backfills in
+ * place when the peer-origin result lands.
  */
 function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMessage }): JSX.Element {
   // Crossfade the resolved header only on the live pending-to-resolved flip (same mounted
@@ -615,6 +618,10 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
     prevPending.current = peer.pending
     return undefined
   }, [peer.pending])
+  const [toolId = '', label = ''] = useActive((s) => {
+    const sender = s ? peerSenderOf(s, peer) : null
+    return sender ? `${sender.toolId ?? ''}\0${sender.label}` : ''
+  }).split('\0')
 
   if (peer.pending) {
     return (
@@ -635,49 +642,73 @@ function PeerMessageView({ message, peer }: { message: ChatMessage; peer: PeerMe
       </div>
     )
   }
-  return <MessageBlock from={`@${peer.from}`} text={message.text} fresh={justResolved} />
+  return (
+    <MessageBlock
+      from={label}
+      text={message.text}
+      fresh={justResolved}
+      onOpen={toolId ? (e) => diveInto(toolId, viaOf(e), undefined, message.id) : undefined}
+      openLabel={`${label}, open transcript`}
+    />
+  )
 }
 
-/** A message someone sent in: a peer session to this one, or Claude to one of its agents. Collapsible via
+/** A message someone sent in: a peer session or a subagent to this session, or Claude to one of its agents. Collapsible via
  *  ToolGroup's local-state pattern; Virtuoso remeasures on the height change. */
-export function MessageBlock({ from, text, defaultOpen, fresh }: { from: string; text: string; defaultOpen?: boolean; fresh?: boolean }): JSX.Element {
+export function MessageBlock({ from, text, defaultOpen, fresh, onOpen, openLabel }: { from: string; text: string; defaultOpen?: boolean; fresh?: boolean; onOpen?: (e: MouseEvent) => void; openLabel?: string }): JSX.Element {
   const long = text.includes('\n') || text.length > MESSAGE_COLLAPSE_OVER
   const [open, setOpen] = useState(defaultOpen ?? !long)
   const head = fresh ? 'peer-head-in' : ''
   const glyph = <IconMessage className="h-3.5 w-3.5 shrink-0 text-info" aria-hidden="true" />
-  const name = <span className="shrink-0 text-label font-semibold text-info">{from}</span>
+  const name = (
+    <span className="min-w-0 truncate text-label font-semibold text-info" title={from}>
+      {from}
+    </span>
+  )
   // Full-strength info (not reduced opacity) for the contrast margin verified.
   const verb = <span className="shrink-0 text-meta text-info">messaged</span>
 
   return (
     <div className={MESSAGE_SHELL}>
-      {long ? (
-        <button
-          type="button"
-          className={`flex w-full items-center gap-2 text-left ${head}`}
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-        >
-          <IconChevron
-            className={`h-3.5 w-3.5 shrink-0 text-info transition-transform ${open ? 'rotate-90' : ''}`}
-            aria-hidden="true"
-          />
-          {glyph}
-          {name}
-          {open ? (
-            verb
-          ) : (
-            <span className="min-w-0 flex-1 truncate text-label italic text-dim">{text}</span>
-          )}
-        </button>
-      ) : (
-        <div className={`flex items-center gap-2 ${head}`}>
-          {gutter}
-          {glyph}
-          {name}
-          {verb}
-        </div>
-      )}
+      <div className="flex items-center gap-2">
+        {long ? (
+          <button
+            type="button"
+            className={`flex min-w-0 flex-1 items-center gap-2 text-left ${head}`}
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+          >
+            <IconChevron
+              className={`h-3.5 w-3.5 shrink-0 text-info transition-transform ${open ? 'rotate-90' : ''}`}
+              aria-hidden="true"
+            />
+            {glyph}
+            {name}
+            {open ? (
+              verb
+            ) : (
+              <span className="min-w-0 flex-1 truncate text-label italic text-dim">{text}</span>
+            )}
+          </button>
+        ) : (
+          <div className={`flex min-w-0 flex-1 items-center gap-2 ${head}`}>
+            {gutter}
+            {glyph}
+            {name}
+            {verb}
+          </div>
+        )}
+        {onOpen && (
+          <button
+            type="button"
+            className="-my-[3px] min-h-6 shrink-0 px-1.5 text-meta text-dim hover:text-content"
+            aria-label={openLabel}
+            onClick={onOpen}
+          >
+            Open transcript
+          </button>
+        )}
+      </div>
       {open && (
         <div className="mb-px mt-2 whitespace-pre-wrap pl-[43px] text-sm text-content max-w-[70ch]">
           {text}

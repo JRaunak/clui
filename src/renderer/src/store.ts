@@ -223,6 +223,9 @@ export interface SendAttachment {
 export interface PeerMessage {
   from: string
   pending: boolean
+  /** The sender's agent id when one of this session's subagents sent it; `name` is then its agent type. */
+  senderTaskId?: string
+  name?: string
 }
 
 /** A background task whose end woke Claude for a turn of its own. A `running` monitor is a
@@ -2055,7 +2058,7 @@ async function beginSession(
         // A recovered inbound peer message becomes a 'peer' block; it's resolved (never
         // pending) since it's read whole from disk.
         role: m.peer ? ('peer' as const) : m.role,
-        peer: m.peer ? { from: m.peer.from, pending: false } : undefined,
+        peer: m.peer ? { ...m.peer, pending: false } : undefined,
         compaction: m.compaction,
         blocked: m.blocked,
         usage: m.usage,
@@ -3967,13 +3970,15 @@ export const useSession = create<SessionStore>((set, get) => ({
             if (prev.taskType === 'local_agent') {
               patch.backgroundTasks = { ...slice.backgroundTasks, [e.taskId]: { ...prev, status, endMs: prev.endMs ?? Date.now() } }
               // Where the agent let go of its face for the agents launched after it. Only its first run's end counts,
-              // so a resume never moves the faces of agents launched since.
+              // so a resume never moves the faces of agents launched since. Its running time is the total over every
+              // run, so the latest notice's figure stands.
               // ponytail: a resume holds no face of its own, and a resumed foreground agent reads as held since launch;
               // re-hold per run if users see a clash
-              const at = prev.toolUseId ? messages.findIndex((m) => m.tools.some((t) => t.id === prev.toolUseId && t.notifiedAt === undefined)) : -1
+              const call = agentToolOf(slice, e.taskId)?.id ?? prev.toolUseId
+              const at = call ? messages.findIndex((m) => m.tools.some((t) => t.id === call)) : -1
               if (at >= 0) {
                 const next = messages.slice()
-                next[at] = { ...messages[at], tools: messages[at].tools.map((t) => (t.id === prev.toolUseId ? { ...t, notifiedAt: messages.length } : t)) }
+                next[at] = { ...messages[at], tools: messages[at].tools.map((t) => (t.id === call ? { ...t, notifiedAt: t.notifiedAt ?? messages.length, durationMs: e.durationMs ?? t.durationMs } : t)) }
                 patch.messages = next
               }
             } else {
@@ -4039,8 +4044,9 @@ export const useSession = create<SessionStore>((set, get) => ({
           // Backfill the open placeholder in place (slot reserved from `started`, no shift).
           // If none is open (degraded result-only path), append a resolved block.
           const idx = messages.findLastIndex((m) => m.role === 'peer' && m.peer?.pending)
+          const peer: PeerMessage = { from: e.from, pending: false, senderTaskId: e.senderTaskId, name: e.name }
           if (idx >= 0) {
-            messages[idx] = { ...messages[idx], text: e.body, peer: { from: e.from, pending: false } }
+            messages[idx] = { ...messages[idx], text: e.body, peer }
           } else {
             messages.push({
               id: `peer-${Date.now()}-${messages.length}`,
@@ -4049,7 +4055,7 @@ export const useSession = create<SessionStore>((set, get) => ({
               thinking: '',
               tools: [],
               blocks: [],
-              peer: { from: e.from, pending: false }
+              peer
             })
           }
           patch.lastActivityMs = Date.now()

@@ -14,7 +14,7 @@ import { createInterface } from 'node:readline'
 import { dirname, join } from 'node:path'
 import { claudeHome } from '../lib/claude-home'
 import type { AgentMeta, HistoryMessage, HistoryToolCall, TranscriptResult } from '../../shared/sessions'
-import { parseCliMessage, type TurnUsage } from '../../shared/events'
+import { agentIdOf, parseCliMessage, type TurnUsage } from '../../shared/events'
 import { readSessionUsage } from './usage'
 
 export const projectsRoot = (): string => join(claudeHome(), 'projects')
@@ -57,7 +57,7 @@ interface RawEntry {
   /** On a tool-result record; a string for some tools. */
   toolUseResult?: unknown
   /** On a CLI-injected record: what produced it, e.g. `coordinator` for a message main sent a subagent. */
-  origin?: { kind?: string }
+  origin?: { kind?: string; from?: string; senderTaskId?: string; name?: string; body?: string }
 }
 
 /** Exact: a reworded wrapper keeps its full text. */
@@ -519,6 +519,13 @@ async function parseTranscriptFile(
       // stream never renders them, so a resumed transcript mustn't show them as the user's words.
       if (entry.isMeta && entry.type === 'user' && entry.sourceToolUseID && toolCallsById.get(entry.sourceToolUseID)?.name === 'Skill') continue
       // Main's SendMessage reaches an agent as a meta record where the agent took it in, so it sits in delivery order.
+      // A peer's message carries its sender on the record; a subagent's also names its agent id and type. Records
+      // without an origin fall back to the wrapper parse below.
+      if (entry.isMeta && entry.type === 'user' && entry.origin?.kind === 'peer' && typeof entry.origin.body === 'string') {
+        const { from, senderTaskId, name } = entry.origin
+        messages.push({ id: `h-${seq++}-${entry.uuid ?? ''}`, role: 'user', text: entry.origin.body, thinking: '', tools: [], peer: { from: name ?? from ?? 'a peer', senderTaskId, name } })
+        continue
+      }
       if (entry.isMeta && entry.type === 'user' && entry.origin?.kind === 'coordinator') {
         const t = contentText(entry.message?.content)
         messages.push({ id: `h-${seq++}-${entry.uuid ?? ''}`, role: 'user', text: COORDINATOR.exec(t)?.[1] ?? t, thinking: '', tools: [], coordinator: true })
@@ -693,10 +700,14 @@ async function parseTranscriptFile(
       // Drop CLI slash-command plumbing user-bubbles (<command-name>/<caveat>):
       // noise the terminal never shows; the command's output is surfaced separately.
       if (role === 'user' && msg.tools.length === 0 && !msg.thinking && isCommandPlumbing(msg.text)) {
-        const note = /^\s*<task-notification>[\s\S]*?<tool-use-id>([^<]+)<\/tool-use-id>/.exec(msg.text)
-        const call = note && toolCallsById.get(note[1])
-        if (call && isAgentCall(call)) {
-          call.notifiedAt = messages.length
+        // A resume's notice names the SendMessage that woke the agent, or no call at all, so its task id, which is the
+        // agent id, places it. Its usage is the total over every run, so the last notice's stands.
+        const note = /^\s*<task-notification>/.test(msg.text) ? msg.text : ''
+        const named = toolCallsById.get(/<tool-use-id>([^<]+)<\/tool-use-id>/.exec(note)?.[1] ?? '')
+        const task = /<task-id>([^<]+)<\/task-id>/.exec(note)?.[1]
+        const call = named && isAgentCall(named) ? named : task ? [...toolCallsById.values()].find((t) => isAgentCall(t) && agentIdOf(t.result) === task) : undefined
+        if (call) {
+          call.notifiedAt ??= messages.length
           const ms = /<duration_ms>(\d+)<\/duration_ms>/.exec(msg.text)
           if (ms) call.durationMs = Number(ms[1])
           const uses = /<tool_uses>(\d+)<\/tool_uses>/.exec(msg.text)

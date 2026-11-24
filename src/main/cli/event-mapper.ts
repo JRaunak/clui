@@ -152,7 +152,7 @@ interface RawEnvelope {
   /** Origin of a turn's result. `kind:'task-notification'` = a backgrounded subagent's
    *  completion turn (foreground result has origin null). `kind:'peer'` = a cross-session
    *  message woke this session; its sender + body ride here (the only place). Live 2.1.250. */
-  origin?: { kind?: string; name?: string; body?: string; from?: string; msg_id?: string; fromMode?: string }
+  origin?: { kind?: string; name?: string; body?: string; from?: string; senderTaskId?: string; msg_id?: string; fromMode?: string }
   /** `command_lifecycle` envelope: brackets a peer-triggered turn. `state:'started'` fires
    *  before the autonomous reply streams, 'completed'/'cancelled' at the very end. Clui's
    *  own stdin turns carry no client-supplied uuid, so they never get a lifecycle. */
@@ -173,7 +173,7 @@ interface RawEnvelope {
   tasks?: Array<{ task_id?: string; task_type?: string; description?: string }>
   // Dynamic-workflow fields (task_type 'local_workflow' + system/task_progress).
   workflow_name?: string
-  usage?: { tool_uses?: number }
+  usage?: { tool_uses?: number; duration_ms?: number }
   workflow_progress?: unknown[]
 }
 
@@ -509,7 +509,9 @@ export class EventMapper {
           out.push({
             type: 'peer-message',
             from: env.origin.name ?? env.origin.from ?? 'a peer',
-            body: env.origin.body
+            body: env.origin.body,
+            senderTaskId: env.origin.senderTaskId,
+            name: env.origin.name
           })
         }
         // Surface the user's failure as the in-chat error box. `alreadyShown` de-dups the
@@ -753,7 +755,8 @@ export class EventMapper {
             type: 'bg-task-notification',
             taskId: env.task_id as string,
             status: env.status,
-            summary: env.summary
+            summary: env.summary,
+            durationMs: env.usage?.duration_ms
           }
         ]
       }

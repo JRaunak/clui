@@ -487,6 +487,21 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   ok(sends.length === 2 && sends.every((t) => t.notifiedAt === undefined && typeof t.result === 'string' && t.result.startsWith('{"success":true')), 'send disk: no SendMessage is stamped, each keeps its JSON result', JSON.stringify(sends.map((t) => [t.notifiedAt, t.result?.slice(0, 20)])))
 }
 
+// A background agent's notice carries its running time summed over every run (test/fixtures/sendmessage, CLI 2.1.331).
+{
+  const wire = readFileSync(new URL('./fixtures/sendmessage/wire.jsonl', import.meta.url), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+  const notes = feed(new EventMapper(), wire).filter((e) => e.type === 'bg-task-notification')
+  equal(JSON.stringify(notes.map((e) => e.durationMs)), '[3259,5250,11961]', 'mapper: each agent notice carries the cumulative duration')
+}
+
+// A subagent's SendMessage to main arrives as a peer result naming its task (live 2.1.331); a peer session's names none.
+{
+  const peer = (origin: Record<string, unknown>): any => feed(new EventMapper(), [{ type: 'result', session_id: 's', origin: { kind: 'peer', ...origin } }]).find((e) => e.type === 'peer-message')
+  const sub = peer({ from: 'a7cbb5d9bf18f15cd', senderTaskId: 'a7cbb5d9bf18f15cd', name: 'general-purpose', body: 'QUESTION-FROM-ASKER' })
+  ok(sub?.senderTaskId === 'a7cbb5d9bf18f15cd' && sub.name === 'general-purpose' && sub.from === 'general-purpose' && sub.body === 'QUESTION-FROM-ASKER', 'mapper: a subagent peer message keeps its sender task and type', JSON.stringify(sub))
+  ok(peer({ from: 'other-ab12', name: 'other', body: 'hi' })?.senderTaskId === undefined, 'mapper: a peer session names no sender task')
+}
+
 // Plugin UI messages: sanitized in main, deduped by uuid, routed by subtype.
 {
   const m = new EventMapper()

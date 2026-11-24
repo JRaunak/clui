@@ -1,7 +1,6 @@
 import { CHANGE_READ_TOOL, changeLabel, messageGist, parseRefs, type ContextReference } from '../../../shared/context'
 import type { ChatMessage, MonitorRecord, PerSessionState, ToolCall } from '../store'
-import { sendResultOf } from './agents'
-import { isBackgroundedTool } from './lumen'
+import { isBackgroundedTool, sendResultOf } from './agents'
 import { READ_CHANGE, spokenChange } from './refCopy'
 import { formatCost } from './formatCost'
 import { SURFACE_OPEN_TOOL, SURFACE_STATE_TOOL } from '../../../shared/surface-tools'

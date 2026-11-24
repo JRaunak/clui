@@ -113,10 +113,10 @@ export interface HistoryMessage {
   tools: HistoryToolCall[]
   /** Attachments recovered from the transcript for a resumed USER turn. Absent when none. */
   attachments?: HistoryAttachment[]
-  /** Set on an inbound peer message (an isMeta user record on disk): the sender name; `text`
-   *  holds the body. Role stays 'user' so search/export are untouched; the renderer promotes
+  /** Set on an inbound peer message (an isMeta user record on disk): the sender name, plus a subagent sender's
+   *  agent id and type; `text` holds the body. Role stays 'user' so search/export are untouched; the renderer promotes
    *  it to a 'peer' block on resume. */
-  peer?: { from: string }
+  peer?: { from: string; senderTaskId?: string; name?: string }
   /** Set on a message main sent a subagent with SendMessage, read off the agent's transcript; `text` holds the
    *  message without the CLI's wrapper. */
   coordinator?: true

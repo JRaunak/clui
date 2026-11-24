@@ -1803,7 +1803,8 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
 // agent's task, row, notice and stream stay on the Agent call.
 {
   const { readFileSync } = await import('node:fs')
-  const { agentIdOf, agentToolOf, sendTargetOf } = await import('../src/renderer/src/lib/agents.ts')
+  const { agentToolOf, sendTargetOf } = await import('../src/renderer/src/lib/agents.ts')
+  const { agentIdOf } = await import('../src/shared/events.ts')
   const AGENT = 'toolu_bdrk_01HjJsSWv8obUaMYrUUKZHuq'
   const TASK = 'a346a162ba7618e7e'
   const RESUME = 'toolu_bdrk_01BW8mGQr3hTix8xnv27cvvb'
@@ -1820,7 +1821,9 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   equal(agentToolOf(sl, 'a0000000000000bogus'), null, 'agents: an unknown id resolves to nothing')
   equal(sendTargetOf(sl, { to: 'sleeper', kind: null }, TASK)?.id, AGENT, 'send target: the pinned id wins over a name in to')
   equal(sendTargetOf(sl, { to: TASK, kind: 'agent' }, null)?.id, AGENT, 'send target: else by to')
-  equal(sendTargetOf(sl, { to: TASK, kind: 'name' }, TASK), null, 'send target: a non-agent recipient is never an agent')
+  equal(sendTargetOf(sl, { to: 'sleeper', kind: 'name' }, TASK)?.id, AGENT, 'send target: a name-addressed send resolves by its pin')
+  equal(sendTargetOf(sl, { to: TASK, kind: 'name' }, null), null, 'send target: an unpinned name never resolves through to')
+  equal(sendTargetOf(sl, { to: TASK, kind: 'peer' }, 'a0000000000000bogus'), null, 'send target: a pin no Agent call holds places nothing')
 
   reset({ busy: true, messages: [{ id: 'u', role: 'user', text: 'go', thinking: '', tools: [], blocks: [] }] })
   const m = new EventMapper()
@@ -1855,6 +1858,13 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
   const coordinators = (): string[] => (cur().subagentMessages[AGENT] ?? []).filter((x: any) => x.kind === 'coordinator').map((x: any) => x.text)
   equal(JSON.stringify(coordinators()), JSON.stringify(['Also include the word BANANA in your reply.', 'Now reply with the word CHERRY.']), 'send replay: both sends sit in the agent stream, in send order')
   equal(cur().subagentMessages[RESUME], undefined, 'send replay: nothing streams under the SendMessage id')
+  equal(tools.find((t: any) => t.id === AGENT)?.durationMs, 11961, 'send replay: the Agent call holds the running time over all three runs')
+  equal(agentRunState(cur(), { by: 'tool', id: AGENT }).durationMs, 11961, 'send replay: the lingering task reads the total, not the last run')
+  const pruned = agentRunState({ ...cur(), backgroundTasks: {} }, { by: 'tool', id: AGENT })
+  ok(pruned.state === 'done' && pruned.durationMs === 11961, 'send replay: once the task is pruned the Agent reads done with the total', JSON.stringify(pruned))
+  const unnoticed = { ...cur(), backgroundTasks: {}, messages: cur().messages.map((x: any) => ({ ...x, tools: x.tools.map((t: any) => (t.id === AGENT ? { ...t, durationMs: undefined } : t)) })) }
+  const bare = agentRunState(unnoticed, { by: 'tool', id: AGENT })
+  ok(bare.state === 'done' && bare.durationMs === undefined, 'send replay: a background launch never reads its launch ack as its run time', JSON.stringify(bare))
 
   const failed = '{"success":false,"message":"No agent named \'x\' is reachable."}'
   for (const e of [
@@ -1866,4 +1876,33 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
 
   st().applyEvent('h1', { type: 'agent-usage', taskId: TASK, toolUseId: RESUME, toolUses: 9 })
   ok(cur().agentToolUses[AGENT] === 9 && cur().agentToolUses[RESUME] === undefined, 'agent-usage: a resumed run counts under its Agent call', JSON.stringify(cur().agentToolUses))
+}
+
+// On disk (test/fixtures/sendmessage, CLI 2.1.331): a resume's notices carry the total running time, and the last one
+// stands even when it names the SendMessage or no call. A subagent's message to main rebuilds from its origin.
+{
+  const { readTranscriptAtPath } = await import('../src/main/sessions/transcript.ts')
+  const fx = (f: string): string => new URL(`./fixtures/sendmessage/${f}`, import.meta.url).pathname
+  const main = await readTranscriptAtPath(fx('main.jsonl'))
+  const agent = main.messages.flatMap((m) => m.tools).find((t) => t.name === 'Agent')
+  ok(agent?.durationMs === 11961 && agent.notifiedAt !== undefined, 'send disk: the Agent reads the last notice\'s total', JSON.stringify([agent?.durationMs, agent?.notifiedAt]))
+  const peer = await readTranscriptAtPath(fx('main-peer.jsonl'))
+  const msg = peer.messages.find((m) => m.peer)
+  ok(msg?.text === 'QUESTION-FROM-ASKER' && msg.peer?.senderTaskId === 'aa8200fd85ea70dc8' && msg.peer.name === 'general-purpose', 'peer disk: a subagent message rebuilds from its origin', JSON.stringify(msg))
+  ok(!peer.messages.some((m) => m.text.includes('Another Claude session')), 'peer disk: the CLI wrapper shows nowhere')
+}
+
+// A subagent's message to main (live 2.1.331: origin carries senderTaskId, and name is the agent type) keeps its
+// sender, which names it by its Agent call. A peer session reads by its @name.
+{
+  const { peerSenderOf } = await import('../src/renderer/src/lib/agents.ts')
+  const launch = 'Async agent launched successfully.\nagentId: a7cbb5d9bf18f15cd (internal ID)'
+  reset({ busy: false, messages: [{ id: 'a', role: 'assistant', text: '', thinking: '', tools: [{ id: 'tu-asker', name: 'Agent', input: { description: 'asker', subagent_type: 'general-purpose' }, result: launch }], blocks: [] }] })
+  st().applyEvent('h1', { type: 'peer-message', from: 'general-purpose', body: 'QUESTION-FROM-ASKER', senderTaskId: 'a7cbb5d9bf18f15cd', name: 'general-purpose' })
+  const peer = cur().messages.at(-1).peer
+  ok(peer?.senderTaskId === 'a7cbb5d9bf18f15cd' && peer.name === 'general-purpose' && !peer.pending, 'peer: a subagent message keeps its sender task', JSON.stringify(peer))
+  equal(JSON.stringify(peerSenderOf(cur(), peer)), JSON.stringify({ label: 'asker', toolId: 'tu-asker' }), 'peer label: a placed subagent reads by its Agent call')
+  equal(peerSenderOf(cur(), { ...peer, senderTaskId: 'a0000000000000bogus' }).label, 'general-purpose agent', 'peer label: an unplaced subagent reads by its type')
+  equal(JSON.stringify(peerSenderOf(cur(), { from: 'a0000000000000bogus', senderTaskId: 'a0000000000000bogus' })), JSON.stringify({ label: 'Agent', toolId: null }), 'peer label: a subagent with no type reads Agent')
+  equal(JSON.stringify(peerSenderOf(cur(), { from: 'other' })), JSON.stringify({ label: '@other', toolId: null }), 'peer label: a peer session keeps its @name')
 }

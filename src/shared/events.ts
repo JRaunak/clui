@@ -370,8 +370,9 @@ export type DomainEvent =
    *  anonymous placeholder, backfilled by `peer-message` at the result. */
   | { type: 'peer-pending' }
   /** An inbound peer message resolved (sender + body from `result.origin.kind:'peer'`):
-   *  backfill the open placeholder in place, or append if none is open. */
-  | { type: 'peer-message'; from: string; body: string }
+   *  backfill the open placeholder in place, or append if none is open. A subagent's SendMessage to main arrives the
+   *  same way; only its origin carries `senderTaskId`, and its `name` is the agent type. */
+  | { type: 'peer-message'; from: string; body: string; senderTaskId?: string; name?: string }
   /** The peer turn's `command_lifecycle` ended (completed/cancelled): drop a still-pending
    *  placeholder that never resolved, so a non-peer lifecycle can't leave a phantom. */
   | { type: 'peer-lifecycle-end' }
@@ -463,6 +464,8 @@ export type DomainEvent =
       taskId: string
       status?: string
       summary?: string
+      /** A subagent's running time summed over every run, so a resume's notice carries the total. */
+      durationMs?: number
     }
   /** Authoritative snapshot of all currently-running background tasks (ids only). */
   | { type: 'bg-tasks-changed'; taskIds: string[] }
@@ -497,6 +500,10 @@ export type DomainEvent =
   | { type: 'mod-status-reset' }
 
 export type CliMessage = Extract<DomainEvent, { type: 'cli-message' }>
+
+/** The agent id an Agent result names, the one SendMessage and the CLI's task events use. Line-anchored: the CLI
+ *  indents a foreground agent's report above it, so a report can't forge it. */
+export const agentIdOf = (result?: string): string | null => /^agentId: ([\w-]+)/m.exec(result ?? '')?.[1] ?? null
 
 /** Splits the CLI's hook wording into its parts: `<Event>[:<matcher>] says: <message>` for a
  *  systemMessage, and for a blocking UserPromptSubmit hook

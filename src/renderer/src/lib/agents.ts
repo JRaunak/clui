@@ -1,10 +1,20 @@
 import type { AgentRun } from '../../../shared/ipc'
 import type { AgentMeta, HistoryMessage } from '../../../shared/sessions'
+import { agentIdOf } from '../../../shared/events'
 import { agentRefOf, type AgentRef, type SurfaceTab } from '../../../shared/surfaces'
-import type { BackgroundTask, PendingPermission, PerSessionState, SubagentMessage, ToolCall, WorkflowAgent, WorkflowState } from '../store'
+import type { BackgroundTask, PeerMessage, PendingPermission, PerSessionState, SubagentMessage, ToolCall, WorkflowAgent, WorkflowState } from '../store'
 import { assignFaces, type Launch } from './faces'
 
 export const isAgentTool = (name: string): boolean => name === 'Task' || name === 'Agent'
+
+/** A backgrounded tool returns at launch while its work continues in the tray, so it never holds the light. */
+export function isBackgroundedTool(t: ToolCall): boolean {
+  return (
+    t.name === 'Workflow' ||
+    !!t.sentToBackground ||
+    (!!t.input && typeof t.input === 'object' && (t.input as { run_in_background?: unknown }).run_in_background === true)
+  )
+}
 
 export function subagentType(input: unknown): string | null {
   if (input && typeof input === 'object') {
@@ -50,17 +60,23 @@ function toolWhere(slice: ToolSources, pred: (t: ToolCall) => boolean): ToolCall
 
 export const launcherOf = (slice: ToolSources, id: string): ToolCall | null => toolWhere(slice, (t) => t.id === id)
 
-/** The agent id an Agent result names, the one SendMessage and the CLI's task events use. Line-anchored: the CLI
- *  indents a foreground agent's report above it, so a report can't forge it. */
-export const agentIdOf = (result?: string): string | null => /^agentId: ([\w-]+)/m.exec(result ?? '')?.[1] ?? null
-
 export const agentToolOf = (slice: ToolSources, agentId: string): ToolCall | null => toolWhere(slice, (t) => isAgentTool(t.name) && agentIdOf(t.result) === agentId)
 
-/** The Agent call a SendMessage writes to: by the result's pinned id, else by its `to`. Null for a peer or team
- *  recipient, and for an agent the session can't place. */
+/** Who sent a peer message. One of this session's subagents is named by its Agent call, which `toolId` opens; one
+ *  that call can't place reads by its type. A peer session reads by its name. */
+export function peerSenderOf(slice: ToolSources & Pick<PerSessionState, 'subagentChildren'>, peer: Pick<PeerMessage, 'from' | 'senderTaskId' | 'name'>): { label: string; toolId: string | null } {
+  if (!peer.senderTaskId) return { label: `@${peer.from}`, toolId: null }
+  const tool = agentToolOf(slice, peer.senderTaskId)
+  if (tool) return { label: agentInfo(slice, tool.id).label, toolId: tool.id }
+  return { label: peer.name ? `${peer.name} agent` : 'Agent', toolId: null }
+}
+
+/** The Agent call a SendMessage writes to: by the result's pinned id under any addressing, since only this session's
+ *  Agent calls name that id; else by `to` when it addresses an agent. A peer named like an agent id never resolves. */
 export function sendTargetOf(slice: ToolSources, send: { to: string; kind: string | null }, pinId: string | null): ToolCall | null {
-  if (send.kind !== null && send.kind !== 'agent') return null
-  return (pinId ? agentToolOf(slice, pinId) : null) ?? agentToolOf(slice, send.to)
+  const pinned = pinId ? agentToolOf(slice, pinId) : null
+  if (pinned || (send.kind !== null && send.kind !== 'agent')) return pinned
+  return agentToolOf(slice, send.to)
 }
 
 /** The agent that launched a nested one, by tool_use id, else null for main's own. */
@@ -164,16 +180,18 @@ export function workflowOfAgent(workflows: Record<string, WorkflowState>, agentI
 const span = (start: number | undefined, end: number | undefined): number | undefined => (start !== undefined && end !== undefined ? end - start : undefined)
 
 function toolRunState(slice: PerSessionState, id: string, meta: AgentMeta | null | undefined): RunStatusOf {
+  const tool = launcherOf(slice, id)
   const bg = Object.values(slice.backgroundTasks).find((t) => t.taskType === 'local_agent' && t.toolUseId === id)
   if (bg) {
     // A stopped agent's row lingers with its stopping flag still set, so only a running one reads stopping.
     const state = bg.status === 'running' ? (bg.stopping ? 'stopping' : 'background') : bg.status === 'killed' ? 'stopped' : bg.status === 'failed' ? 'failed' : 'done'
-    return { state, startMs: bg.startMs, durationMs: span(bg.startMs, bg.endMs) }
+    // A resume restarts the task's clock; the call holds the total over every run.
+    return { state, startMs: bg.startMs, durationMs: (bg.status === 'running' ? undefined : tool?.durationMs) ?? span(bg.startMs, bg.endMs) }
   }
-  const tool = launcherOf(slice, id)
   if (tool && tool.startMs !== undefined) {
     const state = tool.result === undefined ? (slice.interrupting ? 'stopping' : 'running') : tool.stopped ? 'stopped' : tool.isError ? 'failed' : 'done'
-    return { state, startMs: tool.startMs, durationMs: span(tool.startMs, tool.endMs) }
+    // A background launch's result is its launch ack, so its own span says nothing about the run.
+    return { state, startMs: tool.startMs, durationMs: tool.durationMs ?? (isBackgroundedTool(tool) ? undefined : span(tool.startMs, tool.endMs)) }
   }
   const durationMs = tool?.durationMs
   if (tool && !tool.background && meta?.shape !== 'background') {

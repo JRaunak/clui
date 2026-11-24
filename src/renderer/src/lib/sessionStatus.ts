@@ -1,5 +1,5 @@
 import type { PendingPermission, PerSessionState } from '../store'
-import { isBackgroundedTool } from './lumen'
+import { isBackgroundedTool } from './agents'
 import { highlightOf } from './toolHighlight'
 import { changeReadOf, isChangeRead, toolLabel } from './instrument'
 
