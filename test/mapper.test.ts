@@ -640,23 +640,26 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
   equal((m.map({ type: 'system', subtype: 'init', session_id: 's' }) as any[])[0].mcpServers.length, 0, 'mapper: no mcp_servers, empty list')
 }
 
-// The live command list (initialize response and commands_changed, shape verified on 2.1.322) keeps builtin and
+// The live command list (initialize response and commands_changed, shape verified on 2.1.331) keeps builtin and
 // plugin; malformed entries drop.
 {
   const { normalizeSlashCommands } = await import('../src/shared/events.ts')
   const raw = [
     { name: 'compact', description: 'Free context', argumentHint: '', builtin: true },
     { name: 'ship', description: 'Ship it (project)', argumentHint: '<msg>' },
-    { name: 'acme:lint', description: 'Lint', plugin: 'acme', aliases: ['l', 3] },
+    { name: 'handoff', description: 'Toggle handoff', argumentHint: '[10-90 | now]', plugin: 'handoff', aliases: ['l', 3] },
+    { name: 'probeplug:plugskill', description: '(probeplug) Plugin probe skill', argumentHint: '', aliases: ['plugskill'] },
     { name: 7 },
     null,
     'x'
   ]
   const cmds = normalizeSlashCommands(raw)
-  equal(cmds.map((c) => c.name).join(','), 'compact,ship,acme:lint', 'commands: malformed entries drop')
+  equal(cmds.map((c) => c.name).join(','), 'compact,ship,handoff,probeplug:plugskill', 'commands: malformed entries drop')
   equal(cmds[0].builtin, true, 'commands: builtin kept')
   equal(cmds[1].builtin, false, 'commands: a skill is not builtin')
-  equal(cmds[2].plugin, 'acme', 'commands: plugin kept')
+  equal(cmds[2].plugin, 'handoff', 'commands: plugin kept')
+  equal(cmds[3].plugin, undefined, 'commands: a plugin command without the field has none')
+  equal(cmds[3].description, '(probeplug) Plugin probe skill', 'commands: the normalizer leaves the description whole')
   equal(JSON.stringify(cmds[2].aliases), '["l"]', 'commands: non-string aliases drop')
   equal(normalizeSlashCommands({}).length, 0, 'commands: a non-array is empty')
 

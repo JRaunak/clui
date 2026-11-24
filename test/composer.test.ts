@@ -131,15 +131,25 @@ equal(skippedNote(1), '20 references max. 1 file was not added.', 'drop text: on
     { name: 'ship', description: 'Ship it (project)', argumentHint: '<msg>' },
     { name: 'ship', description: 'Ship it globally (user)' },
     { name: 'bare', description: ' (user)' },
-    { name: 'acme:lint', description: 'Lint', plugin: 'acme' },
-    { name: 'odd', description: 'No suffix' }
+    { name: 'acme:lint', description: '(acme) Lint', argumentHint: '' },
+    { name: 'odd', description: 'No suffix' },
+    { name: 'handoff', description: 'Toggle handoff', argumentHint: '[10-90 | now]', plugin: 'handoff' },
+    { name: 'acme:fmt', description: '(other) x' },
+    { name: 'beta', description: '(beta) Try it' }
   ]
   const skills = resolveSkillCommands(live)
-  equal(skills.map((s) => `${s.scope}:${s.name}`).join(','), 'project:ship,user:ship,user:bare,plugin:acme:lint,undefined:odd', 'skills: non-built-ins only, scoped')
+  equal(
+    skills.map((s) => `${s.scope}:${s.name}`).join(','),
+    'project:ship,user:ship,user:bare,plugin:acme:lint,undefined:odd,plugin:handoff,undefined:acme:fmt,undefined:beta',
+    'skills: non-built-ins only, scoped'
+  )
   equal(skills[0].description, 'Ship it', 'skills: project suffix stripped')
   equal(skills[1].description, 'Ship it globally', 'skills: user suffix stripped')
   equal(skills[2].description, '', 'skills: a suffix-only description empties')
   equal(skills[0].argumentHint, '<msg>', 'skills: arg hint kept')
-  equal(skills[3].plugin, 'acme', 'skills: plugin name kept')
+  equal(skills[3].description, 'Lint', 'skills: a namespace-matching plugin prefix is stripped')
+  equal(skills[5].description, 'Toggle handoff', 'skills: a plugin-field row keeps its text')
+  equal(skills[6].description, '(other) x', 'skills: a prefix naming another namespace stays')
+  equal(skills[7].description, '(beta) Try it', 'skills: an unnamespaced parenthesized prefix stays')
   equal(resolveSlashCommands(live).map((c) => c.name).join(','), 'compact', 'skills: built-ins still curate to the allowlist')
 }

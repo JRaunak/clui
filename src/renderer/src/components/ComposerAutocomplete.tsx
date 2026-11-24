@@ -32,7 +32,6 @@ interface Item {
   args?: string
   kind: 'command' | 'skill' | 'file' | 'agent'
   scope?: SkillCommand['scope']
-  plugin?: string
   /** Full literal replacement (incl. trigger char), overriding the default
    *  `trigger.char + value`. Agents need the quoted `@"name (agent)"` form. */
   insert?: string
@@ -184,8 +183,7 @@ export function useComposerAutocomplete(
         hint: s.description || undefined,
         args: s.argumentHint || undefined,
         kind: 'skill' as const,
-        scope: s.scope,
-        plugin: s.plugin
+        scope: s.scope
       }))
     ],
     [commands, skills, refused]
@@ -460,7 +458,7 @@ export function useComposerAutocomplete(
                         </span>
                       )}
                       {(r.it.kind === 'skill' || r.it.kind === 'agent') && (
-                        <span className="ml-auto shrink-0 rounded bg-[var(--glass-row-hover)] px-1.5 py-0.5 text-badge text-dim" title={r.it.plugin && `Plugin: ${r.it.plugin}`}>
+                        <span className="ml-auto shrink-0 rounded bg-[var(--glass-row-hover)] px-1.5 py-0.5 text-badge text-dim">
                           {r.it.scope ?? r.it.kind}
                         </span>
                       )}

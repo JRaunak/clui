@@ -90,22 +90,25 @@ export function resolveSlashCommands(live: SlashCommandInfo[]): SlashCommand[] {
 
 export interface SkillCommand extends SlashCommand {
   scope?: 'project' | 'user' | 'plugin'
-  plugin?: string
 }
 
 /** The live list's non-built-ins (skills, custom and plugin commands). The CLI marks a project or user
- *  one with a " (project)" / " (user)" description suffix, which becomes the scope badge instead. */
+ *  one with a " (project)" / " (user)" description suffix, which becomes the scope badge instead. Most
+ *  plugins arrive without a `plugin` field, named "<p>:cmd" and described "(<p>) …"; that pair marks them. */
 export function resolveSkillCommands(live: SlashCommandInfo[]): SkillCommand[] {
   return live
     .filter((c) => !c.builtin)
     .map((c): SkillCommand => {
       const m = /\s*\((project|user)\)$/.exec(c.description)
+      const description = m ? c.description.slice(0, m.index) : c.description
+      const ns = /^([^:]+):/.exec(c.name)?.[1]
+      const tag = ns ? `(${ns}) ` : ''
+      const tagged = !!tag && description.startsWith(tag)
       return {
         name: c.name,
-        description: m ? c.description.slice(0, m.index) : c.description,
+        description: tagged ? description.slice(tag.length) : description,
         argumentHint: c.argumentHint,
-        scope: c.plugin ? 'plugin' : (m?.[1] as 'project' | 'user' | undefined),
-        plugin: c.plugin
+        scope: c.plugin || tagged ? 'plugin' : (m?.[1] as 'project' | 'user' | undefined)
       }
     })
 }
