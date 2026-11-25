@@ -298,7 +298,7 @@ export function DiffSurface({ handleId }: { handleId: string }): JSX.Element {
   }, [location, multi])
 
   // A new edit to the file changes its edit ids, which refetches.
-  const fetchKey = selected ? `${selected.path}\0${selected.editIds.join(',')}` : ''
+  const fetchKey = selected ? `${selected.path}\0${selected.edits.map((e) => e.id).join(',')}` : ''
   const [retry, setRetry] = useState(0)
   const [loaded, setLoaded] = useState<{ key: string; path: string; diff: FileDiff | null; error?: string } | null>(null)
   const [slow, setSlow] = useState(false)

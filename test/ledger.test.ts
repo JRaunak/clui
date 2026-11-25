@@ -83,7 +83,7 @@ const one = async (l: ChangeLedger, handle = 'h') => (await l.changes(handle))![
   ])
   const s = await one(l)
   ok(s.segments === 1 && s.added === 0 && s.removed === 0 && !s.approximate, 'ledger: a revert nets to +0 −0')
-  equal(s.editIds.join(), 'e1,e2', 'ledger: the segment keeps both edits in order')
+  equal(s.edits.map((e) => e.id).join(), 'e1,e2', 'ledger: the segment keeps both edits in order')
 }
 
 // A verified create counts its content, and later edits net against the empty start.
@@ -110,7 +110,7 @@ const one = async (l: ChangeLedger, handle = 'h') => (await l.changes(handle))![
   l.rekey('h', 'sid-1')
   for (const e of edit('e2', '/f.txt', 'b\n', [hunk(1, 1, 1, ['-b', '+c'])])) l.wire('h', e)
   const s = await one(l)
-  ok(s.segments === 1 && s.editIds.length === 2 && s.added === 1 && s.removed === 1, 'ledger: re-keying keeps the buffered edits in one history')
+  ok(s.segments === 1 && s.edits.length === 2 && s.added === 1 && s.removed === 1, 'ledger: re-keying keeps the buffered edits in one history')
   l.attach('h2', 'sid-1')
   equal((await l.changes('h2'))?.length, 1, 'ledger: a second handle on the session sees the same history')
   l.detach('h')
@@ -122,7 +122,7 @@ const one = async (l: ChangeLedger, handle = 'h') => (await l.changes(handle))![
 {
   const envs = edit('e1', '/f.txt', 'a\n', [hunk(1, 1, 1, ['-a', '+b'])])
   const s = await one(ledgerWith([...envs, ...envs]))
-  ok(s.editIds.length === 1 && s.added === 1, 'ledger: a duplicate result is ingested once')
+  ok(s.edits.length === 1 && s.added === 1, 'ledger: a duplicate result is ingested once')
 }
 
 // Rejected or failed tools add no row.

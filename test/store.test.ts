@@ -827,7 +827,7 @@ ok(countWake({ m: { taskId: 't', description: 'd', status: 'running', startMs: 0
 
 // Changes mirror main's ledger; a session main has let go of keeps its last summaries.
 {
-  const row = { path: '/w/a.ts', added: 3, removed: 1, created: false, missingOnDisk: false, approximate: false, diffAvailable: true, snapshot: true, segments: 1, editIds: ['t1'], edits: [{ id: 't1', added: 3, removed: 1, created: false }] }
+  const row = { path: '/w/a.ts', added: 3, removed: 1, created: false, missingOnDisk: false, approximate: false, diffAvailable: true, snapshot: true, segments: 1, edits: [{ id: 't1', added: 3, removed: 1, created: false }] }
   reset({ changes: [] })
   replies.getChanges = () => [row]
   await st().refreshChanges('h1')

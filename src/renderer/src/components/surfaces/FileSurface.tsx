@@ -124,7 +124,7 @@ export function FileSurface({ handleId, tabId }: { handleId: string; tabId: stri
     }
   }, [revision, text, lang])
 
-  const editKey = change?.editIds.join(',') ?? ''
+  const editKey = change?.edits.map((e) => e.id).join(',') ?? ''
   useEffect(() => {
     if (revision === null || !editKey) return setMarks(null)
     let live = true

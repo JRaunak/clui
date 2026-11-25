@@ -183,7 +183,7 @@ const within = <T,>(p: Promise<T>, ms: number): Promise<T | 'timeout'> => Promis
   equal(typeahead(rows, at('a10.ts'), 'a1'), at('a10.ts'), 'tree: a longer buffer can stay on the focused row')
   equal(typeahead(rows, 0, 'zz'), -1, 'tree: no match moves nothing')
 
-  const change = (path: string, missingOnDisk = false) => ({ path, added: 1, removed: 0, created: false, missingOnDisk, approximate: false, diffAvailable: true, snapshot: true, segments: 1, editIds: [], edits: [] })
+  const change = (path: string, missingOnDisk = false) => ({ path, added: 1, removed: 0, created: false, missingOnDisk, approximate: false, diffAvailable: true, snapshot: true, segments: 1, edits: [] })
   const idx = changeIndex([change('/w/src/main/a.ts'), change('/w/src/b.ts'), change('/w/lib/gone.ts', true), change('/elsewhere/x.ts')], '/w')
   ok(idx.files.has('src/main/a.ts') && idx.files.has('lib/gone.ts') && !idx.files.has('/elsewhere/x.ts'), 'tree: changed files keyed by cwd-relative path')
   ok(idx.dirs.get('src') === '/w/src/main/a.ts' && idx.dirs.has('src/main') && !idx.dirs.has('lib'), 'tree: folders above an on-disk change are marked, first in ledger order; a deleted file marks nothing')

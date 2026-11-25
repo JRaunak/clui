@@ -1837,13 +1837,13 @@ export function subscribeStore(): void {
  *  only mid-turn. */
 function prepareChanges(handleId: string, prev: PerSessionState, next: FileChangeSummary[]): void {
   if (prev.changes === EMPTY_CHANGES && !prev.busy) return
-  const before = new Map(prev.changes.map((c) => [c.path, c.editIds.length]))
-  const fresh = next.find((c) => (before.get(c.path) ?? 0) < c.editIds.length)
+  const before = new Map(prev.changes.map((c) => [c.path, c.edits.length]))
+  const fresh = next.find((c) => (before.get(c.path) ?? 0) < c.edits.length)
   const st = useSession.getState()
   // An HTML page Claude creates is its artifact, a tab of its own beside the Claude changes entry.
   for (const c of next) {
-    if (before.has(c.path) || !c.created || !isHtml(c.path) || !c.editIds[0] || !prev.sessionId) continue
-    const provenance = { sessionId: prev.sessionId, creatingEditId: c.editIds[0] }
+    if (before.has(c.path) || !c.created || !isHtml(c.path) || !c.edits[0] || !prev.sessionId) continue
+    const provenance = { sessionId: prev.sessionId, creatingEditId: c.edits[0].id }
     st.openSurface(handleId, { kind: 'artifact', key: c.path, title: basename(c.path), provenance }, 'prepare', 'claude', 'change')
   }
   const set0 = st.sessions[handleId]?.surfaces

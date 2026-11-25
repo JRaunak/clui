@@ -80,8 +80,6 @@ export interface FileChangeSummary {
   /** The latest segment holds its whole before and after, so it can open as a diff in the editor. */
   snapshot: boolean
   segments: number
-  editIds: string[]
-  /** Parallel to `editIds`. */
   edits: EditCount[]
 }
 

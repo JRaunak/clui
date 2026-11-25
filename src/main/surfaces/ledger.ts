@@ -504,7 +504,6 @@ function summarize(state: SessionState): FileChangeSummary[] {
         diffAvailable: segments.every((s) => (s.before !== undefined && s.after !== undefined) || s.patches.every(Boolean)),
         snapshot: segments.at(-1)?.before !== undefined && segments.at(-1)?.after !== undefined,
         segments: segments.length,
-        editIds: segments.flatMap((s) => s.editIds),
         edits: segments.flatMap((s) => s.editIds.map((id, i) => ({ id, ...s.counts[i] })))
       }
     })
