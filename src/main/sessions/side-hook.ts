@@ -1,6 +1,7 @@
 /**
- * The side chat's PreToolUse deny hook. A side fork keeps every parent tool so it reads the parent's prompt
- * cache, and this hook is what makes it read-only.
+ * The side chat's deny hook, run on PreToolUse and on PreSkillShellCommand (a skill's inline shell, which the CLI
+ * reports as Bash). A side fork keeps every parent tool so it reads the parent's prompt cache, and this hook is
+ * what makes it read-only.
  *
  * `/bin/sh` and `/usr/bin/awk` by absolute path: the packaged app can't run as Node (runAsNode fuse off) and
  * `/bin/sh` can't read a script inside app.asar, so the script is written to userData. The user's PATH, `jq` and

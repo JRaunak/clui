@@ -260,13 +260,15 @@ export class ClaudeSession extends EventEmitter {
     // (verified) so a resume restores it. Clui's own arg, never ~/.claude.
     // disableAllHooks would switch off the deny hook too, the only barrier in bypassPermissions.
     if (this.opts.side && this.opts.disabledConfig?.includes(HOOKS_TOKEN)) throw new Error('side chat needs hooks on: disableAllHooks would switch off its deny hook')
+    // A skill's inline !`cmd` runs on load and never reaches PreToolUse, so the deny hook guards both.
+    const deny = this.opts.side && { hooks: [{ type: 'command', command: this.opts.side.hook, onFailure: 'block' }] }
     const flagSettings = {
       ...(this.opts.ultracode ? { ultracode: true } : {}),
       ...(this.opts.blockOutsideWrites && !this.opts.ephemeral
         ? { permissions: { blockWritesOutsideWorkingDirectories: true } }
         : {}),
       ...(this.opts.disabledConfig?.includes(HOOKS_TOKEN) ? { disableAllHooks: true } : {}),
-      ...(this.opts.side ? { hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: this.opts.side.hook, onFailure: 'block' }] }] } } : {})
+      ...(deny ? { hooks: { PreToolUse: [{ matcher: '*', ...deny }], PreSkillShellCommand: [deny] } } : {})
     }
     if (Object.keys(flagSettings).length) args.push('--settings', JSON.stringify(flagSettings))
     // Ahead of the variadic flags below, which would swallow it as a list item.

@@ -48,6 +48,8 @@ interface RawEntry {
   effort?: string
   isCompactSummary?: boolean
   isMeta?: boolean
+  /** The CLI's own note to the model, e.g. its nudge after a reply with no visible text. */
+  ownNote?: boolean
   /** On a meta record the CLI injects for a tool call, e.g. the body of a skill the Skill tool loaded. */
   sourceToolUseID?: string
   compactMetadata?: { trigger?: string; preTokens?: number; postTokens?: number }
@@ -515,6 +517,8 @@ async function parseTranscriptFile(
       // A meta `<system-reminder>` record (e.g. the tools a background agent used, logged before its report)
       // is context for the model; the live stream never shows it, so resume mustn't render it as a user bubble.
       if (entry.isMeta && entry.type === 'user' && isSystemReminder(entry.message?.content)) continue
+      // The live stream never shows the CLI's own notes, and the CLI's own renderer skips them on resume.
+      if (entry.isMeta && entry.type === 'user' && entry.ownNote) continue
       // A skill's instructions reach the model as a meta "user" record tied to the Skill call; the live
       // stream never renders them, so a resumed transcript mustn't show them as the user's words.
       if (entry.isMeta && entry.type === 'user' && entry.sourceToolUseID && toolCallsById.get(entry.sourceToolUseID)?.name === 'Skill') continue

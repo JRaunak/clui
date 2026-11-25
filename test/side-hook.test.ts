@@ -34,6 +34,12 @@ for (const t of ['Bash', 'Write', 'Agent', 'mcp__clui-surface__surface_open']) {
   const bash = viaScript(pretty('Bash'))
   ok(bash.status === 2 && bash.stderr === denial('Bash'), 'side hook: pretty-printed Bash is denied')
 }
+{
+  // Verbatim shape from 2.1.332: a skill's inline !`cmd`, which never passes through PreToolUse.
+  const skill = JSON.stringify({ session_id: 's', hook_event_name: 'PreSkillShellCommand', tool_name: 'Bash', tool_input: { command: 'echo ran' }, tool_use_id: 't:inner:preamble-0', command_name: 'probe', command_source: 'projectSettings', invoked_by: 'user' })
+  const r = viaScript(skill)
+  ok(r.status === 2 && r.stderr === denial('Bash'), "side hook: a skill's inline shell is denied")
+}
 for (const [label, stdin] of [['empty input', ''], ['non-JSON', 'not json']]) {
   const r = viaScript(stdin)
   ok(r.status === 2 && r.stderr === denial('this tool'), `side hook: ${label} denies as "this tool"`)

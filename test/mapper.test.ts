@@ -371,9 +371,12 @@ const feed = (m: EventMapper, envs: unknown[]): any[] => envs.flatMap((e) => m.m
     rec({ type: 'user', uuid: 'u2', isMeta: true, message: { role: 'user', content: [{ type: 'text', text: '[Image: source: /tmp/x/images/8.jpg][Image: source: /tmp/x/images/9.jpg]' }] } }),
     rec({ type: 'user', uuid: 'u3', isMeta: true, message: { role: 'user', content: '<cross-session-message from-name="peer">hi</cross-session-message>' } }),
     // Verbatim shape from a 2.1.322 transcript: logged before a background agent's task-notification.
-    rec({ type: 'user', uuid: 'u4', isMeta: true, message: { role: 'user', content: '<system-reminder>\n<tools-used-before-summary>Read</tools-used-before-summary>\n</system-reminder>' } })
+    rec({ type: 'user', uuid: 'u4', isMeta: true, message: { role: 'user', content: '<system-reminder>\n<tools-used-before-summary>Read</tools-used-before-summary>\n</system-reminder>' } }),
+    // Verbatim from a 2.1.332 transcript, after a reply with no visible text.
+    rec({ type: 'user', uuid: 'u5', isMeta: true, turnCompanion: true, ownNote: true, message: { role: 'user', content: '[Your previous response had no visible output. Please continue and produce a user-visible response.]' } })
   ].join('\n') + '\n')
   const { messages } = await readTranscriptAtPath(file)
+  ok(!messages.some((m) => m.text.includes('no visible output')), "resume: the CLI's own nudge is not a bubble")
   ok(!messages.some((m) => m.text.includes('[Image: source:')), 'resume: the CLI image-source note is not a bubble')
   ok(!messages.some((m) => m.text.includes('<system-reminder>')), 'resume: a meta system-reminder is not a bubble')
   ok(messages.some((m) => m.text === 'what are these?'), 'resume: the real message stays')
