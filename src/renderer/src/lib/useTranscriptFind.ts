@@ -43,11 +43,20 @@ export function useTranscriptFind(body: RefObject<HTMLElement>, deps: readonly u
   )
   const [found, setFound] = useState(NOT_FOUND)
   const reveal = useRef(false)
+  // Rows fold and unfold without the entries changing, so a match is redone whenever a `hidden` flips under open find.
+  const [folds, setFolds] = useState(0)
+  useEffect(() => {
+    const el = body.current
+    if (!open || !el) return
+    const mo = new MutationObserver(() => setFolds((n) => n + 1))
+    mo.observe(el, { attributeFilter: ['hidden'], subtree: true })
+    return () => mo.disconnect()
+  }, [open, body])
   useLayoutEffect(() => {
     const q = open ? deferred : ''
     setFound(q && body.current ? findRanges(body.current, q, SKIP) : NOT_FOUND)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, deferred, ...deps])
+  }, [open, deferred, folds, ...deps])
   useEffect(() => {
     reveal.current = true
   }, [deferred])

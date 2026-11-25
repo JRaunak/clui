@@ -15,6 +15,9 @@ import {
   browserLabel,
   browserResultCopy,
   changeReadOf,
+  editPathOf,
+  failureReason,
+  bashExit,
   isBackgroundedTool,
   isBrowserTool,
   isChangeRead,
@@ -26,7 +29,8 @@ import {
   tierOf,
   toolLabel,
   TURN_LINE_PX,
-  type RowState
+  type RowState,
+  type Tier
 } from '../lib/instrument'
 import { effortLabel } from '../../../shared/settings'
 import { activityLine, agentInfo, agentRunState, findAgentTool, sendInputOf, sendResultOf, sendTargetOf, STARTING, subagentType } from '../lib/agents'
@@ -74,7 +78,7 @@ export function Bead({ state, lit, placement, bare = false }: { state: RowState;
   )
 }
 
-function StatusText({ state, startMs, reason }: { state: RowState; startMs?: number; reason?: string }): JSX.Element {
+function StatusText({ state, startMs, reason, exit }: { state: RowState; startMs?: number; reason?: string; exit?: string | null }): JSX.Element {
   switch (state) {
     case 'running':
       return (
@@ -110,6 +114,7 @@ function StatusText({ state, startMs, reason }: { state: RowState; startMs?: num
         <span className="flex items-center gap-1 text-err">
           <IconWarn className="h-3.5 w-3.5 shrink-0" />
           failed
+          {exit && <span className="text-dim">· exit {exit}</span>}
         </span>
       )
     case 'launching':
@@ -131,12 +136,21 @@ function StatusText({ state, startMs, reason }: { state: RowState; startMs?: num
   }
 }
 
-const gridCols = (placement: Placement, actions: boolean): string =>
-  [placement === 'inline' ? '8px' : null, 'auto', 'minmax(0,1fr)', 'auto', actions ? 'auto' : null, '24px']
+/** With an aside (agent badge, monitor meta) the target takes only its own width and the aside the rest, so the aside
+ *  sits right after the target; under 520px of run width the target spans both and the aside drops to a second row. */
+const gridCols = (placement: Placement, actions: boolean, aside: boolean): string =>
+  [placement === 'inline' ? '8px' : null, 'auto', aside ? 'minmax(0,max-content) 1fr' : 'minmax(0,1fr)', 'auto', actions ? 'auto' : null, '24px']
     .filter(Boolean)
     .join(' ')
 
-const CARD = 'relative overflow-hidden rounded-md border border-border surface-content bg-tool pointer-fine:hover:bg-row-hover'
+/** The container is the tier: a filled card needs a look, an outline is still working elsewhere, a bare line changed or
+ *  only looked at something. A loud card's hover is in styles.css, because its fill can't change. */
+const CONTAINER: Record<Tier, string> = {
+  loud: 'relative overflow-hidden rounded-md bg-tool',
+  calm: 'relative overflow-hidden rounded-md shadow-[inset_0_0_0_1px_var(--color-border-strong)] pointer-fine:hover:bg-row-hover',
+  legible: 'relative overflow-hidden rounded-md pointer-fine:hover:bg-row-hover',
+  routine: 'relative overflow-hidden rounded-md pointer-fine:hover:bg-row-hover'
+}
 
 export function InstrumentRow({
   tool,
@@ -160,8 +174,8 @@ export function InstrumentRow({
   id: string
   /** A row the sentence revealed by pointer animates in. */
   reveal: boolean
-  /** The edits a merged edit row stands for, itself included. */
-  edits?: number
+  /** The edits a merged edit row stands for, itself last. */
+  edits?: ToolCall[]
 }): JSX.Element {
   // A pointer-opened body animates in; a keyboard toggle is instant.
   const [animateBody, setAnimateBody] = useState(false)
@@ -182,18 +196,7 @@ export function InstrumentRow({
     return t && s ? `${t.id}\0${agentInfo(s, t.id).label}` : ''
   }).split('\0')
   const to = targetLabel || send?.to
-  const summary = send ? `to ${to}: ${firstLine(send.text)}` : browser ? browserLabel(tool.name, tool.input, tabNo) : history ? change : summarizeInput(tool.input)
-  const title = send ? `to ${to}: ${send.text}` : summary
-  // An agent the session can't place is still named as one, so the id doesn't read as a person or a team.
-  const spokenSummary = send ? `to ${targetLabel || (send.kind === null || send.kind === 'agent' ? `agent ${send.to}` : send.to)}` : changeSpoken || summary
   const counted = browser && !tool.isError ? browserResultCopy(tool.result) : null
-  // The header already shows the summary, so Input starts collapsed when there is one.
-  const [inputOpen, setInputOpen] = useState(() => !summary)
-  const [copied, setCopied] = useState(false)
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => {
-    if (copyTimer.current) clearTimeout(copyTimer.current)
-  }, [])
   const bodyId = useId()
   const bodyRef = useRef<HTMLDivElement>(null)
   // A body opened under the dock scrolls up by its overflow, never so far that the row's own top goes under the band.
@@ -216,6 +219,7 @@ export function InstrumentRow({
   const needsYou = useActive(
     (s) => needsYouToolIdOf(s) === tool.id || (!!s && (tool.name === 'Task' || tool.name === 'Agent') && (tool.result === undefined || isBackgroundedTool(tool)) && agentRunState(s, { by: 'tool', id: tool.id }).state === 'needs')
   )
+  const gateReason = useActive((s) => (needsYouToolIdOf(s) === tool.id ? (s?.pendingPermissions[0]?.decisionReason?.trim() ?? '') : ''))
   const checking = useDelayedFlag(useActive((s) => !!s?.checkingTools[tool.id]))
   const lit = useActive((s) => {
     if (!s) return false
@@ -228,6 +232,16 @@ export function InstrumentRow({
   const handleId = useActive((s) => s?.handleId ?? '')
   const stopTask = useSession((s) => s.stopBackgroundTask)
   const state = monitor ? monitorRowState(tool, needsYou, checking, rec) : rowState(tool, needsYou, checking)
+  const tier = tierOf(tool, state)
+  const input = (tool.input && typeof tool.input === 'object' ? tool.input : {}) as Record<string, unknown>
+  // A row names a command the way the sentence does, so one call reads the same folded or not.
+  const command = tool.name === 'Bash' && typeof input.command === 'string' ? input.command : ''
+  const summary = send ? `to ${to}: ${firstLine(send.text)}` : browser ? browserLabel(tool.name, tool.input, tabNo) : history ? change : command || summarizeInput(tool.input)
+  const title = send ? `to ${to}: ${send.text}` : command && typeof input.description === 'string' ? `${input.description}\n${command}` : summary
+  // A description or a message is prose; commands, paths and patterns are code.
+  const prose = !!send || (!!summary && summary === input.description)
+  // An agent the session can't place is still named as one, so the id doesn't read as a person or a team.
+  const spokenSummary = send ? `to ${targetLabel || (send.kind === null || send.kind === 'agent' ? `agent ${send.to}` : send.to)}` : changeSpoken || summary
   const watching = state === 'watching'
   const meta = rec && tool.result !== undefined && !tool.isError ? monitorMeta(rec, watching) : ''
   const canStopMonitor = watching && !stopping && !!rec
@@ -241,6 +255,7 @@ export function InstrumentRow({
     return activityLine(needsYou ? 'needs' : agentRunState(s, { by: 'tool', id: tool.id }).state, s.agentActivity[tool.id], true)
   })
   const lineId = useId()
+  const reasonId = useId()
   const wfTask = useActive((s) => (tool.name === 'Workflow' && s ? workflowTaskOf(s, tool) : null))
   const wfName = useActive((s) => (wfTask ? (s?.workflows[wfTask]?.name ?? null) : null)) ?? summary
   // Agent and openable Workflow rows open a tab, as does a Message row whose agent got the message; every other row
@@ -260,7 +275,16 @@ export function InstrumentRow({
   const actions = opens || canSendToBackground || canStopMonitor || (browser && hasBrowser) || !!filePath
   const errLine = sent && !tool.isError ? (sent.ok ? '' : sent.note) : tool.isError ? firstLine(tool.result ?? '') : ''
   const output = sent ? sent.note : tool.result
-  const failed = state === 'failed'
+  const loud = tier === 'loud'
+  // Checking says why in its word; needs-you only when the CLI gave a reason, never an invented one.
+  const exit = state === 'failed' && tool.isError && tool.name === 'Bash' ? bashExit(tool.result ?? '') : null
+  const failure = exit?.code ? failureReason(exit.rest) || 'No output' : (tool.isError ? failureReason(tool.result ?? '') : errLine) || 'View error'
+  const reason = state === 'failed' ? failure : state === 'not-run' ? errLine : state === 'needs-you' ? gateReason : ''
+  const showReason = !!reason && !open
+  const aside = (isSubagent && !!subType) || !!meta
+  const editPath = tier === 'legible' ? editPathOf(tool) : null
+  const relPath = editPath && cwd && editPath.startsWith(`${cwd}/`) ? editPath.slice(cwd.length + 1) : editPath
+  const cut = relPath ? relPath.lastIndexOf('/') + 1 : 0
   const toggleBody = (e: MouseEvent): void => {
     setAnimateBody(viaOf(e) === 'pointer')
     onToggle()
@@ -272,28 +296,28 @@ export function InstrumentRow({
       }`}
     />
   )
-  const onCopy = (): void => {
-    void navigator.clipboard.writeText(output ?? '')
-    setCopied(true)
-    if (copyTimer.current) clearTimeout(copyTimer.current)
-    copyTimer.current = setTimeout(() => setCopied(false), 1500)
-  }
+  const describedBy = [line && lineId, showReason && reasonId].filter(Boolean).join(' ') || undefined
+  const targetCls =
+    tier === 'routine' ? 'font-mono text-meta text-faint' : `${prose ? '' : 'font-mono '}text-code ${tier === 'calm' ? 'text-dim' : 'text-content'}`
 
   return (
     <div
       data-ui="instrument-row"
       data-state={state}
-      data-tier={tierOf(tool, state)}
+      data-tier={tier}
       data-row-id={tool.id}
       id={id}
       hidden={hidden}
-      className={`${placement === 'spine' ? 'spine-seg' : 'relative'}${reveal ? ' row-body-in' : ''}`}
+      className={`${placement === 'spine' ? 'spine-seg' : 'relative'}${tier === 'loud' || tier === 'calm' ? ' py-0.5' : ''}${reveal ? ' row-body-in' : ''}`}
       data-seg={placement === 'spine' ? seg : undefined}
     >
       {placement === 'spine' && <Bead state={state} lit={lit} placement="spine" />}
       {/* On a row that opens a tab the fill means "opens it", so it stays off while the pointer is on the
           chevron, which only discloses the result. */}
-      <div className={opens ? `${CARD} group/row pointer-fine:has-[[data-ui=row-disclose]:hover]:bg-tool` : CARD}>
+      <div
+        data-ui="row-card"
+        className={`${CONTAINER[tier]} group/row${opens && !loud ? ' pointer-fine:has-[[data-ui=row-disclose]:hover]:bg-transparent' : ''}`}
+      >
         <div className="relative">
           {/* The whole header is one button laid under the visible grid, so the action buttons can sit
               inside the row without nesting a button in a button. An Agent row's opens its transcript, a
@@ -305,7 +329,7 @@ export function InstrumentRow({
               data-tool-id={tool.id}
               className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
               aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}, ${STATE_TEXT[state]}, open transcript`}
-              aria-describedby={line ? lineId : undefined}
+              aria-describedby={describedBy}
               title={[title, line !== STARTING && line, 'Open transcript'].filter(Boolean).join('\n')}
               onClick={(e) => diveInto(targetId || tool.id, viaOf(e), undefined, tool.id)}
             />
@@ -316,6 +340,7 @@ export function InstrumentRow({
               data-tool-id={tool.id}
               className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
               aria-label={`Workflow${wfName ? ` ${wfName}` : ''}, ${STATE_TEXT[state]}, open workflow`}
+              aria-describedby={describedBy}
               title={wfName ? `${wfName}\nOpen workflow` : 'Open workflow'}
               onClick={(e) => diveInto(tool.id, viaOf(e), { taskId: wfTask, title: wfName || 'Workflow' })}
             />
@@ -325,47 +350,74 @@ export function InstrumentRow({
               className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
               aria-expanded={open}
               aria-controls={bodyId}
-              aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}${edits ? `, ${edits} edits` : ''}${counted ? `, ${counted.copy}` : ''}, ${stopping && watching ? 'stopping' : STATE_TEXT[state]}${meta ? `, ${meta.replace(' · ', ', ')}` : ''}`}
+              aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}${edits ? `, ${edits.length} edits` : ''}${counted ? `, ${counted.copy}` : ''}, ${stopping && watching ? 'stopping' : STATE_TEXT[state]}${exit?.code ? `, exit code ${exit.code}` : ''}${meta ? `, ${meta.replace(' · ', ', ')}` : ''}`}
+              aria-describedby={describedBy}
               title={title || undefined}
               onClick={toggleBody}
             />
           )}
           <div
-            className="pointer-events-none relative grid h-8 items-center gap-2 px-2.5"
-            style={{ gridTemplateColumns: gridCols(placement, actions) }}
+            className="pointer-events-none relative grid items-center gap-x-2 pl-2 pr-1.5"
+            style={{ gridTemplateColumns: gridCols(placement, actions, aside), gridTemplateRows: loud || tier === 'calm' ? '28px' : '24px' }}
           >
-            {placement === 'inline' && <Bead state={state} lit={lit} placement="inline" />}
-            <span className={`text-label font-semibold ${state === 'not-run' ? 'text-dim' : 'text-content'}`}>{name}</span>
-            <span className="flex min-w-0 items-center gap-1.5">
-              {summary && <span className="truncate text-code text-dim">{summary}</span>}
-              {!!edits && <span className="shrink-0 text-meta text-faint">{edits} edits</span>}
+            {placement === 'inline' && <Bead state={state} lit={lit} placement="inline" bare={!loud} />}
+            <span
+              className={
+                tier === 'routine' ? 'text-meta font-medium text-faint' : `text-label font-semibold ${state === 'not-run' ? 'text-dim' : 'text-content'}`
+              }
+            >
+              {name}
+            </span>
+            <span className={`flex min-w-0 items-center gap-1.5${aside ? ' @max-[520px]:col-span-2' : ''}`}>
+              {relPath ? (
+                <span data-ui="row-target" className="flex min-w-0 items-baseline gap-1.5 font-mono">
+                  <span className="shrink-0 text-code text-content">{relPath.slice(cut)}</span>
+                  {cut > 0 && <span className="truncate text-meta text-faint">{relPath.slice(0, cut)}</span>}
+                </span>
+              ) : (
+                summary && (
+                  <span data-ui="row-target" className={`truncate ${targetCls}`}>
+                    {summary}
+                  </span>
+                )
+              )}
+              {!!edits && <span className="shrink-0 text-meta text-faint">{edits.length} edits</span>}
               {counted && (
                 <span className="shrink-0 text-meta">
                   <span className="text-faint">· </span>
                   {counted.flagged ? <Flagged copy={counted.copy} /> : <span className="text-dim">{counted.copy}</span>}
                 </span>
               )}
-              {meta && (
-                <span data-ui="monitor-meta" className="min-w-0 truncate text-meta">
-                  <span className="text-faint">· </span>
-                  <span className="text-dim">{meta}</span>
-                </span>
-              )}
-              {isSubagent && subType && (
-                <span
-                  className="shrink-0 rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint"
-                  title={effort ? `${subType} subagent at ${effort} effort` : undefined}
-                >
-                  {subType}
-                  {effort && <>{' · '}{effort}</>}
-                </span>
-              )}
             </span>
+            {aside && (
+              <span
+                data-ui="row-aside"
+                className={`flex items-center gap-1.5 whitespace-nowrap text-meta @max-[520px]:row-start-2 @max-[520px]:-mt-1 @max-[520px]:pb-1.5 ${
+                  placement === 'inline' ? '@max-[520px]:col-[2/-1]' : '@max-[520px]:col-[1/-1]'
+                }`}
+              >
+                {meta && (
+                  <span data-ui="monitor-meta">
+                    <span className="text-faint">· </span>
+                    <span className="text-dim">{meta}</span>
+                  </span>
+                )}
+                {isSubagent && subType && (
+                  <span
+                    className="rounded bg-bg-raised px-1.5 py-0.5 font-mono text-badge text-faint"
+                    title={effort ? `${subType} subagent at ${effort} effort` : undefined}
+                  >
+                    {subType}
+                    {effort && <>{' · '}{effort}</>}
+                  </span>
+                )}
+              </span>
+            )}
             <span className="text-meta">
               {stopping && watching ? (
                 <span className="text-dim">stopping…</span>
               ) : (
-                <StatusText state={state} startMs={watching ? rec?.startMs : tool.startMs} reason={errLine} />
+                state !== 'done' && <StatusText state={state} startMs={watching ? rec?.startMs : tool.startMs} reason={errLine} exit={exit?.code} />
               )}
             </span>
             {opens ? (
@@ -410,7 +462,7 @@ export function InstrumentRow({
                       const via = viaOf(e)
                       void revealBrowser(tabNo || null, (next) => setPaneVia(next, via))
                     }}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px] aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:text-dim"
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px] aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:text-dim"
                     title={tabGone ? `Tab ${tabNo} is closed` : tabNo ? `Show tab ${tabNo} in browser` : 'Show in browser'}
                     aria-label={tabGone ? `Tab ${tabNo} is closed` : tabNo ? `Show tab ${tabNo} in browser` : 'Show in browser'}
                   >
@@ -434,7 +486,12 @@ export function InstrumentRow({
                 {chevron}
               </button>
             ) : (
-              <span className="flex h-6 w-6 items-center justify-center text-faint" aria-hidden="true">
+              <span
+                className={`flex h-6 w-6 items-center justify-center text-faint${
+                  tier === 'routine' && !open ? ' opacity-0 pointer-fine:group-hover/row:opacity-100 group-has-[:focus-visible]/row:opacity-100' : ''
+                }`}
+                aria-hidden="true"
+              >
                 {chevron}
               </span>
             )}
@@ -444,64 +501,98 @@ export function InstrumentRow({
               id={lineId}
               aria-hidden="true"
               data-ui="agent-activity"
-              className={`pointer-events-none relative -mt-1 truncate pb-1.5 pr-[34px] text-meta text-dim ${placement === 'inline' ? 'pl-[26px]' : 'pl-2.5'}`}
+              className={`pointer-events-none relative -mt-1 truncate pb-1.5 pr-[34px] text-meta text-dim ${placement === 'inline' ? 'pl-6' : 'pl-2'}`}
             >
               {line}
             </div>
           )}
         </div>
-        {/* A collapsed failure keeps its reason visible. err text on the tool fill has the least
-            contrast headroom, so the reason itself stays dim. */}
-        {failed && !open && (
+        {/* A collapsed loud card keeps its reason in view. err text on the tool fill has the least contrast
+            headroom, so the reason itself stays dim. */}
+        {showReason && (
           <div
-            className="truncate border-t border-border px-2.5 py-1.5 font-mono text-meta text-dim"
-            title={errLine || undefined}
+            id={reasonId}
+            data-ui="row-reason"
+            className="border-t border-border px-2.5 pb-[5px] pt-1 font-mono text-meta text-dim"
+            title={(state === 'needs-you' ? reason : (output ?? reason)).slice(0, 500)}
           >
-            {errLine || 'View error'}
+            {/* The clamp sits inside the padding, which would otherwise show the top of a fourth line. */}
+            <p className="line-clamp-3 whitespace-pre-line break-words [overflow-wrap:anywhere]">{reason}</p>
           </div>
         )}
         {open && (
-          <div ref={bodyRef} id={bodyId} className={`${animateBody ? 'row-body-in ' : ''}max-h-80 overflow-auto border-t border-border p-2.5`}>
+          <div ref={bodyRef} id={bodyId} className={`${animateBody ? 'row-body-in ' : ''}max-h-80 overflow-auto border-t border-border p-2.5${loud || tier === 'calm' ? '' : ' border-b'}`}>
             {monitor && <MonitorDetail input={tool.input} rec={rec} />}
             {send && <SendDetail to={to ?? send.to} text={send.text} />}
-            <div className="mb-1.5 flex items-center gap-2">
-              <span className="text-caps uppercase text-faint">{state === 'not-run' ? 'Reason' : 'Output'}</span>
-              <button
-                type="button"
-                onClick={onCopy}
-                className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint transition-colors hover:text-content focus-visible:text-content focus-visible:outline-offset-[-2px]"
-                aria-label="Copy output"
-              >
-                {copied ? <IconCheck className="h-4 w-4" /> : <IconCopy className="h-4 w-4" />}
-              </button>
-              <span className="sr-only" role="status" aria-live="polite">
-                {copied ? 'Copied' : ''}
-              </span>
-            </div>
-            {output !== undefined && (
-              <pre className="whitespace-pre-wrap break-words font-mono text-code text-content">
-                <LinkedText text={truncate(output, 4000)} truncated={output.length > 4000} />
-              </pre>
-            )}
-            <button
-              type="button"
-              data-find-skip=""
-              onClick={() => setInputOpen((o) => !o)}
-              aria-expanded={inputOpen}
-              className="mt-2.5 flex min-h-6 items-center gap-1.5 text-caps uppercase text-faint transition-colors hover:text-dim"
-            >
-              <IconChevron className={`h-3 w-3 transition-transform ${inputOpen ? 'rotate-90' : ''}`} aria-hidden="true" />
-              Input
-            </button>
-            {inputOpen && (
-              <pre className="mt-1.5 whitespace-pre-wrap break-words font-mono text-code text-dim">
-                {JSON.stringify(tool.input, null, 2)}
-              </pre>
+            {edits ? (
+              edits.map((e, i) => (
+                <div key={e.id} role="group" aria-labelledby={`${bodyId}-${i}`} className={i ? 'mt-3 border-t border-border pt-2.5' : undefined}>
+                  <div id={`${bodyId}-${i}`} className="mb-1.5 text-meta text-dim">
+                    {toolLabel(e.name)} {i + 1} of {edits.length}
+                  </div>
+                  <ToolBody tool={e} output={e.result} label="Output" />
+                </div>
+              ))
+            ) : (
+              <ToolBody tool={tool} output={output} label={state === 'not-run' ? 'Reason' : 'Output'} inputOpen={!summary} />
             )}
           </div>
         )}
       </div>
     </div>
+  )
+}
+
+function ToolBody({ tool, output, label, inputOpen: initialInput = false }: { tool: ToolCall; output: string | undefined; label: string; inputOpen?: boolean }): JSX.Element {
+  const [inputOpen, setInputOpen] = useState(initialInput)
+  const [copied, setCopied] = useState(false)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (copyTimer.current) clearTimeout(copyTimer.current)
+  }, [])
+  const onCopy = (): void => {
+    void navigator.clipboard.writeText(output ?? '')
+    setCopied(true)
+    if (copyTimer.current) clearTimeout(copyTimer.current)
+    copyTimer.current = setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <>
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="text-caps uppercase text-faint">{label}</span>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded text-faint transition-colors hover:text-content focus-visible:text-content focus-visible:outline-offset-[-2px]"
+          aria-label="Copy output"
+        >
+          {copied ? <IconCheck className="h-4 w-4" /> : <IconCopy className="h-4 w-4" />}
+        </button>
+        <span className="sr-only" role="status" aria-live="polite">
+          {copied ? 'Copied' : ''}
+        </span>
+      </div>
+      {output !== undefined && (
+        <pre className="whitespace-pre-wrap break-words font-mono text-code text-content">
+          <LinkedText text={truncate(output, 4000)} truncated={output.length > 4000} />
+        </pre>
+      )}
+      <button
+        type="button"
+        data-find-skip=""
+        onClick={() => setInputOpen((o) => !o)}
+        aria-expanded={inputOpen}
+        className="mt-2.5 flex min-h-6 items-center gap-1.5 text-caps uppercase text-faint transition-colors hover:text-dim"
+      >
+        <IconChevron className={`h-3 w-3 transition-transform ${inputOpen ? 'rotate-90' : ''}`} aria-hidden="true" />
+        Input
+      </button>
+      {inputOpen && (
+        <pre className="mt-1.5 whitespace-pre-wrap break-words font-mono text-code text-dim">
+          {JSON.stringify(tool.input, null, 2)}
+        </pre>
+      )}
+    </>
   )
 }
 
@@ -575,7 +666,7 @@ function OpenFileButton({ tool, path, cwd }: { tool: ToolCall; path: string; cwd
       type="button"
       data-ui="row-open-file"
       onClick={(e) => openFileLink(handleId, path, { line }, false, e)}
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px]"
+      className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-dim transition-colors hover:text-content focus-visible:outline-offset-[-2px]"
       title={title}
       aria-label={label}
       aria-description={title}

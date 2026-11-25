@@ -79,7 +79,7 @@ export function foldable(tool: ToolCall): boolean {
   return tool.name !== 'Monitor' && rowState(tool, false) === 'done' && tierOf(tool, 'done') === 'routine'
 }
 
-function editPathOf(tool: ToolCall): string | null {
+export function editPathOf(tool: ToolCall): string | null {
   if (!EDIT_TOOLS.has(tool.name) || !tool.input || typeof tool.input !== 'object') return null
   const { file_path, notebook_path } = tool.input as Record<string, unknown>
   const p = file_path ?? notebook_path
@@ -98,8 +98,9 @@ export interface FoldPlan {
  *  growing from the fourth call on. */
 const LIVE_KEEP = 3
 
-/** Which rows of a run hide. `keptIds` are rows once opened outside the sentence, which never fold or merge. `focusId` is
- *  exempt only while live, so a keyboard user isn't moved as calls stream in; at settle focus is handed off instead. */
+/** Which rows of a run hide. `keptIds` are rows once opened outside the sentence, which never fold or merge away.
+ *  `focusId` is exempt only while live, so a keyboard user isn't moved as calls stream in; at settle focus is handed
+ *  off instead. */
 export function foldPlan(
   tools: ToolCall[],
   o: { settled: boolean; keptIds: ReadonlySet<string>; focusId: string | null; sentenceOpen: boolean }
@@ -118,14 +119,16 @@ export function foldPlan(
     const byPath = new Map<string, ToolCall[]>()
     for (const t of tools) {
       const p = editPathOf(t)
-      if (p === null || o.keptIds.has(t.id) || rowState(t, false) !== 'done') continue
+      if (p === null || rowState(t, false) !== 'done') continue
       byPath.set(p, [...(byPath.get(p) ?? []), t])
     }
-    for (const edits of byPath.values()) {
+    // Opening the stand-in row keeps it merged; only an earlier edit once opened stays out.
+    for (const all of byPath.values()) {
+      const last = all[all.length - 1]
+      const edits = [...all.slice(0, -1).filter((e) => !o.keptIds.has(e.id)), last]
       if (edits.length < 2) continue
-      const keep = edits[edits.length - 1].id
-      merged.set(keep, edits)
-      for (const e of edits.slice(0, -1)) mergedInto.set(e.id, keep)
+      merged.set(last.id, edits)
+      for (const e of edits.slice(0, -1)) mergedInto.set(e.id, last.id)
     }
   }
   let lastVisible: string | null = null
@@ -219,11 +222,12 @@ function objectParts(obj: string, v: Verb): SentencePart[] {
 
 /** The dim line a settled run's routine calls fold into: verb phrases in order of first appearance, objects named at 1
  *  or 2 and counted from 3. The Bash clause goes last because it is the only one with its own comma list, so a clause
- *  after it would read as one more command. It names the first `bashNamed` distinct commands and counts the rest. */
+ *  after it would read as one more command. It names the first `bashNamed` distinct commands and counts the rest;
+ *  `commands` is how many it could name. */
 export function sentenceOf(
   tools: ToolCall[],
   o: { changeLabel: (t: ToolCall) => string | null; bashNamed: number }
-): { parts: SentencePart[]; plain: string } {
+): { parts: SentencePart[]; plain: string; commands: number } {
   const groups = new Map<string, { verb: Verb; tools: ToolCall[] }>()
   const bash: ToolCall[] = []
   for (const t of tools) {
@@ -246,8 +250,8 @@ export function sentenceOf(
     else if (verb.one && calls.length === 1) clauses.push([sans(verb.one)])
     else clauses.push([sans(verb.many(n))])
   }
+  const cmds = [...new Set(bash.map(commandOf))]
   if (bash.length) {
-    const cmds = [...new Set(bash.map(commandOf))]
     const names = cmds.slice(0, Math.max(0, o.bashNamed))
     const rest = bash.filter((t) => !names.includes(commandOf(t))).length
     const named = names.map((c): SentencePart[] => [{ text: c, mono: true }])
@@ -256,7 +260,7 @@ export function sentenceOf(
   }
   const parts = clauses.flatMap((c, i) => (i ? [sans(', '), ...c] : c))
   if (parts[0]) parts[0] = { ...parts[0], text: parts[0].text.charAt(0).toUpperCase() + parts[0].text.slice(1) }
-  return { parts, plain: parts.map((p) => p.text).join('') }
+  return { parts, plain: parts.map((p) => p.text).join(''), commands: cmds.length }
 }
 
 /** A permission request carries no tool_use id, so the waiting row is found by name: the last
@@ -274,6 +278,19 @@ export function needsYouToolIdOf(slice: PerSessionState | null): string | null {
     if (t.result === undefined && (browserGate ? isBrowserTool(t.name) : t.name === req.toolName)) return t.id
   }
   return null
+}
+
+/** A failed call's reason line: its result without blank lines or npm's `> script` echoes, which would push the error
+ *  itself out of the 3-line clamp. A result that is nothing but echoes keeps its first line. */
+export function failureReason(result: string): string {
+  const lines = result.split('\n')
+  return lines.filter((l) => l.trim() && !l.startsWith('> ')).join('\n').slice(0, 500) || (lines.find((l) => l.trim())?.trim() ?? '')
+}
+
+/** A failed Bash result leads with `Exit code N` on its own line. The status shows the code, so the reason starts after it. */
+export function bashExit(result: string): { code: string | null; rest: string } {
+  const m = /^Exit code (\d+)(?:\n|$)/.exec(result)
+  return m ? { code: m[1], rest: result.slice(m[0].length) } : { code: null, rest: result }
 }
 
 export function summarizeInput(input: unknown): string {

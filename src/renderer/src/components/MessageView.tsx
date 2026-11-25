@@ -842,7 +842,7 @@ export function ToolGroup({
       ref={runRef}
       data-ui="run"
       data-spine={spine === 'off' ? undefined : spine}
-      className="relative flex flex-col gap-0.5"
+      className="@container relative flex flex-col gap-0.5"
       onFocus={(e) => setFocusId(e.target.closest<HTMLElement>('[data-row-id]')?.dataset.rowId ?? null)}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) setFocusId(null)
@@ -869,7 +869,7 @@ export function ToolGroup({
           onToggle={() => toggleRow(t.id)}
           hidden={isHidden(t.id)}
           reveal={revealIds.has(t.id)}
-          edits={plan.merged.get(t.id)?.length}
+          edits={plan.merged.get(t.id)}
         />
       ))}
     </div>

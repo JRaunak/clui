@@ -1060,11 +1060,32 @@ body {
   background: var(--color-border);
   pointer-events: none;
 }
+/* A bare 24px row or the sentence centres its bead 12px down; a 28px card under its 2px padding, 16px. */
 [data-ui='run'] > .spine-seg {
+  --bead-c: 12px;
+}
+[data-ui='run'] > .spine-seg:is([data-tier='calm'], [data-tier='loud']) {
   --bead-c: 16px;
 }
-[data-ui='run'] > [data-ui='run-sentence'] {
-  --bead-c: 12px;
+
+/* A loud card's left edge names its state. Dark --err on --row-hover is 4.34:1, under the 4.5 the 12px "failed"
+   needs, so on hover the card keeps its fill and brightens its ring. */
+[data-tier='loud'] > [data-ui='row-card'] {
+  --edge: var(--color-control-edge);
+  box-shadow:
+    inset 2px 0 0 var(--edge),
+    inset 0 0 0 1px var(--ring-c, var(--color-border));
+}
+[data-tier='loud'][data-state='failed'] > [data-ui='row-card'] {
+  --edge: var(--color-err);
+}
+[data-tier='loud'][data-state='needs-you'] > [data-ui='row-card'] {
+  --edge: var(--color-warn);
+}
+@media (pointer: fine) {
+  [data-tier='loud'] > [data-ui='row-card']:hover {
+    --ring-c: var(--color-control-edge);
+  }
 }
 [data-ui='run'] > .spine-seg::before {
   top: -2px;

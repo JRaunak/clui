@@ -1,6 +1,6 @@
 // Boundary: the row-state grammar, tiers, a run's fold plan and sentence, "needs you" matching, and the
 // current-turn derivation that the top-band header renders.
-import { monitorRowState, rowState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel, summarizeInput } from '../src/renderer/src/lib/instrument.ts'
+import { monitorRowState, rowState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel, summarizeInput, failureReason, bashExit } from '../src/renderer/src/lib/instrument.ts'
 import { formatCost } from '../src/renderer/src/lib/formatCost.ts'
 import { equal } from './support/harness.mjs'
 
@@ -190,6 +190,9 @@ equal(summarizeInput({ skill: 'create-cso-pr', args: '--help' }), 'create-cso-pr
   const broken = plan([edit('e1', 'a.ts'), edit('e2', 'a.ts', { isError: true }), edit('e3', 'a.ts')], { settled: true })
   equal(ids(broken.mergedInto.keys()) + ' | ' + broken.merged.get('e3')?.map((t: { id: string }) => t.id).join(' '), 'e1 | e1 e3', 'merge: a failed edit stays its own row')
   equal(plan(three).mergedInto.size, 0, 'merge: nothing merges while live')
+  equal(plan(three, { settled: true, keptIds: new Set(['e3']) }).merged.get('e3')?.length, 3, 'merge: opening the merged row keeps it merged')
+  const keptEarly = plan(three, { settled: true, keptIds: new Set(['e1']) })
+  equal(ids(keptEarly.mergedInto.keys()) + ' | ' + keptEarly.merged.get('e3')?.length, 'e2 | 2', 'merge: an earlier edit opened while live stays its own row')
   const nb = (id: string) => tool({ id, name: 'NotebookEdit', input: { notebook_path: 'n.ipynb' }, result: 'ok' })
   equal(plan([nb('n1'), nb('n2')], { settled: true }).mergedInto.get('n1'), 'n2', 'merge: NotebookEdit merges by notebook_path')
 
@@ -209,6 +212,9 @@ equal(summarizeInput({ skill: 'create-cso-pr', args: '--help' }), 'create-cso-pr
   equal(say(cmds, 2), 'Read a.ts, ran git status, npm test and 2 more commands', 'sentence: Bash names 2, counts the rest')
   equal(say(cmds, 0), 'Read a.ts, ran 4 commands', 'sentence: Bash names none')
   equal(say([sh('s1', 'ls'), sh('s2', 'pwd')], 1), 'Ran ls and 1 more command', 'sentence: one more command is singular')
+  equal(say([sh('s1', 'ls')], 0), 'Ran 1 command', 'sentence: one counted command is singular')
+  equal(say([sh('s1', 'ls'), sh('s2', 'ls'), sh('s3', 'pwd')], 1), 'Ran ls and 1 more command', 'sentence: a named command covers its repeats')
+  equal(sentenceOf([...cmds, sh('s5', 'ls')] as never, { changeLabel: () => null, bashNamed: 0 }).commands, 4, 'sentence: the fit searches distinct commands')
   equal(say([sh('s1', 'x'.repeat(50))]), `Ran ${'x'.repeat(39)}…`, 'sentence: a command is cut at 40 characters')
   equal(say([tool({ id: 'k', name: 'CronList', result: 'ok' })]), 'Used CronList', 'sentence: the fallback verb')
   equal(say([tool({ id: 'k', name: 'CronList', result: 'ok' }), tool({ id: 'k2', name: 'CronList', result: 'ok' })]), 'Used CronList 2 times', 'sentence: the fallback verb counts from 2')
@@ -219,3 +225,14 @@ equal(summarizeInput({ skill: 'create-cso-pr', args: '--help' }), 'create-cso-pr
   const parts = sentenceOf([read('a'), sh('s1', 'ls')] as never, { changeLabel: () => null, bashNamed: Infinity }).parts
   equal(parts.filter((p) => p.mono).map((p) => p.text).join(' '), 'a.ts ls', 'sentence: only objects are mono')
 }
+
+// The shape the 2.1.332 CLI sends for a failed `npm test`, verbatim.
+const npmFail = 'Exit code 1\n\n> failbash@1.0.0 test\n> node -e "console.error(\'AssertionError: expected undefined to be system\'); process.exit(1)"\n\nAssertionError: expected undefined to be system'
+equal(failureReason(npmFail), 'Exit code 1\nAssertionError: expected undefined to be system', 'reason: npm echoes and blank lines drop, the error stays')
+const exited = bashExit(npmFail)
+equal(`${exited.code} | ${failureReason(exited.rest)}`, '1 | AssertionError: expected undefined to be system', 'exit: the code leaves the reason for the status')
+equal(`${bashExit('Exit code 127').code} | ${bashExit('Exit code 127').rest}`, '127 | ', 'exit: a bare exit line leaves nothing, so the row says No output')
+equal(bashExit('Exit code 1: not a line').code, null, 'exit: only an exact first line counts')
+equal(failureReason('\n> a\n> b\n'), '> a', 'reason: a result of only echoes keeps its first line')
+equal(failureReason(''), '', 'reason: an empty result gives none, so the row says View error')
+equal(failureReason('x'.repeat(600)).length, 500, 'reason: capped at 500 characters')
