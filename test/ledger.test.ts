@@ -3,7 +3,8 @@
 import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ChangeLedger, applyPatch, lineCount, patchCounts } from '../src/main/surfaces/ledger.ts'
+import { ChangeLedger, applyPatch, patchCounts } from '../src/main/surfaces/ledger.ts'
+import { lineCount } from '../src/shared/changes.ts'
 import { equal, ok } from './support/harness.mjs'
 
 const fixture = (name: string): string => new URL(`./fixtures/ledger/${name}`, import.meta.url).pathname
@@ -148,6 +149,23 @@ const one = async (l: ChangeLedger, handle = 'h') => (await l.changes(handle))![
   const [w, s] = (await l.changes('h'))!
   ok(s.path === '/s.txt' && s.approximate && s.added === 2 && s.removed === 1, 'ledger: a subagent Edit is an approximate +2 −1 from its input')
   ok(w.path === '/w.txt' && w.added === null && w.removed === null && !w.approximate && !w.created, 'ledger: a subagent Write is a row with unknown counts')
+  equal(JSON.stringify(s.edits), '[{"id":"s1","added":null,"removed":null,"created":false}]', 'ledger: an input-derived count never reaches an edit row')
+}
+
+// Each edit keeps its own counts beside the file's net.
+{
+  const l = ledgerWith([
+    use('w1', 'Write', { file_path: '/p.txt', content: 'a\nb\n' }),
+    res('w1', { type: 'create', filePath: '/p.txt', content: 'a\nb\n', structuredPatch: [], originalFile: null }),
+    ...edit('e1', '/p.txt', 'a\nb\n', [hunk(1, 2, 3, [' a', '-b', '+B', '+C'])]),
+    use('e2', 'Edit', { file_path: '/p.txt', old_string: 'C', new_string: 'D', replace_all: true }),
+    res('e2', { filePath: '/p.txt' })
+  ])
+  equal(
+    JSON.stringify((await one(l)).edits),
+    '[{"id":"w1","added":2,"removed":0,"created":true},{"id":"e1","added":2,"removed":1,"created":false},{"id":"e2","added":null,"removed":null,"created":false}]',
+    'ledger: per-edit counts: a create, an exact Edit, a replace_all with no patch'
+  )
 }
 
 // Eviction drops old texts but keeps counts, and the open segment keeps its continuity text.

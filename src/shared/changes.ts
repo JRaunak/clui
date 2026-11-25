@@ -25,6 +25,13 @@ export type ChangeSelection =
 
 const utf8 = new TextEncoder()
 
+export const MINUS = '−'
+
+export function lineCount(text: string): number {
+  if (!text) return 0
+  return text.split('\n').length - (text.endsWith('\n') ? 1 : 0)
+}
+
 /** The text one side of a hunk slice reads as, numbered as `DiffSurface` numbers its rows. `rows` absent = the whole
  *  hunk. `diff` keeps every row verbatim, `\ No newline` rows included; `before`/`after` drop them. */
 export function changeSelection(h: PatchHunk, side: ChangeSide, rows?: HunkRows): ChangeSelection {
@@ -74,6 +81,18 @@ export interface FileChangeSummary {
   snapshot: boolean
   segments: number
   editIds: string[]
+  /** Parallel to `editIds`. */
+  edits: EditCount[]
+}
+
+/** One edit's own lines, null where the ledger could only estimate them (from the tool input, a notebook cell, or a
+ *  patch that didn't apply to its file). An estimate on a row would read as exact. */
+export interface EditCount {
+  id: string
+  added: number | null
+  removed: number | null
+  /** A Write that made the file. */
+  created: boolean
 }
 
 /** One hunk of a Claude changes diff, identified by its exact bytes in one segment revision. */

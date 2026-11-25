@@ -8,11 +8,11 @@ import { rmSync } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { diffLines, structuredPatch, type ChangeObject, type StructuredPatch } from 'diff'
-import { changeSelection, type ChangeMarks, type ChangeSelection, type DiffHunk, type DiffRequest, type DiffSegment, type FileDiff, type PatchHunk } from '../../shared/changes'
+import { changeSelection, lineCount, type ChangeMarks, type ChangeSelection, type DiffHunk, type DiffRequest, type DiffSegment, type FileDiff, type PatchHunk } from '../../shared/changes'
 import type { ChangeSide } from '../../shared/context'
 import type { ChangeRefRequest } from '../../shared/ipc'
 import { survivingLines } from '../../shared/lines'
-import { lineCount, type SegmentView } from './ledger'
+import type { SegmentView } from './ledger'
 
 const LINES_MAX = 50_000
 const CHARS_MAX = 8 * 1024 * 1024

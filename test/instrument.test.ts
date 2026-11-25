@@ -1,6 +1,6 @@
 // Boundary: the row-state grammar, tiers, a run's fold plan and sentence, "needs you" matching, and the
 // current-turn derivation that the top-band header renders.
-import { monitorRowState, rowState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel, summarizeInput, failureReason, bashExit } from '../src/renderer/src/lib/instrument.ts'
+import { editCountsOf, editMeta, monitorRowState, rowState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel, summarizeInput, failureReason, bashExit } from '../src/renderer/src/lib/instrument.ts'
 import { formatCost } from '../src/renderer/src/lib/formatCost.ts'
 import { equal } from './support/harness.mjs'
 
@@ -236,3 +236,17 @@ equal(bashExit('Exit code 1: not a line').code, null, 'exit: only an exact first
 equal(failureReason('\n> a\n> b\n'), '> a', 'reason: a result of only echoes keeps its first line')
 equal(failureReason(''), '', 'reason: an empty result gives none, so the row says View error')
 equal(failureReason('x'.repeat(600)).length, 500, 'reason: capped at 500 characters')
+
+{
+  const c = (id: string, added: number | null, removed: number | null, created = false) => ({ id, added, removed, created })
+  const counts = editCountsOf([{ edits: [c('e1', 6, 2), c('e2', 1, 0), c('e3', null, null), c('w1', 3, 0, true), c('w2', 1, 1)] } as never])
+  const e1 = tool({ id: 'e1', name: 'Edit' })
+  equal(editMeta(e1, undefined, counts), '+6 −2', 'size: an Edit shows its own counts')
+  equal(editMeta(tool({ id: 'e3', name: 'Edit' }), undefined, counts), '', 'size: an uncounted Edit shows none')
+  equal(editMeta(tool({ id: 'eX', name: 'Edit' }), undefined, counts), '', 'size: an Edit the ledger has not reached shows none')
+  equal(editMeta(tool({ id: 'e2' }), [e1, tool({ id: 'e2', name: 'Edit' })], counts), '+7 −2', 'size: a merged row sums its edits')
+  equal(editMeta(tool({ id: 'e2' }), [e1, tool({ id: 'e3' }), tool({ id: 'e2' })], counts), '', 'size: a merged row with one uncounted edit shows no partial sum')
+  equal(editMeta(tool({ id: 'w1', name: 'Write', input: { content: 'a\nb\nc\n' } }), undefined, counts), 'new, 3 lines', 'size: a created Write is new')
+  equal(editMeta(tool({ id: 'w2', name: 'Write', input: { content: 'a' } }), undefined, counts), '1 line', 'size: an overwrite is only its lines')
+  equal(editMeta(tool({ id: 'wX', name: 'Write', input: { content: 'a\nb' } }), undefined, counts), '2 lines', 'size: lines show before the ledger answers')
+}

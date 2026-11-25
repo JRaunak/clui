@@ -15,6 +15,8 @@ import {
   browserLabel,
   browserResultCopy,
   changeReadOf,
+  editCountsOf,
+  editMeta,
   editPathOf,
   failureReason,
   bashExit,
@@ -285,6 +287,8 @@ export function InstrumentRow({
   const editPath = tier === 'legible' ? editPathOf(tool) : null
   const relPath = editPath && cwd && editPath.startsWith(`${cwd}/`) ? editPath.slice(cwd.length + 1) : editPath
   const cut = relPath ? relPath.lastIndexOf('/') + 1 : 0
+  // Changes arrive from main as the ledger counts them, so the size shows up after the row does.
+  const size = useActive((s) => (editPath && state === 'done' && s ? editMeta(tool, edits, editCountsOf(s.changes)) : ''))
   const toggleBody = (e: MouseEvent): void => {
     setAnimateBody(viaOf(e) === 'pointer')
     onToggle()
@@ -350,7 +354,7 @@ export function InstrumentRow({
               className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
               aria-expanded={open}
               aria-controls={bodyId}
-              aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}${edits ? `, ${edits.length} edits` : ''}${counted ? `, ${counted.copy}` : ''}, ${stopping && watching ? 'stopping' : STATE_TEXT[state]}${exit?.code ? `, exit code ${exit.code}` : ''}${meta ? `, ${meta.replace(' · ', ', ')}` : ''}`}
+              aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}${edits ? `, ${edits.length} edits` : ''}${size ? `, ${size}` : ''}${counted ? `, ${counted.copy}` : ''}, ${stopping && watching ? 'stopping' : STATE_TEXT[state]}${exit?.code ? `, exit code ${exit.code}` : ''}${meta ? `, ${meta.replace(' · ', ', ')}` : ''}`}
               aria-describedby={describedBy}
               title={title || undefined}
               onClick={toggleBody}
@@ -382,6 +386,7 @@ export function InstrumentRow({
                 )
               )}
               {!!edits && <span className="shrink-0 text-meta text-faint">{edits.length} edits</span>}
+              {size && <span className="shrink-0 font-mono text-meta text-faint">{size}</span>}
               {counted && (
                 <span className="shrink-0 text-meta">
                   <span className="text-faint">· </span>

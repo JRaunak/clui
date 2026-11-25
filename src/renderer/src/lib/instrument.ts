@@ -1,3 +1,4 @@
+import { lineCount, MINUS, type EditCount, type FileChangeSummary } from '../../../shared/changes'
 import { CHANGE_READ_TOOL, changeLabel, messageGist, parseRefs, type ContextReference } from '../../../shared/context'
 import type { ChatMessage, MonitorRecord, PerSessionState, ToolCall } from '../store'
 import { isBackgroundedTool, sendResultOf } from './agents'
@@ -84,6 +85,38 @@ export function editPathOf(tool: ToolCall): string | null {
   const { file_path, notebook_path } = tool.input as Record<string, unknown>
   const p = file_path ?? notebook_path
   return typeof p === 'string' ? p : null
+}
+
+const countsBy = new WeakMap<readonly FileChangeSummary[], Map<string, EditCount>>()
+
+/** Every edit's ledger counts by tool id, built once per changes push. */
+export function editCountsOf(changes: readonly FileChangeSummary[]): ReadonlyMap<string, EditCount> {
+  let m = countsBy.get(changes)
+  if (!m) countsBy.set(changes, (m = new Map(changes.flatMap((c) => c.edits.map((e) => [e.id, e])))))
+  return m
+}
+
+/** A done edit row's size: `+6 −2`, or a Write's `new, 48 lines`. A merged row sums its edits only when the ledger
+ *  counted every one, since a partial sum reads as the whole. */
+export function editMeta(tool: ToolCall, edits: readonly ToolCall[] | undefined, counts: ReadonlyMap<string, EditCount>): string {
+  if (edits) {
+    let added = 0
+    let removed = 0
+    for (const e of edits) {
+      const c = counts.get(e.id)
+      if (c?.added == null || c.removed == null) return ''
+      added += c.added
+      removed += c.removed
+    }
+    return `+${added} ${MINUS}${removed}`
+  }
+  const c = counts.get(tool.id)
+  if (tool.name === 'Write') {
+    const content = (tool.input as Record<string, unknown> | null)?.content
+    const n = typeof content === 'string' ? lineCount(content) : null
+    return [c?.created && 'new', n !== null && `${n} ${n === 1 ? 'line' : 'lines'}`].filter(Boolean).join(', ')
+  }
+  return c?.added == null || c.removed == null ? '' : `+${c.added} ${MINUS}${c.removed}`
 }
 
 export interface FoldPlan {

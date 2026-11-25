@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream, existsSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { applyPatch as applyHunks, diffLines, type Change } from 'diff'
-import type { FileChangeSummary, PatchHunk } from '../../shared/changes'
+import { lineCount, type EditCount, type FileChangeSummary, type PatchHunk } from '../../shared/changes'
 import { sessionTranscriptFiles } from '../sessions/transcript'
 
 const TEXT_BUDGET = 64 * 1024 * 1024
@@ -54,11 +54,6 @@ interface Counts {
 type Obj = Record<string, unknown>
 const obj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : null)
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
-
-export function lineCount(text: string): number {
-  if (!text) return 0
-  return text.split('\n').length - (text.endsWith('\n') ? 1 : 0)
-}
 
 export function patchCounts(hunks: PatchHunk[]): Counts {
   let added = 0
@@ -170,6 +165,8 @@ export function normalizeEdit(id: string, name: string, input: Obj, result: unkn
 interface Segment {
   id: string
   editIds: string[]
+  /** Parallel to `editIds`. Eviction drops the patches but never these, so a row's count outlives its diff. */
+  counts: Omit<EditCount, 'id'>[]
   /** Each edit's own hunks, null where the result had none or they were evicted. */
   patches: (PatchHunk[] | null)[]
   /** The break before this segment was a proven text mismatch rather than missing evidence. */
@@ -374,6 +371,7 @@ export class ChangeLedger {
     const last = file.segments.at(-1)
     if (last && last.after !== undefined && e.before === last.after && !e.userModified) {
       last.editIds.push(e.id)
+      last.counts.push(ownCounts(e))
       // An evicted segment can't show its edits whole, so it keeps no new hunks either.
       const patch = last.evicted ? null : (e.patch ?? null)
       last.patches.push(patch)
@@ -387,6 +385,7 @@ export class ChangeLedger {
       const seg: Segment = {
         id: hash(e.origin, e.path, e.id),
         editIds: [e.id],
+        counts: [ownCounts(e)],
         patches: [e.patch ?? null],
         provenBreak: !last || (last.after !== undefined && e.before !== undefined),
         before: e.before,
@@ -435,6 +434,9 @@ export class ChangeLedger {
     }
   }
 }
+
+const ownCounts = (e: ClaudeEdit): Omit<EditCount, 'id'> =>
+  e.approximate ? { added: null, removed: null, created: e.created } : { added: e.added, removed: e.removed, created: e.created }
 
 function newState(key: string): SessionState {
   return { key, files: new Map(), order: [], seen: new Set(), pending: new Map(), inbox: [], textChars: 0, seq: 0, replay: null, flush: null }
@@ -502,7 +504,8 @@ function summarize(state: SessionState): FileChangeSummary[] {
         diffAvailable: segments.every((s) => (s.before !== undefined && s.after !== undefined) || s.patches.every(Boolean)),
         snapshot: segments.at(-1)?.before !== undefined && segments.at(-1)?.after !== undefined,
         segments: segments.length,
-        editIds: segments.flatMap((s) => s.editIds)
+        editIds: segments.flatMap((s) => s.editIds),
+        edits: segments.flatMap((s) => s.editIds.map((id, i) => ({ id, ...s.counts[i] })))
       }
     })
 }

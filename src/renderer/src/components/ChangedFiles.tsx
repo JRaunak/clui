@@ -1,7 +1,7 @@
 import { useEffect, useId, useState, type CSSProperties } from 'react'
 import { useActive, useSession, EMPTY_CHANGES } from '../store'
 import { requestSurfaceFocus } from '../lib/surfaceFocus'
-import type { FileChangeSummary, GitPathStatus, GitUnavailableCause } from '../../../shared/changes'
+import { MINUS, type FileChangeSummary, type GitPathStatus, type GitUnavailableCause } from '../../../shared/changes'
 import { IconChevron, IconFile } from './Icon'
 
 /** Workspace-relative path; a file outside cwd stays absolute. */
@@ -9,7 +9,6 @@ export function toWorkspaceRelative(cwd: string | null, path: string): string {
   return cwd && path.startsWith(cwd + '/') ? path.slice(cwd.length + 1) : path
 }
 
-export const MINUS = '−'
 const lines = (n: number): string => `${n} ${n === 1 ? 'line' : 'lines'}`
 
 /** The row's screen-reader description and its pointer tooltip's count line. */
