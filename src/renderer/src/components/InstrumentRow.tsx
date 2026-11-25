@@ -375,8 +375,9 @@ export function InstrumentRow({
             <span className={`flex min-w-0 items-center gap-1.5${aside ? ' @max-[520px]:col-span-2' : ''}`}>
               {relPath ? (
                 <span data-ui="row-target" className="flex min-w-0 items-baseline gap-1.5 font-mono">
-                  <span className="shrink-0 text-code text-content">{relPath.slice(cut)}</span>
-                  {cut > 0 && <span className="truncate text-meta text-faint">{relPath.slice(0, cut)}</span>}
+                  <span className="truncate text-code text-content">{relPath.slice(cut)}</span>
+                  {/* A zero basis lets the filename take its whole width before the dir gets any, so the dir truncates first. */}
+                  {cut > 0 && <span className="min-w-0 flex-1 truncate text-meta text-faint">{relPath.slice(0, cut)}</span>}
                 </span>
               ) : (
                 summary && (
