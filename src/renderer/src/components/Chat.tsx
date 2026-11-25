@@ -364,7 +364,9 @@ export function Chat({ onScrollbarWidth }: { onScrollbarWidth?: (w: number) => v
         itemContent={(index, m) => (
           // H-padding on the item, never the Virtuoso scroller: scroller padding inflates
           // scrollWidth past clientWidth (a react-virtuoso quirk), producing a spurious h-scrollbar.
-          <div className="mx-auto max-w-5xl px-7 py-6">
+          // A prompt drops its bottom padding so it sits 24px above its reply while turns stay 48px apart.
+          // The last prompt drops it too, so the reply lands without shifting the prompt.
+          <div className={`mx-auto max-w-5xl px-7 ${m.role === 'user' && (messages[index + 1]?.role ?? 'assistant') === 'assistant' ? 'pt-6' : 'py-6'}`}>
             {resumed && historyCount > 0 && index === historyCount && (
               <div className="mb-6 flex items-center gap-2 text-caps uppercase text-faint">
                 <span className="h-px flex-1 bg-border" />
