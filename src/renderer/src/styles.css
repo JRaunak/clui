@@ -252,7 +252,7 @@
 :root {
   --control-material: glass;
   --specular: rgb(255 255 255 / 0.05);
-  --shadow-content: none;
+  --shadow-content: 0 0 #0000;
   /* --ink-950, the app background, at 76%. */
   --glass-tint-edge: rgb(22 22 23 / 0.76);
   --glass-tint-thick: rgb(30 30 31 / 0.97);
