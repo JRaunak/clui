@@ -1024,7 +1024,9 @@ body {
 /* ─────────────────────────────────────────────────────────────────────────
    Transcript spine. Each transcript item draws its own slice of the line so nothing is
    measured: a slice reaches 8px up to bridge the flex gap above it. The head slice starts at the
-   speaker dot's centre and the end slice stops at its row's bead (16px into the 32px header).
+   speaker dot's centre. A tool run bridges the 8px above itself, each visible row in it bridges the
+   run's 2px gap, and the run's last visible element stops the line at its bead, `--bead-c` down.
+   Hidden rows draw nothing.
    ───────────────────────────────────────────────────────────────────────── */
 .spine-seg {
   position: relative;
@@ -1045,12 +1047,32 @@ body {
   top: -8px;
   bottom: 0;
 }
-.spine-seg[data-seg='end']::before {
-  top: -8px;
-  height: 24px;
-}
 .spine-seg[data-seg='none']::before {
   display: none;
+}
+[data-ui='run'][data-spine]::before {
+  content: '';
+  position: absolute;
+  left: -15.5px;
+  top: -8px;
+  height: 8px;
+  width: 1px;
+  background: var(--color-border);
+  pointer-events: none;
+}
+[data-ui='run'] > .spine-seg {
+  --bead-c: 16px;
+}
+[data-ui='run'] > [data-ui='run-sentence'] {
+  --bead-c: 12px;
+}
+[data-ui='run'] > .spine-seg::before {
+  top: -2px;
+  bottom: 0;
+}
+[data-ui='run'] > .spine-seg[data-seg='end']::before {
+  bottom: auto;
+  height: calc(2px + var(--bead-c));
 }
 
 @keyframes row-body-in {

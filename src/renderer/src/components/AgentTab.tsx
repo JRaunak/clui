@@ -215,8 +215,8 @@ function SpawnedChildren({ items, onOpen }: { items: NestedSubagent[]; onOpen: (
 }
 
 /** An agent's entries in stream order: text and thinking runs between its tool calls, each run of consecutive tool
- *  calls in one ToolGroup. */
-function SubagentStream({ entries }: { entries: SubagentMessage[] }): JSX.Element {
+ *  calls in one ToolGroup. A run settles once an entry follows it and every call has returned, or when the agent ends. */
+function SubagentStream({ entries, live }: { entries: SubagentMessage[]; live: boolean }): JSX.Element {
   const out: JSX.Element[] = []
   let i = 0
   while (i < entries.length) {
@@ -229,11 +229,7 @@ function SubagentStream({ entries }: { entries: SubagentMessage[] }): JSX.Elemen
         run.push(t.tool)
         i++
       }
-      out.push(
-        <div key={`t${i}`} className="flex flex-col gap-1.5">
-          <ToolGroup tools={run} />
-        </div>
-      )
+      out.push(<ToolGroup key={run[0].id} tools={run} settled={!live || (i < entries.length && run.every((t) => t.result !== undefined))} />)
       continue
     }
     if (e.kind === 'coordinator') {
@@ -329,7 +325,7 @@ function TranscriptBody({
   } else {
     body = (
       <>
-        <SubagentStream entries={entries} />
+        <SubagentStream entries={entries} live={live} />
         {live && <WorkingTail ui="subagent-working" bg={status.state === 'background'} starting={false} />}
         <SpawnedChildren items={children} onOpen={onOpenChild} />
       </>

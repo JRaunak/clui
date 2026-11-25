@@ -3,8 +3,8 @@ import { FIND_MAX, findRanges, useFind } from '../components/surfaces/fileDoc'
 
 const NOT_FOUND: { ranges: Range[]; more: boolean } = { ranges: [], more: false }
 /** A transcript's buttons can carry its content, such as a spawned agent's card, so only chrome marked
- *  `data-find-skip` is passed over. */
-const SKIP = '[data-num], .sr-only, [data-find-skip], [data-pointed]'
+ *  `data-find-skip` is passed over. A folded row is `[hidden]`: matching it would scroll to a zero rect. */
+const SKIP = '[data-num], .sr-only, [data-find-skip], [data-pointed], [hidden]'
 
 /** A match past a truncated row's ellipsis is lit off its clipped edge, so the box clipping it, the first ancestor
  *  below `stop` that overflows sideways, scrolls to show it. `shifted` holds the box last scrolled; it goes back once the

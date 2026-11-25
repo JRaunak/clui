@@ -1,7 +1,7 @@
 import { fileLinkTitle, LinkedText, openFileLink, useLinkTarget } from '../lib/openLink'
 import { openFileLabel, toolPathIn } from '../lib/fileLinks'
-import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react'
-import { activeSlice, useActive, useSession, type MonitorRecord, type ToolCall } from '../store'
+import { useEffect, useId, useRef, useState, type MouseEvent } from 'react'
+import { useActive, useSession, type MonitorRecord, type ToolCall } from '../store'
 import { formatElapsed } from '../lib/turnEnd'
 import { useDelayedFlag } from '../lib/useDelayedFlag'
 import { useStopFocus } from '../lib/useStopFocus'
@@ -23,9 +23,9 @@ import {
   needsYouToolIdOf,
   rowState,
   summarizeInput,
+  tierOf,
   toolLabel,
   TURN_LINE_PX,
-  worstState,
   type RowState
 } from '../lib/instrument'
 import { effortLabel } from '../../../shared/settings'
@@ -53,13 +53,14 @@ const BEAD_FILL: Record<RowState, string> = {
   ended: 'border-[1.5px] border-faint'
 }
 
-/** 8px state mark. On the spine it sits outside the card, centred on the line 15px left of the
- *  card edge; inline (inside an aggregate or an off-spine list) it leads the row's grid. */
-export function Bead({ state, lit, placement }: { state: RowState; lit: boolean; placement: Placement }): JSX.Element {
+/** 8px state mark. On the spine it sits outside the row, centred on the line 15px left of the
+ *  row edge at the run's `--bead-c`; inline (an off-spine run) it leads the row's grid. `bare`
+ *  marks a bead that sits on the page rather than a card. */
+export function Bead({ state, lit, placement, bare = false }: { state: RowState; lit: boolean; placement: Placement; bare?: boolean }): JSX.Element {
   const hollow = state === 'launching' || state === 'sent' || state === 'done' || state === 'ended' || state === 'failed' || state === 'not-run' || state === 'stopped'
-  const pos = placement === 'spine' ? 'absolute left-[-19px] top-3' : 'relative'
+  const pos = placement === 'spine' ? 'absolute left-[-19px] top-[calc(var(--bead-c)-4px)]' : 'relative'
   // A hollow ring is filled with whatever it sits on, so the spine line doesn't show through it.
-  const hole = hollow ? (placement === 'spine' ? 'bg-bg' : 'bg-tool') : ''
+  const hole = hollow ? (placement === 'spine' || bare ? 'bg-bg' : 'bg-tool') : ''
   return (
     <span
       data-ui="row-bead"
@@ -141,16 +142,27 @@ export function InstrumentRow({
   tool,
   placement,
   seg = 'through',
-  lumen = true
+  open,
+  onToggle,
+  hidden,
+  id,
+  reveal,
+  edits
 }: {
   tool: ToolCall
   placement: Placement
-  /** Spine slice for a spine-placed row: 'end' on the transcript item that carries the last bead. */
+  /** Spine slice for a spine-placed row: 'end' on the run's last visible row. */
   seg?: Seg
-  /** Rows inside an aggregate never light; the aggregate's own bead carries the Lumen. */
-  lumen?: boolean
+  /** Open state lives in the run, because an open row never folds. */
+  open: boolean
+  onToggle: () => void
+  hidden: boolean
+  id: string
+  /** A row the sentence revealed by pointer animates in. */
+  reveal: boolean
+  /** The edits a merged edit row stands for, itself included. */
+  edits?: number
 }): JSX.Element {
-  const [open, setOpen] = useState(false)
   // A pointer-opened body animates in; a keyboard toggle is instant.
   const [animateBody, setAnimateBody] = useState(false)
   const browser = isBrowserTool(tool.name)
@@ -206,7 +218,7 @@ export function InstrumentRow({
   )
   const checking = useDelayedFlag(useActive((s) => !!s?.checkingTools[tool.id]))
   const lit = useActive((s) => {
-    if (!lumen || !s) return false
+    if (!s) return false
     const site = lumenSiteOf(s)
     return site?.kind === 'tool' && site.toolId === tool.id
   })
@@ -251,7 +263,7 @@ export function InstrumentRow({
   const failed = state === 'failed'
   const toggleBody = (e: MouseEvent): void => {
     setAnimateBody(viaOf(e) === 'pointer')
-    setOpen((o) => !o)
+    onToggle()
   }
   const chevron = (
     <IconChevron
@@ -271,7 +283,11 @@ export function InstrumentRow({
     <div
       data-ui="instrument-row"
       data-state={state}
-      className={placement === 'spine' ? 'spine-seg' : 'relative'}
+      data-tier={tierOf(tool, state)}
+      data-row-id={tool.id}
+      id={id}
+      hidden={hidden}
+      className={`${placement === 'spine' ? 'spine-seg' : 'relative'}${reveal ? ' row-body-in' : ''}`}
       data-seg={placement === 'spine' ? seg : undefined}
     >
       {placement === 'spine' && <Bead state={state} lit={lit} placement="spine" />}
@@ -309,7 +325,7 @@ export function InstrumentRow({
               className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
               aria-expanded={open}
               aria-controls={bodyId}
-              aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}${counted ? `, ${counted.copy}` : ''}, ${stopping && watching ? 'stopping' : STATE_TEXT[state]}${meta ? `, ${meta.replace(' · ', ', ')}` : ''}`}
+              aria-label={`${name}${spokenSummary ? ` ${spokenSummary}` : ''}${edits ? `, ${edits} edits` : ''}${counted ? `, ${counted.copy}` : ''}, ${stopping && watching ? 'stopping' : STATE_TEXT[state]}${meta ? `, ${meta.replace(' · ', ', ')}` : ''}`}
               title={title || undefined}
               onClick={toggleBody}
             />
@@ -322,6 +338,7 @@ export function InstrumentRow({
             <span className={`text-label font-semibold ${state === 'not-run' ? 'text-dim' : 'text-content'}`}>{name}</span>
             <span className="flex min-w-0 items-center gap-1.5">
               {summary && <span className="truncate text-code text-dim">{summary}</span>}
+              {!!edits && <span className="shrink-0 text-meta text-faint">{edits} edits</span>}
               {counted && (
                 <span className="shrink-0 text-meta">
                   <span className="text-faint">· </span>
@@ -565,162 +582,6 @@ function OpenFileButton({ tool, path, cwd }: { tool: ToolCall; path: string; cwd
     >
       <IconFile className="h-4 w-4" />
     </button>
-  )
-}
-
-/**
- * More than AGGREGATE_ABOVE tools collapse into one row with the most urgent child's bead; at
- * COLLAPSE_AT and above, completed children hide until the header is opened. The gates count all
- * tools, not concurrent ones, because headless stream-json serializes subagent calls.
- */
-export function AggregateRow({
-  tools,
-  placement,
-  seg = 'through',
-  collapse
-}: {
-  tools: ToolCall[]
-  placement: Placement
-  seg?: Seg
-  collapse: boolean
-}): JSX.Element {
-  const [expanded, setExpanded] = useState(false)
-  const ids = useMemo(() => new Set(tools.map((t) => t.id)), [tools])
-  const needsYouId = useActive((s) => needsYouToolIdOf(s))
-  const checkingMap = useActive((s) => s?.checkingTools)
-  // Delayed across the group, so a quick check on one row can't flash the word.
-  const anyChecking = useDelayedFlag(tools.some((t) => !!checkingMap?.[t.id]))
-  const lit = useActive((s) => {
-    if (!s) return false
-    const site = lumenSiteOf(s)
-    return site?.kind === 'tool' && ids.has(site.toolId)
-  })
-  const monitors = useActive((s) => s?.monitors)
-  const states = tools.map((t) => {
-    const checking = anyChecking && !!checkingMap?.[t.id]
-    return t.name === 'Monitor' ? monitorRowState(t, t.id === needsYouId, checking, monitors?.[t.id]) : rowState(t, t.id === needsYouId, checking)
-  })
-  const worst = worstState(states)
-  const done = states.filter((s) => s === 'done' || s === 'sent' || s === 'launched' || s === 'ended').length
-  const failed = states.filter((s) => s === 'failed').length
-  const notRun = states.filter((s) => s === 'not-run').length
-  const stopped = states.filter((s) => s === 'stopped').length
-  // One activity word at most, the most urgent first, so a lit or amber bead always has text too.
-  const activity: { text: string; cls: string } | null = states.includes('needs-you')
-    ? { text: 'needs you', cls: 'text-warn' }
-    : states.includes('checking')
-      ? { text: 'checking', cls: 'text-dim' }
-      : states.includes('running')
-      ? { text: 'running', cls: 'text-dim' }
-      : states.includes('launching')
-        ? { text: 'launching…', cls: 'text-info' }
-        : null
-  const names = [
-    ...new Set(tools.map((t) => toolLabel(t.name)))
-  ].join(', ')
-  // Collapsed, only what still matters shows: failures pinned first, then anything unresolved.
-  const visible =
-    collapse && !expanded
-      ? [...tools.filter((_, i) => states[i] === 'failed'), ...tools.filter((t) => t.result === undefined)]
-      : tools
-  const label = [
-    `${tools.length} tool calls`,
-    failed > 0 ? `${failed} failed` : null,
-    notRun > 0 ? `${notRun} not run` : null,
-    stopped > 0 ? `${stopped} stopped` : null,
-    activity?.text ?? null,
-    `${done} of ${tools.length} done`
-  ]
-    .filter(Boolean)
-    .join(', ')
-  const grid = (
-    <div
-      className="pointer-events-none relative grid h-8 items-center gap-2 px-2.5"
-      style={{ gridTemplateColumns: gridCols(placement, false) }}
-    >
-      {placement === 'inline' && <Bead state={worst} lit={lit} placement="inline" />}
-      <span className="text-label font-semibold text-content">{tools.length} tool calls</span>
-      <span className="truncate text-code text-dim">{names}</span>
-      <span className="flex items-center gap-1 text-meta">
-        {failed > 0 && (
-          <>
-            <span className="flex items-center gap-1 text-err">
-              <IconWarn className="h-3.5 w-3.5 shrink-0" />
-              {failed} failed
-            </span>
-            <span className="text-faint">·</span>
-          </>
-        )}
-        {activity && (
-          <>
-            <span className={activity.cls}>{activity.text}</span>
-            <span className="text-faint">·</span>
-          </>
-        )}
-        <span className="text-faint">
-          {done} of {tools.length} done
-        </span>
-        {notRun > 0 && (
-          <>
-            <span className="text-faint">·</span>
-            <span className="flex items-center gap-1 text-faint">
-              <IconCircle className="h-3.5 w-3.5 shrink-0" />
-              {notRun} not run
-            </span>
-          </>
-        )}
-        {stopped > 0 && (
-          <>
-            <span className="text-faint">·</span>
-            <span className="flex items-center gap-1 text-faint">
-              <IconStop className="h-3 w-3 shrink-0" />
-              {stopped} stopped
-            </span>
-          </>
-        )}
-      </span>
-      <span className="flex h-6 w-6 items-center justify-center text-faint" aria-hidden="true">
-        {collapse && (
-          <IconChevron className={`h-4 w-4 transition-transform [transition-duration:var(--dur-fast)] ${expanded ? 'rotate-90' : ''}`} />
-        )}
-      </span>
-    </div>
-  )
-  return (
-    <div
-      data-ui="row-aggregate"
-      data-state={worst}
-      className={placement === 'spine' ? 'spine-seg' : 'relative'}
-      data-seg={placement === 'spine' ? seg : undefined}
-    >
-      {placement === 'spine' && <Bead state={worst} lit={lit} placement="spine" />}
-      <div className={CARD}>
-        {collapse ? (
-          <div className="relative">
-            <button
-              type="button"
-              className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
-              aria-expanded={expanded}
-              aria-label={label}
-              onClick={() => setExpanded((v) => !v)}
-            />
-            {grid}
-          </div>
-        ) : (
-          <div role="group" aria-label={label}>
-            {grid}
-          </div>
-        )}
-      </div>
-      <div className="mt-1.5 flex flex-col gap-1.5 pl-3">
-        {collapse && !expanded && done > 0 && (
-          <div className="px-1 text-meta text-faint">{done} completed, hidden</div>
-        )}
-        {visible.map((t) => (
-          <InstrumentRow key={t.id} tool={t} placement="inline" lumen={false} />
-        ))}
-      </div>
-    </div>
   )
 }
 

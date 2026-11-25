@@ -27,7 +27,9 @@ import { baseOf } from '../lib/refCopy'
 import { viaOf, type Via } from '../lib/motion'
 import { peerSenderOf } from '../lib/agents'
 import { diveInto } from '../lib/dive'
-import { AggregateRow, InstrumentRow } from './InstrumentRow'
+import { InstrumentRow } from './InstrumentRow'
+import { RunSentence } from './RunSentence'
+import { foldPlan } from '../lib/instrument'
 import { IconArrowUp, IconChevron, IconClose, IconEye, IconFile, IconChecklist, IconMessage, IconNoEntry, IconSendToTray, IconShield, IconShieldOff, IconStop, IconWarn } from './Icon'
 import { highlightOf } from '../lib/toolHighlight'
 import { openFileAt, useLinkRoot } from '../lib/openLink'
@@ -64,16 +66,6 @@ function MessageAttachmentView({ att }: { att: ShownAttachment }): JSX.Element {
     </div>
   )
 }
-
-/** >this many total tools in a message triggers aggregate header + demote per-card dots to
- *  a static running-dot. Gated on total count, not concurrent-running count. Verified against
- *  the CLI that headless stream-json serializes subagent/tool calls (peak concurrent = 1), so
- *  a "running > N" gate would never fire; a message with many tool calls is exactly when the
- *  compact tally + one static header help. */
-const AGGREGATE_ABOVE = 5
-/** ≥this many total tools triggers collapse completed into the header count (show only
- *  running + failed; failed pinned). */
-const COLLAPSE_AT = 16
 
 /** The composer inserts an agent mention as the literal token @"name (agent)", the quoted
  *  form the CLI needs to delegate the turn. Display-only: message.text keeps the literal
@@ -163,7 +155,7 @@ export function MessageView({ message, hideThinking = false, rebuilt = false }: 
               {isUser ? (
                 <UserContent message={message} rebuilt={rebuilt} />
               ) : (
-                <SpineItems entries={entries} />
+                <SpineItems entries={entries} live={live} />
               )}
             </div>
           )}
@@ -725,7 +717,7 @@ type SpineEntry =
   | { kind: 'tools'; tools: ToolCall[] }
 
 /** Flattens a message into spine entries in stream order. Consecutive tools coalesce into one run
- *  (so aggregation applies to a fan-out); entering plan mode breaks the run with a divider. */
+ *  (so a fan-out folds as one); entering plan mode breaks the run with a divider. */
 function spineEntries(message: ChatMessage): SpineEntry[] {
   const out: SpineEntry[] = []
   if (message.blocks.length === 0) {
@@ -769,13 +761,17 @@ function lastToolsIndex(entries: SpineEntry[]): number {
   return -1
 }
 
-/** Items above the last tool run carry the line down; items after it (closing prose) don't. */
-function SpineItems({ entries }: { entries: SpineEntry[] }): JSX.Element {
+/** Items above the last tool run carry the line down; items after it (closing prose) don't. A run settles once a later
+ *  block follows it and every call has returned, or when the turn ends. */
+function SpineItems({ entries, live }: { entries: SpineEntry[]; live: boolean }): JSX.Element {
   const last = lastToolsIndex(entries)
   return (
     <>
       {entries.map((e, i) => {
-        if (e.kind === 'tools') return <ToolGroup key={i} tools={e.tools} spine={i === last ? 'end' : 'through'} />
+        if (e.kind === 'tools') {
+          const settled = !live || (i < entries.length - 1 && e.tools.every((t) => t.result !== undefined))
+          return <ToolGroup key={e.tools[0].id} tools={e.tools} settled={settled} spine={i === last ? 'end' : 'through'} />
+        }
         return (
           <div key={i} className="spine-seg" data-seg={i < last ? 'through' : 'none'}>
             {e.kind === 'text' ? <Markdown text={e.text} /> : e.kind === 'hook' ? <HookNoteRow note={e.note} /> : <PlanModeDivider />}
@@ -786,41 +782,97 @@ function SpineItems({ entries }: { entries: SpineEntry[] }): JSX.Element {
   )
 }
 
+const NONE: ReadonlySet<string> = new Set()
+
 /**
- * A run of consecutive tool calls. On the spine, each row's bead sits on the line; 'end' marks the
- * run that carries the transcript item's last bead. AgentTab keeps the default 'off', which
- * puts beads inline because its column has no spine gutter.
+ * A run of consecutive tool calls: always the sentence, then every row, so no count of calls remounts anything. Done
+ * routine rows fold into the sentence and stay mounted under `hidden`. On the spine each bead sits on the line, and
+ * 'end' marks the run that carries the transcript item's last bead. AgentTab keeps the default 'off', which puts beads
+ * inline because its column has no spine gutter.
  */
 export function ToolGroup({
   tools,
+  settled,
   spine = 'off'
 }: {
   tools: ToolCall[]
+  settled: boolean
   spine?: 'off' | 'through' | 'end'
-}): JSX.Element | null {
-  if (tools.length === 0) return null
-  const placement = spine === 'off' ? 'inline' : 'spine'
-  if (tools.length <= AGGREGATE_ABOVE) {
-    return (
-      <>
-        {tools.map((t, i) => (
-          <InstrumentRow
-            key={t.id}
-            tool={t}
-            placement={placement}
-            seg={spine === 'end' && i === tools.length - 1 ? 'end' : 'through'}
-          />
-        ))}
-      </>
-    )
+}): JSX.Element {
+  // A row opened outside the sentence is kept out of it for good, closed or not. A row opened inside it keeps counting
+  // and closes with it, so the count never changes under the reader.
+  const [openIds, setOpenIds] = useState(NONE)
+  const [keptIds, setKeptIds] = useState(NONE)
+  const [sentenceOpen, setSentenceOpen] = useState(false)
+  const [revealIds, setRevealIds] = useState(NONE)
+  const [focusId, setFocusId] = useState<string | null>(null)
+  const uid = useId()
+  const runRef = useRef<HTMLDivElement>(null)
+  const sentenceRef = useRef<HTMLButtonElement>(null)
+  const plan = foldPlan(tools, { settled, keptIds, focusId, sentenceOpen })
+  const isHidden = (id: string): boolean => plan.mergedInto.has(id) || (!sentenceOpen && plan.folded.has(id))
+  const hiddenKey = tools.filter((t) => isHidden(t.id)).map((t) => t.id).join(' ')
+  // Runs before Chromium's focus fixup, so a row that just hid still holds focus here and it never falls to <body>.
+  useLayoutEffect(() => {
+    const a = document.activeElement
+    const row = a instanceof HTMLElement && runRef.current?.contains(a) ? a.closest<HTMLElement>('[data-row-id]') : null
+    if (!row?.hidden) return
+    const keep = plan.mergedInto.get(row.dataset.rowId ?? '')
+    const to = keep ? document.getElementById(`${uid}${keep}`)?.querySelector('button') : sentenceRef.current
+    to?.focus({ preventScroll: true })
+  }, [hiddenKey])
+  const toggleRow = (id: string): void => {
+    if (!openIds.has(id) && !(sentenceOpen && plan.folded.has(id))) setKeptIds((s) => new Set(s).add(id))
+    setOpenIds((s) => {
+      const next = new Set(s)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
   }
+  const toggleSentence = (e: MouseEvent): void => {
+    setRevealIds(!sentenceOpen && viaOf(e) === 'pointer' ? plan.folded : NONE)
+    setOpenIds((s) => new Set([...s].filter((id) => keptIds.has(id))))
+    setSentenceOpen((o) => !o)
+  }
+  const placement = spine === 'off' ? 'inline' : 'spine'
+  const seg = (id: string | null): 'through' | 'end' => (spine === 'end' && plan.lastVisible === id ? 'end' : 'through')
+  const folded = tools.filter((t) => plan.folded.has(t.id))
   return (
-    <AggregateRow
-      tools={tools}
-      placement={placement}
-      seg={spine === 'end' ? 'end' : 'through'}
-      collapse={tools.length >= COLLAPSE_AT}
-    />
+    <div
+      ref={runRef}
+      data-ui="run"
+      data-spine={spine === 'off' ? undefined : spine}
+      className="relative flex flex-col gap-0.5"
+      onFocus={(e) => setFocusId(e.target.closest<HTMLElement>('[data-row-id]')?.dataset.rowId ?? null)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setFocusId(null)
+      }}
+    >
+      <RunSentence
+        tools={folded}
+        open={sentenceOpen}
+        onToggle={toggleSentence}
+        controls={folded.map((t) => `${uid}${t.id}`).join(' ')}
+        placement={placement}
+        seg={seg(null)}
+        hidden={!folded.length}
+        buttonRef={sentenceRef}
+      />
+      {tools.map((t) => (
+        <InstrumentRow
+          key={t.id}
+          tool={t}
+          placement={placement}
+          seg={seg(t.id)}
+          id={`${uid}${t.id}`}
+          open={openIds.has(t.id)}
+          onToggle={() => toggleRow(t.id)}
+          hidden={isHidden(t.id)}
+          reveal={revealIds.has(t.id)}
+          edits={plan.merged.get(t.id)?.length}
+        />
+      ))}
+    </div>
   )
 }
 

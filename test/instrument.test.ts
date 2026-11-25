@@ -1,6 +1,6 @@
-// Boundary: the row-state grammar, the aggregate's worst-state pick, "needs you" matching, and the
+// Boundary: the row-state grammar, tiers, a run's fold plan and sentence, "needs you" matching, and the
 // current-turn derivation that the top-band header renders.
-import { monitorRowState, rowState, worstState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel, summarizeInput } from '../src/renderer/src/lib/instrument.ts'
+import { monitorRowState, rowState, needsYouToolIdOf, turnNumberOf, currentTurnAt, browserLabel, summarizeInput } from '../src/renderer/src/lib/instrument.ts'
 import { formatCost } from '../src/renderer/src/lib/formatCost.ts'
 import { equal } from './support/harness.mjs'
 
@@ -26,10 +26,6 @@ equal(rowState(tool({ sentToBackground: true, result: 'ok' }), false), 'launched
 equal(rowState(tool({ result: 'boom', isError: true }), false), 'failed', 'row: an error result is failed')
 equal(rowState(tool({ result: 'ok' }), false), 'done', 'row: a plain result is done')
 
-equal(worstState(['done', 'running', 'failed']), 'failed', 'worst: failed beats everything')
-equal(worstState(['done', 'needs-you', 'running']), 'needs-you', 'worst: needs you beats running')
-equal(worstState(['done', 'launched']), 'launched', 'worst: launched beats done')
-equal(worstState([]), 'done', 'worst: an empty set reads done')
 
 const slice = (messages: unknown[], pending: unknown[]) => ({ messages, pendingPermissions: pending }) as never
 const asst = msg('a', 'assistant', '', { tools: [{ id: 'w1', name: 'Write', input: {}, result: 'ok' }, { id: 'w2', name: 'Write', input: {} }] })
@@ -133,7 +129,6 @@ equal(summarizeInput({ skill: 'create-cso-pr', args: '--help' }), 'create-cso-pr
   equal(rowState(send(failed), false), 'failed', 'row: a send that did not go through is failed')
   equal(rowState(send('boom', { isError: true }), false), 'failed', 'row: an error result is failed')
   equal(rowState(send('Message sent'), false), 'done', 'row: an unparsed send result reads done')
-  equal(worstState(['sent', 'done']), 'sent', 'worst: sent outranks done')
   equal(toolLabel('SendMessage'), 'Message', 'toolLabel: SendMessage says Message')
 
   const input = { to: 'a346a162ba7618e7e', message: 'Now reply with the word CHERRY.', type: 'message', recipient: 'a346a162ba7618e7e', recipient_kind: 'agent', content: 'Now reply with the word CHERRY.' }
@@ -141,4 +136,86 @@ equal(summarizeInput({ skill: 'create-cso-pr', args: '--help' }), 'create-cso-pr
   equal(JSON.stringify(sendInputOf({ recipient: 'peer-1', content: 'yo' })), JSON.stringify({ to: 'peer-1', text: 'yo', kind: null }), 'send input: recipient and content alone, no kind')
   equal(JSON.stringify(sendInputOf({ to: 'team', message: { type: 'shutdown_request' }, content: 'stop' })), JSON.stringify({ to: 'team', text: 'stop', kind: null }), 'send input: an object message falls back to content')
   equal(sendInputOf({ to: 'team', message: { type: 'shutdown_request' } }), null, 'send input: no string text is no send input')
+}
+
+// Tiers, the fold plan, and the sentence a run's routine calls fold into.
+{
+  const { tierOf, foldable, foldPlan, sentenceOf } = await import('../src/renderer/src/lib/instrument.ts')
+  const tier = (o: Record<string, unknown>, needsYou = false) => {
+    const t = tool(o)
+    return tierOf(t, rowState(t, needsYou))
+  }
+  equal(tier({}, true), 'loud', 'tier: a Bash waiting on you is loud')
+  equal(tier({ name: 'Read' }), 'routine', 'tier: a running Read is routine')
+  equal(foldable(tool({ name: 'Read' })), false, 'fold: a running Read never folds')
+  equal(tier({}), 'legible', 'tier: a running Bash is legible')
+  equal(tier({ result: 'ok' }), 'routine', 'tier: a passed Bash is routine')
+  equal(tier({ input: { run_in_background: true }, result: 'Started' }), 'calm', 'tier: a backgrounded Bash is calm')
+  equal(tier({ name: 'mcp__clui-browser__console', result: 'summary!: 3 errors' }), 'legible', 'tier: a flagged browser call is legible')
+  equal(tier({ name: 'mcp__clui-browser__console', result: 'summary: no errors' }), 'routine', 'tier: an unflagged browser call is routine')
+  equal(tierOf(tool({ name: 'Monitor', result: 'ok' }), 'ended'), 'legible', 'tier: an ended Monitor is legible')
+  equal(foldable(tool({ name: 'Monitor', result: 'ok' })), false, 'fold: a Monitor never folds')
+  equal(tier({ name: 'Read', result: 'x', stopped: true }), 'legible', 'tier: a stopped Read is legible')
+  equal(tier({ name: 'mcp__linear__get_issue', result: 'ok' }), 'routine', 'tier: an unknown MCP tool is routine')
+  equal(tier({ name: 'Agent', result: 'ok' }), 'calm', 'tier: a done Agent is calm')
+  equal(tier({ name: 'Agent', result: 'boom', isError: true }), 'loud', 'tier: a failed Agent is loud')
+  equal(tier({ name: 'Edit', result: 'ok' }), 'legible', 'tier: a done Edit is legible')
+
+  const read = (id: string, o: Record<string, unknown> = {}) => tool({ id, name: 'Read', input: { file_path: `src/${id}.ts` }, result: 'ok', ...o })
+  const edit = (id: string, path: string, o: Record<string, unknown> = {}) => tool({ id, name: 'Edit', input: { file_path: path }, result: 'ok', ...o })
+  const none = new Set<string>()
+  const plan = (tools: unknown[], o: Record<string, unknown> = {}) => foldPlan(tools as never, { settled: false, keptIds: none, focusId: null, sentenceOpen: false, ...o })
+  const ids = (s: Iterable<string>) => [...s].join(' ')
+  const six = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6'].map((id) => read(id))
+  const live = [...six, tool({ id: 'b', input: { command: 'npm test' } })]
+  equal(ids(plan(live).folded), 'r1 r2 r3', 'live: the oldest done reads fold, the newest 3 stay')
+  equal(plan(live).lastVisible, 'b', 'live: the running call is the last visible row')
+  equal(ids(plan(live, { focusId: 'r1' }).folded), 'r2 r3', 'live: the focused row never folds')
+  equal(ids(plan([...six, read('r7', { result: undefined })]).folded), 'r1 r2 r3', 'live: a running routine row never folds')
+
+  equal(ids(plan([read('a'), read('b')], { settled: true }).folded), 'a b', 'settled: two done routine rows fold')
+  equal(plan([read('a'), edit('e', 'x.ts')], { settled: true }).folded.size, 0, 'settled: a lone routine row keeps its row')
+  equal(ids(plan([read('a'), read('b'), read('c')], { settled: true, keptIds: new Set(['b']) }).folded), 'a c', 'settled: a kept row is exempt')
+  equal(plan([read('a'), read('b')], { settled: true, keptIds: new Set(['b']) }).folded.size, 0, 'settled: a row closed after opening stays kept, so its lone neighbour keeps its row too')
+  const mixed = [read('a'), read('b'), tool({ id: 'f', result: 'x', isError: true }), tool({ id: 'ag', name: 'Agent', result: 'ok' }), edit('e', 'x.ts'), tool({ id: 'r', input: { command: 'ls' } })]
+  equal(ids(plan(mixed, { settled: true }).folded), 'a b', 'settled: loud, calm and legible rows never fold')
+  equal(plan([read('a'), read('b')], { settled: true }).lastVisible, null, 'settled: all folded leaves the sentence last')
+  equal(plan([read('a'), read('b')], { settled: true, sentenceOpen: true }).lastVisible, 'b', 'settled: an open sentence shows its last row')
+
+  const three = [edit('e1', 'a.ts'), edit('e2', 'a.ts'), edit('e3', 'a.ts')]
+  const m = plan(three, { settled: true })
+  equal(ids(m.mergedInto.keys()) + ' > ' + m.mergedInto.get('e1'), 'e1 e2 > e3', 'merge: same-path edits merge into the last')
+  equal(m.merged.get('e3')?.length, 3, 'merge: the kept row holds every edit')
+  equal(plan([edit('e1', 'a.ts'), edit('e2', 'b.ts')], { settled: true }).mergedInto.size, 0, 'merge: two paths are two rows')
+  const broken = plan([edit('e1', 'a.ts'), edit('e2', 'a.ts', { isError: true }), edit('e3', 'a.ts')], { settled: true })
+  equal(ids(broken.mergedInto.keys()) + ' | ' + broken.merged.get('e3')?.map((t: { id: string }) => t.id).join(' '), 'e1 | e1 e3', 'merge: a failed edit stays its own row')
+  equal(plan(three).mergedInto.size, 0, 'merge: nothing merges while live')
+  const nb = (id: string) => tool({ id, name: 'NotebookEdit', input: { notebook_path: 'n.ipynb' }, result: 'ok' })
+  equal(plan([nb('n1'), nb('n2')], { settled: true }).mergedInto.get('n1'), 'n2', 'merge: NotebookEdit merges by notebook_path')
+
+  const resumed = [read('a'), read('b'), edit('e1', 'x.ts'), read('c'), edit('e2', 'x.ts')]
+  const rp = plan(resumed, { settled: true })
+  equal(`${ids(rp.folded)} | ${ids(rp.mergedInto.keys())} | ${rp.lastVisible}`, 'a b c | e1 | e2', 'resumed: one plan, reads folded and edits merged')
+
+  const say = (tools: unknown[], bashNamed = Infinity, label: (t: unknown) => string | null = () => null) => sentenceOf(tools as never, { changeLabel: label as never, bashNamed }).plain
+  equal(say([read('a'), read('b')]), 'Read a.ts and b.ts', 'sentence: two reads are named')
+  equal(say([read('a'), read('b'), read('c')]), 'Read 3 files', 'sentence: three reads are counted')
+  equal(say([read('a'), read('a', { id: 'a2' }), read('a', { id: 'a3' })]), 'Read a.ts', 'sentence: rereads of one file name it once')
+  const grep = (id: string, pattern: string) => tool({ id, name: 'Grep', input: { pattern }, result: 'ok' })
+  equal(say([grep('g1', 'useStore'), read('a'), grep('g2', 'x'), grep('g3', 'y')]), 'Searched 3 times, read a.ts', 'sentence: verbs in order of first appearance, capitalized, no period')
+  const sh = (id: string, command: string) => tool({ id, input: { command }, result: 'ok' })
+  const cmds = [sh('s1', 'git status'), read('a'), sh('s2', 'npm test\n--watch'), sh('s3', 'ls'), sh('s4', 'pwd')]
+  equal(say(cmds), 'Read a.ts, ran git status, npm test, ls and pwd', 'sentence: Bash goes last, every command named')
+  equal(say(cmds, 2), 'Read a.ts, ran git status, npm test and 2 more commands', 'sentence: Bash names 2, counts the rest')
+  equal(say(cmds, 0), 'Read a.ts, ran 4 commands', 'sentence: Bash names none')
+  equal(say([sh('s1', 'ls'), sh('s2', 'pwd')], 1), 'Ran ls and 1 more command', 'sentence: one more command is singular')
+  equal(say([sh('s1', 'x'.repeat(50))]), `Ran ${'x'.repeat(39)}…`, 'sentence: a command is cut at 40 characters')
+  equal(say([tool({ id: 'k', name: 'CronList', result: 'ok' })]), 'Used CronList', 'sentence: the fallback verb')
+  equal(say([tool({ id: 'k', name: 'CronList', result: 'ok' }), tool({ id: 'k2', name: 'CronList', result: 'ok' })]), 'Used CronList 2 times', 'sentence: the fallback verb counts from 2')
+  equal(say([tool({ id: 'l', name: 'mcp__linear__get_issue', result: 'ok' })]), 'Used linear get_issue', 'sentence: the MCP form')
+  const cr = (id: string) => tool({ id, name: 'mcp__clui-surface__change_read', input: { ref: id }, result: 'ok' })
+  equal(say([cr('c1')], Infinity, (t) => `${(t as { id: string }).id} · before L3`), 'Read change c1 · before L3', 'sentence: change_read takes the injected label')
+  equal(say([cr('c1')]), 'Read 1 change', 'sentence: a change with no label is counted')
+  const parts = sentenceOf([read('a'), sh('s1', 'ls')] as never, { changeLabel: () => null, bashNamed: Infinity }).parts
+  equal(parts.filter((p) => p.mono).map((p) => p.text).join(' '), 'a.ts ls', 'sentence: only objects are mono')
 }
